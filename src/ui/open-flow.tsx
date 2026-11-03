@@ -12,13 +12,14 @@ import {
 	openProjectAt,
 } from "./api";
 import { type Notice, Toast as NoticeToast } from "./canvas/toast";
-import { type Answer, answerOf, isLink } from "./open-answer";
+import { type Answer, answerOf, isLink, sizeOf } from "./open-answer";
 import { type Dropped, DropTarget, useOpenDrop } from "./open-drop";
-import { OpenSheet, type SheetBody } from "./open-sheet";
+import { type Ask, OpenSheet, type SheetBody } from "./open-sheet";
 import { tilde } from "./paths";
 import { PlaceChooser } from "./place-chooser";
 
 type Opened = { root: string; name: string };
+type Asked = Extract<Answer, { kind: "ask" }>["finding"];
 
 /** Typing in a field, where ⌘V is the field's. */
 const editing = (target: EventTarget | null) =>
@@ -38,8 +39,8 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 	const [choosing, setChoosing] = useState(false);
 	const [sheet, setSheet] = useState<SheetBody | null>(null);
 	const [notice, setNotice] = useState<Notice | null>(null);
-	/** what the sheet's button does, and how to stop it once it is under way */
-	const pending = useRef<Extract<Answer, { kind: "ask" }> | null>(null);
+	/** what the sheet asks about, and what its button does */
+	const pending = useRef<{ ask: Ask; act: () => Promise<void> } | null>(null);
 	const work = useRef<AbortController | null>(null);
 	/** each take outdates the last: an answer that comes back after another take, or a Cancel, is dropped */
 	const turn = useRef(0);
@@ -68,8 +69,11 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 		pending.current = null;
 		setSheet({ kind: "nothing", given, says });
 	};
-	/** run `act` as this turn's work; an error says itself in the sheet with what was given kept */
-	const run = async <T,>(given: string, act: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> => {
+	/**
+	 * Run `act` as this turn's work. An error says itself in the sheet with what was given kept to fix, or, for bytes
+	 * a browser dropped, which there is nothing to fix in, in a line that passes.
+	 */
+	const run = async <T,>(given: string | File, act: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> => {
 		const mine = turn.current;
 		const controller = new AbortController();
 		work.current = controller;
@@ -77,19 +81,29 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 			const done = await act(controller.signal);
 			return mine === turn.current ? done : undefined;
 		} catch (error) {
-			if (mine === turn.current && !controller.signal.aborted)
-				nothing(given, error instanceof Error ? error.message : "Could not finish. Try again.");
+			if (mine !== turn.current || controller.signal.aborted) return undefined;
+			const says = error instanceof Error ? error.message : "Could not finish. Try again.";
+			if (typeof given === "string") nothing(given, says);
+			else {
+				pending.current = null;
+				setSheet(null);
+				setNotice({ kind: "error", message: says });
+			}
 			return undefined;
 		}
+	};
+	/** ask first: the sheet with its one button, which runs `act` showing `line` while it works */
+	const askFirst = (ask: Ask, act: (showing: (line: string, done?: number) => void) => Promise<void>) => {
+		const showing = (line: string, done?: number) =>
+			setSheet({ kind: "ask", ask, work: { line, ...(done === undefined ? {} : { done }) } });
+		pending.current = { ask, act: () => act(showing) };
+		setSheet({ kind: "ask", ask, work: null });
 	};
 
 	const answer = async (given: string, finding: Finding) => {
 		const found = answerOf(finding);
 		if (found.kind === "nothing") return nothing(given, found.says);
-		if (found.kind === "ask") {
-			pending.current = found;
-			return setSheet({ kind: "ask", ask: found.ask, work: null });
-		}
+		if (found.kind === "ask") return askFirst(found.ask, (showing) => make(found.finding, showing));
 		if (found.kind === "open") {
 			const done = await run(given, async () => {
 				const outcome = await openProjectAt(found.root);
@@ -135,30 +149,23 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 		if (mine === turn.current) await answer(given, finding);
 	};
 
-	const act = async () => {
-		const asked = pending.current;
-		if (asked === null) return;
-		const given = asked.finding.kind === "repo" ? asked.finding.url : asked.finding.path;
-		const showing = (line: string, done?: number) =>
-			setSheet({ kind: "ask", ask: asked.ask, work: { line, ...(done === undefined ? {} : { done }) } });
-		if (asked.finding.kind === "folder") {
-			const { path } = asked.finding;
-			showing(`adding design/ to ${tilde(path)}`);
-			const done = await run(given, async () => {
-				const outcome = await initProjectAt(path);
+	/** what the sheet asked to make: design in the folder, import the file, or clone the repo and read it again */
+	const make = async (finding: Asked, showing: (line: string, done?: number) => void) => {
+		if (finding.kind === "folder") {
+			showing(`adding design/ to ${tilde(finding.path)}`);
+			const done = await run(finding.path, async () => {
+				const outcome = await initProjectAt(finding.path);
 				if (outcome.kind === "error") throw new Error(outcome.message);
 				return outcome;
 			});
 			if (done !== undefined) finish(done);
-		} else if (asked.finding.kind === "file") {
-			const { path, into } = asked.finding;
-			showing(`unpacking into ${tilde(into)}`);
-			const done = await run(given, (signal) => importProjectFrom(path, signal));
+		} else if (finding.kind === "file") {
+			showing(`unpacking into ${tilde(finding.into)}`);
+			const done = await run(finding.path, (signal) => importProjectFrom(finding.path, signal));
 			if (done !== undefined) finish(done);
 		} else {
-			const { url, into } = asked.finding;
 			const transfer = crypto.randomUUID();
-			showing(`cloning into ${tilde(into)}`, 0);
+			showing(`cloning into ${tilde(finding.into)}`, 0);
 			const mine = turn.current;
 			// git says how far only while it receives and resolves: between, the bar holds where it was
 			let done = 0;
@@ -169,12 +176,19 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 					showing(progress.line, done);
 				});
 			}, 250);
-			const cloned = await run(given, (signal) => cloneRepo(url, transfer, signal)).finally(() =>
+			const cloned = await run(finding.url, (signal) => cloneRepo(finding.url, transfer, signal)).finally(() =>
 				clearInterval(poll),
 			);
 			// read again: designs open, a plain clone asks to design in it
-			if (cloned !== undefined) await answer(given, cloned);
+			if (cloned !== undefined) await answer(finding.url, cloned);
 		}
+	};
+
+	const act = async () => {
+		const asked = pending.current;
+		if (asked === null) return;
+		pending.current = null;
+		await asked.act();
 	};
 
 	const cancel = () => {
@@ -182,31 +196,33 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 		setSheet(null);
 	};
 
-	/** A browser's drop of a .spool file: imported by its bytes, as there is no path to read. */
-	const importBytes = async (file: File) => {
+	/** A browser's drop of a .spool file: asked like any other, then imported by its bytes, as there is no path to read. */
+	const importBytes = (file: File) => {
 		stop();
-		const transfer = crypto.randomUUID();
-		setSheet({
-			kind: "ask",
-			ask: {
+		setChoosing(false);
+		askFirst(
+			{
 				face: "file",
 				name: file.name,
 				says: "spool keeps a copy of its frames with your projects.",
-				detail: [file.name, "into your projects folder"],
+				detail: [sizeOf(file.size), "into your projects folder"],
 				act: "Import",
 			},
-			work: { line: `unpacking ${file.name}` },
-		});
-		const done = await run(file.name, async (signal) => {
-			signal.addEventListener("abort", () => void cancelProjectTransfer(transfer).catch(() => {}));
-			return importProject(file, transfer);
-		});
-		if (done !== undefined) finish(done);
+			async (showing) => {
+				const transfer = crypto.randomUUID();
+				showing(`unpacking ${file.name}`);
+				const done = await run(file, (signal) => {
+					signal.addEventListener("abort", () => void cancelProjectTransfer(transfer).catch(() => {}));
+					return importProject(file, transfer);
+				});
+				if (done !== undefined) finish(done);
+			},
+		);
 	};
 
 	const drop = (dropped: Dropped) => {
 		if (dropped.kind === "given") void take(dropped.given);
-		else if (dropped.kind === "bytes") void importBytes(dropped.file);
+		else if (dropped.kind === "bytes") importBytes(dropped.file);
 		else setNotice({ kind: "error", message: dropped.says });
 	};
 	const held = useOpenDrop(home, drop);
