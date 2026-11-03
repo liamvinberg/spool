@@ -234,7 +234,10 @@ export async function scanStills(root: string): Promise<Map<string, StoredStill>
  */
 const BOOTH_NAME = "booth";
 
-/** Every frame whose stored cover the booth did not make, and has not failed to make again. */
+/**
+ * Every frame whose stored cover the booth did not make, and has not failed to
+ * make again, and every frame whose failure was recorded without its kind.
+ */
 export async function scanPreBoothCovers(root: string): Promise<string[]> {
 	const store = coverStoreDir(root);
 	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
@@ -244,10 +247,13 @@ export async function scanPreBoothCovers(root: string): Promise<string[]> {
 			if (frame === undefined) return undefined;
 			const names = (await listed(join(store, folder))).filter((entry) => entry.isFile()).map((entry) => entry.name);
 			// a frame the booth failed on keeps its old cover and says why, and asking
-			// again on every start would only fail again
-			const owed =
-				coverAmong(names) !== undefined && !names.includes(BOOTH_NAME) && !names.includes(CAPTURE_ERROR_NAME);
-			return owed ? frame : undefined;
+			// again on every start would only fail again, unless what it said is from
+			// before a failure said whose it was
+			if (names.includes(CAPTURE_ERROR_NAME)) {
+				const text = await readFile(join(store, folder, CAPTURE_ERROR_NAME), "utf8").catch(() => "");
+				return parseCaptureError(text) === undefined ? frame : undefined;
+			}
+			return coverAmong(names) !== undefined && !names.includes(BOOTH_NAME) ? frame : undefined;
 		}),
 	);
 	return scanned.filter((frame) => frame !== undefined);
@@ -332,11 +338,29 @@ function captureErrorFile(root: string, frame: string): string {
 	return join(coverDir(root, frame), CAPTURE_ERROR_NAME);
 }
 
+/**
+ * What kind of failure a recorded one is. `compile` and `boot` are the frame's
+ * own fault: it does not build, or it throws as it starts, and the canvas shows
+ * it broken. `capture` is the booth's: too large, too slow, or a page that would
+ * not draw, and the frame may well work.
+ */
+export type CaptureFailure = "compile" | "boot" | "capture";
+
 export interface CaptureError {
 	error: string;
 	/** ISO timestamp of the failed picture, not of the read. */
 	at: string;
+	kind: CaptureFailure;
 }
+
+/** A recorded failure that is the frame's own, as the canvas and `spool check` show it. */
+export interface BrokenFrame {
+	error: string;
+	at: string;
+	kind: Exclude<CaptureFailure, "capture">;
+}
+
+const CAPTURE_FAILURES: readonly CaptureFailure[] = ["compile", "boot", "capture"];
 
 /**
  * The reason the photo booth could not make a cover, beside the old one it
@@ -345,22 +369,74 @@ export interface CaptureError {
  * the new image gets removed — retires this the moment a later capture lands,
  * so a stale reason never outlives the picture that made it moot.
  */
-export function writeCaptureError(root: string, frame: string, error: string): void {
-	writeAtomic(captureErrorFile(root, frame), `${JSON.stringify({ error, at: new Date().toISOString() })}\n`);
+export function writeCaptureError(root: string, frame: string, error: string, kind: CaptureFailure): void {
+	writeAtomic(captureErrorFile(root, frame), `${JSON.stringify({ error, at: new Date().toISOString(), kind })}\n`);
 }
 
 /** Machine-written cache: anything malformed reads as no recorded error (mirrors readLogsCache in verify-record.ts). */
 export function readCaptureError(root: string, frame: string): CaptureError | undefined {
-	let parsed: unknown;
 	try {
-		parsed = JSON.parse(readFileSync(captureErrorFile(root, frame), "utf8"));
+		return parseCaptureError(readFileSync(captureErrorFile(root, frame), "utf8"));
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
+}
+
+/**
+ * One recorded failure, or nothing when the text is no such record. One written
+ * before failures had a kind is nothing too: what it says can not be told apart
+ * as the frame's or the booth's, and the booth sits such a frame again
+ * (`scanPreBoothCovers`) to say which.
+ */
+function parseCaptureError(text: string): CaptureError | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		return undefined;
+	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { error, at } = parsed as { error?: unknown; at?: unknown };
-	return typeof error === "string" && typeof at === "string" ? { error, at } : undefined;
+	const { error, at, kind } = parsed as { error?: unknown; at?: unknown; kind?: unknown };
+	if (typeof error !== "string" || typeof at !== "string") return undefined;
+	const known = CAPTURE_FAILURES.find((one) => one === kind);
+	return known === undefined ? undefined : { error, at, kind: known };
+}
+
+/** Every frame whose last cover failed through its own fault. */
+export function scanBrokenFramesSync(root: string): Map<string, BrokenFrame> {
+	const broken = new Map<string, BrokenFrame>();
+	const store = coverStoreDir(root);
+	for (const { frame, folder } of framesIn(store)) {
+		if (!filesIn(join(store, folder)).includes(CAPTURE_ERROR_NAME)) continue;
+		let text = "";
+		try {
+			text = readFileSync(join(store, folder, CAPTURE_ERROR_NAME), "utf8");
+		} catch {}
+		const recorded = parseCaptureError(text);
+		if (recorded !== undefined && recorded.kind !== "capture")
+			broken.set(frame, { ...recorded, kind: recorded.kind });
+	}
+	return broken;
+}
+
+/** The same, read without holding the event loop. */
+export async function scanBrokenFrames(root: string): Promise<Map<string, BrokenFrame>> {
+	const store = coverStoreDir(root);
+	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+	const scanned = await Promise.all(
+		folders.map(async (folder) => {
+			const frame = segmentFrame(folder);
+			if (frame === undefined) return undefined;
+			const names = (await listed(join(store, folder))).filter((entry) => entry.isFile()).map((entry) => entry.name);
+			if (!names.includes(CAPTURE_ERROR_NAME)) return undefined;
+			const text = await readFile(join(store, folder, CAPTURE_ERROR_NAME), "utf8").catch(() => "");
+			const recorded = parseCaptureError(text);
+			if (recorded === undefined || recorded.kind === "capture") return undefined;
+			return [frame, { error: recorded.error, at: recorded.at, kind: recorded.kind }] as const;
+		}),
+	);
+	return new Map(scanned.filter((entry) => entry !== undefined));
 }
 
 /**

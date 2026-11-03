@@ -4,14 +4,15 @@ import { createFrameReads } from "./frame-reads";
 const old = { hash: "old" };
 const fresh = { hash: "fresh" };
 
-it("keeps a cover heard while a read was out over that read's older answer", () => {
+it("keeps a cover heard while a read was out over that read's older answer, and what it proves", () => {
 	const reads = createFrameReads();
 	const ticket = reads.ask();
 	reads.note("home", fresh);
-	expect(reads.settle(ticket, [{ name: "home", cover: old }, { name: "other" }])).toEqual([
-		{ name: "home", cover: fresh },
-		{ name: "other" },
-	]);
+	reads.note("cart", old);
+	const broken = { error: "boom", at: "", kind: "boot" };
+	expect(
+		reads.settle(ticket, [{ name: "home", cover: old }, { name: "cart", cover: old, broken }, { name: "other" }]),
+	).toEqual([{ name: "home", cover: fresh }, { name: "cart", cover: old }, { name: "other" }]);
 });
 
 it("takes a read asked after a cover was heard as it answers", () => {

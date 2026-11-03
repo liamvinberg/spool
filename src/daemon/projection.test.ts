@@ -14,7 +14,7 @@ import {
 	summarizeProject,
 } from "./projection";
 import { markSeen } from "./seen";
-import { writeCover } from "./thumbs";
+import { writeCaptureError, writeCover } from "./thumbs";
 
 describe("frame birth", () => {
 	it("carries the folder's birth time so the finder can sort newest first", () => {
@@ -54,6 +54,9 @@ describe("the projection read without blocking", () => {
 				'{ "x": 0, "y": 2000, "w": 390, "h": 844, "placeholder": { "title": "Soon", "brief": "Later." } }\n',
 			);
 			writeCover(root, "home", Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]));
+			// the booth failed on home since: the old cover stays, and says why
+			writeCaptureError(root, "home", "threw on boot: boom", "boot");
+			writeCaptureError(root, "app/settings", "too large for a cover", "capture");
 			return root;
 		};
 		const sync = project();
@@ -61,7 +64,11 @@ describe("the projection read without blocking", () => {
 		const strip = (projection: ReturnType<typeof listProjectFrames>) => ({
 			...projection,
 			root: "",
-			frames: projection.frames.map(({ born, ...frame }) => ({ ...frame, born: born !== undefined })),
+			frames: projection.frames.map(({ born, broken, ...frame }) => ({
+				...frame,
+				born: born !== undefined,
+				...(broken === undefined ? {} : { broken: { ...broken, at: "" } }),
+			})),
 		});
 
 		// the first read seeds the seen record and places the frames without a place
@@ -81,6 +88,8 @@ describe("the projection read without blocking", () => {
 		expect(second.frames.find((frame) => frame.name === "app/fresh")?.unseen).toBe("new");
 		expect(second.frames.find((frame) => frame.name === "app/linked")).toMatchObject({ x: 5000, w: 320 });
 		expect(second.frames.find((frame) => frame.name === "home")?.cover).toBeDefined();
+		expect(second.frames.find((frame) => frame.name === "home")?.broken).toMatchObject({ kind: "boot" });
+		expect(second.frames.find((frame) => frame.name === "app/settings")?.broken).toBeUndefined();
 	});
 });
 

@@ -399,6 +399,21 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 		}
 		return rolled;
 	}, [frames, unseen]);
+	/**
+	 * The broken frames and every page above one (#390). A frame that does not
+	 * compile is worth finding from a shut folder too, so a page answers for
+	 * everything below it, as with unseen, and broken outranks unseen on a row:
+	 * a frame that cannot show is the louder thing to know.
+	 */
+	const brokenIn = useMemo(() => {
+		const broken = new Set<string>();
+		for (const frame of frames) {
+			if (frame.broken === undefined) continue;
+			broken.add(frame.name);
+			for (const page of pageChain(pageOf(frame))) broken.add(`${page}/`);
+		}
+		return broken;
+	}, [frames]);
 
 	/* ── the list: the projection, arranged by the stored order ──────── */
 
@@ -1686,6 +1701,9 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 								mark={
 									row.kind === "frame" ? unseen.get(row.name) : row.open ? undefined : unseenIn.get(row.page)
 								}
+								broken={
+									row.kind === "frame" ? brokenIn.has(row.name) : !row.open && brokenIn.has(`${row.page}/`)
+								}
 								cursored={cursor === rowKey(row)}
 								lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
 								into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
@@ -1877,6 +1895,7 @@ const RailTreeRow = memo(function RailTreeRow({
 	selected,
 	holding,
 	mark,
+	broken,
 	cursored,
 	lifted,
 	into,
@@ -1898,6 +1917,8 @@ const RailTreeRow = memo(function RailTreeRow({
 	holding: boolean;
 	/** nobody has looked at this frame, or at something inside this shut page */
 	mark: Unseen | undefined;
+	/** it, or a frame under its shut page, does not compile or throws as it starts */
+	broken: boolean;
 	cursored: boolean;
 	lifted: boolean;
 	into: boolean;
@@ -1953,6 +1974,7 @@ const RailTreeRow = memo(function RailTreeRow({
 				current={active}
 				lit={!page && chosen}
 				unseen={mark === undefined ? undefined : mark === "new" ? true : "moved"}
+				broken={broken}
 				// the count is what is one chevron away, so an open page has none: the rows
 				// under it are the count, and a total beside them reads as a second, wrong number
 				meta={page && !row.open && rename === null ? row.count : undefined}

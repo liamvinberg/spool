@@ -250,7 +250,9 @@ describe("the booth before any browser", () => {
 	it("refuses a frame past the raster budget with a reason, without a browser", async () => {
 		const { booth: made, deps } = booth({ geometry: vi.fn(() => ({ w: 100, h: 50_000 })) });
 		made.enqueue(sitting("tall"));
-		await vi.waitFor(() => expect(deps.failed).toHaveBeenCalledWith(ROOT, "tall", "too large for a cover"));
+		await vi.waitFor(() =>
+			expect(deps.failed).toHaveBeenCalledWith(ROOT, "tall", "too large for a cover", "capture"),
+		);
 		expect(deps.launch).not.toHaveBeenCalled();
 		expect(deps.store).not.toHaveBeenCalled();
 	});
@@ -268,7 +270,9 @@ describe("the booth before any browser", () => {
 			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "error", message: "Unexpected end of file" })),
 		});
 		made.enqueue(sitting("broken", "missing"));
-		await vi.waitFor(() => expect(deps.failed).toHaveBeenCalledWith(ROOT, "broken", "Unexpected end of file"));
+		await vi.waitFor(() =>
+			expect(deps.failed).toHaveBeenCalledWith(ROOT, "broken", "Unexpected end of file", "compile"),
+		);
 		// every projection read finds it uncovered; none of them is a reason to try again
 		made.enqueue(sitting("broken", "missing"));
 		made.enqueue(sitting("broken", "missing"));

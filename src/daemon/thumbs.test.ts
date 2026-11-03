@@ -10,6 +10,7 @@ import {
 	readCover,
 	readCoverAwaited,
 	readCoverImage,
+	scanBrokenFrames,
 	scanCoverSchemes,
 	scanCovers,
 	scanPaces,
@@ -110,10 +111,11 @@ describe("recording a capture failure (#173)", () => {
 		const root = project();
 		expect(readCaptureError(root, "home")).toBeUndefined();
 
-		writeCaptureError(root, "home", "capture canvases too large");
+		writeCaptureError(root, "home", "capture canvases too large", "capture");
 
 		const recorded = readCaptureError(root, "home");
 		expect(recorded?.error).toBe("capture canvases too large");
+		expect(recorded?.kind).toBe("capture");
 		expect(recorded?.at).toEqual(expect.any(String));
 		expect(new Date(recorded?.at ?? "").toString()).not.toBe("Invalid Date");
 	});
@@ -131,11 +133,26 @@ describe("recording a capture failure (#173)", () => {
 
 		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify([]));
 		expect(readCaptureError(root, "home")).toBeUndefined();
+
+		// one from before failures had a kind can not say whose it was
+		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify({ error: "x", at: "2026-10-03T00:00:00Z" }));
+		expect(readCaptureError(root, "home")).toBeUndefined();
+	});
+
+	it("calls a frame broken only when the failure is its own", async () => {
+		const root = project();
+		writeCaptureError(root, "home", "No matching export", "compile");
+		writeCaptureError(root, "cart", "threw on boot: boom", "boot");
+		writeCaptureError(root, "big", "too large for a cover", "capture");
+
+		const broken = await scanBrokenFrames(root);
+		expect([...broken.keys()].sort()).toEqual(["cart", "home"]);
+		expect(broken.get("home")).toMatchObject({ error: "No matching export", kind: "compile" });
 	});
 
 	it("clears a recorded error the moment a landed cover retires every other file", () => {
 		const root = project();
-		writeCaptureError(root, "home", "capture reply timed out");
+		writeCaptureError(root, "home", "capture reply timed out", "capture");
 		expect(readCaptureError(root, "home")).toBeDefined();
 
 		writeCover(root, "home", JPEG);
@@ -145,7 +162,7 @@ describe("recording a capture failure (#173)", () => {
 
 	it("never confuses its own record with a cover", () => {
 		const root = project();
-		writeCaptureError(root, "home", "capture source too large");
+		writeCaptureError(root, "home", "capture source too large", "capture");
 
 		expect(readCover(root, "home")).toBeUndefined();
 		expect(scanCovers(root)).toEqual(new Map());
@@ -202,7 +219,7 @@ describe("the version of the frame a still is of", () => {
 	it("says when the booth failed on the frame since", async () => {
 		const root = project();
 		writeCover(root, "home", JPEG, undefined, A);
-		writeCaptureError(root, "home", "too slow");
+		writeCaptureError(root, "home", "too slow", "capture");
 		expect((await scanStills(root)).get("home")).toMatchObject({ source: A, failed: true });
 	});
 });
@@ -228,9 +245,16 @@ describe("covers taken before the booth", () => {
 		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.jpg`), JPEG);
 		writeFileSync(
 			join(storeDir(root), "error.json"),
-			JSON.stringify({ error: "too slow", at: "2026-10-03T00:00:00Z" }),
+			JSON.stringify({ error: "too slow", at: "2026-10-03T00:00:00Z", kind: "capture" }),
 		);
 		expect(await scanPreBoothCovers(root)).toEqual([]);
+	});
+
+	it("include a frame whose failure was recorded without its kind, so it can be told again", async () => {
+		const root = project();
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify({ error: "x", at: "2026-10-03T00:00:00Z" }));
+		expect(await scanPreBoothCovers(root)).toEqual(["home"]);
 	});
 });
 

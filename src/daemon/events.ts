@@ -43,6 +43,9 @@ export type ChangeEvent =
 	// without re-reading the projection. Absent means it could not be read back,
 	// and the canvas falls back to a frames read.
 	| { kind: "thumb"; frame: string; cover?: Cover }
+	// the booth could not make a frame's cover, and recorded why beside the old
+	// one (#173): a canvas reads the frames again to learn whether it is broken
+	| { kind: "cover-failed"; frame: string }
 	// a session witnessed an edge (#25), published by the walked API — .spool
 	// is invisible to the watcher, so the store announces its own writes
 	| { kind: "walked" }

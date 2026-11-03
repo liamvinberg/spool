@@ -653,7 +653,7 @@ describe("a solo project's covers", () => {
 		writeCover(root, "checkout/done", png, undefined, "e".repeat(64));
 		writeCover(root, "checkout/receipt", png);
 		writeCover(root, "checkout/slow", png);
-		writeCaptureError(root, "checkout/slow", "too slow");
+		writeCaptureError(root, "checkout/slow", "too slow", "capture");
 		const owed: [string, CoverOwed][] = [];
 		const shares = createProjectShares({
 			spoolDir,

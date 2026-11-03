@@ -80,13 +80,14 @@ export function Count({
 
 /* -------------------------------------------- Dot, SpinRing, StatusMark -- */
 
-export type DotTone = "primary" | "secondary" | "accent";
+export type DotTone = "primary" | "secondary" | "accent" | "danger";
 export type DotSize = "sm" | "md";
 
 const DOT_TONE: Record<DotTone, string> = {
 	primary: "bg-primary",
 	secondary: "bg-secondary",
 	accent: "bg-accent",
+	danger: "bg-danger",
 };
 
 /** A disc that says one thing without words. `sm` 6, `md` 8. Arrives with a pop. */
@@ -129,7 +130,7 @@ export function SpinRing({ className, ...rest }: ComponentProps<"svg">) {
 	);
 }
 
-export type Status = "unseen" | "moved" | "working" | "waiting";
+export type Status = "unseen" | "moved" | "working" | "waiting" | "broken";
 
 /**
  * What a frame or a thread is doing, in a 12px box so a name never moves when
@@ -138,7 +139,8 @@ export type Status = "unseen" | "moved" | "working" | "waiting";
  *
  * unseen: a disc, nobody has looked · moved: a hollow ring, seen and changed
  * since · working: the ring turning · waiting: the ring held still with the
- * disc in it, stopped on a question.
+ * disc in it, stopped on a question · broken: the disc in danger, it does not
+ * compile or throws as it starts, and is the one mark here that is red.
  */
 export function StatusMark({ status, className, ...rest }: ComponentProps<"span"> & { status: Status }) {
 	return (
@@ -159,6 +161,8 @@ function StatusGlyph({ status }: { status: Status }) {
 	switch (status) {
 		case "unseen":
 			return <Dot tone="primary" />;
+		case "broken":
+			return <Dot tone="danger" />;
 		case "moved":
 			return (
 				<svg viewBox="0 0 12 12" fill="none" aria-hidden="true" className={cn("size-full text-secondary", POP)}>

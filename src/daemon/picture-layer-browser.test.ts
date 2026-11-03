@@ -124,8 +124,13 @@ async function pictureCanvas(options: { plain?: boolean; far?: boolean } = {}) {
 		writeCover(project.root, frame.name, Buffer.from(solidPng(800, 533, frame.color)));
 	}
 	if (options.plain === true) {
-		// a document that throws gives the photo booth nothing to keep
-		writeFrame(project.root, "plain", 'export default function Frame() { throw new Error("nothing to picture"); }');
+		// a document that never draws gives the photo booth nothing to keep, and
+		// is no fault of its own (one that throws is broken, and says so on top)
+		writeFrame(
+			project.root,
+			"plain",
+			'import { use } from "react";\n\nconst never = new Promise<never>(() => {});\n\nexport default function Frame() { return use(never); }',
+		);
 		writeDesignFile(project.root, "frames/plain/frame.json", `${JSON.stringify({ x: 340, y: 240, w: W, h: H })}\n`);
 	}
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: CAMERA })}\n`);

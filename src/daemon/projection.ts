@@ -16,7 +16,14 @@ import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
 import { type Unseen, unseenNow, unseenNowAwaited } from "./seen";
 import { type PlaceholderNote, parsePlaceholder } from "./sidecar";
-import { readCoverAwaited, scanCovers, scanCoversAwaited } from "./thumbs";
+import {
+	type BrokenFrame,
+	readCoverAwaited,
+	scanBrokenFrames,
+	scanBrokenFramesSync,
+	scanCovers,
+	scanCoversAwaited,
+} from "./thumbs";
 
 export { frameFolder } from "../page-path";
 export { pageObjectBox, placePages } from "./placement";
@@ -62,6 +69,12 @@ export interface ProjectedFrame {
 	 * the canvas reads as "show the placeholder".
 	 */
 	cover?: Cover;
+	/**
+	 * Why the frame is broken, when the booth's last try at its cover failed
+	 * through the frame's own fault: it does not compile, or it throws as it
+	 * starts. Its cover, when it has one, is of the last version that worked.
+	 */
+	broken?: BrokenFrame;
 	/**
 	 * Nobody has looked at this frame yet, or nobody has looked at it since its
 	 * folder last moved. Only the canvas asks for it — `listProjectFrames` leaves
@@ -398,6 +411,7 @@ function placeholdersOf(discovery: Discovery): ProjectedPlaceholder[] {
 /** What placing a project's frames reads of each one, gathered blocking or not. */
 interface FrameReads {
 	covers: Map<string, Cover>;
+	broken: Map<string, BrokenFrame>;
 	sidecars: Map<string, Sidecar>;
 	/** The folder's birth, for a frame whose sidecar already places it. */
 	born: (frame: DiscoveredFrame) => number | undefined;
@@ -418,11 +432,13 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 	// one sweep of the cover store answers every frame from immutable image names,
 	// so this costs a readdir per frame folder and opens no image
 	const covers = readCovers(root);
+	const broken = readBroken(root);
 	const sidecars = new Map(
 		discovery.frames.map((frame) => [frame.name, readFrameSidecar(frame.dir, discovery.designDir)]),
 	);
 	return placeFrames(root, discovery, {
 		covers,
+		broken,
 		sidecars,
 		born: (frame) => folderBorn(frame.dir),
 		...(options.seen === true ? { unseen: () => unseenNow(root, discovery.frames) } : {}),
@@ -438,8 +454,9 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 export async function listProjectFramesAwaited(root: string, options: { seen?: boolean } = {}): Promise<Projection> {
 	const discovery = await discoverAwaited(root);
 	if (discovery === undefined) return emptyProjection(root);
-	const [covers, sidecars, borns, unseen] = await Promise.all([
+	const [covers, broken, sidecars, borns, unseen] = await Promise.all([
 		readCoversAwaited(root),
+		readBrokenAwaited(root),
 		Promise.all(
 			discovery.frames.map(
 				async (frame) => [frame.name, await readFrameSidecarAwaited(frame.dir, discovery.designDir)] as const,
@@ -451,6 +468,7 @@ export async function listProjectFramesAwaited(root: string, options: { seen?: b
 	const born = new Map(borns);
 	return placeFrames(root, discovery, {
 		covers,
+		broken,
 		sidecars: new Map(sidecars),
 		born: (frame) => born.get(frame.name),
 		...(unseen === undefined ? {} : { unseen: () => unseen }),
@@ -516,6 +534,10 @@ function placeFrames(root: string, discovery: Discovery, reads: FrameReads): Pro
 			const mark = marks.get(frame.name);
 			if (mark !== undefined) frame.unseen = mark;
 		}
+	}
+	for (const frame of placed) {
+		const broken = reads.broken.get(frame.name);
+		if (broken !== undefined) frame.broken = broken;
 	}
 	// a page with no place gets one and keeps it: the arrangement is committed,
 	// so it has to be the same coordinate on the next machine that pulls it
@@ -657,6 +679,24 @@ export function frameDirectories(root: string): Map<string, string> {
 function readCovers(root: string): Map<string, Cover> {
 	try {
 		return scanCovers(root);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return new Map();
+	}
+}
+
+function readBroken(root: string): Map<string, BrokenFrame> {
+	try {
+		return scanBrokenFramesSync(root);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return new Map();
+	}
+}
+
+async function readBrokenAwaited(root: string): Promise<Map<string, BrokenFrame>> {
+	try {
+		return await scanBrokenFrames(root);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return new Map();

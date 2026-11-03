@@ -12,7 +12,7 @@ import type { NamedElement } from "../runtime/frame-shim/named-element";
 import { ASSET_PATH } from "./assets";
 import { type BoothQueue, type BoothReason, keyOf, type Sitting } from "./booth-queue";
 import { frameShims } from "./frame-shims";
-import { type FramePace, SLOW_PER_SECOND } from "./thumbs";
+import { type CaptureFailure, type FramePace, SLOW_PER_SECOND } from "./thumbs";
 import { VENDOR_REACT_URL } from "./vendor-pins";
 import type { LogEntry } from "./verify-record";
 
@@ -332,8 +332,8 @@ export interface BoothDeps {
 	 * heavy enough to slow a canvas.
 	 */
 	paced?(root: string, frame: string, pace: FramePace | undefined): void;
-	/** A cover could not be made; the reason rides beside the old one, which stays (#173). */
-	failed(root: string, frame: string, reason: string): void;
+	/** A cover could not be made; the reason, and whose fault it was, ride beside the old one, which stays (#173). */
+	failed(root: string, frame: string, reason: string, kind: CaptureFailure): void;
 	/** A sitting for this frame is over, whatever came of it. */
 	finished?(root: string, frame: string): void;
 	/**
@@ -965,9 +965,11 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		if (sitting.reason === "missing" && deps.covered(root, frame)) return;
 		const origin = deps.origin();
 		if (origin === undefined) return;
-		const fail = (reason: string) => {
+		// the frame's own failure is what the canvas shows and an agent fixes, so it
+		// keeps the toolchain's words; the booth's own is one line
+		const fail = (reason: string, kind: CaptureFailure = "capture") => {
 			failedAt.set(key, Date.now());
-			deps.failed(root, frame, reason.slice(0, 240));
+			deps.failed(root, frame, reason.slice(0, kind === "capture" ? 240 : 4000), kind);
 		};
 		const owedAgain = (reason: BoothReason) => {
 			if (deps.registered(root)) queue.add({ ...sitting, reason });
@@ -978,7 +980,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		// a frame that is gone or will not compile needs no browser to say so
 		const before = await deps.compile(root, frame);
 		if (before.kind === "missing") return;
-		if (before.kind === "error") return fail(before.message);
+		if (before.kind === "error") return fail(before.message, "compile");
 		const tab = await tabFor(slot);
 		tab.covers++;
 		let shot: Shot;
@@ -994,7 +996,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			retire(slot, tab);
 			return fail(describe(error));
 		}
-		if (shot.kind === "threw") return fail(`threw on boot: ${shot.message}`);
+		if (shot.kind === "threw") return fail(`threw on boot: ${shot.message}`, "boot");
 		if (shot.kind === "answered") {
 			// gone, or its project is moving: nothing to picture and nothing to blame
 			if (shot.status === 404 || shot.status === 409) return;
@@ -1002,7 +1004,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			// the source broke between the compile and the load: its words, or
 			// another try when it was fixed again in between
 			const now = await deps.compile(root, frame);
-			if (now.kind === "error") return fail(now.message);
+			if (now.kind === "error") return fail(now.message, "compile");
 			if (now.kind === "ok") owedAgain("edited");
 			return;
 		}

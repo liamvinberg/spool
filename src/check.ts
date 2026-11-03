@@ -102,6 +102,9 @@ interface SyntaxFailure {
 interface SourceClosure {
 	sources: Map<string, string>;
 	inspections: Map<string, SourceInspection>;
+	/** What each source reads into the closure, canonical both ways, and where each named entry landed. */
+	reads: Map<string, string[]>;
+	entries: Map<string, string>;
 }
 
 interface LocalModuleResolution {
@@ -173,14 +176,16 @@ class NonRegularDesignFileError extends Error {
 /** What one `spool check` found: its diagnostics, or why it did not run, and what it covered. */
 export interface CheckReport {
 	diagnostics: CheckDiagnostic[];
-	/** Whether the typecheck ran; when it did not, the diagnostics say what stopped it. */
+	/** Whether the typecheck ran; when it did not, the diagnostics or `notChecked` say what stopped it. */
 	ran: boolean;
 	/** The frames it checked, by name (their path under frames/). */
 	frames: string[];
 	/** How many source files their import closure holds. */
 	sources: number;
-	/** Why nothing was checked, when the sources are over the offline limit. */
-	notChecked?: string;
+	/** How many checks it took to stay under the offline limit: more than one only for a closure over it. */
+	batches: number;
+	/** One line for each frame left unchecked because what it imports alone is over the offline limit. */
+	notChecked: string[];
 	/** Scope paths that name no frame; nothing is checked when there are any. */
 	unmatched: string[];
 	/** Design paths of `.tsx` files under frames/ that look meant as frames but are none. */
@@ -190,15 +195,18 @@ export interface CheckReport {
 /** Check every HTML frame without registering, compiling, or writing a project. */
 export async function checkDesign(root: string): Promise<CheckDiagnostic[]> {
 	const report = await checkProject(root);
-	if (report.notChecked === undefined) return report.diagnostics;
-	return [{ path: "design/frames", line: 1, column: 1, code: 5083, message: report.notChecked }];
+	return [
+		...report.diagnostics,
+		...report.notChecked.map((message) => ({ path: "design/frames", line: 1, column: 1, code: 5083, message })),
+	];
 }
 
 /**
  * Check the frames under `scope` (absolute paths of frame folders, their
  * entries, or folders holding frames) and the closure of what they import, or
- * every frame when there is no scope. The offline limit counts that closure,
- * so one frame of a large canvas can be checked on its own.
+ * every frame when there is no scope. The offline limit counts that closure; a
+ * closure over it is checked in batches that each fit, so a whole canvas gets
+ * one answer, and only a frame over it on its own goes unchecked.
  */
 export async function checkProject(root: string, scope?: string[]): Promise<CheckReport> {
 	let designDir = join(root, "design");
@@ -208,15 +216,24 @@ export async function checkProject(root: string, scope?: string[]): Promise<Chec
 		const discovery = discoverHtmlFrames(designDir);
 		selection = selectFrames(designDir, discovery, scope);
 		if (selection.unmatched.length > 0) return { ...report(designDir, selection, [], 0), ran: false };
-		const { diagnostics, sources, closure } = await runCheckDesign(designDir, selection.entries);
+		const checked = await checkInBatches(designDir, selection.entries);
 		// a page-level source some frame imports is a part, not a frame meant
-		selection.strays = selection.strays.filter((file) => basename(file) === "frame.tsx" || !closure.has(file));
-		return report(designDir, selection, diagnostics, sources);
+		selection.strays = selection.strays.filter(
+			(file) => basename(file) === "frame.tsx" || !checked.closure.has(file),
+		);
+		const alone = new Set(checked.alone.map(({ entry }) => entry));
+		return {
+			...report(
+				designDir,
+				{ ...selection, entries: selection.entries.filter((entry) => !alone.has(entry)) },
+				checked.diagnostics,
+				checked.closure.size,
+			),
+			ran: checked.batches > 0 || alone.size === 0,
+			batches: checked.batches,
+			notChecked: checked.alone.map(({ entry, usage }) => overLimit(designDir, entry, usage)),
+		};
 	} catch (error) {
-		if (error instanceof CheckSourceLimitError && (error.limit === "files" || error.limit === "total-bytes")) {
-			const over = overBudget(designDir, selection.entries, scope !== undefined && !selection.whole);
-			if (over !== undefined) return { ...report(designDir, selection, [], 0), ran: false, notChecked: over };
-		}
 		return { ...report(designDir, selection, unrunnable(designDir, error), 0), ran: false };
 	}
 }
@@ -233,6 +250,8 @@ function report(
 		ran: true,
 		frames: selection.entries.map((entry) => relative(framesDir, dirname(entry)).split(sep).join("/")),
 		sources,
+		batches: 1,
+		notChecked: [],
 		unmatched: selection.unmatched,
 		strays: selection.strays.map((file) => designPath(designDir, file)),
 	};
@@ -261,32 +280,118 @@ function unrunnable(designDir: string, error: unknown): CheckDiagnostic[] {
 	return [{ path: "design/frames", line: 1, column: 1, code: 5083, message }];
 }
 
+/** What a set of sources weighs against the offline limit. */
+interface Usage {
+	files: number;
+	bytes: number;
+}
+
+interface Batched {
+	diagnostics: CheckDiagnostic[];
+	/** Every source some batch read, by canonical path. */
+	closure: Map<string, string>;
+	batches: number;
+	/** The frames whose own closure is over the limit, which no batch could hold. */
+	alone: { entry: string; usage: Usage }[];
+}
+
 /**
- * The line for a closure over the file-count or total-size limit: how far over
- * it is, counted again without those two limits, so the author learns the
- * size of the problem rather than which file it happened to stop on.
+ * Check the entries in one go when their closure fits the offline limit, and
+ * otherwise in batches that each do: the limit bounds what one typecheck holds,
+ * not what a canvas may hold. Diagnostics of a source two batches share are
+ * the same diagnostic, said once.
  */
-function overBudget(designDir: string, entries: string[], scoped: boolean): string | undefined {
+async function checkInBatches(designDir: string, entries: string[]): Promise<Batched> {
+	try {
+		const { diagnostics, closure } = await runCheckDesign(designDir, entries);
+		return { diagnostics, closure, batches: 1, alone: [] };
+	} catch (error) {
+		if (!(error instanceof CheckSourceLimitError && (error.limit === "files" || error.limit === "total-bytes")))
+			throw error;
+	}
+	const { batches, alone } = packBatches(designDir, entries);
+	const diagnostics: CheckDiagnostic[] = [];
+	const closure = new Map<string, string>();
+	for (const batch of batches) {
+		const checked = await runCheckDesign(designDir, batch);
+		diagnostics.push(...checked.diagnostics);
+		for (const [file, text] of checked.closure) closure.set(file, text);
+	}
+	return { diagnostics: dedupe(diagnostics), closure, batches: batches.length, alone };
+}
+
+/**
+ * The entries, in their order, packed into batches whose closures each fit the
+ * offline limit. Frames of one page share most of what they import, so packing
+ * in path order keeps a batch's closure close to one page's. The whole closure
+ * is read once without the count and size limits, as the line for one over
+ * them always was, and each frame's own closure is walked from it.
+ */
+function packBatches(designDir: string, entries: string[]): { batches: string[][]; alone: Batched["alone"] } {
 	const counter = new CheckSourceBudget({
 		...checkSourceLimits,
 		maxFiles: Number.POSITIVE_INFINITY,
 		maxTotalBytes: Number.POSITIVE_INFINITY,
 	});
-	try {
-		readImportMap(designDir, counter);
-		readClosure(designDir, entries, counter);
-	} catch {
-		return undefined;
+	readImportMap(designDir, counter);
+	// the import map is in every batch
+	const base = counter.usage;
+	const whole = readClosure(designDir, entries, counter);
+	const bytesOf = (file: string): number => counter.bytesOf(file) ?? 0;
+	const reach = (entry: string): Set<string> => {
+		const seen = new Set<string>();
+		const start = whole.entries.get(entry);
+		const stack = start === undefined ? [] : [start];
+		for (let file = stack.pop(); file !== undefined; file = stack.pop()) {
+			if (seen.has(file)) continue;
+			seen.add(file);
+			stack.push(...(whole.reads.get(file) ?? []));
+		}
+		return seen;
+	};
+	const fits = (usage: Usage): boolean =>
+		base.files + usage.files <= checkSourceLimits.maxFiles &&
+		base.bytes + usage.bytes <= checkSourceLimits.maxTotalBytes;
+	const batches: string[][] = [];
+	const alone: Batched["alone"] = [];
+	let batch: string[] = [];
+	let held = new Set<string>();
+	let usage: Usage = { files: 0, bytes: 0 };
+	for (const entry of entries) {
+		const own = reach(entry);
+		const ownUsage = { files: own.size, bytes: [...own].reduce((sum, file) => sum + bytesOf(file), 0) };
+		if (!fits(ownUsage)) {
+			alone.push({ entry, usage: { files: base.files + ownUsage.files, bytes: base.bytes + ownUsage.bytes } });
+			continue;
+		}
+		const added = [...own].filter((file) => !held.has(file));
+		const next = {
+			files: usage.files + added.length,
+			bytes: usage.bytes + added.reduce((sum, file) => sum + bytesOf(file), 0),
+		};
+		if (fits(next)) {
+			batch.push(entry);
+			for (const file of added) held.add(file);
+			usage = next;
+			continue;
+		}
+		batches.push(batch);
+		batch = [entry];
+		held = own;
+		usage = ownUsage;
 	}
-	const { files, bytes } = counter.usage;
-	const fewer = scoped
-		? "name fewer frames to check fewer"
-		: "name frames or folders of frames to check fewer, as in spool check design/frames/<page>";
-	if (files > checkSourceLimits.maxFiles) {
-		return `not checked: ${files} source files, the limit is ${checkSourceLimits.maxFiles}; ${fewer}`;
-	}
+	if (batch.length > 0) batches.push(batch);
+	return { batches, alone };
+}
+
+/** The line for a frame whose own closure is over the file-count or total-size limit: how far over it is. */
+function overLimit(designDir: string, entry: string, usage: Usage): string {
 	const mb = (value: number): string => `${(value / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`;
-	return `not checked: ${mb(bytes)} of source, the limit is ${mb(checkSourceLimits.maxTotalBytes)}; ${fewer}`;
+	const over =
+		usage.files > checkSourceLimits.maxFiles
+			? `${usage.files} source files, the limit is ${checkSourceLimits.maxFiles}`
+			: `${mb(usage.bytes)} of source, the limit is ${mb(checkSourceLimits.maxTotalBytes)}`;
+	return `${designPath(designDir, entry)}: not checked: it imports ${over}`;
 }
 
 async function runCheckDesign(
@@ -1456,8 +1561,12 @@ function readClosure(designDir: string, entries: string[], sourceBudget: CheckSo
 	const sources = new Map<string, string>();
 	const inspections = new Map<string, SourceInspection>();
 	const queue = [...entries];
+	// what each source asked for, by the path it asked with, and what each path came to
+	const asked = new Map<string, string[]>();
+	const canonicalOf = new Map<string, string>();
 	for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
 		const canonical = resolveDesignPath(designDir, file, designPath(designDir, file));
+		canonicalOf.set(file, canonical);
 		if (isDesignPackagePath(designDir, canonical)) {
 			throw new DesignBoundaryError(designPath(designDir, file));
 		}
@@ -1466,6 +1575,7 @@ function readClosure(designDir: string, entries: string[], sourceBudget: CheckSo
 		const inspection = inspectSource(canonical, text);
 		sources.set(canonical, text);
 		inspections.set(canonical, inspection);
+		const before = queue.length;
 		for (const { specifier } of inspection.moduleUses) {
 			if (!isRelativeLocalSpecifier(specifier) || hasInvalidPathCharacter(specifier)) continue;
 			const cssDeclaration = resolveLocalCssDeclaration(designDir, dirname(canonical), specifier);
@@ -1488,8 +1598,18 @@ function readClosure(designDir: string, entries: string[], sourceBudget: CheckSo
 			const resolved = resolveLocalClosureSource(designDir, dirname(canonical), jsxImportSource.runtimeSpecifier);
 			if (resolved !== undefined) queue.push(resolved);
 		}
+		asked.set(canonical, queue.slice(before));
 	}
-	return { sources, inspections };
+	const landed = (path: string): string[] => {
+		const canonical = canonicalOf.get(path);
+		return canonical === undefined ? [] : [canonical];
+	};
+	return {
+		sources,
+		inspections,
+		reads: new Map([...asked].map(([file, paths]) => [file, paths.flatMap(landed)])),
+		entries: new Map(entries.flatMap((entry) => landed(entry).map((canonical) => [entry, canonical] as const))),
+	};
 }
 
 function reserveAuthoredCheckerNames(
