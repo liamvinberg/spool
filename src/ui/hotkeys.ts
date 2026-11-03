@@ -772,7 +772,7 @@ export const HOTKEYS = [
 		id: "app.open-project",
 		scope: "app",
 		group: "Home",
-		label: "Open a project or folder",
+		label: "Open a folder, a .spool file or a link",
 		keys: ["accel+o"],
 		repeats: false,
 	},

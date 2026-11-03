@@ -984,7 +984,7 @@ export function buildAppMenu(): Menu {
 					click: () => sendCanvasCommand("app.new-project"),
 				},
 				{
-					label: "Open Project…",
+					label: "Open…",
 					accelerator: menuKey("app.open-project", menuKeys),
 					click: () => sendCanvasCommand("app.open-project"),
 				},
