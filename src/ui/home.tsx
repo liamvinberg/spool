@@ -3,7 +3,7 @@ import { type HerePerson, type ProjectCard, type TeamProjectOnMac, thumbnailUrl 
 import { cn } from "./cn";
 import { FindNav, FoundHead, finds, NARROW_NAV, ProjectsHead, type Sort, useFoundPlace } from "./home-find";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
-import type { HotkeyIdFor } from "./hotkeys";
+import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { ArrowRightIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
 import { MovedArt, MovedSheet, movedBy } from "./moved-away";
 import { tilde } from "./paths";
@@ -55,8 +55,7 @@ export function Home({
 	onTrashProject,
 	onRenameProject,
 	onStart,
-	onFolder,
-	onImport,
+	onOpen,
 	onExportProject,
 	moveItems,
 	onChangeIcon,
@@ -76,8 +75,8 @@ export function Home({
 	onTrashProject: (project: { root: string; name: string }) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onStart: () => void;
-	onFolder: () => void;
-	onImport?: () => void;
+	/** Open…: a folder, a .spool file or a link, through the system's open panel */
+	onOpen: () => void;
 	onExportProject?: (project: ProjectCard) => void;
 	/** The ways each cover's project can move: "Move to team…" and the like. */
 	moveItems?: MoveItems | undefined;
@@ -150,13 +149,7 @@ export function Home({
 	);
 	const start = (
 		<>
-			{/* until Open… takes a .spool file itself (spool#51's Open…) */}
-			{onImport && (
-				<Button size="lg" variant="ghost" onClick={onImport}>
-					Import…
-				</Button>
-			)}
-			<Button size="lg" icon={<FolderIcon />} onClick={onFolder}>
+			<Button size="lg" icon={<FolderIcon />} title={`Open… ${hotkeyKey("app.open-project")}`} onClick={onOpen}>
 				Open…
 			</Button>
 			<Button size="lg" variant="primary" icon={<PlusIcon />} onClick={onStart}>
@@ -194,7 +187,7 @@ export function Home({
 						<button
 							type="button"
 							className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
-							onClick={onFolder}
+							onClick={onOpen}
 						>
 							<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
 							<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
@@ -202,22 +195,10 @@ export function Home({
 								<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 							</strong>
 							<small className="mt-[10px] text-secondary type-control">
-								Bring your codebase.
+								A folder, a .spool file or a link.
 								<br />
-								Keep the design beside your code.
+								Drop one here, or paste it.
 							</small>
-						</button>
-						<button
-							type="button"
-							className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
-							onClick={onImport}
-						>
-							<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
-							<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-								Import…
-								<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-							</strong>
-							<small className="mt-[10px] text-secondary type-control">Open a .spool project file.</small>
 						</button>
 					</div>
 				}

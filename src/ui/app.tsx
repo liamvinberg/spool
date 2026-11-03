@@ -39,10 +39,10 @@ import { coversOf, Home, type MoveItems, ProjectGrid } from "./home";
 import { attachHotkeyLayer, closeTopmost, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import type { HotkeyId, HotkeyIdFor } from "./hotkeys";
-import { ProjectPicker } from "./picker";
+import { useOpen } from "./open-flow";
 import { ProjectTeams } from "./project-icon";
 import { useIconChange } from "./project-icon-change";
-import { useProjectTransfer } from "./project-transfer";
+import { useProjectExport } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
@@ -110,8 +110,6 @@ export function App() {
 	const [handed, setHanded] = useState(() => handedOver(window.location.search));
 	/** A team, or one project of it, that spool.page's Export handed this page, to export once the teams are read. */
 	const [exportAsked] = useState(() => (handed?.export ? { team: handed.team, project: handed.project } : null));
-	/** The folder picker, open for Open…. */
-	const [picking, setPicking] = useState(false);
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
 	const [account, setAccount] = useState<CloudAccountState>({ state: "unreachable" });
 	const readAccount = useCallback(async () => setAccount(await fetchCloudAccount()), []);
@@ -488,6 +486,15 @@ export function App() {
 		},
 		[focusProject],
 	);
+	// Open…, a drop on the window and a paste on Home: whatever it was, one rule opens it
+	const opener = useOpen({
+		home: focusedTab === undefined && !settingsOpen,
+		onOpened: (project) => {
+			void refetch();
+			openTab(project);
+		},
+	});
+	const choose = opener.choose;
 
 	/** The project New just made, whose canvas opens with the Agent pane out. */
 	const [started, setStarted] = useState<string | null>(null);
@@ -630,7 +637,7 @@ export function App() {
 			},
 			"app.open-project": (event) => {
 				event?.preventDefault();
-				setPicking(true);
+				choose();
 			},
 			"app.help": () => {
 				setSettingsOpen(false);
@@ -677,7 +684,7 @@ export function App() {
 			scope: "app",
 			handlers: appWindow === undefined ? withoutTabKeys(handlers) : handlers,
 		});
-	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot, startNew]);
+	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot, startNew, choose]);
 
 	useEffect(() => {
 		return appWindow?.onCommand((command) => {
@@ -690,14 +697,12 @@ export function App() {
 				case "app.open-project":
 					setSettingsOpen(false);
 					setKeysOpen(false);
-					setPicking(true);
+					choose();
 					break;
 				case "app.settings":
-					setPicking(false);
 					openSettings();
 					break;
 				case "app.help":
-					setPicking(false);
 					setSettingsOpen(false);
 					setKeysOpen(true);
 					break;
@@ -709,13 +714,10 @@ export function App() {
 					runMenuHotkey(command);
 			}
 		});
-	}, [appWindow, openSettings, closeOnTop, startNew]);
+	}, [appWindow, openSettings, closeOnTop, startNew, choose]);
 
 	const icons = useIconChange(setIcon, setThumbnail);
-	const transfer = useProjectTransfer(async (project) => {
-		await refetch();
-		openTab(project);
-	});
+	const transfer = useProjectExport();
 	const teamHome = useTeamHome(
 		account,
 		openExternally,
@@ -828,13 +830,13 @@ export function App() {
 	const canvasActive =
 		focusedTab !== undefined &&
 		chrome !== null &&
-		!picking &&
 		!keysOpen &&
 		!settingsOpen &&
 		renameRequest === null &&
 		trashRequest === null &&
 		moving === null &&
-		!transfer.confirming;
+		!transfer.confirming &&
+		!opener.up;
 	useEffect(() => {
 		appWindow?.setMenuKeys?.(menuAccelerators());
 	}, [appWindow]);
@@ -908,8 +910,7 @@ export function App() {
 								)}
 								loading={!projectsLoaded}
 								onStart={() => startNew()}
-								onFolder={() => setPicking(true)}
-								onImport={transfer.importProject}
+								onOpen={choose}
 								onExportProject={transfer.exportProject}
 								onChangeIcon={icons.change}
 								onRemoveIcon={icons.remove}
@@ -985,7 +986,7 @@ export function App() {
 												logo: null,
 											})
 								}
-								onFolder={() => setPicking(true)}
+								onFolder={choose}
 								onRename={(name) => requestRename(focusedTab, name)}
 							/>
 						)}
@@ -1009,6 +1010,7 @@ export function App() {
 				{newProject.toast}
 				{abandon.toast}
 				{transfer.surface}
+				{opener.surface}
 				{icons.surface}
 				{focusedTab === undefined && teamHome.toast}
 				{teamHome.exportSurface}
@@ -1019,16 +1021,6 @@ export function App() {
 						aboveCanvasTools={focusedTab !== undefined && chrome !== null}
 						onUpdate={() => (toast.kind === "app" ? bridge?.install() : void startUpgrade())}
 						onDismiss={dismissToast}
-					/>
-				)}
-
-				{picking && (
-					<ProjectPicker
-						onOpened={(project) => {
-							setPicking(false);
-							openTab(project);
-						}}
-						onClose={() => setPicking(false)}
 					/>
 				)}
 

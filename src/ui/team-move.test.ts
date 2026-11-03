@@ -110,7 +110,7 @@ function home(
 				onTrashProject: vi.fn(),
 				onRenameProject: vi.fn(),
 				onStart: vi.fn(),
-				onFolder: vi.fn(),
+				onOpen: vi.fn(),
 				moveItems: moves.moveItems,
 			}),
 			moves.surface,

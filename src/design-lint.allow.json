@@ -47,7 +47,7 @@
 		"ad-hoc-motion": 1
 	},
 	"src/ui/home.tsx": {
-		"ad-hoc-motion": 3,
+		"ad-hoc-motion": 2,
 		"raw-colour": 1
 	},
 	"src/ui/project-icon.tsx": {
