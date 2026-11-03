@@ -10,6 +10,7 @@ import { initProject, startProject } from "../init";
 import { openProject } from "../open";
 import { forgetResolvedProject, readRegistry } from "../registry";
 import { backInGitOffered } from "../team-moves";
+import { isUntitled } from "../untitled";
 import { updateLine } from "../update-how";
 import type { createAgentTurns } from "./agent-live";
 import { DesignBoundaryError } from "./design-path";
@@ -34,7 +35,7 @@ import {
 	ThumbnailRefused,
 } from "./project-thumbnail";
 import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
-import { describeMissingFrame, frameExists, type ProjectCard, summarizeProject } from "./projection";
+import { describeMissingFrame, discoverFrames, frameExists, type ProjectCard, summarizeProject } from "./projection";
 import type { AppEvent, watchMachineState } from "./session";
 import type { createSettingsStore } from "./settings";
 import { type createTeamSync, endedWith, followedLink, goneLocalWith, movedOutOf } from "./team-sync";
@@ -299,13 +300,19 @@ export function homeRoutes(deps: {
 			.post(
 				"/projects/trash",
 				validator("json", (value, c) => {
-					const parsed = z.object({ root: z.string().min(1) }).safeParse(value);
+					const parsed = z
+						.object({ root: z.string().min(1), abandoned: z.literal(true).optional() })
+						.safeParse(value);
 					return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
 				}),
 				async (c) => {
-					const { root } = c.req.valid("json");
+					const { root, abandoned } = c.req.valid("json");
 					const roots = registeredRoots();
 					if (!roots.includes(root)) return c.json({ error: "This project is no longer registered." }, 404);
+					// a closed project nobody named or drew in goes by itself, and only while it still is one (spool#51)
+					if (abandoned === true && !isAbandoned(root)) {
+						return c.json({ error: "This project has been named or has frames, so it stays." }, 409);
+					}
 					if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
 					if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
 					if ([...liveTurns.of(root)].some((turn) => turn.running)) {
@@ -514,4 +521,9 @@ export function homeRoutes(deps: {
 				},
 			)
 	);
+}
+
+/** Still an untitled project on this Mac only, with no frames: what New made and nobody used. */
+function isAbandoned(root: string): boolean {
+	return isUntitled(basename(root)) && followedLink(root) === undefined && (discoverFrames(root)?.length ?? 0) === 0;
 }
