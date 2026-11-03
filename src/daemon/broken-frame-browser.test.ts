@@ -38,6 +38,8 @@ it("says a frame is broken, hands the error to the agent, and lets go once it is
 	const broken = page.locator('[data-broken-frame="cart"]');
 	await broken.getByText("failed to compile").waitFor({ timeout: 60_000 });
 	expect(await broken.textContent()).toContain("shared/ui/nowhere");
+	// and the Pages list says it on the frame's row
+	await page.getByRole("treeitem", { name: "cart" }).getByRole("img", { name: "broken" }).waitFor();
 	// the last good picture stays under it
 	expect(await page.locator('[data-frame-cover="cart"] img').isVisible()).toBe(true);
 
