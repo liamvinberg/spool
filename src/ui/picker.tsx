@@ -5,7 +5,7 @@ import { cn } from "./cn";
 import { type DirectoryRequest, desktopWindow } from "./desktop-window";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { ArrowRightIcon, BackIcon, ChevronIcon, FolderIcon, PlusIcon, SearchIcon } from "./icons";
-import { crumbsOf, shortPath } from "./picker-model";
+import { crumbsOf, shortPath } from "./folder-paths";
 import { Button, IconButton } from "./primitives/actions";
 import { Dialog } from "./primitives/overlays";
 import { ListRow } from "./primitives/structure";

@@ -200,7 +200,7 @@ export function EyeIcon({ className }: { className?: string }) {
 	);
 }
 
-/** A folder, wherever spool names one: a page in the rail, a directory in the picker. */
+/** A folder, wherever spool names one: a page in the rail, a directory in the chooser. */
 export function FolderIcon({ className }: { className?: string }) {
 	return (
 		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
@@ -210,6 +210,32 @@ export function FolderIcon({ className }: { className?: string }) {
 				strokeWidth="1.15"
 				strokeLinejoin="round"
 			/>
+		</svg>
+	);
+}
+
+/** A .spool project file: a page with a folded corner. */
+export function SpoolFileIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<path d="M3 1.75h5l3 3v7.5H3zM8 1.75v3h3" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+/** A link: to a repo, or to a team's project at spool.page. */
+export function LinkIcon({ className }: { className?: string }) {
+	return (
+		<svg
+			viewBox="0 0 16 16"
+			className={className}
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1.25"
+			aria-hidden="true"
+		>
+			<path d="M6.75 9.25a2.5 2.5 0 0 0 3.55 0l2-2a2.5 2.5 0 0 0-3.55-3.55l-.6.6" strokeLinecap="round" />
+			<path d="M9.25 6.75a2.5 2.5 0 0 0-3.55 0l-2 2a2.5 2.5 0 0 0 3.55 3.55l.6-.6" strokeLinecap="round" />
 		</svg>
 	);
 }

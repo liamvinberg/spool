@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { browseDirectory, type FsHit, type FsListing, type FsSearch, searchDirectories } from "./api";
-import { browseRows } from "./picker-model";
+import { browseDirectory, type FsListing, type FsSearch, searchDirectories } from "./api";
+import { browseRows, type FolderRow } from "./folder-paths";
 
-/** Read-only navigation and selection. A pasted path is resolved before it can be confirmed. */
-export function useFolderBrowser(initialPath: string) {
+/**
+ * Read-only navigation and selection. A pasted path is resolved before it can be confirmed. With `files`, a folder's
+ * .spool files are listed after its folders.
+ */
+export function useFolderBrowser(initialPath: string, { files = false }: { files?: boolean } = {}) {
 	const [listing, setListing] = useState<FsListing | null>(null);
 	const [home, setHome] = useState<string | null>(null);
 	const [query, setQuery] = useState("");
@@ -111,7 +114,7 @@ export function useFolderBrowser(initialPath: string) {
 	const answer = found?.key === searchKey ? found.value : undefined;
 	const pathAnswer = resolved?.key === term ? resolved : null;
 	const pending = browsing || (pathQuery ? pathAnswer === null : searchKey !== null && answer === undefined);
-	const rows: readonly FsHit[] = pathQuery
+	const rows: readonly FolderRow[] = pathQuery
 		? pathAnswer?.value
 			? [
 					{
@@ -126,7 +129,7 @@ export function useFolderBrowser(initialPath: string) {
 		: searchKey !== null
 			? (answer?.hits ?? [])
 			: listing
-				? browseRows(listing).filter((row) => row.name.toLowerCase().includes(term.toLowerCase()))
+				? browseRows(listing, files).filter((row) => row.name.toLowerCase().includes(term.toLowerCase()))
 				: [];
 	const target = pathQuery ? rows[0] : (rows[at] ?? (term === "" ? (listing ?? undefined) : undefined));
 	useEffect(() => {

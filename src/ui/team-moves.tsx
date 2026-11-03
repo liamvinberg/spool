@@ -29,7 +29,7 @@ import { ConfirmDialog, RefusedInPlace } from "./confirm-dialog";
 import { HerePill, MenuBackdrop, type MoveItem, type MoveItems } from "./home";
 import { DotsIcon } from "./icons";
 import { tilde } from "./paths";
-import { ProjectPicker } from "./picker";
+import { PlaceChooser } from "./place-chooser";
 import { Button, IconButton } from "./primitives/actions";
 import { Field, TextField } from "./primitives/inputs";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
@@ -350,19 +350,18 @@ export function GetItDialog({
 	}, [waitingFor, team.address, project.name]);
 	if (picking)
 		return (
-			<ProjectPicker
-				initial="location"
-				location="~"
-				onOpened={() => {}}
-				onClose={() => setPicking(false)}
-				onLocation={async (path) => {
+			<PlaceChooser
+				purpose="location"
+				start="~"
+				onCancel={() => setPicking(false)}
+				onChoose={(path) => {
+					setPicking(false);
 					setPicked({ path });
 					choose({ kind: "pick" });
 					void fetchPlaceSurvey(team.address, project.name, path).then((found) => {
 						if (found !== undefined)
 							setPicked((now) => (now?.path === path ? { path, survey: found.survey } : now));
 					});
-					return { ok: true };
 				}}
 			/>
 		);
@@ -988,15 +987,13 @@ export function IntoCheckoutSheet({
 	}, [team.address, project]);
 	if (picking)
 		return (
-			<ProjectPicker
-				initial="location"
-				location="~"
-				onOpened={() => {}}
-				onClose={() => setPicking(false)}
-				onLocation={async (path) => {
+			<PlaceChooser
+				purpose="location"
+				start="~"
+				onCancel={() => setPicking(false)}
+				onChoose={(path) => {
 					setCheckout(path);
 					setPicking(false);
-					return { ok: true };
 				}}
 			/>
 		);
