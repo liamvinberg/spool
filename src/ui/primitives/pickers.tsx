@@ -856,7 +856,7 @@ export function PicturePreview({ value, options }: { value: string; options: rea
 	);
 }
 
-/** the search over a popover list, the arrows walking what it found */
+/** the search over a popover list, and what it found */
 function useFound(options: readonly KnobOption[], words: (option: KnobOption) => string) {
 	const [query, setQuery] = useState("");
 	const q = query.trim().toLowerCase();
