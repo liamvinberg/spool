@@ -65,22 +65,9 @@ describe("empty project title", () => {
 			"D Devosurfsynced with spool.page",
 		);
 	});
-
-	it("selects the name only when asked for a newly created project", () => {
-		const focused = vi.fn();
-		const input = mount(vi.fn().mockResolvedValue(null), true, focused);
-		expect(document.activeElement).toBe(input);
-		expect(input.selectionStart).toBe(0);
-		expect(input.selectionEnd).toBe("untitled".length);
-		expect(focused).toHaveBeenCalledOnce();
-	});
 });
 
-function mount(
-	onRename: (name: string) => Promise<string | null>,
-	focusName = false,
-	onNameFocused = vi.fn(),
-): HTMLInputElement {
+function mount(onRename: (name: string) => Promise<string | null>): HTMLInputElement {
 	const host = document.createElement("div");
 	document.body.append(host);
 	const root = createRoot(host);
@@ -94,8 +81,6 @@ function mount(
 				project: "untitled",
 				root: "/tmp/untitled",
 				onRename,
-				focusName,
-				onNameFocused,
 			}),
 		),
 	);

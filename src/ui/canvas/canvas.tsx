@@ -406,8 +406,6 @@ export function ownsFrameMessage(
 interface ProjectCanvasProps {
 	project: string;
 	root?: string;
-	focusName?: boolean | undefined;
-	onNameFocused?: (() => void) | undefined;
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
 	/** A project New just made: its canvas opens with the Agent pane out, its composer not focused. */
@@ -444,8 +442,6 @@ function CanvasField({
 	onChrome,
 	onRename,
 	onFolder,
-	focusName,
-	onNameFocused,
 	agentOpen = false,
 	team: markTeam,
 	deck,
@@ -6033,8 +6029,6 @@ function CanvasField({
 								team={markTeam}
 								onRename={onRename}
 								onFolder={onFolder}
-								focusName={focusName}
-								onNameFocused={onNameFocused}
 							/>
 						</div>
 					)}

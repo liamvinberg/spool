@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { isUntitled } from "../untitled";
 import { ArrowRightIcon, RibbonMark } from "./icons";
 import { Button } from "./primitives/actions";
@@ -12,27 +12,17 @@ export function ProjectEmpty({
 	onRename,
 	onFolder,
 	onUseAgent,
-	focusName = false,
-	onNameFocused,
 	team,
 }: {
 	project: string;
 	/** A team project's local copy: the name row says its team. */
 	team?: MarkTeam | undefined;
-	focusName?: boolean | undefined;
-	onNameFocused?: (() => void) | undefined;
 	root?: string | undefined;
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
 	onUseAgent?: (() => void) | undefined;
 }) {
 	const inputRef = useRef<HTMLInputElement>(null);
-	useEffect(() => {
-		if (!focusName) return;
-		inputRef.current?.focus();
-		inputRef.current?.select();
-		onNameFocused?.();
-	}, [focusName, onNameFocused]);
 	const [draft, setDraft] = useState(project);
 	const [renaming, setRenaming] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
