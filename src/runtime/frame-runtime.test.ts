@@ -980,14 +980,13 @@ describe("knobs", () => {
 	it("declares every call to the canvas and takes live values, presses and cleared values without a recompile", async () => {
 		const harness = makeHarness();
 		scaffoldTuned(harness);
+		const fontsLoaded: (() => void)[] = [];
 		const fonts = Object.assign(
 			[
 				{ family: '"Inter"', status: "loaded" },
 				{ family: "Lora", status: "unloaded" },
 			],
-			{
-				ready: Promise.resolve(),
-			},
+			{ ready: new Promise<void>((resolve) => fontsLoaded.push(resolve)) },
 		);
 		Object.defineProperty(document, "fonts", { configurable: true, value: fonts });
 		const warnings = captureWarnings();
@@ -1030,7 +1029,7 @@ describe("knobs", () => {
 										{ value: "b", image: "/b.png" },
 									],
 								},
-								// the rail lists what the document loaded
+								// the rail lists what the document loaded, without waiting for the rest
 								family: { type: "font", value: "Inter", options: ["Inter"] },
 								replay: { type: "action", label: "Replay" },
 							},
@@ -1041,6 +1040,17 @@ describe("knobs", () => {
 							schema: { count: { type: "stepper", value: 3 } },
 						},
 					],
+				});
+			});
+			// and is told again once the fonts are in
+			fonts[1] = { family: "Lora", status: "loaded" };
+			for (const resolve of fontsLoaded) resolve();
+			await vi.waitFor(() => {
+				const calls = declared.at(-1)?.calls as KnobsDeclared["calls"];
+				expect(calls.find((call) => call.at === site)?.schema.family).toEqual({
+					type: "font",
+					value: "Inter",
+					options: ["Inter", "Lora"],
 				});
 			});
 		} finally {

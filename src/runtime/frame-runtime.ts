@@ -1928,26 +1928,39 @@ function pressKnob(message: KnobAction): void {
 	notifyKnobs();
 }
 
-/** Every call the document has run, whole, once per microtask: only the canvas tunes. */
+/**
+ * Every call the document has run, whole, once per microtask: only the canvas
+ * tunes. A font knob with no options offers what the document has loaded, so
+ * once its fonts are in, it is told again what they are.
+ */
 function scheduleKnobsDeclared(): void {
 	if (!embedded || play !== undefined || knobsDeclareScheduled) return;
 	knobsDeclareScheduled = true;
-	queueMicrotask(async () => {
+	queueMicrotask(() => {
+		knobsDeclareScheduled = false;
+		declareKnobs();
 		const unlisted = [...knobEntries.values()].some((entry) =>
 			[...entry.specs.values()].some((spec) => spec.type === "font" && spec.options === undefined),
 		);
-		if (unlisted) await document.fonts?.ready;
-		knobsDeclareScheduled = false;
-		const families = unlisted ? loadedFontFamilies() : [];
-		const calls = [...knobEntries.values()].map((entry): KnobCall => {
-			const schema = JSON.parse(entry.json) as KnobSchema;
-			eachKnob(schema, (_, spec) => {
-				if (spec.type === "font") spec.options ??= families;
-			});
-			return { at: entry.site.at, computed: entry.site.computed, schema };
-		});
-		post({ spool: "knobs", calls });
+		if (unlisted) void document.fonts?.ready.then(declareKnobs);
 	});
+}
+
+let knobsDeclared = "";
+
+function declareKnobs(): void {
+	let families: string[] | undefined;
+	const calls = [...knobEntries.values()].map((entry): KnobCall => {
+		const schema = JSON.parse(entry.json) as KnobSchema;
+		eachKnob(schema, (_, spec) => {
+			if (spec.type === "font") spec.options ??= families ??= loadedFontFamilies();
+		});
+		return { at: entry.site.at, computed: entry.site.computed, schema };
+	});
+	const said = JSON.stringify(calls);
+	if (said === knobsDeclared) return;
+	knobsDeclared = said;
+	post({ spool: "knobs", calls });
 }
 
 /** A font knob with no options offers what this document loaded. */
