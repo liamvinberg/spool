@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { initProject } from "../init";
@@ -14,7 +15,7 @@ import {
 } from "../test-helpers";
 import { createSettingsStore } from "./settings";
 
-it("starts a project at once with the Agent pane out, names it from the first ask, and opens existing work from Open…", {
+it("starts a project at once with the Agent pane out, names it from the first ask, and opens existing work from Open… and a paste", {
 	timeout: 120_000,
 }, async () => {
 	// the naming question is answered when the test says; the turn after it answers the model probes and works on
@@ -52,6 +53,11 @@ it("starts a project at once with the Agent pane out, names it from the first as
 		},
 	});
 	const parent = realpathSync(makeTempDir());
+	const codebase = join(parent, "existing-codebase");
+	mkdirSync(join(codebase, "src"), { recursive: true });
+	for (let i = 0; i < 20; i++) mkdirSync(join(codebase, `folder-${i}`));
+	writeFileSync(join(codebase, "src", "index.ts"), "export const keep = true;\n");
+	execFileSync("git", ["init", "-q", "-b", "main", codebase]);
 	const shared = join(parent, "shared-project");
 	mkdirSync(shared);
 	initProject(shared, makeTempDir());
@@ -102,14 +108,33 @@ it("starts a project at once with the Agent pane out, names it from the first as
 	await expect.poll(() => trashed, { timeout: 10_000 }).toEqual([join(parent, "untitled")]);
 	expect(readRegistry(project.spoolDir).projects.some((item) => item.root === join(parent, "untitled"))).toBe(false);
 
+	// Open… reads what it is given: a code folder asks first, and nothing is made until it is asked
 	await page.getByRole("button", { name: "Home", exact: true }).click();
 	await page.locator(".pj-heading").getByRole("button", { name: "Open…", exact: true }).click();
-	const picker = page.getByRole("dialog", { name: "Choose a project folder", exact: true });
-	const search = picker.getByRole("textbox");
-	await search.fill(shared);
-	await picker.getByRole("button", { name: "Open project", exact: true }).waitFor();
-	await search.press("Enter");
+	const chooser = page.getByRole("dialog", { name: "Open", exact: true });
+	await chooser.getByRole("textbox").fill(join(codebase, "src"));
+	await chooser.getByRole("button", { name: "Open", exact: true }).click();
+	const sheet = page.getByRole("dialog", { name: "existing-codebase", exact: true });
+	await sheet.getByText("No designs here yet, so its canvas starts empty.").waitFor();
+	// a folder inside a checkout is offered at the checkout's top, beside its code
+	expect(await sheet.innerText()).toContain("git · main");
+	expect(await sheet.innerText()).toContain("adds design/ beside the code");
+	expect(existsSync(join(codebase, "design"))).toBe(false);
+	await sheet.getByRole("button", { name: "Design in this folder", exact: true }).click();
+	await page.getByRole("button", { name: "Close existing-codebase", exact: true }).waitFor();
+	expect(existsSync(join(codebase, "design", "canvas.json"))).toBe(true);
+	expect(readFileSync(join(codebase, "src", "index.ts"), "utf8")).toBe("export const keep = true;\n");
+
+	// a path pasted on Home opens a project that has designs at once, with no sheet
+	await page.getByRole("button", { name: "Home", exact: true }).click();
+	await page.locator(".pj-heading").waitFor();
+	await page.evaluate((path) => {
+		const clipboardData = new DataTransfer();
+		clipboardData.setData("text/plain", path);
+		document.body.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+	}, shared);
 	await page.getByRole("button", { name: "Close shared-project", exact: true }).waitFor();
+	expect(await page.locator("dialog").count()).toBe(0);
 	expect(readRegistry(project.spoolDir).projects.some((item) => item.root === shared)).toBe(true);
 	expect(readFileSync(join(shared, "design", "canvas.json"), "utf8")).toBe(sharedCanvas);
 	expect(errors).toEqual([]);

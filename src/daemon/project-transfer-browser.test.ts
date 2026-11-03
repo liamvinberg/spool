@@ -25,6 +25,11 @@ async function dropProject(page: Page, bytes: Buffer, names = ["project.spool"],
 		);
 }
 
+/** Open… asks before it makes a project: the sheet's one button. */
+async function confirmImport(page: Page) {
+	await page.getByRole("dialog").getByRole("button", { name: "Import", exact: true }).click();
+}
+
 it("round-trips whole projects from Home and an inactive tab without replacing existing work", {
 	timeout: 180_000,
 }, async () => {
@@ -84,9 +89,17 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	expect(bytes.subarray(0, 2).toString()).toBe("PK");
 	expect(await page.getByRole("dialog").count()).toBe(0);
 
-	const picked = page.waitForEvent("filechooser");
-	await page.locator(".pj-heading").getByRole("button", { name: "Import…", exact: true }).click();
-	await (await picked).setFiles({ name: `${project.name}.spool`, mimeType: "application/zip", buffer: bytes });
+	// Open… takes a .spool file from where it lies, and asks before it imports
+	const archive = join(realpathSync(makeTempDir()), `${project.name}.spool`);
+	writeFileSync(archive, bytes);
+	await page.getByRole("button", { name: "Open…", exact: true }).first().click();
+	const chooser = page.getByRole("dialog", { name: "Open", exact: true });
+	await chooser.getByRole("textbox").fill(archive);
+	await chooser.getByRole("button", { name: "Open", exact: true }).click();
+	const sheet = page.getByRole("dialog", { name: `${project.name}.spool`, exact: true });
+	expect(await sheet.innerText()).toContain(`into ${destination}`);
+	expect(readRegistry(project.spoolDir).projects.length).toBe(1);
+	await confirmImport(page);
 	await expect.poll(() => readRegistry(project.spoolDir).projects.length).toBe(2);
 	const imported = readRegistry(project.spoolDir).projects.find((entry) => entry.root !== project.root);
 	if (!imported) throw new Error("import was not registered");
@@ -134,6 +147,7 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	expect(readRegistry(project.spoolDir).projects.some((entry) => entry.root === imported.root)).toBe(true);
 
 	await dropProject(page, bytes, ["again.spool"], ".project-tab-label");
+	await confirmImport(page);
 	await expect.poll(() => readRegistry(project.spoolDir).projects.length).toBe(3);
 	const again = readRegistry(project.spoolDir).projects.find(
 		(entry) => entry.root !== project.root && entry.root !== imported.root,
@@ -146,9 +160,10 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	await page.getByRole("button", { name: "Home", exact: true }).click();
 	await page.getByRole("button", { name: `Open ${basename(imported.root)}`, exact: true }).waitFor();
 	await dropProject(page, bytes, ["one.spool", "two.spool"]);
-	await expect.poll(() => page.locator("body").innerText()).toMatch(/one project file/i);
+	await expect.poll(() => page.locator("body").innerText()).toMatch(/one \.spool file/i);
 	expect(readRegistry(project.spoolDir).projects.length).toBe(3);
 	await dropProject(page, Buffer.from("invalid archive"));
+	await confirmImport(page);
 	await expect.poll(() => page.locator("body").innerText()).toMatch(/invalid|archive|unsupported/i);
 	expect(readRegistry(project.spoolDir).projects.length).toBe(3);
 });
@@ -180,12 +195,15 @@ it("cancels a slow import cleanly and retries after invalid input and a write fa
 		await route.continue();
 	});
 	await dropProject(page, bytes);
-	await page.getByRole("button", { name: "Cancel", exact: true }).waitFor();
+	await confirmImport(page);
+	await page.getByRole("progressbar").waitFor();
 	const cancelled = page.waitForResponse((res) => res.url().endsWith("/api/projects/transfer/cancel"));
-	await page.getByRole("button", { name: "Cancel", exact: true }).click();
+	await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
 	expect((await cancelled).ok()).toBe(true);
+	expect(await page.getByRole("dialog").count()).toBe(0);
+	const answered = page.waitForEvent("requestfinished", (request) => request.url().includes("/api/projects/import"));
 	release?.();
-	await expect.poll(() => page.locator("body").innerText()).toMatch(/cancelled/i);
+	await answered;
 	expect(readRegistry(project.spoolDir).projects.length).toBe(1);
 	expect(existsSync(join(parent, project.name))).toBe(false);
 	await page.unroute("**/api/projects/import?*");
@@ -194,14 +212,17 @@ it("cancels a slow import cleanly and retries after invalid input and a write fa
 	store.write("projects.location", unavailable);
 	writeFileSync(unavailable, "keep");
 	await dropProject(page, bytes);
+	await confirmImport(page);
 	await expect.poll(() => page.locator("body").innerText()).toMatch(/could not|unable|failed|directory|ENOTDIR/i);
 	expect(readRegistry(project.spoolDir).projects.length).toBe(1);
 	expect(readFileSync(unavailable, "utf8")).toBe("keep");
 	store.write("projects.location", parent);
 	await dropProject(page, Buffer.from("broken"));
+	await confirmImport(page);
 	await expect.poll(() => page.locator("body").innerText()).toMatch(/invalid|archive|unsupported/i);
 	expect(readRegistry(project.spoolDir).projects.length).toBe(1);
 	await dropProject(page, bytes);
+	await confirmImport(page);
 	await expect.poll(() => readRegistry(project.spoolDir).projects.length).toBe(2);
 	const imported = readRegistry(project.spoolDir).projects.find((entry) => entry.root !== project.root);
 	if (!imported) throw new Error("retry did not install a project");
@@ -245,7 +266,7 @@ it("accepts a real file drag over a live frame and leaves image drags alone", { 
 		const unrelatedData = { items: [], files: [unrelated], dragOperationsMask: 1 };
 		await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...point, data: unrelatedData });
 		await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...point, data: unrelatedData });
-		if (filename.endsWith(".zip")) await expect.poll(() => page.locator(".project-transfer-drop").count()).toBe(1);
+		if (filename.endsWith(".zip")) await expect.poll(() => page.locator("[data-drop-target]").count()).toBe(1);
 		await cdp.send("Input.dispatchDragEvent", { type: "drop", ...point, data: unrelatedData });
 		await expect
 			.poll(() => page.frameLocator('iframe[title="start"]').locator("output").innerText())
@@ -260,7 +281,7 @@ it("accepts a real file drag over a live frame and leaves image drags alone", { 
 	const nativeData = { items: [], files: [nativeFile], dragOperationsMask: 1 };
 	await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...nativePoint, data: nativeData });
 	await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...nativePoint, data: nativeData });
-	await expect.poll(() => page.locator(".project-transfer-drop").count()).toBe(1);
+	await expect.poll(() => page.locator("[data-drop-target]").count()).toBe(1);
 	await cdp.send("Input.dispatchDragEvent", { type: "drop", ...nativePoint, data: nativeData });
 	await expect
 		.poll(() => page.frameLocator('iframe[title="start"]').locator("output").innerText())
@@ -268,8 +289,9 @@ it("accepts a real file drag over a live frame and leaves image drags alone", { 
 	const data = { items: [], files: [archive], dragOperationsMask: 1 };
 	await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...point, data });
 	await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...point, data });
-	await expect.poll(() => page.locator("body").innerText()).toMatch(/drop.*project/i);
+	await expect.poll(() => page.locator("body").innerText()).toMatch(/let go to open it/i);
 	await cdp.send("Input.dispatchDragEvent", { type: "drop", ...point, data });
+	await confirmImport(page);
 	await expect.poll(() => readRegistry(project.spoolDir).projects.length).toBe(2);
 	const imported = readRegistry(project.spoolDir).projects.find((entry) => entry.root !== project.root);
 	if (!imported) throw new Error("live frame drop did not import");
