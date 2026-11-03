@@ -8,6 +8,7 @@ import {
 	type KnobType,
 	type KnobValue,
 } from "../../runtime/knob-protocol";
+import type { NumberRules } from "../primitives/inputs";
 import { frameFolderRel } from "./pages";
 
 /**
@@ -60,7 +61,9 @@ export function placeOf(frame: string, at: string): string {
  */
 export function knobLines(frame: string, calls: readonly KnobCall[], folded: ReadonlySet<string>): KnobLine[] {
 	const lines: KnobLine[] = [];
-	for (const call of calls) {
+	// the frame's own calls first, the shared ones it renders after
+	const own = (call: KnobCall) => sharedFile(frame, call.at) === null;
+	for (const call of [...calls.filter(own), ...calls.filter((call) => !own(call))]) {
 		const shared = sharedFile(frame, call.at);
 		const walk = (schema: KnobSchema, prefix: string, depth: number) => {
 			for (const [key, node] of Object.entries(schema)) {
@@ -75,7 +78,7 @@ export function knobLines(frame: string, calls: readonly KnobCall[], folded: Rea
 						key,
 						depth,
 						spec: node,
-						computed: call.computed.includes(path),
+						computed: computedAt(call.computed, path),
 						shared,
 					});
 					continue;
@@ -89,6 +92,10 @@ export function knobLines(frame: string, calls: readonly KnobCall[], folded: Rea
 	}
 	return lines;
 }
+
+/** A value worked out in code, the knob's own or a group's over it, is no literal to write. */
+const computedAt = (computed: readonly KnobPath[], path: KnobPath): boolean =>
+	computed.some((one) => path === one || path.startsWith(`${one}.`));
 
 function countKnobs(schema: KnobSchema): number {
 	return Object.values(schema).reduce((n, node) => n + (isKnobSpec(node) ? 1 : countKnobs(node)), 0);
@@ -131,59 +138,74 @@ export function valueNow(spec: KnobSpec, live: KnobValue | undefined): KnobValue
 
 export const optionValue = (choice: KnobChoice): string => (typeof choice === "string" ? choice : choice.value);
 
-/** The number a step moves, decimals kept to the step's own. */
-function stepOf(spec: KnobSpec): number {
-	if (spec.type === "duration") return 0.01;
-	if (spec.type === "weight") return 100;
-	if ("step" in spec && typeof spec.step === "number") return spec.step;
-	return 1;
+/** The weights a weight knob offers when its call names none. */
+const WEIGHTS: readonly number[] = [400, 500, 600, 700];
+
+/** The families a font knob offers when neither its call nor the document's loaded fonts name any. */
+const FONTS: readonly string[] = ["system-ui", "ui-serif", "ui-monospace", "Georgia", "Helvetica"];
+
+/** What a weight knob offers. */
+export const weightsOf = (spec: Extract<KnobSpec, { type: "weight" }>): readonly number[] =>
+	spec.options !== undefined && spec.options.length > 0 ? spec.options : WEIGHTS;
+
+/** What a font knob offers, its own value always among them. */
+export function fontsOf(spec: Extract<KnobSpec, { type: "font" }>, value: string): readonly string[] {
+	const named = spec.options !== undefined && spec.options.length > 0 ? spec.options : FONTS;
+	return named.includes(value) ? named : [value, ...named];
 }
 
-const decimals = (step: number): number => (String(step).split(".")[1] ?? "").length;
-
 /**
- * A knob moved by whole steps, signed: ←/→ on its row and a scrub across it.
- * Numbers step and clamp (an angle wraps), every side of a box together; a
- * toggle turns on to the right; a choice moves to the next option. Nothing
- * for a knob a step means nothing to.
+ * A knob's value as one number to scrub and step, in the unit its row shows
+ * it in, and the way back to the knob's own value: a duration is tuned in ms
+ * and written in seconds. Nothing for a knob that is not one number.
  */
-export function nudged(spec: KnobSpec, value: KnobValue | undefined, units: number): KnobValue | undefined {
-	if (units === 0 || value === undefined) return undefined;
-	const step = stepOf(spec);
-	const min = "min" in spec && typeof spec.min === "number" ? spec.min : -Infinity;
-	const max = "max" in spec && typeof spec.max === "number" ? spec.max : Infinity;
-	const move = (n: number) => {
-		const next = Number((n + units * step).toFixed(decimals(step)));
-		return Math.min(max, Math.max(min, next));
-	};
+export function knobNumber(
+	spec: KnobSpec,
+	value: KnobValue | undefined,
+): { n: number; rules: NumberRules; back: (n: number) => KnobValue } | undefined {
+	if (typeof value !== "number") return undefined;
+	const same = (n: number) => n;
 	switch (spec.type) {
 		case "slider":
 		case "stepper":
-		case "duration":
-			return typeof value === "number" ? move(value) : undefined;
-		case "weight": {
-			if (typeof value !== "number") return undefined;
-			if (spec.options === undefined) return Math.min(900, Math.max(100, move(value)));
-			return stepChoice(spec.options.map(String), String(value), units, Number);
-		}
+			return { n: value, rules: { min: spec.min, max: spec.max, step: spec.step, unit: spec.unit }, back: same };
 		case "angle":
-			return typeof value === "number" ? (((value + units * step) % 360) + 360) % 360 : undefined;
+			return { n: value, rules: { min: 0, max: 360, step: 1, unit: "°", wrap: true }, back: same };
+		case "duration": {
+			const ms = (seconds: number | undefined) => (seconds === undefined ? undefined : Math.round(seconds * 1000));
+			return {
+				n: Math.round(value * 1000),
+				rules: { min: ms(spec.min) ?? 0, max: ms(spec.max), step: 10, unit: "ms", units: { s: 1000 } },
+				back: (n) => n / 1000,
+			};
+		}
 		case "spacing":
 		case "corners":
-			if (typeof value === "number") return move(value);
-			return Array.isArray(value) ? value.map(move) : undefined;
+			return { n: value, rules: { min: spec.min ?? 0, max: spec.max, step: 1, unit: "px" }, back: same };
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * A knob that is a choice moved by whole options, signed: ←/→ on its row. A
+ * toggle turns on to the right. Nothing for a knob that is no choice.
+ */
+export function nudged(spec: KnobSpec, value: KnobValue | undefined, units: number): KnobValue | undefined {
+	if (units === 0 || value === undefined) return undefined;
+	switch (spec.type) {
 		case "toggle":
 			return units > 0;
+		case "weight":
+			return stepChoice(weightsOf(spec).map(String), String(value), units, Number);
 		case "segmented":
 		case "select":
 		case "pictures":
 		case "icon":
 		case "image":
-			return typeof value === "string" ? stepChoice(spec.options.map(optionValue), value, units, String) : undefined;
+			return stepChoice(spec.options.map(optionValue), String(value), units, String);
 		case "font":
-			return typeof value === "string" && spec.options !== undefined
-				? stepChoice(spec.options, value, units, String)
-				: undefined;
+			return stepChoice(fontsOf(spec, String(value)), String(value), units, String);
 		default:
 			return undefined;
 	}
@@ -200,37 +222,12 @@ function stepChoice<T extends KnobValue>(
 	return next === undefined ? undefined : as(next);
 }
 
-/** What a step or a scrub moves along: the knobs that are one number, or one per side, at heart. */
-export function scrubs(spec: KnobSpec): boolean {
-	return ["slider", "angle", "duration", "spacing", "corners"].includes(spec.type);
-}
-
 /** A value in the words the literal is written in: `20 22`, `0.35 0.3`, `true`. */
 export function knobWords(value: KnobValue | undefined): string {
 	if (value === undefined) return "";
 	if (Array.isArray(value)) return value.join(" ");
 	if (typeof value === "object") return Object.values(value).join(" ");
 	return String(value);
-}
-
-/** What the number measures, after it in the row. */
-export function unitOf(spec: KnobSpec): string | undefined {
-	switch (spec.type) {
-		case "slider":
-		case "stepper":
-		case "range":
-		case "xy":
-			return spec.unit;
-		case "angle":
-			return "°";
-		case "duration":
-			return "s";
-		case "spacing":
-		case "corners":
-			return "px";
-		default:
-			return undefined;
-	}
 }
 
 export const sameValue = (a: KnobValue | undefined, b: KnobValue | undefined): boolean =>

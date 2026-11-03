@@ -74,6 +74,9 @@ const NONE: FrameKnobs = { calls: [], live: new Map(), status: null, washed: nul
 /** How long a written status stands before the foot goes quiet. */
 const STATUS_MS = 2400;
 
+const pick = (values: Record<KnobPath, KnobValue>, keep: (path: KnobPath) => boolean) =>
+	Object.fromEntries(Object.entries(values).filter(([path]) => keep(path)));
+
 export function createKnobLane(deps: () => KnobLaneDeps) {
 	const declared = new Map<string, readonly KnobCall[]>();
 	const live = new Map<string, Map<string, Record<KnobPath, KnobValue>>>();
@@ -153,14 +156,26 @@ export function createKnobLane(deps: () => KnobLaneDeps) {
 
 	// --- the frame's side ------------------------------------------------------
 
-	/** A document said what it declares: the rail redraws, and what it has not caught up with is told again. */
+	/**
+	 * A document said what it declares: the rail redraws, and what it has not
+	 * caught up with is told again, or told to read its literal. A new
+	 * document's literals are the file's, so only a gesture still under way
+	 * outlives one; the same document again keeps what differs from its own.
+	 */
 	const heard = (message: KnobsDeclared) => {
 		const { frame } = message;
-		pending.delete(frame);
+		const held = live.get(frame) ?? new Map<string, Record<KnobPath, KnobValue>>();
+		const fresh = pending.delete(frame);
 		declared.set(frame, message.calls);
-		const left = stillLive(message.calls, live.get(frame) ?? new Map());
-		live.set(frame, left);
-		for (const [at, values] of left) deps().post(frame, { spool: "knob-values", at, values });
+		const kept = fresh
+			? new Map(
+					[...held]
+						.map(([at, values]) => [at, pick(values, (path) => gestures.has(knobId(at, path)))] as const)
+						.filter(([, values]) => Object.keys(values).length > 0),
+				)
+			: stillLive(message.calls, held);
+		live.set(frame, kept);
+		for (const at of held.keys()) deps().post(frame, { spool: "knob-values", at, values: kept.get(at) ?? {} });
 		changed();
 	};
 
@@ -211,8 +226,9 @@ export function createKnobLane(deps: () => KnobLaneDeps) {
 			return;
 		}
 		gestures.delete(id);
+		// a cancel carries the value from before its gesture
 		if (phase === "cancel" || sameValue(from, next)) {
-			put(at, path, phase === "cancel" ? from : next);
+			put(at, path, next);
 			say(frame, null);
 			changed();
 			return;

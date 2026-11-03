@@ -13,7 +13,7 @@ import type { Cover } from "../../cover";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { BrokenFrame as BrokenFrameRecord } from "../../daemon/thumbs";
-import { pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
+import { pageName, pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { parseKnobsDeclared } from "../../runtime/knob-protocol";
@@ -38,6 +38,7 @@ import {
 	coverUrl,
 	daemonComments,
 	daemonShares,
+	duplicateFrames,
 	fetchCanvasState,
 	fetchCloudAccount,
 	fetchFlows,
@@ -56,6 +57,7 @@ import {
 	saveCanvasState,
 	setProjectThumbnail,
 	subscribeSse,
+	writeKnob,
 } from "../api";
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
@@ -934,9 +936,6 @@ function CanvasField({
 	const holdNext = useRef(new Set<string>());
 	// the knobs' lane, made once the hand's edit lane it lands writes through is (#220)
 	const knobsRef = useRef<KnobLane | null>(null);
-	// frames a knob just wrote: a call is no element, so its file's read cannot
-	// vouch for the echo the way an element's does, and the next one is taken as ours
-	const knobEchoes = useRef(new Set<string>());
 	// frames whose file changed from outside while the hand held an element in
 	// them (#319): the reload they owe is paid when the hand leaves the frame,
 	// not under the gesture — the same flush the hand's own saves wait on
@@ -1090,7 +1089,6 @@ function CanvasField({
 			// with it, so the canvas must not keep holding this frame's pointer
 			if (store.get().editing?.frame === frame) setEditing(null);
 			saved.current.delete(frame);
-			knobEchoes.current.delete(frame);
 			setWalkArrivals((current) => withoutFrame(current, frame));
 			// a reload drops every pick in the frame: the new document is asked afresh
 			setPicked((current) => current.filter((pick) => pick.frame !== frame));
@@ -1221,7 +1219,6 @@ function CanvasField({
 	 */
 	const changedUnderHand = useCallback(
 		(frame: string, own: { source: string; fingerprint: string }) => {
-			if (knobEchoes.current.delete(frame)) return;
 			void readRungs(project, frame, [own.source]).then((reads) => {
 				if (saved.current.get(frame) !== own || reads?.[0]?.fingerprint === own.fingerprint) return;
 				reloadOrHold(frame);
@@ -2682,12 +2679,8 @@ function CanvasField({
 	const knobs = useKnobLane({
 		project,
 		post: (frame, message) => iframes.current.get(frame)?.contentWindow?.postMessage(message, "*"),
-		// the write lane's set-knob op: api.ts's writeKnob once it lands
-		writeKnob: async () => undefined,
-		landed: (frame, readAt, written) => {
-			landed(frame, readAt, written);
-			if (saved.current.has(frame)) knobEchoes.current.add(frame);
-		},
+		writeKnob,
+		landed,
 		holdNext,
 		history,
 		updateHistory,
@@ -2695,6 +2688,25 @@ function CanvasField({
 		setNotice,
 	});
 	knobsRef.current = knobs;
+
+	/** Save as variant (#220): the daemon names the copy `--b`, the next letter free, and stands it beside the frame. */
+	const saveVariant = useCallback(
+		async (frame: string) => {
+			const done = await duplicateFrames(project, [frame], undefined, true);
+			if (done.kind === "refused") {
+				setNotice({ kind: "error", message: done.message });
+				return;
+			}
+			const copies = done.copies.map((copy) => copy.to);
+			recordEntry({ kind: "mint", staged: { frames: copies, page: null } });
+			await refetchFrames();
+			setPicked([]);
+			holdChain(null);
+			setSelected(copies);
+			frameAnchor.current = copies[0] ?? null;
+		},
+		[project, recordEntry, refetchFrames, holdChain],
+	);
 
 	/**
 	 * One step of the one stack (#230).
@@ -5583,9 +5595,9 @@ function CanvasField({
 						onGeometryCommit: commitFrameGeometry,
 						knobs: {
 							lane: knobs,
-							variantOf: (frame) => variantName(frame, new Set(store.get().frames.map((one) => one.name))),
-							// Save as variant is ⌘D's copy, laid beside the frame
-							onSaveVariant: (frame) => void frameVerbs.current?.duplicate([frame]),
+							variantOf: (frame) =>
+								pageName(variantName(frame, new Set(store.get().frames.map((one) => one.name)))),
+							onSaveVariant: (frame) => void saveVariant(frame),
 						},
 					}}
 				/>

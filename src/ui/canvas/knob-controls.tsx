@@ -1,18 +1,54 @@
-import { useEffect, useRef } from "react";
-import type { KnobChoice, KnobSpec, KnobValue } from "../../runtime/knob-protocol";
-import { cn } from "../cn";
+import { type ReactNode, useRef } from "react";
+import type { KnobSpec, KnobValue, SpringValue } from "../../runtime/knob-protocol";
 import { Button } from "../primitives/actions";
-import { ColourField, NumberField, Textarea, TextField, type TuneProps } from "../primitives/inputs";
-import { MenuItem } from "../primitives/overlays";
+import {
+	BoxPreview,
+	type Corners,
+	CornersEditor,
+	ShadowEditor,
+	ShadowPreview,
+	type Sides,
+	SpacingEditor,
+} from "../primitives/boxes";
+import {
+	Angle,
+	AnglePreview,
+	type Bezier,
+	Duration,
+	EASINGS,
+	Easing,
+	EasingPreview,
+	Range,
+	Slider,
+	Spring,
+	SpringPreview,
+	Stepper,
+	TrackPreview,
+	XYPad,
+	XYPreview,
+} from "../primitives/dials";
+import { type NumberRules, Textarea, TextField, type TuneProps } from "../primitives/inputs";
+import {
+	ColourPicker,
+	ColourPreview,
+	FontList,
+	FontPreview,
+	GradientEditor,
+	GradientPreview,
+	IconGrid,
+	OptionList,
+	PictureGrid,
+	PicturePreview,
+	WeightPicker,
+} from "../primitives/pickers";
 import { Segment, SegmentedControl, Switch } from "../primitives/selection";
-import { PropertyValue } from "../primitives/structure";
-import { knobWords, nudged, optionValue, unitOf } from "./knobs";
+import { fontsOf, knobNumber, knobWords, optionValue, weightsOf } from "./knobs";
 
 /**
  * Each knob type's control (#220), in one place: what its row says at rest,
- * the control that acts in its row, and the editor it opens into. Every
- * control reports through `TuneProps`: `live` while a hand is on it, `commit`
- * once when it lets go, `cancel` with the value from before.
+ * the control that acts in its row, the editor it opens into, and the list a
+ * popover beside the row holds. The editors are the primitives'; this maps a
+ * knob's spec and value onto them. Every one reports through `TuneProps`.
  */
 
 export interface KnobControlProps extends TuneProps<KnobValue> {
@@ -21,95 +57,155 @@ export interface KnobControlProps extends TuneProps<KnobValue> {
 	label: string;
 }
 
-const choicesOf = (spec: KnobSpec): readonly KnobChoice[] => {
-	if ("options" in spec && spec.options !== undefined) return spec.options.map((option) => option as KnobChoice);
-	return [];
-};
+/** A knob's value handed to an editor of a narrower type, its reports handed back as a knob's. */
+function as<T>(control: KnobControlProps): TuneProps<T> {
+	return {
+		value: control.value as T,
+		onTune: (next, phase) => control.onTune(next as KnobValue, phase),
+		disabled: control.disabled,
+	};
+}
 
-const choiceOf = (spec: KnobSpec, value: KnobValue | undefined) =>
-	choicesOf(spec).find((choice) => optionValue(choice) === String(value));
+/** A number knob's limits as its dial takes them, without its own literal. */
+const rulesOf = (spec: { min?: number; max?: number; step?: number; unit?: string }): NumberRules => ({
+	min: spec.min,
+	max: spec.max,
+	step: spec.step,
+	unit: spec.unit,
+});
 
 /* ---------- at rest ---------- */
 
-/** What a row says at rest: the value the way its literal reads, with a swatch or a picture where one says more. */
+const INK = "truncate tabular-nums text-primary type-value";
+const ASIDE = "shrink-0 text-tertiary type-detail";
+
+/** a row's value: a glyph, the value as written, a faint unit or word after it */
+function Line({ lead, words, aside }: { lead?: ReactNode; words: ReactNode; aside?: ReactNode }) {
+	return (
+		<span className="flex min-w-0 items-center gap-2">
+			{lead}
+			<span className={INK}>{words}</span>
+			{aside === undefined || aside === "" ? null : <span className={ASIDE}>{aside}</span>}
+		</span>
+	);
+}
+
+/** What a row says at rest: the value the way its literal reads, behind the glyph that says more. */
 export function KnobPreview({ spec, value }: { spec: KnobSpec; value: KnobValue | undefined }) {
 	const words = knobWords(value);
 	switch (spec.type) {
-		case "color":
-		case "gradient":
+		case "slider":
 			return (
-				<span className="flex min-w-0 flex-1 items-center gap-2 px-1">
-					<span
-						className={cn(
-							"block h-3.5 shrink-0 rounded-xs border border-line-strong",
-							spec.type === "color" ? "w-3.5" : "w-7",
-						)}
-						style={{ background: words }}
-					/>
-					<span className="min-w-0 truncate text-primary type-value">{words}</span>
-				</span>
+				<Line lead={<TrackPreview value={value as number} {...rulesOf(spec)} />} words={words} aside={spec.unit} />
 			);
-		case "font":
-			return <PropertyValue value={<span style={{ fontFamily: words }}>{words}</span>} />;
-		case "pictures":
-		case "image":
-		case "icon": {
-			const choice = choiceOf(spec, value);
-			const image = typeof choice === "object" ? choice.image : undefined;
+		case "range":
 			return (
-				<span className="flex min-w-0 flex-1 items-center gap-2 px-1">
-					{image === undefined ? null : (
-						<img src={image} alt="" className="size-4 shrink-0 rounded-xs object-cover" />
-					)}
-					<span className="min-w-0 truncate text-primary type-value">
-						{typeof choice === "object" ? (choice.label ?? choice.value) : words}
-					</span>
-				</span>
+				<Line
+					lead={<TrackPreview value={value as [number, number]} {...rulesOf(spec)} />}
+					words={words}
+					aside={spec.unit}
+				/>
+			);
+		case "duration": {
+			const number = knobNumber(spec, value);
+			return <Line lead={<TrackPreview value={number?.n ?? 0} {...number?.rules} />} words={number?.n} aside="ms" />;
+		}
+		case "angle":
+			return <Line lead={<AnglePreview value={value as number} />} words={words} aside="°" />;
+		case "xy": {
+			const point = value as { x: number; y: number };
+			return (
+				<Line
+					lead={<XYPreview value={point} {...rulesOf(spec)} />}
+					words={`${point.x} ${point.y}`}
+					aside={spec.unit}
+				/>
 			);
 		}
+		case "easing": {
+			const curve = value as Bezier;
+			const named = EASINGS.find((one) => one.curve.join() === curve.join())?.name;
+			return (
+				<Line
+					lead={<EasingPreview value={curve} />}
+					words={named ?? "custom"}
+					aside={named === undefined ? words : undefined}
+				/>
+			);
+		}
+		case "spring": {
+			const spring = value as SpringValue;
+			return (
+				<Line
+					lead={<SpringPreview value={spring} />}
+					words={
+						"duration" in spring
+							? `${spring.duration}s · ${spring.bounce}`
+							: `${spring.stiffness} / ${spring.damping}`
+					}
+					aside={"duration" in spring ? "bounce" : "stiff / damp"}
+				/>
+			);
+		}
+		case "color":
+			return <ColourPreview value={words} />;
+		case "gradient":
+			return <GradientPreview value={words} />;
+		case "font":
+			return <FontPreview value={words} />;
+		case "pictures":
+		case "image":
+		case "icon":
+			return <PicturePreview value={words} options={spec.options} />;
+		case "select":
+		case "segmented": {
+			const choice = spec.options.find((one) => optionValue(one) === words);
+			return <Line words={typeof choice === "object" ? (choice.label ?? choice.value) : words} />;
+		}
+		case "spacing":
+		case "corners":
+			// the previews fill what holds them, which would push their unit to the row's end
+			return (
+				<span className="flex min-w-0">
+					<BoxPreview value={value as Sides} corners={spec.type === "corners"} />
+				</span>
+			);
+		case "shadow":
+			return (
+				<span className="flex min-w-0">
+					<ShadowPreview value={words} />
+				</span>
+			);
+		case "text":
+		case "longtext":
+			return <span className="truncate text-secondary type-label">{words}</span>;
+		case "action":
+			return <Line words={spec.label ?? "run"} />;
 		default:
-			return <PropertyValue value={words} unit={unitOf(spec)} />;
+			return <Line words={words} />;
 	}
 }
 
 /* ---------- in the row ---------- */
 
 /** The control of a knob that acts where its row stands and never opens. */
-export function KnobInRow({
-	spec,
-	value,
-	onTune,
-	disabled,
-	label,
-	onPress,
-}: KnobControlProps & { onPress: () => void }) {
+export function KnobInRow(control: KnobControlProps & { onPress: () => void }) {
+	const { spec, value, onTune, disabled, label, onPress } = control;
 	switch (spec.type) {
 		case "toggle":
 			return (
-				<span className="flex flex-1 justify-end">
+				<span className="flex items-center gap-2">
 					<Switch
 						aria-label={label}
 						checked={value === true}
 						disabled={disabled}
 						onCheckedChange={(on) => onTune(on, "commit")}
 					/>
+					<span className={ASIDE}>{String(value === true)}</span>
 				</span>
 			);
 		case "stepper":
-			return typeof value === "number" ? (
-				<NumberField
-					className="flex-1"
-					value={value}
-					unit={spec.unit}
-					label={label}
-					disabled={disabled}
-					onValueChange={(typed) => onTune(clamp(spec, typed), "commit")}
-					onStep={(units) => {
-						const next = nudged(spec, value, units);
-						if (next !== undefined) onTune(next, "commit");
-					}}
-				/>
-			) : null;
+			return <Stepper {...as<number>(control)} {...rulesOf(spec)} />;
 		case "segmented":
 			return (
 				<SegmentedControl
@@ -117,7 +213,7 @@ export function KnobInRow({
 					label={label}
 					value={String(value)}
 					onValueChange={(next) => onTune(next, "commit")}
-					className="flex-1"
+					className="w-full"
 				>
 					{spec.options.map((choice) => (
 						<Segment
@@ -132,10 +228,10 @@ export function KnobInRow({
 				</SegmentedControl>
 			);
 		case "text":
-			return <Words value={String(value ?? "")} onTune={onTune} disabled={disabled} label={label} />;
+			return <Words {...as<string>(control)} label={label} />;
 		case "action":
 			return (
-				<Button variant="ghost" size="sm" className="flex-1 justify-start" disabled={disabled} onClick={onPress}>
+				<Button variant="ghost" size="sm" className="-ml-2" disabled={disabled} onClick={onPress}>
 					{spec.label ?? label}
 				</Button>
 			);
@@ -146,96 +242,59 @@ export function KnobInRow({
 
 /* ---------- opened ---------- */
 
-/** The full editor a knob opens into, in place under its row, or in a popover beside it for a long list. */
-export function KnobEditor({ spec, value, onTune, disabled, label }: KnobControlProps) {
-	if (spec.type === "color") {
-		return <Colour value={String(value ?? "")} onTune={onTune} disabled={disabled} label={label} />;
+/** The editor a knob opens into, in place under its row. */
+export function KnobEditor(control: KnobControlProps) {
+	const { spec, label } = control;
+	switch (spec.type) {
+		case "slider":
+			return <Slider {...as<number>(control)} {...rulesOf(spec)} />;
+		case "range":
+			return <Range {...as<[number, number]>(control)} {...rulesOf(spec)} />;
+		case "angle":
+			return <Angle {...as<number>(control)} />;
+		case "xy":
+			return <XYPad {...as<{ x: number; y: number }>(control)} {...rulesOf(spec)} />;
+		case "duration":
+			return <Duration {...as<number>(control)} min={spec.min} max={spec.max} />;
+		case "easing":
+			return <Easing {...as<Bezier>(control)} />;
+		case "spring":
+			return <Spring {...as<SpringValue>(control)} />;
+		case "color":
+			return <ColourPicker {...as<string>(control)} alpha={spec.alpha} swatches={spec.swatches} />;
+		case "gradient":
+			return <GradientEditor {...as<string>(control)} />;
+		case "longtext":
+			return <Words {...as<string>(control)} label={label} long />;
+		case "weight":
+			return <WeightPicker {...as<number>(control)} weights={weightsOf(spec)} />;
+		case "pictures":
+		case "image":
+			return <PictureGrid {...as<string>(control)} options={spec.options} />;
+		case "spacing":
+			return <SpacingEditor {...as<Sides>(control)} min={spec.min} max={spec.max} />;
+		case "corners":
+			return <CornersEditor {...as<Corners>(control)} min={spec.min} max={spec.max} />;
+		case "shadow":
+			return <ShadowEditor {...as<string>(control)} />;
+		default:
+			return null;
 	}
-	if (spec.type === "longtext") {
-		return <Words value={String(value ?? "")} onTune={onTune} disabled={disabled} label={label} long />;
-	}
-	if (spec.type === "gradient" || spec.type === "shadow" || (spec.type === "font" && spec.options === undefined)) {
-		return <Words value={String(value ?? "")} onTune={onTune} disabled={disabled} label={label} />;
-	}
-	if (choicesOf(spec).length > 0) {
-		return <Choices spec={spec} value={value} onTune={onTune} disabled={disabled} label={label} />;
-	}
-	if (typeof value === "number") {
-		return (
-			<NumberField
-				size="md"
-				tone="boxed"
-				value={value}
-				unit={unitOf(spec)}
-				label={label}
-				disabled={disabled}
-				onValueChange={(typed) => onTune(clamp(spec, typed), "commit")}
-				onStep={(units) => {
-					const next = nudged(spec, value, units);
-					if (next !== undefined) onTune(next, "commit");
-				}}
-			/>
-		);
-	}
-	if (Array.isArray(value) || (typeof value === "object" && value !== null)) {
-		return <Numbers spec={spec} value={value} onTune={onTune} disabled={disabled} label={label} />;
-	}
-	return <KnobPreview spec={spec} value={value} />;
 }
 
-function clamp(spec: KnobSpec, n: number): number {
-	const min = "min" in spec && typeof spec.min === "number" ? spec.min : -Infinity;
-	const max = "max" in spec && typeof spec.max === "number" ? spec.max : Infinity;
-	return Math.min(max, Math.max(min, n));
-}
-
-/** What each number of a knob that holds several is called, by type and count. */
-function partNames(spec: KnobSpec, count: number): readonly string[] | undefined {
-	if (spec.type === "spacing") return count === 2 ? ["v", "h"] : ["t", "r", "b", "l"];
-	if (spec.type === "corners") return ["tl", "tr", "br", "bl"];
-	if (spec.type === "range") return ["from", "to"];
-	if (spec.type === "easing") return ["x1", "y1", "x2", "y2"];
-	return undefined;
-}
-
-/** A knob of several numbers, one field each: sides, corners, a range, a curve, a point, a spring. */
-function Numbers({
-	spec,
-	value,
-	onTune,
-	disabled,
-	label,
-}: KnobControlProps & { value: readonly number[] | { readonly [key: string]: number | string } }) {
-	const parts = Array.isArray(value)
-		? value.map((n, index) => [partNames(spec, value.length)?.[index] ?? String(index), n] as const)
-		: Object.entries(value);
-	const put = (at: number, n: number) => {
-		if (Array.isArray(value))
-			onTune(
-				value.map((was, index) => (index === at ? n : was)),
-				"commit",
-			);
-		else onTune({ ...(value as Record<string, number | string>), [parts[at]?.[0] ?? ""]: n }, "commit");
-	};
-	return (
-		<div className="grid grid-cols-2 gap-1.5">
-			{parts.map(([name, n], at) =>
-				typeof n === "number" ? (
-					<NumberField
-						key={name}
-						size="md"
-						tone="boxed"
-						prefix={name}
-						value={n}
-						label={`${label} ${name}`}
-						disabled={disabled}
-						step={"step" in spec && typeof spec.step === "number" ? spec.step : 1}
-						onValueChange={(typed) => put(at, typed)}
-					/>
-				) : null,
-			)}
-		</div>
-	);
+/** The list a font, icon or select knob opens beside its row. */
+export function KnobList(control: KnobControlProps) {
+	const { spec } = control;
+	switch (spec.type) {
+		case "font":
+			return <FontList {...as<string>(control)} options={fontsOf(spec, String(control.value))} />;
+		case "icon":
+			return <IconGrid {...as<string>(control)} options={spec.options} />;
+		case "select":
+			return <OptionList {...as<string>(control)} options={spec.options} />;
+		default:
+			return null;
+	}
 }
 
 /**
@@ -248,16 +307,17 @@ function Words({
 	disabled,
 	label,
 	long = false,
-}: TuneProps<KnobValue> & { label: string; long?: boolean }) {
+}: TuneProps<string> & { label: string; long?: boolean }) {
 	const start = useRef<string | null>(null);
 	const typing = (next: string) => {
-		start.current ??= value as string;
+		start.current ??= value;
 		onTune(next, "live");
 	};
 	const finish = (commit: boolean, text: string) => {
 		const from = start.current;
 		start.current = null;
-		if (from !== null) onTune(commit ? text : from, commit ? "commit" : "cancel");
+		if (from === null) return;
+		onTune(commit && text !== from ? text : from, commit && text !== from ? "commit" : "cancel");
 	};
 	const keys = (event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
 		event.stopPropagation();
@@ -273,7 +333,7 @@ function Words({
 	if (long) {
 		return (
 			<Textarea
-				value={String(value)}
+				value={value}
 				label={label}
 				disabled={disabled}
 				onValueChange={typing}
@@ -285,100 +345,12 @@ function Words({
 		<TextField
 			size="xs"
 			tone="quiet"
-			className="flex-1"
-			value={String(value)}
+			className="-ml-1 flex-1"
+			value={value}
 			label={label}
 			disabled={disabled}
 			onValueChange={typing}
 			inputProps={{ onKeyDown: keys, onBlur: (event) => finish(true, event.currentTarget.value) }}
 		/>
-	);
-}
-
-/** A colour: the system picker moves the frame as it drags and writes once it is shut; a typed hex writes. */
-function Colour({ value, onTune, disabled, label }: TuneProps<KnobValue> & { label: string }) {
-	const box = useRef<HTMLSpanElement | null>(null);
-	const picked = useRef<string | null>(null);
-	const tune = useRef(onTune);
-	tune.current = onTune;
-	// the picker's own `change` is it shutting, which React's onChange (every input) never says
-	useEffect(() => {
-		const shut = () => {
-			const held = picked.current;
-			picked.current = null;
-			if (held !== null) tune.current(held, "commit");
-		};
-		const element = box.current;
-		element?.addEventListener("change", shut);
-		return () => element?.removeEventListener("change", shut);
-	}, []);
-	return (
-		<span ref={box} className="flex">
-			<ColourField
-				value={String(value)}
-				label={label}
-				disabled={disabled}
-				onPick={(next) => {
-					picked.current = next;
-					onTune(next, "live");
-				}}
-				onType={(typed) => onTune(typed, "commit")}
-			/>
-		</span>
-	);
-}
-
-/**
- * A choice among the options the knob offers: pointing at one tries it on
- * the frame, leaving puts back what was chosen, and only a press writes.
- */
-export function Choices({ spec, value, onTune, disabled }: KnobControlProps) {
-	const start = useRef<KnobValue | null>(null);
-	const as = (option: string): KnobValue => (spec.type === "weight" ? Number(option) : option);
-	const tryOn = (option: string) => {
-		start.current ??= value ?? null;
-		onTune(as(option), "live");
-	};
-	const putBack = () => {
-		const from = start.current;
-		start.current = null;
-		if (from !== null) onTune(from, "cancel");
-	};
-	return (
-		<div role="listbox" className="flex flex-col" onPointerLeave={putBack}>
-			{choicesOf(spec).map((choice) => {
-				const option = optionValue(choice);
-				const image = typeof choice === "object" ? choice.image : undefined;
-				return (
-					<MenuItem
-						key={option}
-						role="option"
-						aria-selected={String(value) === option}
-						checked={image === undefined ? String(value) === option : undefined}
-						icon={
-							image === undefined ? undefined : (
-								<img src={image} alt="" className="size-4 rounded-xs object-cover" />
-							)
-						}
-						label={
-							spec.type === "font" ? (
-								<span style={{ fontFamily: option }}>{option}</span>
-							) : typeof choice === "object" ? (
-								(choice.label ?? option)
-							) : (
-								option
-							)
-						}
-						disabled={disabled}
-						onPointerEnter={() => tryOn(option)}
-						onFocus={() => tryOn(option)}
-						onClick={() => {
-							start.current = null;
-							onTune(as(option), "commit");
-						}}
-					/>
-				);
-			})}
-		</div>
 	);
 }

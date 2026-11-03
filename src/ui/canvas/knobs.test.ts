@@ -3,6 +3,7 @@ import type { KnobCall, KnobSpec } from "../../runtime/knob-protocol";
 import {
 	knobId,
 	knobLines,
+	knobNumber,
 	knobStatus,
 	nudged,
 	reachOf,
@@ -21,7 +22,7 @@ import {
 
 const OWN: KnobCall = {
 	at: "frames/shop/card/frame.tsx:4:11",
-	computed: ["card.badge"],
+	computed: ["card.badge", "card.inner"],
 	schema: {
 		card: {
 			radius: { type: "corners", value: 20, min: 0, max: 40 },
@@ -45,6 +46,9 @@ it("lays a frame's calls out as rows under folding group heads, in code order", 
 	).toEqual(["card/", "  radius", "  badge", "  inner/", "    gap", "replay", "accent"]);
 	const badge = lines.find((line) => line.kind === "knob" && line.key === "badge");
 	expect(badge).toMatchObject({ computed: true, shared: null, path: "card.badge" });
+	// a group worked out in code makes every knob in it read-only
+	expect(lines.find((line) => line.kind === "knob" && line.key === "gap")).toMatchObject({ computed: true });
+	expect(lines.find((line) => line.kind === "knob" && line.key === "radius")).toMatchObject({ computed: false });
 	// a knob declared outside the frame's folder is marked, by the file it is in
 	expect(lines.at(-1)).toMatchObject({ kind: "knob", shared: "shared/knobs/kaffe.ts" });
 
@@ -71,17 +75,21 @@ it("opens a knob in place, beside its row for a long list, or acts where it stan
 	]);
 });
 
-it("steps a knob by whole units: numbers clamp to their step, angles wrap, sides move together, choices walk", () => {
-	expect(nudged({ type: "slider", value: 8, max: 10, step: 0.5 }, 9.5, 1)).toBe(10);
-	expect(nudged({ type: "slider", value: 8, max: 10, step: 0.5 }, 9.5, 10)).toBe(10);
-	expect(nudged({ type: "duration", value: 0.3 }, 0.3, 1)).toBe(0.31);
-	expect(nudged({ type: "angle", value: 0 }, 359, 2)).toBe(1);
-	expect(nudged({ type: "spacing", value: [20, 22], min: 0 }, [20, 0], -1)).toEqual([19, 0]);
+it("tunes a number knob in the unit its row shows, and steps a choice by whole options", () => {
+	// a duration is scrubbed in ms and written in seconds
+	const duration = knobNumber({ type: "duration", value: 0.3, max: 2 }, 0.3);
+	expect(duration && { n: duration.n, max: duration.rules.max, back: duration.back(520) }).toEqual({
+		n: 300,
+		max: 2000,
+		back: 0.52,
+	});
+	expect(knobNumber({ type: "spacing", value: [20, 22] }, [20, 22])).toBeUndefined();
 	expect(nudged({ type: "toggle", value: false }, false, 1)).toBe(true);
 	const pack: KnobSpec = { type: "segmented", value: "s", options: ["s", { value: "m" }, "l"] };
 	expect(nudged(pack, "s", 1)).toBe("m");
 	expect(nudged(pack, "l", 1)).toBe("l");
-	expect(nudged({ type: "easing", value: [0.2, 0, 0, 1] }, [0.2, 0, 0, 1], 1)).toBeUndefined();
+	// a weight with no options walks the rail's own
+	expect(nudged({ type: "weight", value: 500 }, 500, 1)).toBe(600);
 });
 
 it("says what letting go will write while a hand is on a knob, then the file and line it wrote", () => {
