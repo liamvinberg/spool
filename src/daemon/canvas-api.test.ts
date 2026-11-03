@@ -862,7 +862,7 @@ describe("the folder picker", () => {
 		expect(await res.json()).toEqual({ root, name });
 	});
 
-	it("offers init when the walk-up finds nothing, and init scaffolds through the one code path", async () => {
+	it("finds nothing to open when the walk-up finds nothing, and init scaffolds through the one code path", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const bare = makeTempDir();
 		const app = makeApp(spoolDir);
@@ -873,7 +873,6 @@ describe("the folder picker", () => {
 			body: JSON.stringify({ path: bare }),
 		});
 		expect(miss.status).toBe(404);
-		expect(((await miss.json()) as { offerInit: boolean }).offerInit).toBe(true);
 
 		const init = await app.request("/api/projects/init", {
 			method: "POST",

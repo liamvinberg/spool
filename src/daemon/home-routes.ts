@@ -187,8 +187,7 @@ export function homeRoutes(deps: {
 					return c.json({ root, name: basename(root) });
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;
-					// nothing found by walk-up: the chooser's next move is offering init
-					return c.json({ error: error.message, offerInit: true }, 404);
+					return c.json({ error: error.message }, 404);
 				}
 			})
 			.post("/projects/init", validator("json", requestedPath), (c) => {
