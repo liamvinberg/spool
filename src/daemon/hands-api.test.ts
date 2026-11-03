@@ -712,6 +712,55 @@ export default () => <Card>Keep going</Card>;
 });
 
 /**
+ * A knob's literal over the API (#220): written where the call is, a shared
+ * file's included, answered and undone exactly as a text edit is.
+ */
+describe("the knob write", () => {
+	const kaffe = `import { ui } from "spool";
+export const kaffe = ui.knobs({ roast: { type: "slider", value: 3 }, beans: { type: "select", value: load() } });
+`;
+	const at = "shared/knobs/kaffe.ts:2:22";
+
+	it("writes the literal in the shared file, puts it back, and refuses a computed one", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/knobs/kaffe.ts", kaffe);
+		writeFrame(
+			root,
+			"menu",
+			'import { kaffe } from "shared/knobs/kaffe";\nexport default () => <p>{kaffe.roast}</p>;\n',
+		);
+		const app = makeApp(spoolDir);
+		const read = () => readFileSync(join(root, "design", "shared", "knobs", "kaffe.ts"), "utf8");
+
+		const res = await app.request(`/api/p/${name}/knob`, jsonPost({ frame: "menu", at, path: "roast", value: 4.5 }));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { path: string; fingerprint: string; undo: Record<string, unknown> };
+		expect(body.path).toBe("design/shared/knobs/kaffe.ts");
+		expect(read()).toBe(kaffe.replace("value: 3", "value: 4.5"));
+		// the call reads at its stamp, so the canvas can tell its own write's echo from another's
+		const rungs = await app.request(`/api/p/${name}/rungs`, jsonPost({ frame: "menu", sources: [at] }));
+		expect(((await rungs.json()) as { rungs: { fingerprint?: string }[] }).rungs[0]?.fingerprint).toBe(
+			body.fingerprint,
+		);
+
+		expect((await app.request(`/api/p/${name}/revert`, jsonPost(body.undo))).status).toBe(200);
+		expect(read()).toBe(kaffe);
+
+		const computed = await app.request(
+			`/api/p/${name}/knob`,
+			jsonPost({ frame: "menu", at, path: "beans", value: "oat" }),
+		);
+		expect(computed.status).toBe(409);
+		expect(((await computed.json()) as { refusal: { code: string } }).refusal.code).toBe("computed-knob");
+		expect(
+			(await app.request(`/api/p/${name}/knob`, jsonPost({ frame: "menu", at, path: "roast", value: null }))).status,
+		).toBe(400);
+		expect(read()).toBe(kaffe);
+	});
+});
+
+/**
  * The reorder over the API (#340): one write, one span its undo puts back,
  * and always a reload rather than stamps shifted along a line. The same
  * fingerprint gate every other write in the lane keeps.

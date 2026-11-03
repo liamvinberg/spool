@@ -46,6 +46,7 @@ import type { SyncState } from "../daemon/team-sync";
 import type { PlaceSurvey, Survey } from "../get-it-places";
 import type { CloneProgress } from "../git-clone";
 import type { MoveProgress } from "../move-in";
+import type { KnobPath, KnobValue } from "../runtime/knob-protocol";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import {
 	type ProjectShares,
@@ -566,6 +567,25 @@ export async function writeElement(
 ): Promise<TextWritten | undefined> {
 	try {
 		const res = await client.api.p[":project"].element.$post({ param: { project }, json: { frame, ...ask } });
+		if (!res.ok && res.status !== 409) return undefined;
+		return (await res.json()) as TextWritten;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * A knob's literal, written on release (#220): the call's stamp, the knob's
+ * path in it, and the value. It answers as a text edit does, a refusal
+ * included, and undoes through the same revert.
+ */
+export async function writeKnob(
+	project: string,
+	frame: string,
+	ask: { at: string; path: KnobPath; value: KnobValue },
+): Promise<TextWritten | undefined> {
+	try {
+		const res = await client.api.p[":project"].knob.$post({ param: { project }, json: { frame, ...ask } });
 		if (!res.ok && res.status !== 409) return undefined;
 		return (await res.json()) as TextWritten;
 	} catch {

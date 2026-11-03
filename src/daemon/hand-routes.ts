@@ -2,7 +2,17 @@ import { Hono } from "hono";
 import { validator } from "hono/validator";
 import { writeAtomic } from "../atomic-write";
 import { isFramePath } from "../page-path";
-import { elementSite, type LaneDeps, type MoveAsk, readRungs, revertSpan, textSite, type WriteSite } from "./hand-lane";
+import { isKnobValue } from "../runtime/knob-protocol";
+import {
+	elementSite,
+	knobSite,
+	type LaneDeps,
+	type MoveAsk,
+	readRungs,
+	revertSpan,
+	textSite,
+	type WriteSite,
+} from "./hand-lane";
 import { uncaughtNotice } from "./hand-notice";
 import { fingerprintOf, parseEditedNodes, parseStamps, spanBetween } from "./hand-write";
 import { type ResolveProject, withProject } from "./project-route";
@@ -187,6 +197,27 @@ const moveOf = (body: Record<string, unknown>, stamps: string[]): string | Omit<
 	};
 };
 
+/** A knob's literal on release (#220): the call's stamp, the knob's path in it, and the value. */
+const knobBody = validator("json", (value, c) => {
+	const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+	const { frame, at, path } = body;
+	if (
+		typeof frame !== "string" ||
+		!isFramePath(frame) ||
+		parseStamps([at]) === undefined ||
+		typeof at !== "string" ||
+		typeof path !== "string" ||
+		path.split(".").includes("") ||
+		!isKnobValue(body.value)
+	) {
+		return c.text(
+			'a knob write is { "frame", "at": "frames/…/frame.tsx:4:11", "path": "card.radius", "value" }',
+			400,
+		);
+	}
+	return { frame, at, path, value: body.value };
+});
+
 /**
  * The patch that puts a hand edit back (#314): the run, and the file it
  * was taken of.
@@ -253,6 +284,20 @@ export function handRoutes(deps: {
 				withProject(c, deps.resolve, (root) => {
 					const { frame, ...ask } = c.req.valid("json");
 					const site = elementSite(root, frame, ask);
+					if (site.kind === "error") return c.text(site.message, site.status);
+					if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
+					return c.json(written(root, site));
+				}),
+			)
+			/*
+			 * A knob's literal (#220): the frame already shows the value, posted
+			 * live while the hand dragged; this writes it once, on release, and
+			 * answers as a text edit does, so undo is the same revert.
+			 */
+			.post("/:project/knob", knobBody, async (c) =>
+				withProject(c, deps.resolve, (root) => {
+					const { frame, ...ask } = c.req.valid("json");
+					const site = knobSite(root, frame, ask);
 					if (site.kind === "error") return c.text(site.message, site.status);
 					if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 					return c.json(written(root, site));
