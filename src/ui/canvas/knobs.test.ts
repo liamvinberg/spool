@@ -1,17 +1,6 @@
 import { expect, it } from "vitest";
 import type { KnobCall, KnobSpec } from "../../runtime/knob-protocol";
-import {
-	knobId,
-	knobLines,
-	knobNumber,
-	knobStatus,
-	nudged,
-	reachOf,
-	readersOf,
-	statusWords,
-	stillLive,
-	variantName,
-} from "./knobs";
+import { knobId, knobLines, knobNumber, knobStatus, nudged, reachOf, readersOf, statusWords, stillLive } from "./knobs";
 
 /**
  * The Knobs section as the rail reads a frame's calls (#220): rows and folding
@@ -122,9 +111,4 @@ it("posts a shared knob to every frame whose document declared its call", () => 
 		["site/home", []],
 	]);
 	expect(readersOf(declared, SHARED.at)).toEqual(["shop/card", "shop/cart"]);
-});
-
-it("names a variant after its frame with the next letter free", () => {
-	expect(variantName("product-card", new Set(["product-card"]))).toBe("product-card--b");
-	expect(variantName("product-card--b", new Set(["product-card--b"]))).toBe("product-card--c");
 });

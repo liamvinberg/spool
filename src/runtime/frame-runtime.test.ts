@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { type KnobsDeclared, parseKnobsDeclared } from "./knob-protocol";
 
 /**
  * The flow runtime, exercised through really-served documents: every config
@@ -939,7 +940,7 @@ describe("embedded in a canvas", () => {
 
 const kaffeTs = `import { ui } from "spool";
 
-export const kaffe = ui.knobs({ roast: { type: "segmented", value: "dark", options: ["light", "dark"] } }, {"at":"shared/knobs/kaffe.ts:3:22","computed":[]});
+export const kaffe = ui.knobs({ roast: { type: "segmented", value: "dark", options: ["light", "dark"] } }, {"at":"shared/knobs/kaffe.ts:3:22","computed":[],"inFile":["shared/knobs/kaffe.ts:3:22"]});
 `;
 
 // the compile stamps each call; written out here since this suite serves frames as written
@@ -947,15 +948,15 @@ const tunedTsx = `import { ui } from "spool";
 import { kaffe } from "shared/knobs/kaffe";
 
 const k = ui.knobs({
-	card: { radius: { type: "slider", value: 20, min: 0, max: 40 }, "bad.key": { type: "toggle", value: true } },
+	card: { radius: { type: "slider", value: 20, min: 0, max: 40 }, "bad.key": { type: "toggle", value: true }, gap: { type: "number", value: 4, unit: "px" } },
 	hero: { type: "image", value: "a", options: [{ value: "a", image: "/a.png" }, { value: "b", image: "/b.png" }] },
 	family: { type: "font", value: "Inter" },
 	replay: { type: "action", label: "Replay" },
-}, {"at":"frames/tuned/frame.tsx:4:11","computed":[]});
+}, {"at":"frames/tuned/frame.tsx:4:11","computed":[],"inFile":["frames/tuned/frame.tsx:4:11","frames/tuned/frame.tsx:13:16"]});
 
 export default function Tuned() {
 	const state = ui.use();
-	const inner = ui.knobs({ count: { type: "stepper", value: 3 } }, {"at":"frames/tuned/frame.tsx:13:16","computed":[]});
+	const inner = ui.knobs({ count: { type: "stepper", value: 3 } }, {"at":"frames/tuned/frame.tsx:13:16","computed":[],"inFile":["frames/tuned/frame.tsx:4:11","frames/tuned/frame.tsx:13:16"]});
 	return (
 		<main>
 			<output id="radius">{k.card.radius}</output>
@@ -979,14 +980,13 @@ describe("knobs", () => {
 	it("declares every call to the canvas and takes live values, presses and cleared values without a recompile", async () => {
 		const harness = makeHarness();
 		scaffoldTuned(harness);
+		const fontsLoaded: (() => void)[] = [];
 		const fonts = Object.assign(
 			[
 				{ family: '"Inter"', status: "loaded" },
 				{ family: "Lora", status: "unloaded" },
 			],
-			{
-				ready: Promise.resolve(),
-			},
+			{ ready: new Promise<void>((resolve) => fontsLoaded.push(resolve)) },
 		);
 		Object.defineProperty(document, "fonts", { configurable: true, value: fonts });
 		const warnings = captureWarnings();
@@ -1005,6 +1005,7 @@ describe("knobs", () => {
 			await waitForText("#roast", "dark");
 			await waitForText("#count", "3");
 			expect(warnings.lines.filter((line) => line.includes('"card.bad.key"'))).toHaveLength(1);
+			expect(warnings.lines.filter((line) => line.includes('"card.gap"'))).toHaveLength(1);
 			await vi.waitFor(() => {
 				expect(declared.at(-1)).toEqual({
 					spool: "knobs",
@@ -1028,7 +1029,7 @@ describe("knobs", () => {
 										{ value: "b", image: "/b.png" },
 									],
 								},
-								// the rail lists what the document loaded
+								// the rail lists what the document loaded, without waiting for the rest
 								family: { type: "font", value: "Inter", options: ["Inter"] },
 								replay: { type: "action", label: "Replay" },
 							},
@@ -1039,6 +1040,17 @@ describe("knobs", () => {
 							schema: { count: { type: "stepper", value: 3 } },
 						},
 					],
+				});
+			});
+			// and is told again once the fonts are in
+			fonts[1] = { family: "Lora", status: "loaded" };
+			for (const resolve of fontsLoaded) resolve();
+			await vi.waitFor(() => {
+				const calls = declared.at(-1)?.calls as KnobsDeclared["calls"];
+				expect(calls.find((call) => call.at === site)?.schema.family).toEqual({
+					type: "font",
+					value: "Inter",
+					options: ["Inter", "Lora"],
 				});
 			});
 		} finally {
@@ -1066,6 +1078,38 @@ describe("knobs", () => {
 		await waitForText("#radius", "20");
 		// re-renders re-run the render's call without declaring anything new
 		expect(declared).toHaveLength(declaredBefore);
+	});
+
+	it("drops a call its file no longer stamps once the file runs again", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+		// a line added above the call, as Fast Refresh runs the file again: here the state stands in for it
+		writeFrame(
+			harness.root,
+			"moved",
+			`import { ui } from "spool";
+export default function Moved() {
+	const at = ui.use().moved ? "frames/moved/frame.tsx:5:12" : "frames/moved/frame.tsx:4:12";
+	const k = ui.knobs({ on: { type: "toggle", value: true } }, { at, computed: [], inFile: [at] });
+	return <output id="on">{String(k.on)}</output>;
+}
+`,
+		);
+		const declared: KnobsDeclared[] = [];
+		await loadFrameDocument(harness, "moved", {
+			host: (message) => {
+				const knobs = parseKnobsDeclared(message);
+				if (knobs !== undefined) declared.push(knobs);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+		await vi.waitFor(() =>
+			expect(declared.at(-1)?.calls.map((call) => call.at)).toEqual(["frames/moved/frame.tsx:4:12"]),
+		);
+		hostReply({ spool: "state", state: { moved: true } });
+		await vi.waitFor(() =>
+			expect(declared.at(-1)?.calls.map((call) => call.at)).toEqual(["frames/moved/frame.tsx:5:12"]),
+		);
 	});
 
 	it("reads its literals and declares nothing outside the canvas", async () => {

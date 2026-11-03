@@ -1797,16 +1797,15 @@ interface KnobEntry {
 const knobEntries = new Map<string, KnobEntry>();
 const knobListeners = new Set<() => void>();
 const warnedKnobKeys = new Set<string>();
-let knobVersion = 0;
 let knobsDeclareScheduled = false;
 
 function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
-	const clean = withoutDottedKeys(schema, site?.at ?? "ui.knobs");
+	const clean = cleanSchema(schema, site?.at ?? "ui.knobs");
 	const json = JSON.stringify(clean);
 	let entry = site === undefined ? undefined : knobEntries.get(site.at);
 	if (entry === undefined) {
 		entry = {
-			site: site ?? { at: "", computed: [] },
+			site: site ?? { at: "", computed: [], inFile: [] },
 			json,
 			specs: new Map(),
 			values: {},
@@ -1816,9 +1815,14 @@ function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
 		};
 		// an unstamped call reads its literals and is never declared
 		if (site !== undefined) knobEntries.set(site.at, entry);
-	} else if (entry.json === json && entry.site.computed.join() === site?.computed.join()) {
+	} else if (
+		entry.json === json &&
+		entry.site.computed.join() === site?.computed.join() &&
+		entry.site.inFile.join() === site.inFile.join()
+	) {
 		return entry.read as KnobRead<S>;
 	}
+	if (site !== undefined) dropGoneKnobs(site);
 	entry.site = site ?? entry.site;
 	entry.json = json;
 	entry.specs.clear();
@@ -1828,21 +1832,50 @@ function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
 	return entry.read as KnobRead<S>;
 }
 
-/** A key with a dot would make its path ambiguous: named once, and left out. */
-function withoutDottedKeys(schema: KnobSchema, at: string, prefix = ""): KnobSchema {
+/**
+ * The schema as the rail can show it: a key with a dot would make its path
+ * ambiguous, and a spec whose type spool doesn't know has no editor, so each
+ * is named once and left out. Only a plain object is a group.
+ */
+function cleanSchema(schema: KnobSchema, at: string, prefix = ""): KnobSchema {
 	const clean: KnobSchema = {};
 	for (const [key, node] of Object.entries(schema)) {
 		const path = prefix === "" ? key : `${prefix}.${key}`;
+		const unknown = node as unknown;
+		const group = isPlainObject(unknown) && typeof unknown.type !== "string";
 		if (key.includes(".")) {
-			if (!warnedKnobKeys.has(`${at} ${path}`)) {
-				warnedKnobKeys.add(`${at} ${path}`);
-				console.warn(`spool: knob key "${path}" at ${at} has a dot, which separates a path's keys — rename it`);
-			}
-			continue;
+			warnKnobOnce(at, path, `knob key "${path}" at ${at} has a dot, which separates a path's keys — rename it`);
+		} else if (isKnobSpec(node)) clean[key] = node;
+		else if (group) clean[key] = cleanSchema(unknown as KnobSchema, at, path);
+		else {
+			const type = isPlainObject(unknown) ? `type "${String(unknown.type)}"` : "no type";
+			warnKnobOnce(at, path, `knob "${path}" at ${at} has ${type}, which is no knob spool knows — left out`);
 		}
-		clean[key] = isKnobSpec(node) ? node : withoutDottedKeys(node, at, path);
 	}
 	return clean;
+}
+
+function warnKnobOnce(at: string, path: KnobPath, says: string): void {
+	if (warnedKnobKeys.has(`${at} ${path}`)) return;
+	warnedKnobKeys.add(`${at} ${path}`);
+	console.warn(`spool: ${says}`);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	if (typeof value !== "object" || value === null) return false;
+	const proto = Object.getPrototypeOf(value);
+	return proto === Object.prototype || proto === null;
+}
+
+/**
+ * A file run again (Fast Refresh) may stamp its calls elsewhere, a line added
+ * above one: a call it no longer stamps is gone, not still declared.
+ */
+function dropGoneKnobs(site: KnobSite): void {
+	const file = site.at.replace(/:\d+:\d+$/, "");
+	for (const at of knobEntries.keys()) {
+		if (at.replace(/:\d+:\d+$/, "") === file && !site.inFile.includes(at)) knobEntries.delete(at);
+	}
 }
 
 /** Getters over the store, so the object a call returns stays the one to read from. */
@@ -1878,7 +1911,6 @@ function knobReading(entry: KnobEntry, path: KnobPath): unknown {
 }
 
 function notifyKnobs(): void {
-	knobVersion++;
 	for (const listener of knobListeners) listener();
 }
 
@@ -1896,26 +1928,39 @@ function pressKnob(message: KnobAction): void {
 	notifyKnobs();
 }
 
-/** Every call the document has run, whole, once per microtask: only the canvas tunes. */
+/**
+ * Every call the document has run, whole, once per microtask: only the canvas
+ * tunes. A font knob with no options offers what the document has loaded, so
+ * once its fonts are in, it is told again what they are.
+ */
 function scheduleKnobsDeclared(): void {
 	if (!embedded || play !== undefined || knobsDeclareScheduled) return;
 	knobsDeclareScheduled = true;
-	queueMicrotask(async () => {
+	queueMicrotask(() => {
+		knobsDeclareScheduled = false;
+		declareKnobs();
 		const unlisted = [...knobEntries.values()].some((entry) =>
 			[...entry.specs.values()].some((spec) => spec.type === "font" && spec.options === undefined),
 		);
-		if (unlisted) await document.fonts?.ready;
-		knobsDeclareScheduled = false;
-		const families = unlisted ? loadedFontFamilies() : [];
-		const calls = [...knobEntries.values()].map((entry): KnobCall => {
-			const schema = JSON.parse(entry.json) as KnobSchema;
-			eachKnob(schema, (_, spec) => {
-				if (spec.type === "font") spec.options ??= families;
-			});
-			return { at: entry.site.at, computed: entry.site.computed, schema };
-		});
-		post({ spool: "knobs", calls });
+		if (unlisted) void document.fonts?.ready.then(declareKnobs);
 	});
+}
+
+let knobsDeclared = "";
+
+function declareKnobs(): void {
+	let families: string[] | undefined;
+	const calls = [...knobEntries.values()].map((entry): KnobCall => {
+		const schema = JSON.parse(entry.json) as KnobSchema;
+		eachKnob(schema, (_, spec) => {
+			if (spec.type === "font") spec.options ??= families ??= loadedFontFamilies();
+		});
+		return { at: entry.site.at, computed: entry.site.computed, schema };
+	});
+	const said = JSON.stringify(calls);
+	if (said === knobsDeclared) return;
+	knobsDeclared = said;
+	post({ spool: "knobs", calls });
 }
 
 /** A font knob with no options offers what this document loaded. */
@@ -1927,20 +1972,16 @@ function loadedFontFamilies(): string[] {
 	return [...families];
 }
 
-function subscribeKnobs(listener: () => void): () => void {
-	knobListeners.add(listener);
-	return () => knobListeners.delete(listener);
-}
-
 /**
- * The frame document's root (the boot module renders it): a knob is read
- * anywhere, from a module-level object, so a moved knob re-renders the whole
- * frame, with no recompile. A memoised component with no knob-dependent props
- * keeps its last render.
+ * The frame document's root render (the boot module hands it over): a knob is
+ * read anywhere, from a module-level object, so a moved knob renders the root
+ * again, with no recompile. A memoised component with no knob-dependent props
+ * keeps its last render. No wrapper component holds the frame, so nothing that
+ * reads React's fibers (the element tree, the name label, picks) meets one.
  */
-export function FrameRoot({ frame }: { frame: ComponentType }) {
-	useSyncExternalStore(subscribeKnobs, () => knobVersion);
-	return createElement(frame);
+export function renderFrame(render: () => void): void {
+	render();
+	knobListeners.add(render);
 }
 
 // --- boot -------------------------------------------------------------------

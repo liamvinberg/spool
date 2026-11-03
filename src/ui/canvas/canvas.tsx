@@ -13,7 +13,7 @@ import type { Cover } from "../../cover";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { BrokenFrame as BrokenFrameRecord } from "../../daemon/thumbs";
-import { pageName, pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
+import { pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { parseKnobsDeclared } from "../../runtime/knob-protocol";
@@ -21,6 +21,7 @@ import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { SETTINGS } from "../../settings/registry";
 import type { Comment, Presence, PresenceState } from "../../team-sync-protocol";
+import { variantName } from "../../variant-name";
 import { AgentHandoff } from "../agent-handoff";
 import type {
 	Camera,
@@ -180,7 +181,6 @@ import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useVersions } from "./history-version";
 import { type Hand, hotBoots, hotUpdates, onAnswer, onChange } from "./hot-updates";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
-import { variantName } from "./knobs";
 import {
 	FrameLife,
 	type LifecycleStore,
@@ -5595,8 +5595,12 @@ function CanvasField({
 						onGeometryCommit: commitFrameGeometry,
 						knobs: {
 							lane: knobs,
-							variantOf: (frame) =>
-								pageName(variantName(frame, new Set(store.get().frames.map((one) => one.name)))),
+							variantOf: (frame) => {
+								const names = new Set(store.get().frames.map((one) => one.name));
+								return (
+									variantName(pageName(frame), (name) => names.has(pageUnder(pageParent(frame), name))) ?? ""
+								);
+							},
 							onSaveVariant: (frame) => void saveVariant(frame),
 						},
 					}}

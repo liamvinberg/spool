@@ -1,6 +1,6 @@
 import { type ParserPlugin, parse } from "@babel/parser";
 import type { CallExpression, Node, ObjectExpression } from "@babel/types";
-import type { KnobPath, KnobSite } from "../runtime/knob-protocol";
+import { KNOB_TYPES, type KnobPath, type KnobSite } from "../runtime/knob-protocol";
 import { walkNodes } from "./jsx-walk";
 
 /**
@@ -48,15 +48,19 @@ export type KnobAt =
 	| { kind: "none" };
 
 export function knobAt(call: CallExpression, path: KnobPath): KnobAt {
-	let node: Node | undefined = call.arguments[0];
-	for (const key of path.split(".")) {
-		if (node?.type !== "ObjectExpression") return { kind: "computed" };
-		if (isKnob(node)) return { kind: "none" };
-		node = propertyNamed(node, key);
-		if (node === undefined) return { kind: "none" };
+	// the schema itself is always a group, whatever keys it has
+	let node = call.arguments[0] as Node;
+	for (const [index, key] of path.split(".").entries()) {
+		const kind = index === 0 ? "group" : kindOf(node);
+		if (kind === "computed") return { kind: "computed" };
+		if (kind !== "group" || node.type !== "ObjectExpression") return { kind: "none" };
+		const held = propertyNamed(node, key);
+		if (held === undefined) return { kind: "none" };
+		node = held;
 	}
-	if (node?.type !== "ObjectExpression") return { kind: "computed" };
-	if (!isKnob(node)) return { kind: "none" };
+	const kind = kindOf(node);
+	if (kind === "computed") return { kind: "computed" };
+	if (kind !== "knob" || node.type !== "ObjectExpression") return { kind: "none" };
 	const type = propertyNamed(node, "type");
 	return {
 		kind: "knob",
@@ -74,9 +78,11 @@ export function computedPaths(call: CallExpression): KnobPath[] {
 			const key = property.type === "ObjectProperty" ? plainKey(property) : undefined;
 			if (property.type !== "ObjectProperty" || key === undefined) continue;
 			const path = prefix === "" ? key : `${prefix}.${key}`;
-			const held = property.value;
-			if (held.type !== "ObjectExpression") paths.push(path);
-			else if (!isKnob(held)) visit(held, path);
+			const held = unwrapped(property.value);
+			const kind = kindOf(held);
+			if (kind === "computed") paths.push(path);
+			else if (held.type !== "ObjectExpression" || kind === "unknown") continue;
+			else if (kind === "group") visit(held, path);
 			else {
 				const value = propertyNamed(held, "value");
 				const type = propertyNamed(held, "type");
@@ -93,7 +99,7 @@ export function computedPaths(call: CallExpression): KnobPath[] {
 /**
  * A value a hand may write over: numbers (a minus included), strings, a
  * template with nothing in it, booleans, and arrays and objects of nothing
- * else under plain keys.
+ * else under plain keys, each maybe typed with `as`, `satisfies` or `!`.
  */
 export function isLiteral(node: Node): boolean {
 	switch (node.type) {
@@ -105,6 +111,10 @@ export function isLiteral(node: Node): boolean {
 			return node.operator === "-" && node.argument.type === "NumericLiteral";
 		case "TemplateLiteral":
 			return node.expressions.length === 0;
+		case "TSAsExpression":
+		case "TSSatisfiesExpression":
+		case "TSNonNullExpression":
+			return isLiteral(node.expression);
 		case "ArrayExpression":
 			return node.elements.every((element) => element !== null && isLiteral(element));
 		case "ObjectExpression":
@@ -120,18 +130,45 @@ export function isLiteral(node: Node): boolean {
 	}
 }
 
-/** A nested object is a knob when it says its type, and a group when it doesn't. */
-function isKnob(node: ObjectExpression): boolean {
-	return propertyNamed(node, "type") !== undefined;
+/**
+ * What a node in a schema is, as the runtime decides it (`cleanSchema`): a
+ * knob when its type is one spool knows, a group when it is an object with no
+ * type string, nothing (left out) for any other literal, and computed when
+ * only the run time can say.
+ */
+function kindOf(node: Node): "knob" | "group" | "unknown" | "computed" {
+	if (node.type !== "ObjectExpression") return isLiteral(node) ? "unknown" : "computed";
+	const type = propertyNamed(node, "type");
+	if (type === undefined) return "group";
+	const name =
+		type.type === "StringLiteral"
+			? type.value
+			: type.type === "TemplateLiteral" && type.expressions.length === 0
+				? type.quasis[0]?.value.cooked
+				: undefined;
+	if (name !== undefined) return (KNOB_TYPES as readonly string[]).includes(name) ? "knob" : "unknown";
+	return isLiteral(type) ? "group" : "computed";
 }
 
 /** The value written under a plain key, the last one written winning as it does at run time. */
 function propertyNamed(node: ObjectExpression, key: string): Node | undefined {
 	let found: Node | undefined;
 	for (const property of node.properties) {
-		if (property.type === "ObjectProperty" && plainKey(property) === key) found = property.value;
+		if (property.type === "ObjectProperty" && plainKey(property) === key) found = unwrapped(property.value);
 	}
 	return found;
+}
+
+/** A value inside what only types it, `as const`, `satisfies` or `!`: the run time reads the value, and a write goes inside. */
+export function unwrapped(node: Node): Node {
+	let inner = node;
+	while (
+		inner.type === "TSAsExpression" ||
+		inner.type === "TSSatisfiesExpression" ||
+		inner.type === "TSNonNullExpression"
+	)
+		inner = inner.expression;
+	return inner;
 }
 
 /** A key as the run time names it, or nothing for one only the run time can name. */
@@ -167,13 +204,17 @@ export function stampKnobCalls(text: string, rel: string, loader: string): strin
 	} catch {
 		return text;
 	}
-	let stamped = text;
-	for (const call of knobCalls(program).sort((a, b) => (b.end ?? 0) - (a.end ?? 0))) {
+	const calls = knobCalls(program).flatMap((call) => {
 		const start = call.loc?.start;
-		if (start === undefined || call.end == null) continue;
-		const site: KnobSite = { at: `${rel}:${start.line}:${start.column + 1}`, computed: computedPaths(call) };
+		const end = call.end;
+		return start === undefined || end == null ? [] : [{ call, end, at: `${rel}:${start.line}:${start.column + 1}` }];
+	});
+	const inFile = calls.map(({ at }) => at);
+	let stamped = text;
+	for (const { call, end, at } of calls.sort((a, b) => b.end - a.end)) {
+		const site: KnobSite = { at, computed: computedPaths(call), inFile };
 		const comma = (call.extra?.trailingComma as number | undefined) === undefined ? ", " : " ";
-		const paren = call.end - 1;
+		const paren = end - 1;
 		stamped = `${stamped.slice(0, paren)}${comma}${JSON.stringify(site)}${stamped.slice(paren)}`;
 	}
 	return stamped;
