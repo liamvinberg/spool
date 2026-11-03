@@ -13,7 +13,6 @@ import { registerAndOpenProject } from "./daemon/session";
 import { type OpenSyncSocket, syncLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
-import { isSafeName } from "./page-path";
 import { expandHome, realDir } from "./paths";
 import { readRegistry } from "./registry";
 import {
@@ -26,6 +25,7 @@ import {
 	writeProjectLink,
 } from "./team-project";
 import { scaffoldDirs, scaffoldFiles } from "./templates";
+import { untitledName } from "./untitled";
 
 export interface InitOptions {
 	/**
@@ -235,63 +235,37 @@ function scaffold(root: string, files: Record<string, string>): void {
 }
 
 /**
- * The picker's "+" (#242): make the folder, then run the one scaffold on it.
- * The folder lands inside the one being browsed, and a name is one path
- * segment, never a path — the picker is where you choose where.
+ * The app's New project while a team is chosen in Home's switcher: the next free `untitled` in `parentDir` that
+ * the team doesn't have yet, started in the team as `spool init --team` starts one. A team that refuses leaves no
+ * folder behind.
  */
-export function createProject(parentDir: string, name: string, spoolDir: string): { root: string } {
-	const trimmed = name.trim();
-	if (trimmed === "") return startProject(parentDir, spoolDir);
-	if (!isSafeName(trimmed)) throw new SpoolError(`Not a folder name: ${JSON.stringify(trimmed)}`);
-	const parent = expandHome(parentDir);
-	try {
-		mkdirSync(parent, { recursive: true });
-		const target = join(realDir(parent), trimmed);
-		if (existsSync(target)) throw new SpoolError(`${trimmed} already exists here. Choose another name.`);
-		mkdirSync(target);
-		return initProject(target, spoolDir);
-	} catch (error) {
-		if (error instanceof SpoolError) throw error;
-		throw new SpoolError(
-			`Could not create a project in ${parent}. Choose another folder or check that it is writable.`,
-		);
-	}
-}
-
-/**
- * The app's New project while a team is chosen in Home's switcher: the folder is made where the picker says, then
- * started in the team as `spool init --team` starts one. No name is the next free `untitled` the team doesn't have
- * yet. A team that refuses leaves no folder behind.
- */
-export async function createTeamProject(
+export async function startTeamProject(
 	parentDir: string,
-	name: string,
 	spoolDir: string,
 	options: TeamInitOptions,
 ): Promise<{ root: string; link: ProjectLink; uploaded: boolean }> {
-	const trimmed = name.trim();
-	if (trimmed !== "" && !isSafeName(trimmed)) throw new SpoolError(`Not a folder name: ${JSON.stringify(trimmed)}`);
 	const parent = expandHome(parentDir);
 	mkdirSync(parent, { recursive: true });
+	const registered = new Set(readRegistry(spoolDir).projects.map((project) => basename(project.root)));
 	for (let suffix = 1; suffix <= 100; suffix++) {
-		const folder = trimmed !== "" ? trimmed : suffix === 1 ? "untitled" : `untitled-${suffix}`;
+		const folder = untitledName(suffix);
 		const target = join(realDir(parent), folder);
-		if (existsSync(target)) {
-			if (trimmed !== "") throw new SpoolError(`${trimmed} already exists here. Choose another name.`);
-			continue;
-		}
+		if (registered.has(folder) || existsSync(target)) continue;
 		mkdirSync(target);
 		try {
 			return await initTeamProject(target, spoolDir, options);
 		} catch (error) {
 			rmSync(target, { recursive: true, force: true });
-			if (trimmed !== "" || !(error instanceof ProjectNameTaken)) throw error;
+			if (!(error instanceof ProjectNameTaken)) throw error;
 		}
 	}
-	throw new SpoolError("Could not find a free name for the project. Give it one.");
+	throw new SpoolError("Could not find a free name for the project. Rename an untitled one and try again.");
 }
 
-/** Allocate with mkdir itself: another request or process may take any name before us. */
+/**
+ * New project: the next free `untitled` in the projects location. Allocated with mkdir itself, since another
+ * request or process may take any name before us.
+ */
 export function startProject(location: string, spoolDir: string): { root: string } {
 	const parent = expandHome(location);
 	try {
@@ -299,7 +273,7 @@ export function startProject(location: string, spoolDir: string): { root: string
 		const directory = realDir(parent);
 		const registered = new Set(readRegistry(spoolDir).projects.map((project) => basename(project.root)));
 		for (let suffix = 1; ; suffix++) {
-			const name = suffix === 1 ? "untitled" : `untitled-${suffix}`;
+			const name = untitledName(suffix);
 			if (registered.has(name)) continue;
 			const target = join(directory, name);
 			try {

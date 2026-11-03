@@ -6,7 +6,7 @@ import { validator } from "hono/validator";
 import { z } from "zod";
 import { SpoolError } from "../errors";
 import { checkoutOf } from "../git-remote";
-import { createProject, initProject, startProject } from "../init";
+import { initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
 import { openProject } from "../open";
 import { forgetResolvedProject, readRegistry } from "../registry";
@@ -50,8 +50,8 @@ function requestedPath(value: unknown, c: Context): { path: string } | Response 
 	return { path };
 }
 
-/** Body of the picker's create: { path, name } — the folder to make it in, and what to call it. */
-function requestedNewProject(value: unknown, c: Context): { path: string; name: string } | Response {
+/** Body of a new folder: { path, name }, the folder to make it in and what to call it. */
+function requestedNewFolder(value: unknown, c: Context): { path: string; name: string } | Response {
 	const parsed = z.object({ path: z.string().min(1), name: z.string() }).safeParse(value);
 	if (!parsed.success) {
 		return c.json({ error: 'expected { "path": "/abs/dir", "name": "folder" }' }, 400);
@@ -116,7 +116,7 @@ export function homeRoutes(deps: {
 				if (path === undefined) void refreshIndex(fsIndex);
 				return c.json(listing);
 			})
-			.post("/fs/create", validator("json", requestedNewProject), (c) => {
+			.post("/fs/create", validator("json", requestedNewFolder), (c) => {
 				try {
 					const { path, name } = c.req.valid("json");
 					return c.json(createDirectory(path, name));
@@ -243,6 +243,7 @@ export function homeRoutes(deps: {
 					return c.json({ error: error.message }, 409);
 				}
 			})
+			// New project: the next free untitled in the projects location, opened at once
 			.post("/projects/start", (c) => {
 				try {
 					const location = settings.read().entries.find((entry) => entry.key === "projects.location");
@@ -290,17 +291,6 @@ export function homeRoutes(deps: {
 					}
 				},
 			)
-			.post("/projects/create", validator("json", requestedNewProject), (c) => {
-				try {
-					const { path, name } = c.req.valid("json");
-					// the "+" (#242): mkdir, then the same scaffold init runs
-					const { root } = createProject(path, name, spoolDir);
-					return c.json({ root, name: basename(root) });
-				} catch (error) {
-					if (!(error instanceof SpoolError)) throw error;
-					return c.json({ error: error.message }, 409);
-				}
-			})
 			.post(
 				"/projects/forget",
 				validator("json", (value, c) => {

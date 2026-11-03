@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { cloudTeams } from "../cloud-teams";
 import { chooseInitTarget, describeChoice, initDestination, initTeamProject } from "../init";
 import { fetchLocalCopy } from "../open";
 import { readRegistry, registerProject, teamProjects } from "../registry";
@@ -21,6 +22,7 @@ import { SOLO_GITIGNORE } from "../templates";
 import { makeApp, makeTempDir, SseTimeout, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
 import { historyEnabled } from "./history";
+import { createSettingsStore } from "./settings";
 import {
 	commitFiles,
 	encode,
@@ -307,48 +309,43 @@ describe("local copies", () => {
 });
 
 describe("New project in the app, while a team is chosen", () => {
-	it("starts a team project in a new folder, uploaded to the team", async () => {
+	it("starts the next untitled the team doesn't have yet in the team's folder, uploaded to the team", async () => {
 		const cloud = fakeTeam();
 		const ana = cloud.machine("ana");
 		const state = join(makeTempDir(), ".spool");
+		const location = makeTempDir();
+		createSettingsStore(state).write("projects.location", location);
 		const daemon = makeApp(state, {
 			cloud: ana.cloud,
 			teamNotice: () => {},
 		});
-		const parent = join(makeTempDir(), "devosurf");
-		const start = (name: string, path = parent) =>
+		const start = () =>
 			daemon.controlRequest("/api/cloud/teams/devosurf/projects", {
 				method: "POST",
-				headers: { "content-type": "application/json", origin: "http://localhost:7766" },
-				body: JSON.stringify({ path, name }),
+				headers: { origin: "http://localhost:7766" },
 			});
 
-		const named = await start("Checkout");
-		expect(named.status).toBe(200);
-		const root = join(realpathSync(parent), "Checkout");
-		expect(await named.json()).toEqual({ root, name: "Checkout" });
+		// the folder untitled is taken here, and the team already has untitled-2
+		const parent = join(realpathSync(location), "devosurf");
+		mkdirSync(join(parent, "untitled"), { recursive: true });
+		await cloudTeams(join(makeTempDir(), ".spool"), cloud.machine("ben").request).createProject(
+			"devosurf",
+			"untitled-2",
+		);
+		const started = await start();
+		expect(started.status).toBe(200);
+		const root = join(parent, "untitled-3");
+		expect(await started.json()).toEqual({ root, name: "untitled-3" });
 		expect(JSON.parse(readFileSync(join(root, "spool.json"), "utf8"))).toEqual({
-			project: `${TEAM_ORIGIN}/devosurf/checkout`,
+			project: `${TEAM_ORIGIN}/devosurf/untitled-3`,
 		});
-		expect(cloud.paths("checkout")).toContain("canvas.json");
+		expect(cloud.paths("untitled-3")).toContain("canvas.json");
 		expect(readRegistry(state).projects.map((project) => project.root)).toEqual([root]);
-
-		// no name is the next untitled the team doesn't have yet
-		mkdirSync(join(parent, "untitled"));
-		expect(await (await start("")).json()).toMatchObject({ name: "untitled-2" });
-		expect(cloud.paths("untitled-2")).toContain("canvas.json");
-
-		const elsewhere = makeTempDir();
-		const taken = await start("checkout", elsewhere);
-		expect(taken.status).toBe(409);
-		expect(await taken.json()).toEqual({
-			error: 'Devosurf already has a project called "checkout"; start this one in a folder with another name',
-		});
-		expect(existsSync(join(elsewhere, "checkout"))).toBe(false);
+		expect(existsSync(join(parent, "untitled-2"))).toBe(false);
 
 		// a team gone local takes no new project: said with spool.page's reason, for Home to word
 		cloud.lapse();
-		const lapsed = await start("billing", elsewhere);
+		const lapsed = await start();
 		expect(lapsed.status).toBe(409);
 		expect(await lapsed.json()).toEqual({
 			error: "the team has gone local; an admin can pay for it at spool.page to sync again",

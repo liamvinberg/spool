@@ -522,6 +522,9 @@ export function createDaemonApp({
 	});
 	// #281: every setting, behind one read and one write over the three files
 	const settings = createSettingsStore(spoolDir);
+	/** Where new projects go: the default project location. */
+	const projectsLocation = () =>
+		String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool");
 	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
 	const fsIndex = { home: home ?? homedir(), spoolDir };
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
@@ -1806,6 +1809,7 @@ export function createDaemonApp({
 		cloudTeamRoutes({
 			spoolDir,
 			cloud,
+			location: projectsLocation,
 			// a team paid for again, as an admin who just paid from this Mac sees it: its copies here follow it now
 			onTeams: (teams) => {
 				for (const team of teams) if (team.billing?.state !== "lapsed") teamSync.recheck(team.address);
@@ -1818,8 +1822,7 @@ export function createDaemonApp({
 			spoolDir,
 			home: fsIndex.home,
 			cloud,
-			location: () =>
-				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
+			location: projectsLocation,
 			notice: teamNotice,
 			signal: moving.signal,
 			hooks: {
