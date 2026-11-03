@@ -54,7 +54,7 @@ export interface DesktopWindow {
 }
 
 export interface DirectoryRequest {
-	purpose: "location" | "open" | "export";
+	purpose: "location" | "checkout" | "open" | "export";
 	defaultPath: string;
 }
 

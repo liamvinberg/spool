@@ -351,7 +351,7 @@ export function GetItDialog({
 	if (picking)
 		return (
 			<PlaceChooser
-				purpose="location"
+				purpose="checkout"
 				start="~"
 				onCancel={() => setPicking(false)}
 				onChoose={(path) => {
@@ -988,7 +988,7 @@ export function IntoCheckoutSheet({
 	if (picking)
 		return (
 			<PlaceChooser
-				purpose="location"
+				purpose="checkout"
 				start="~"
 				onCancel={() => setPicking(false)}
 				onChoose={(path) => {

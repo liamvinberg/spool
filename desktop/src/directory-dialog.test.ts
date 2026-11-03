@@ -13,6 +13,11 @@ test("open takes a folder or a .spool file, and a location a folder it may make"
 	equal(location.defaultPath, join(homedir(), "spool"));
 	deepEqual(location.properties, ["openDirectory", "createDirectory"]);
 	equal(directoryDialogOptions({ purpose: "location", defaultPath: "/tmp/my code" }).defaultPath, "/tmp/my code");
+	// a team project's checkout is asked for in its own words, not as where new projects go
+	equal(
+		directoryDialogOptions({ purpose: "checkout", defaultPath: "~" }).message,
+		"Choose the checkout this project goes into.",
+	);
 });
 
 test("an export asks for the folder it is written into", () => {

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { cn } from "./cn";
-import { type DesktopWindow, desktopWindow } from "./desktop-window";
+import { type DesktopWindow, type DirectoryRequest, desktopWindow } from "./desktop-window";
 import { crumbsOf, type FolderRow, shortPath } from "./folder-paths";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { BackIcon, ChevronIcon, FolderIcon, SearchIcon, SpoolFileIcon } from "./icons";
@@ -9,6 +9,9 @@ import { TextField } from "./primitives/inputs";
 import { Dialog, DialogFooter } from "./primitives/overlays";
 import { ListRow } from "./primitives/structure";
 import { useFolderBrowser } from "./use-folder-browser";
+
+/** open takes a folder or a .spool file, or a path or link typed in; a location or a checkout takes a folder */
+type Purpose = Exclude<DirectoryRequest["purpose"], "export">;
 
 /**
  * The one chooser for every place spool picks something on this Mac: Open… (a folder or a .spool file), where new
@@ -24,8 +27,7 @@ export function PlaceChooser({
 	onChoose,
 	onCancel,
 }: {
-	/** open takes a folder or a .spool file, or a path or link typed in; location takes a folder */
-	purpose: "open" | "location";
+	purpose: Purpose;
 	/** the folder it opens in, `~` allowed */
 	start: string;
 	onChoose: (path: string) => void;
@@ -47,7 +49,7 @@ function NativeChooser({
 	onCancel,
 }: {
 	choose: NonNullable<DesktopWindow["chooseDirectory"]>;
-	purpose: "open" | "location";
+	purpose: Purpose;
 	start: string;
 	onChoose: (path: string) => void;
 	onCancel: () => void;
@@ -82,7 +84,7 @@ function InAppChooser({
 	onChoose,
 	onCancel,
 }: {
-	purpose: "open" | "location";
+	purpose: Purpose;
 	start: string;
 	onChoose: (path: string) => void;
 	onCancel: () => void;
