@@ -310,16 +310,3 @@ export function stillLive(
 export function readersOf(declared: ReadonlyMap<string, readonly KnobCall[]>, at: string): string[] {
 	return [...declared].filter(([, calls]) => calls.some((call) => call.at === at)).map(([frame]) => frame);
 }
-
-/**
- * The name Save as variant copies a frame to: `<name>--b`, or the next letter
- * free. A variant of a variant is its base's next one.
- */
-export function variantName(frame: string, taken: ReadonlySet<string>): string {
-	const base = frame.replace(/--[b-z]$/, "");
-	for (let code = "b".charCodeAt(0); code <= "z".charCodeAt(0); code += 1) {
-		const name = `${base}--${String.fromCharCode(code)}`;
-		if (!taken.has(name)) return name;
-	}
-	return `${base}--${taken.size}`;
-}

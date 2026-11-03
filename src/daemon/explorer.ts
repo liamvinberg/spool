@@ -12,6 +12,7 @@ import {
 	pageWithin,
 	ROOT_PAGE,
 } from "../page-path";
+import { variantName } from "../variant-name";
 import { readOrder, withPageMoved, withPagesDropped, writeOrder } from "./canvas-order";
 import {
 	withPagesDropped as placesAfterDrop,
@@ -386,16 +387,6 @@ function freshName(name: string, taken: (candidate: string) => boolean): string 
 		const candidate = `${base}-${suffix}`;
 		if (!taken(candidate)) return candidate;
 	}
-}
-
-/** `<name>--b` to `<name>--z`, a variant's own letter set aside: a variant of `card--b` is `card--c`. */
-function variantName(name: string, taken: (candidate: string) => boolean): string | undefined {
-	const base = name.replace(/--[b-z]$/, "");
-	for (let letter = "b".charCodeAt(0); letter <= "z".charCodeAt(0); letter += 1) {
-		const candidate = `${base}--${String.fromCharCode(letter)}`;
-		if (!taken(candidate)) return candidate;
-	}
-	return undefined;
 }
 
 /**
