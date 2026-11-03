@@ -9,7 +9,9 @@ const REFUSED_TOAST_MS = 6000;
  * `onStarted` to open. A second press while one is on its way makes nothing more. What a refusal says stands
  * in a toast at the window's foot.
  */
-export function useStartProject(onStarted: (project: { root: string; name: string }) => void): {
+export function useStartProject(
+	onStarted: (project: { root: string; name: string }) => void,
+): {
 	start: (team?: string) => void;
 	toast: ReactNode;
 } {
@@ -34,7 +36,8 @@ export function useStartProject(onStarted: (project: { root: string; name: strin
 	return { start, toast: refused !== null && <RefusedToast key={refused} message={refused} onDismiss={dismiss} /> };
 }
 
-function RefusedToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+/** What was refused, at the window's foot until dismissed or its time is up. */
+export function RefusedToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
 	useEffect(() => {
 		const timer = setTimeout(onDismiss, REFUSED_TOAST_MS);
 		return () => clearTimeout(timer);
