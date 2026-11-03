@@ -936,3 +936,153 @@ describe("embedded in a canvas", () => {
 		await waitForText("output", "2");
 	});
 });
+
+const kaffeTs = `import { ui } from "spool";
+
+export const kaffe = ui.knobs({ roast: { type: "segmented", value: "dark", options: ["light", "dark"] } }, {"at":"shared/knobs/kaffe.ts:3:22","computed":[]});
+`;
+
+// the compile stamps each call; written out here since this suite serves frames as written
+const tunedTsx = `import { ui } from "spool";
+import { kaffe } from "shared/knobs/kaffe";
+
+const k = ui.knobs({
+	card: { radius: { type: "slider", value: 20, min: 0, max: 40 }, "bad.key": { type: "toggle", value: true } },
+	hero: { type: "image", value: "a", options: [{ value: "a", image: "/a.png" }, { value: "b", image: "/b.png" }] },
+	family: { type: "font", value: "Inter" },
+	replay: { type: "action", label: "Replay" },
+}, {"at":"frames/tuned/frame.tsx:4:11","computed":[]});
+
+export default function Tuned() {
+	const state = ui.use();
+	const inner = ui.knobs({ count: { type: "stepper", value: 3 } }, {"at":"frames/tuned/frame.tsx:13:16","computed":[]});
+	return (
+		<main>
+			<output id="radius">{k.card.radius}</output>
+			<output id="hero">{k.hero}</output>
+			<output id="replays">{k.replay}</output>
+			<output id="roast">{kaffe.roast}</output>
+			<output id="count">{inner.count}</output>
+			<output id="unread">{String(state.unread)}</output>
+		</main>
+	);
+}
+`;
+
+describe("knobs", () => {
+	function scaffoldTuned(harness: Harness): void {
+		scaffoldFlow(harness);
+		writeDesignFile(harness.root, "shared/knobs/kaffe.ts", kaffeTs);
+		writeFrame(harness.root, "tuned", tunedTsx);
+	}
+
+	it("declares every call to the canvas and takes live values, presses and cleared values without a recompile", async () => {
+		const harness = makeHarness();
+		scaffoldTuned(harness);
+		const fonts = Object.assign(
+			[
+				{ family: '"Inter"', status: "loaded" },
+				{ family: "Lora", status: "unloaded" },
+			],
+			{
+				ready: Promise.resolve(),
+			},
+		);
+		Object.defineProperty(document, "fonts", { configurable: true, value: fonts });
+		const warnings = captureWarnings();
+		const declared: Record<string, unknown>[] = [];
+		const site = "frames/tuned/frame.tsx:4:11";
+		try {
+			await loadFrameDocument(harness, "tuned", {
+				host: (message) => {
+					if (message.spool === "knobs") declared.push(message);
+					if (message.spool === "session?") hostReply({ spool: "session", record: null });
+				},
+			});
+			await waitForText("#radius", "20");
+			await waitForText("#hero", "/a.png");
+			await waitForText("#replays", "0");
+			await waitForText("#roast", "dark");
+			await waitForText("#count", "3");
+			expect(warnings.lines.filter((line) => line.includes('"card.bad.key"'))).toHaveLength(1);
+			await vi.waitFor(() => {
+				expect(declared.at(-1)).toEqual({
+					spool: "knobs",
+					frame: "tuned",
+					calls: [
+						{
+							at: "shared/knobs/kaffe.ts:3:22",
+							computed: [],
+							schema: { roast: { type: "segmented", value: "dark", options: ["light", "dark"] } },
+						},
+						{
+							at: site,
+							computed: [],
+							schema: {
+								card: { radius: { type: "slider", value: 20, min: 0, max: 40 } },
+								hero: {
+									type: "image",
+									value: "a",
+									options: [
+										{ value: "a", image: "/a.png" },
+										{ value: "b", image: "/b.png" },
+									],
+								},
+								// the rail lists what the document loaded
+								family: { type: "font", value: "Inter", options: ["Inter"] },
+								replay: { type: "action", label: "Replay" },
+							},
+						},
+						{
+							at: "frames/tuned/frame.tsx:13:16",
+							computed: [],
+							schema: { count: { type: "stepper", value: 3 } },
+						},
+					],
+				});
+			});
+		} finally {
+			warnings.restore();
+			Reflect.deleteProperty(document, "fonts");
+		}
+		const declaredBefore = declared.length;
+
+		hostReply({ spool: "knob-values", at: site, values: { "card.radius": 31, hero: "b" } });
+		hostReply({ spool: "knob-values", at: "shared/knobs/kaffe.ts:3:22", values: { roast: "light" } });
+		hostReply({ spool: "knob-action", at: site, path: "replay" });
+		hostReply({ spool: "knob-action", at: site, path: "replay" });
+		await waitForText("#radius", "31");
+		await waitForText("#hero", "/b.png");
+		await waitForText("#roast", "light");
+		await waitForText("#replays", "2");
+
+		// a page's session landing is prototype data: the knobs keep their hand
+		hostReply({ spool: "state", state: { unread: 9 } });
+		await waitForText("#unread", "9");
+		expect(document.querySelector("#radius")?.textContent).toBe("31");
+
+		// a path left out reads its literal again
+		hostReply({ spool: "knob-values", at: site, values: { hero: "b" } });
+		await waitForText("#radius", "20");
+		// re-renders re-run the render's call without declaring anything new
+		expect(declared).toHaveLength(declaredBefore);
+	});
+
+	it("reads its literals and declares nothing outside the canvas", async () => {
+		const harness = makeHarness();
+		scaffoldTuned(harness);
+		const posted: unknown[] = [];
+		const listen = (event: MessageEvent) => posted.push(event.data);
+		window.addEventListener("message", listen);
+		const warnings = captureWarnings();
+		try {
+			await loadFrameDocument(harness, "tuned");
+			await waitForText("#radius", "20");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		} finally {
+			warnings.restore();
+			window.removeEventListener("message", listen);
+		}
+		expect(posted).toEqual([]);
+	});
+});

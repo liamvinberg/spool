@@ -380,7 +380,7 @@ export function hotModuleUrl(project: string, module: string, session: string, v
  */
 export function hotBootEntry(frame: string, project: string, entry: string): string {
 	const url = JSON.stringify(hotModuleUrl(project, entry, HOT_SESSION_PLACEHOLDER, 0));
-	return `import "spool";
+	return `import { FrameRoot } from "spool";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 const FRAME = ${JSON.stringify(frame)};
@@ -395,7 +395,7 @@ function Ready() {
 	return null;
 }
 createRoot(document.getElementById("root")).render(
-	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
+	createElement(Fragment, null, createElement(FrameRoot, { frame: Frame }), createElement(Ready)),
 );
 ${HOT_BOOT_CLIENT}`;
 }

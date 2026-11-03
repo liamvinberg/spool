@@ -6,6 +6,12 @@ export interface SpoolUi {
 	go(target: string, patch?: Record<string, unknown>): void;
 	back(): void;
 	copy(text: string): Promise<void>;
+	/**
+	 * Values a person tunes by hand on the canvas (#220): each `value` is a
+	 * literal the rail writes back into this call. Reads live, never persisted,
+	 * and no scenario or walk resets it.
+	 */
+	knobs<const S extends KnobSchema>(schema: S): KnobRead<S>;
 }
 
 /** A choice in a segmented, select, pictures, icon or image knob. */
