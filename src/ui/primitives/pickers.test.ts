@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
-import { act, createElement } from "react";
+import { act, createElement, type PointerEvent as ReactPointerEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { formatColour, formatGradient, PictureGrid, parseColour, parseGradient } from "./pickers";
+import { formatColour, formatGradient, PictureGrid, parseColour, parseGradient, tuneDrag } from "./pickers";
 
 /**
  * A colour knob writes in the format the picker shows, so every format reads
@@ -88,4 +88,37 @@ it("hovering a choice tries it on, leaving puts the value back, and a press comm
 	]);
 	act(() => root.unmount());
 	host.remove();
+});
+
+it("a drag commits on release, and puts its value back when the pointer is lost or the window left", () => {
+	const onTune = vi.fn();
+	const pad = document.createElement("div");
+	document.body.append(pad);
+	const press = () =>
+		tuneDrag(
+			{
+				button: 0,
+				clientX: 0,
+				clientY: 0,
+				currentTarget: pad,
+				preventDefault: () => {},
+			} as unknown as ReactPointerEvent<HTMLElement>,
+			{ value: 0, onTune },
+			(point) => point.dx,
+		);
+	const move = () => window.dispatchEvent(new PointerEvent("pointermove", { clientX: 12 }));
+	for (const end of [new PointerEvent("pointerup"), new PointerEvent("pointercancel"), new FocusEvent("blur")]) {
+		press();
+		move();
+		window.dispatchEvent(end);
+	}
+	expect(onTune.mock.calls).toEqual([
+		[12, "live"],
+		[12, "commit"],
+		[12, "live"],
+		[0, "cancel"],
+		[12, "live"],
+		[0, "cancel"],
+	]);
+	pad.remove();
 });

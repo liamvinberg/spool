@@ -65,23 +65,29 @@ export function tuneDrag<T>(
 	const stop = () => {
 		view.removeEventListener("pointermove", move);
 		view.removeEventListener("pointerup", up);
-		view.removeEventListener("pointercancel", up);
+		view.removeEventListener("pointercancel", cancel);
+		view.removeEventListener("blur", cancel);
 		view.removeEventListener("keydown", key, true);
 	};
 	const up = () => {
 		stop();
 		if (!same(last, value)) onTune(last, "commit");
 	};
+	// a pointer the system took back, or a window left, ends the gesture as Esc does
+	const cancel = () => {
+		stop();
+		if (!same(last, value)) onTune(value, "cancel");
+	};
 	const key = (pressed: KeyboardEvent) => {
 		if (pressed.key !== "Escape") return;
 		pressed.preventDefault();
 		pressed.stopPropagation();
-		stop();
-		if (!same(last, value)) onTune(value, "cancel");
+		cancel();
 	};
 	view.addEventListener("pointermove", move);
 	view.addEventListener("pointerup", up);
-	view.addEventListener("pointercancel", up);
+	view.addEventListener("pointercancel", cancel);
+	view.addEventListener("blur", cancel);
 	view.addEventListener("keydown", key, true);
 	move(event);
 }
