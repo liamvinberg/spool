@@ -3,22 +3,24 @@ import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { SpoolError } from "./errors";
+import { quietGit } from "./git-remote";
 
 /**
- * Open… taking a git link: asking the remote whether it answers, and cloning it onto this Mac. Git runs with the
- * daemon's own git environment taken off and never prompts, so a private repo without a credential reads as one that
- * answers nothing rather than hanging on a password nobody can type.
+ * Open… taking a git link: asking the remote whether it answers, and cloning it onto this Mac. Git never prompts
+ * (`quietGit`), so a private repo without a credential reads as one that answers nothing rather than hanging on a
+ * password nobody can type.
  */
 
 const run = promisify(execFile);
 
-const quiet = () => ({ ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_TERMINAL_PROMPT: "0" });
+/** Longer than any clone a design folder needs; a clone still going then is a remote that stopped answering. */
+const CLONE_TIMEOUT_MS = 10 * 60_000;
 
 /** The branch a remote's HEAD names, or undefined when nothing answers at the link. */
 export async function remoteHead(url: string, signal?: AbortSignal): Promise<{ branch: string | null } | undefined> {
 	try {
 		const { stdout } = await run("git", ["ls-remote", "--symref", "--", url, "HEAD"], {
-			env: quiet(),
+			env: quietGit(),
 			timeout: 20_000,
 			windowsHide: true,
 			...(signal === undefined ? {} : { signal }),
@@ -35,7 +37,7 @@ export async function branchAt(dir: string): Promise<string | null> {
 	try {
 		const { stdout } = await run("git", ["symbolic-ref", "--short", "-q", "HEAD"], {
 			cwd: dir,
-			env: quiet(),
+			env: quietGit(),
 			timeout: 10_000,
 			windowsHide: true,
 		});
@@ -82,13 +84,14 @@ export async function cloneInto(
 		if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new SpoolError(`${into} is already there.`);
 		throw error;
 	}
+	const started = Date.now();
 	const child = spawn("git", ["clone", "--progress", "--", url, into], {
-		env: quiet(),
+		env: quietGit(),
 		stdio: ["ignore", "ignore", "pipe"],
 		windowsHide: true,
+		timeout: CLONE_TIMEOUT_MS,
+		...(options.signal === undefined ? {} : { signal: options.signal }),
 	});
-	const stop = () => child.kill();
-	options.signal?.addEventListener("abort", stop, { once: true });
 	let last = "";
 	child.stderr.setEncoding("utf8");
 	child.stderr.on("data", (chunk: string) => {
@@ -102,9 +105,10 @@ export async function cloneInto(
 		child.on("error", () => resolve(-1));
 		child.on("close", resolve);
 	});
-	options.signal?.removeEventListener("abort", stop);
 	if (code === 0) return;
 	rmSync(into, { recursive: true, force: true });
 	if (options.signal?.aborted) throw new SpoolError("The clone was stopped.");
+	if (Date.now() - started >= CLONE_TIMEOUT_MS)
+		throw new SpoolError("The clone took longer than ten minutes, so spool stopped it.");
 	throw new SpoolError(last.replace(/^fatal:\s*/u, "") || "git could not clone this repository.");
 }
