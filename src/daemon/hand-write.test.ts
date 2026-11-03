@@ -779,12 +779,12 @@ export const k = ui.knobs({
 	card: {
 		radius: { type: "corners", value: 20, min: 0, max: 40 },
 		padding: { type: "spacing", value: [20,
-			22] },
-		label: { type: "text", value: 'Oat latte' },
+			22] as const },
+		label: { type: "text" as const, value: 'Oat latte'! },
 		gap: { type: "slider", value: base * 2 },
 	},
 	motion: {
-		spring: { type: "spring", value: { duration: 0.35, bounce: 0.3 } },
+		spring: { type: "spring", value: { duration: 0.35, bounce: 0.3 } satisfies Spring },
 		replay: { type: "action", label: "Replay" },
 	},
 	more: someSpec,
@@ -803,6 +803,7 @@ export const k = ui.knobs({
 		expect(readElements(KNOBS, [{ line: line ?? 0, column: column ?? 0 }])).toEqual([{}]);
 	});
 
+	// each inside what only types it (as const, satisfies, !), which stays
 	it("writes an array or object entry by entry while it keeps its shape, and whole on one line once it doesn't", () => {
 		expect(written([knob("card.padding", [18, 22])], KNOBS)).toBe(KNOBS.replace("[20,", "[18,"));
 		expect(written([knob("card.padding", [8, 12, 8, 12])], KNOBS)).toBe(

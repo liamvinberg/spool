@@ -78,7 +78,7 @@ export function computedPaths(call: CallExpression): KnobPath[] {
 			const key = property.type === "ObjectProperty" ? plainKey(property) : undefined;
 			if (property.type !== "ObjectProperty" || key === undefined) continue;
 			const path = prefix === "" ? key : `${prefix}.${key}`;
-			const held = property.value;
+			const held = unwrapped(property.value);
 			const kind = kindOf(held);
 			if (kind === "computed") paths.push(path);
 			else if (held.type !== "ObjectExpression" || kind === "unknown") continue;
@@ -99,7 +99,7 @@ export function computedPaths(call: CallExpression): KnobPath[] {
 /**
  * A value a hand may write over: numbers (a minus included), strings, a
  * template with nothing in it, booleans, and arrays and objects of nothing
- * else under plain keys.
+ * else under plain keys, each maybe typed with `as`, `satisfies` or `!`.
  */
 export function isLiteral(node: Node): boolean {
 	switch (node.type) {
@@ -111,6 +111,10 @@ export function isLiteral(node: Node): boolean {
 			return node.operator === "-" && node.argument.type === "NumericLiteral";
 		case "TemplateLiteral":
 			return node.expressions.length === 0;
+		case "TSAsExpression":
+		case "TSSatisfiesExpression":
+		case "TSNonNullExpression":
+			return isLiteral(node.expression);
 		case "ArrayExpression":
 			return node.elements.every((element) => element !== null && isLiteral(element));
 		case "ObjectExpression":
@@ -150,9 +154,21 @@ function kindOf(node: Node): "knob" | "group" | "unknown" | "computed" {
 function propertyNamed(node: ObjectExpression, key: string): Node | undefined {
 	let found: Node | undefined;
 	for (const property of node.properties) {
-		if (property.type === "ObjectProperty" && plainKey(property) === key) found = property.value;
+		if (property.type === "ObjectProperty" && plainKey(property) === key) found = unwrapped(property.value);
 	}
 	return found;
+}
+
+/** A value inside what only types it, `as const`, `satisfies` or `!`: the run time reads the value, and a write goes inside. */
+export function unwrapped(node: Node): Node {
+	let inner = node;
+	while (
+		inner.type === "TSAsExpression" ||
+		inner.type === "TSSatisfiesExpression" ||
+		inner.type === "TSNonNullExpression"
+	)
+		inner = inner.expression;
+	return inner;
 }
 
 /** A key as the run time names it, or nothing for one only the run time can name. */

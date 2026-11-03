@@ -5,7 +5,7 @@ import type { KnobPath, KnobValue } from "../runtime/knob-protocol";
 import { parseStampRef } from "../stamp";
 import { isLayoutOnly, readJsxText, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
-import { isLiteral, knobAt, knobCallAt, plainKey } from "./knob-literals";
+import { isLiteral, knobAt, knobCallAt, plainKey, unwrapped } from "./knob-literals";
 
 /**
  * The write lane (#253): a typed op in, the exact characters out.
@@ -535,7 +535,8 @@ function planKnob(source: string, call: CallExpression, path: KnobPath, value: K
 	return { patches: literalPatches(source, knob.value, value) };
 }
 
-function literalPatches(source: string, node: Node, value: KnobValue): SpanPatch[] {
+function literalPatches(source: string, typed: Node, value: KnobValue): SpanPatch[] {
+	const node = unwrapped(typed);
 	if (Array.isArray(value) && node.type === "ArrayExpression" && node.elements.length === value.length) {
 		return node.elements.flatMap((element, index) =>
 			element === null ? [] : literalPatches(source, element, value[index] as number),
