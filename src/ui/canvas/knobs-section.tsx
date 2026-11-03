@@ -1,7 +1,6 @@
 import {
 	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
-	type PointerEvent as ReactPointerEvent,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -12,11 +11,21 @@ import type { KnobValue } from "../../runtime/knob-protocol";
 import { cn } from "../cn";
 import { ChevronIcon, LinkIcon } from "../icons";
 import { Button } from "../primitives/actions";
-import { Popover } from "../primitives/overlays";
+import { type TunePhase, useKeyTune, useScrub } from "../primitives/inputs";
 import { Section, StatusLine } from "../primitives/structure";
-import { Choices, KnobEditor, KnobInRow, KnobPreview } from "./knob-controls";
-import { fileOf, headsOver, type KnobLine, knobLines, nudged, reachOf, scrubs, statusWords, valueNow } from "./knobs";
-import { scrubStep, useCloseOnPressAway } from "./rail-fields";
+import { KnobEditor, KnobInRow, KnobList, KnobPreview } from "./knob-controls";
+import {
+	fileOf,
+	headsOver,
+	type KnobLine,
+	knobLines,
+	knobNumber,
+	nudged,
+	reachOf,
+	statusWords,
+	valueNow,
+} from "./knobs";
+import { useCloseOnPressAway } from "./rail-fields";
 import { type FrameKnobs, type KnobLane, useFrameKnobs } from "./use-knobs";
 
 /**
@@ -24,8 +33,8 @@ import { type FrameKnobs, type KnobLane, useFrameKnobs } from "./use-knobs";
  * geometry, one calm row each. A press opens a row in place into its editor
  * and shuts the one before, the pressed row holding its place; a list too
  * long for the rail opens beside its row instead; a knob whose control fits
- * its row acts there and never opens. A row that is one number at heart
- * scrubs where it stands. The keyboard walks rows and group heads, and Escape
+ * its row acts there and never opens. A knob that is one number at heart
+ * scrubs from its name. The keyboard walks rows and group heads, and Escape
  * backs out one level. One line at the foot says what letting go will write,
  * then where it was written.
  */
@@ -53,6 +62,8 @@ function Knobs({ frame, knobs, acts }: { frame: string; knobs: FrameKnobs; acts:
 	const anchor = useRef<{ id: string; top: number } | null>(null);
 	const lines = knobLines(frame, knobs.calls, folded);
 	const count = lines.filter((line) => line.kind === "knob").length;
+	/** the file the section's first knob is written in: the frame's own, when it has any */
+	const file = fileOf(frame, lines.find((line) => line.kind === "knob")?.at ?? "");
 
 	const rowOf = useCallback(
 		(id: string) =>
@@ -104,7 +115,7 @@ function Knobs({ frame, knobs, acts }: { frame: string; knobs: FrameKnobs; acts:
 
 	return (
 		<div ref={section} data-knobs-section="" className="contents">
-			<Section title="knobs" meta={fileOf(frame, knobs.calls[0]?.at ?? "")}>
+			<Section title="knobs" meta={file}>
 				{lines.map((line) =>
 					line.kind === "group" ? (
 						<GroupHead key={line.id} line={line} onFold={() => fold(line.id)} />
@@ -120,14 +131,8 @@ function Knobs({ frame, knobs, acts }: { frame: string; knobs: FrameKnobs; acts:
 						/>
 					),
 				)}
-				<Foot knobs={knobs} count={count} />
-				<div className="flex items-center gap-3 px-3 pb-2.5">
-					<Button variant="secondary" size="sm" className="flex-1" onClick={() => acts.onSaveVariant(frame)}>
-						Save as variant
-					</Button>
-					<span className="shrink-0 truncate text-tertiary type-detail">{acts.variantOf(frame)}</span>
-				</div>
 			</Section>
+			<Foot frame={frame} file={file} knobs={knobs} count={count} acts={acts} />
 		</div>
 	);
 }
@@ -217,10 +222,17 @@ function KnobRow({
 	const head = useRef<HTMLDivElement | null>(null);
 	const value = valueNow(spec, knobs.live.get(knob.at)?.[knob.path]);
 	const reach = reachOf(spec.type);
-	const tune = (next: KnobValue, phase: "live" | "commit" | "cancel") => lane.tune(frame, knob, next, phase);
-	/** what ←/→ held has stepped to, written when the key lets go */
-	const stepping = useRef<KnobValue | null>(null);
-	const [scrubbing, setScrubbing] = useState(false);
+	const tune = (next: KnobValue, phase: TunePhase) => lane.tune(frame, knob, next, phase);
+	// a knob that is one number at heart scrubs from its name and steps on ←/→, in the unit its row shows
+	const number = computed ? undefined : knobNumber(spec, value);
+	/** a scrub ends in a click on the row, which must not open it */
+	const scrubbed = useRef(false);
+	const tuneNumber = (n: number, phase: TunePhase) => {
+		if (phase === "live") scrubbed.current = true;
+		if (number !== undefined) tune(number.back(n), phase);
+	};
+	const scrub = useScrub(number?.n ?? 0, number?.rules ?? {}, tuneNumber);
+	const keys = useKeyTune(number?.n ?? 0, number?.rules ?? {}, tuneNumber);
 
 	const close = () => {
 		onOpen(false);
@@ -236,69 +248,6 @@ function KnobRow({
 		else onOpen(!open);
 	};
 
-	const press = (event: ReactPointerEvent<HTMLDivElement>) => {
-		if (event.button !== 0 || computed) return;
-		// a press on the row's own control is that control's
-		if ((event.target as HTMLElement).closest("input, button, label, textarea, [role=radiogroup]") !== null) return;
-		event.preventDefault();
-		head.current?.focus({ preventScroll: true });
-		const target = event.currentTarget;
-		const pointer = event.pointerId;
-		const from = value;
-		let carry = 0;
-		let units = 0;
-		let x = event.clientX;
-		let moved = false;
-		let done = false;
-		const end = () => {
-			done = true;
-			target.removeEventListener("pointermove", move);
-			target.removeEventListener("pointerup", up);
-			target.removeEventListener("pointercancel", cancel);
-			window.removeEventListener("keydown", key, true);
-			if (target.hasPointerCapture(pointer)) target.releasePointerCapture(pointer);
-			setScrubbing(false);
-		};
-		const move = (next: PointerEvent) => {
-			if (done || !scrubs(spec)) return;
-			// movement first, as the geometry's scrub reads it; a browser that reports none leaves the position
-			const step = scrubStep(carry, next.movementX || next.clientX - x, next.shiftKey);
-			x = next.clientX;
-			carry = step.carry;
-			if (step.units === 0) return;
-			units += step.units;
-			const to = nudged(spec, from, units);
-			if (to === undefined) return;
-			if (!moved) setScrubbing(true);
-			moved = true;
-			tune(to, "live");
-		};
-		const up = () => {
-			end();
-			if (!moved) act();
-			else {
-				const to = nudged(spec, from, units);
-				if (to !== undefined) tune(to, "commit");
-			}
-		};
-		const cancel = () => {
-			end();
-			if (moved && from !== undefined) tune(from, "cancel");
-		};
-		// Escape mid-scrub puts back the value from before it and writes nothing
-		const key = (next: KeyboardEvent) => {
-			if (next.key !== "Escape") return;
-			next.preventDefault();
-			next.stopPropagation();
-			cancel();
-		};
-		target.setPointerCapture(pointer);
-		target.addEventListener("pointermove", move);
-		target.addEventListener("pointerup", up);
-		target.addEventListener("pointercancel", cancel);
-		window.addEventListener("keydown", key, true);
-	};
-
 	const keyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
 		if (event.target !== event.currentTarget || walk(event)) return;
 		if (event.key === "Enter" || event.key === " ") {
@@ -311,33 +260,31 @@ function KnobRow({
 			event.stopPropagation();
 			close();
 		} else if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !computed) {
+			if (number !== undefined) {
+				keys.onKeyDown(event);
+				return;
+			}
 			event.preventDefault();
 			event.stopPropagation();
-			const units = (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 10 : 1);
-			const to = nudged(spec, stepping.current ?? value, units);
-			if (to === undefined) return;
-			// a number held is one gesture and one write; a choice or a switch is written at once
-			if (scrubs(spec)) {
-				stepping.current = to;
-				tune(to, "live");
-			} else tune(to, "commit");
-		}
-	};
-	const keyUp = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-		if ((event.key !== "ArrowLeft" && event.key !== "ArrowRight") || stepping.current === null) return;
-		tune(stepping.current, "commit");
-		stepping.current = null;
+			const to = nudged(spec, value, event.key === "ArrowRight" ? 1 : -1);
+			if (to !== undefined && to !== value) tune(to, "commit");
+		} else if (event.key === "Escape" && number !== undefined) keys.onKeyDown(event);
 	};
 
 	const refused = knobs.refused?.id === knob.id ? knobs.refused.refusal : null;
 	const washed = knobs.washed?.id === knob.id ? knobs.washed.n : 0;
 	const control = { spec, value: value as KnobValue, onTune: tune, label: knob.key, disabled: computed };
+	const inRow = reach === "row" && !computed;
 	return (
 		<div
 			ref={self}
 			data-knob-id={knob.id}
 			data-knob={knob.path}
-			className={cn("relative border-line-subtle border-b", open && reach === "opens" && "bg-surface-panel")}
+			className={cn(
+				// the pinned foot covers the rail's last rows: what scrolls into view clears it
+				"relative scroll-mb-24 border-line-subtle border-b transition-colors duration-fast",
+				open && reach === "opens" && "bg-surface-panel",
+			)}
 		>
 			{washed === 0 ? null : (
 				<span
@@ -354,21 +301,33 @@ function KnobRow({
 				tabIndex={0}
 				aria-expanded={reach === "row" ? undefined : open}
 				aria-label={knob.key}
-				onPointerDown={press}
+				onClick={(event) => {
+					if (scrubbed.current) {
+						scrubbed.current = false;
+						return;
+					}
+					// a press on the row's own control is that control's
+					if (inRow && (event.target as HTMLElement).closest("input, button, [role=radiogroup]") !== null) return;
+					act();
+				}}
 				onKeyDown={keyDown}
-				onKeyUp={keyUp}
-				style={{ paddingLeft: `calc(var(--spacing) * ${3 + knob.depth * 3})` }}
+				onKeyUp={number === undefined ? undefined : keys.onKeyUp}
+				onBlur={number === undefined ? undefined : keys.onBlur}
+				// a knob stands flush with the head of the group it is in
+				style={{ paddingLeft: `calc(var(--spacing) * ${3 + Math.max(0, knob.depth - 1) * 3})` }}
 				className={cn(
 					"group/knob relative grid h-row min-w-0 select-none grid-cols-[calc(var(--spacing)*22)_minmax(0,1fr)_12px] items-center gap-2 pr-3 outline-none transition-colors duration-fast focus-ring-inset",
-					computed ? "cursor-default" : scrubs(spec) && !open ? "cursor-ew-resize" : "cursor-pointer",
+					computed || inRow ? "cursor-default" : "cursor-pointer",
 					!open && "hover:bg-state-hover",
 				)}
 			>
 				<span className="flex min-w-0 items-center gap-1.5">
 					<span
+						onPointerDown={number === undefined ? undefined : scrub}
 						className={cn(
 							"truncate transition-colors duration-fast type-detail",
-							open || scrubbing ? "text-primary" : "text-secondary group-hover/knob:text-primary",
+							number !== undefined && "cursor-ew-resize touch-none",
+							open ? "text-primary" : "text-secondary group-hover/knob:text-primary",
 						)}
 					>
 						{knob.key}
@@ -383,7 +342,7 @@ function KnobRow({
 					)}
 				</span>
 				<span className="flex min-w-0 items-center">
-					{reach === "row" && !computed ? (
+					{inRow ? (
 						<KnobInRow {...control} onPress={() => lane.press(knob)} />
 					) : (
 						<KnobPreview spec={spec} value={value} />
@@ -397,7 +356,7 @@ function KnobRow({
 							className={cn(
 								"flex size-3 transition-[opacity,rotate] duration-fast [&>svg]:size-full",
 								open
-									? "rotate-90 opacity-100"
+									? "rotate-90 text-secondary opacity-100"
 									: "opacity-0 group-hover/knob:opacity-100 group-focus-visible/knob:opacity-100",
 							)}
 						>
@@ -406,10 +365,10 @@ function KnobRow({
 					)}
 				</span>
 			</div>
-			{computed && open ? null : open && reach === "opens" ? (
+			{open && reach === "opens" ? (
 				// biome-ignore lint/a11y/noStaticElementInteractions: Escape inside the editor backs out to its row
 				<div
-					className="flex flex-col gap-2 px-3 pt-1 pb-3"
+					className="flex flex-col gap-2.5 px-3 pt-1 pb-3.5"
 					onKeyDown={(event) => {
 						if (event.key !== "Escape" || event.defaultPrevented) return;
 						event.stopPropagation();
@@ -427,13 +386,8 @@ function KnobRow({
 				</div>
 			) : null}
 			{open && reach === "popover" && self.current !== null ? (
-				<Beside
-					row={self.current}
-					label={knob.key}
-					onClose={close}
-					onCancel={() => value !== undefined && tune(value, "cancel")}
-				>
-					<Choices {...control} />
+				<Beside row={self.current} from={value as KnobValue} onTune={tune} onClose={close}>
+					<KnobList {...control} />
 				</Beside>
 			) : null}
 			{refused === null ? null : (
@@ -445,74 +399,115 @@ function KnobRow({
 	);
 }
 
-/** the popover's width, a menu's */
-const BESIDE_WIDTH = 224;
+/** the gap between a row and the list open beside it */
+const BESIDE_GAP = 8;
 
-/** A list too long for the rail, open beside the row it belongs to, over the canvas. */
+/**
+ * A list too long for the rail, open beside the row it belongs to, over the
+ * canvas, its top on the row's. The list is its own float; this places it.
+ * Escape puts back what it tried on and shuts it.
+ */
 function Beside({
 	row,
-	label,
+	from,
+	onTune,
 	onClose,
-	onCancel,
 	children,
 }: {
 	row: HTMLElement;
-	label: string;
+	/** the value when it opened, which Escape puts back */
+	from: KnobValue;
+	onTune: (next: KnobValue, phase: TunePhase) => void;
 	onClose: () => void;
-	/** what was tried on goes back */
-	onCancel: () => void;
 	children: ReactNode;
 }) {
 	const panel = useRef<HTMLDivElement | null>(null);
 	const rowRef = useRef(row);
 	rowRef.current = row;
+	const [opened] = useState(from);
+	const [rect, setRect] = useState(() => row.getBoundingClientRect());
 	useCloseOnPressAway(true, onClose, panel, rowRef);
+	// the list rides with its row as the rail scrolls under it
+	useLayoutEffect(() => {
+		const follow = () => setRect(row.getBoundingClientRect());
+		follow();
+		window.addEventListener("scroll", follow, true);
+		window.addEventListener("resize", follow);
+		return () => {
+			window.removeEventListener("scroll", follow, true);
+			window.removeEventListener("resize", follow);
+		};
+	}, [row]);
 	// the keyboard comes along: the chosen option takes the focus as the list opens
 	useEffect(() => {
-		const options = [...(panel.current?.querySelectorAll<HTMLElement>("[role=option]") ?? [])];
-		(options.find((option) => option.getAttribute("aria-selected") === "true") ?? options[0])?.focus();
+		const options = [...(panel.current?.querySelectorAll<HTMLElement>("[role=option], button[aria-pressed]") ?? [])];
+		(options.find((option) => option.matches("[aria-selected=true], [aria-pressed=true]")) ?? options[0])?.focus({
+			preventScroll: true,
+		});
 	}, []);
-	const rect = row.getBoundingClientRect();
 	return (
-		<Popover
+		// biome-ignore lint/a11y/noStaticElementInteractions: the keys walk the list inside and Escape shuts it
+		<div
 			ref={panel}
-			pad="sm"
-			aria-label={label}
 			style={{
-				left: Math.max(8, rect.left - BESIDE_WIDTH - 8),
-				top: Math.max(8, Math.min(rect.top, innerHeight - 320)),
-				width: BESIDE_WIDTH,
+				right: innerWidth - rect.left + BESIDE_GAP,
+				top: Math.max(BESIDE_GAP, Math.min(rect.top, innerHeight - 340)),
 			}}
-			className="fixed z-50 max-h-80 overflow-y-auto"
+			className="fixed z-50"
 			onKeyDown={(event) => {
 				event.stopPropagation();
 				if (event.key === "Escape") {
 					event.preventDefault();
-					onCancel();
+					onTune(opened, "cancel");
 					onClose();
 				} else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 					event.preventDefault();
-					const options = [...event.currentTarget.querySelectorAll<HTMLElement>("[role=option]")];
+					const options = [
+						...event.currentTarget.querySelectorAll<HTMLElement>("[role=option], button[aria-pressed]"),
+					];
 					const at = options.indexOf(document.activeElement as HTMLElement);
 					options[Math.min(options.length - 1, Math.max(0, at + (event.key === "ArrowDown" ? 1 : -1)))]?.focus();
 				}
 			}}
 		>
 			{children}
-		</Popover>
+		</div>
 	);
 }
 
 /* ---------- the foot ---------- */
 
-function Foot({ knobs, count }: { knobs: FrameKnobs; count: number }) {
+/** What letting go will write, then where it was written; pinned to the rail's foot while the section shows. */
+function Foot({
+	frame,
+	file,
+	knobs,
+	count,
+	acts,
+}: {
+	frame: string;
+	file: string;
+	knobs: FrameKnobs;
+	count: number;
+	acts: KnobsActs;
+}) {
 	const words = knobs.status === null ? null : statusWords(knobs.status);
 	return (
-		<StatusLine role="status" aria-live="polite" data-knobs-status="" className="px-3">
-			<span className={cn("min-w-0 truncate", words === null ? "text-tertiary" : "text-primary")}>
-				{words?.says ?? `${count} knobs`}
-			</span>
-			{words === null || words.aside === "" ? null : <span className="shrink-0 text-tertiary">{words.aside}</span>}
-		</StatusLine>
+		<div className="sticky bottom-0 z-10 border-line-default border-t bg-surface-window">
+			<StatusLine role="status" aria-live="polite" data-knobs-status="" className="border-t-0 px-3">
+				<span className={cn("min-w-0 truncate", words === null ? "text-tertiary" : "text-primary")}>
+					{words?.says ?? `${file} · ${count} knobs`}
+				</span>
+				{words === null || words.aside === "" ? null : (
+					<span className="shrink-0 text-tertiary">{words.aside}</span>
+				)}
+			</StatusLine>
+			<div className="flex items-center gap-3 px-3 pb-2.5">
+				<Button variant="secondary" size="md" className="flex-1" onClick={() => acts.onSaveVariant(frame)}>
+					Save as variant
+				</Button>
+				<span className="shrink-0 truncate text-tertiary type-detail">{acts.variantOf(frame)}</span>
+			</div>
+		</div>
 	);
 }
