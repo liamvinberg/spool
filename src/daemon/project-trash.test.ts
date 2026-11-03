@@ -15,6 +15,7 @@ const post = (body: unknown): RequestInit => ({
 	headers: { "content-type": "application/json" },
 	body: JSON.stringify(body),
 });
+const put = (body: unknown): RequestInit => ({ ...post(body), method: "PUT" });
 
 it("moves the whole folder before forgetting it, closes its tab and tells other windows", async () => {
 	const spoolDir = join(makeTempDir(), ".spool");
@@ -44,7 +45,7 @@ it("moves the whole folder before forgetting it, closes its tab and tells other 
 	expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
 });
 
-it("trashes a closed project as abandoned only while it is untitled with no frames", async () => {
+it("trashes a project as abandoned only while it is closed, untitled and with no frames", async () => {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const untitled = (n: string) => {
 		const dir = join(makeTempDir(), n);
@@ -57,8 +58,10 @@ it("trashes a closed project as abandoned only while it is untitled with no fram
 	const empty = untitled("untitled");
 	const moveToTrash = vi.fn(async () => {});
 	const app = makeApp(spoolDir, { moveToTrash });
-	for (const root of [named, drawn])
+	// its tab open again, as ⌘⇧T or another window opens it while the Undo toast still stands, keeps it
+	for (const root of [named, drawn, empty])
 		expect((await app.request("/api/projects/trash", post({ root, abandoned: true }))).status).toBe(409);
+	await app.request("/api/session", put({ root: empty, open: false }));
 	expect((await app.request("/api/projects/trash", post({ root: empty, abandoned: true }))).status).toBe(204);
 	expect(moveToTrash).toHaveBeenCalledExactlyOnceWith([empty]);
 });

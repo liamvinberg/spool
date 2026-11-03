@@ -14,25 +14,29 @@ interface Abandoned {
 /**
  * New makes a project without asking, so one closed untitled and empty goes to the Trash by itself (spool#51).
  * Closing its tab hides it from Home and stands a toast with Undo, which opens it again; once the toast drains
- * the daemon trashes it, if it still is untitled with no frames. One with a turn running stays. A team copy stays, being the team's.
+ * the daemon trashes it, if it still is closed, untitled and without frames. Opened again any other way meanwhile
+ * (⌘⇧T, say), it is kept just as Undo keeps it. One with a turn running stays. A team copy stays, being the team's.
  */
 export function useAbandonUntitled({
 	hide,
 	show,
-	onUndo,
+	reopen,
 	onGone,
 }: {
 	/** Home leaves the project out while its toast stands */
 	hide: (root: string) => void;
-	/** it stays after all: undone, used, or the trash refused */
+	/** it stays after all: kept, used, or the trash refused */
 	show: (root: string) => void;
-	onUndo: (project: TabProject) => void;
+	/** Undo: the tab opens again, which keeps the project */
+	reopen: (project: TabProject) => void;
 	onGone: (root: string) => void;
-}): { closed: (project: TabProject) => void; toast: ReactNode } {
+}): { closed: (project: TabProject) => void; keep: (root: string) => void; toast: ReactNode } {
 	const [standing, setStanding] = useState<Abandoned | null>(null);
-	const latest = useRef({ hide, show, onUndo, onGone });
-	latest.current = { hide, show, onUndo, onGone };
+	const latest = useRef({ hide, show, reopen, onGone });
+	latest.current = { hide, show, reopen, onGone };
 	const standingRef = useRef<Abandoned | null>(null);
+	/** closed and on the way to a toast, until it stands or the project is kept */
+	const pending = useRef(new Set<string>());
 	const stand = useCallback((next: Abandoned | null) => {
 		standingRef.current = next;
 		setStanding(next);
@@ -52,9 +56,12 @@ export function useAbandonUntitled({
 	const closed = useCallback(
 		(project: TabProject) => {
 			if (!isUntitled(project.name) || project.teamAddress !== undefined) return;
+			pending.current.add(project.root);
 			latest.current.hide(project.root);
 			void Promise.all([fetchProjection(project.name), fetchAgentThreads(project.name)]).then(
 				([projection, threads]) => {
+					// opened again while this was asked: it is kept already
+					if (!pending.current.delete(project.root)) return;
 					const working = threads.some(
 						(thread) => thread.live && (thread.life === "running" || thread.life === "waiting"),
 					);
@@ -75,25 +82,30 @@ export function useAbandonUntitled({
 		[stand, trash],
 	);
 
-	const undo = useCallback(() => {
-		const was = standingRef.current;
-		if (was === null) return;
-		clearTimeout(was.timer);
-		stand(null);
-		latest.current.show(was.project.root);
-		latest.current.onUndo(was.project);
-	}, [stand]);
+	const keep = useCallback(
+		(root: string) => {
+			const was = standingRef.current;
+			const held = pending.current.delete(root);
+			if (was?.project.root === root) {
+				clearTimeout(was.timer);
+				stand(null);
+			} else if (!held) return;
+			latest.current.show(root);
+		},
+		[stand],
+	);
 
 	// a page that goes while a toast stands leaves its project where it is
 	useEffect(() => () => clearTimeout(standingRef.current?.timer), []);
 
 	return {
 		closed,
+		keep,
 		toast: standing !== null && (
 			<div key={standing.project.root} className="-translate-x-1/2 fixed bottom-6 left-1/2 z-20">
 				<Toast
 					message={`Moved ${standing.project.name} to Trash`}
-					action={<TextAction onClick={undo}>Undo</TextAction>}
+					action={<TextAction onClick={() => latest.current.reopen(standing.project)}>Undo</TextAction>}
 					drain={UNDO_MS}
 				/>
 			</div>

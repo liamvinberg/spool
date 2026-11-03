@@ -37,7 +37,7 @@ import {
 } from "./project-thumbnail";
 import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
 import { describeMissingFrame, discoverFrames, frameExists, type ProjectCard, summarizeProject } from "./projection";
-import type { AppEvent, watchMachineState } from "./session";
+import { type AppEvent, readSession, type watchMachineState } from "./session";
 import type { createSettingsStore } from "./settings";
 import { type createTeamSync, endedWith, followedLink, goneLocalWith, movedOutOf } from "./team-sync";
 
@@ -296,8 +296,8 @@ export function homeRoutes(deps: {
 					const roots = registeredRoots();
 					if (!roots.includes(root)) return c.json({ error: "This project is no longer registered." }, 404);
 					// a closed project nobody named or drew in goes by itself, and only while it still is one (spool#51)
-					if (abandoned === true && !isAbandoned(root)) {
-						return c.json({ error: "This project has been named or has frames, so it stays." }, 409);
+					if (abandoned === true && !isAbandoned(spoolDir, root)) {
+						return c.json({ error: "This project is open, named or has frames, so it stays." }, 409);
 					}
 					if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
 					if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
@@ -509,7 +509,15 @@ export function homeRoutes(deps: {
 	);
 }
 
-/** Still an untitled project on this Mac only, with no frames: what New made and nobody used. */
-function isAbandoned(root: string): boolean {
-	return isUntitled(basename(root)) && followedLink(root) === undefined && (discoverFrames(root)?.length ?? 0) === 0;
+/**
+ * Still an untitled project on this Mac only, with no frames, and closed: what New made and nobody used. A tab open
+ * on it again, in any window, is someone using it after all.
+ */
+function isAbandoned(spoolDir: string, root: string): boolean {
+	return (
+		isUntitled(basename(root)) &&
+		followedLink(root) === undefined &&
+		(discoverFrames(root)?.length ?? 0) === 0 &&
+		!readSession(spoolDir).open.includes(root)
+	);
 }

@@ -482,6 +482,18 @@ export function App() {
 		window.history.replaceState(null, "", path);
 	}, []);
 
+	/** An untitled project closed empty, on its way to the Trash behind an Undo; opening it again keeps it. */
+	const abandon = useAbandonUntitled({
+		hide: (root) => setForgetting((roots) => new Set([...roots, root])),
+		show: (root) => setForgetting((roots) => new Set([...roots].filter((held) => held !== root))),
+		reopen: (project) => openTab(project),
+		onGone: (root) => {
+			projectRevision.current += 1;
+			setProjects((cards) => cards.filter((card) => card.root !== root));
+		},
+	});
+	const { closed: abandonClosed, keep: keepAbandoned } = abandon;
+
 	/**
 	 * Open-or-focus (#4 focus-not-duplicate). Local state moves first, the PUT
 	 * follows, and the session SSE event is the convergence path — no eager
@@ -489,8 +501,9 @@ export function App() {
 	 */
 	const openTab = useCallback(
 		(project: TabProject, focus = true) => {
-			// a project forgotten earlier and opened again is kept like any other
+			// a project forgotten earlier and opened again is kept like any other, as is one closed on its way to the Trash
 			keep(project.root);
+			keepAbandoned(project.root);
 			if (!openRef.current.includes(project.root)) {
 				const next = [...openRef.current, project.root];
 				setOpen(next);
@@ -498,7 +511,7 @@ export function App() {
 			}
 			if (focus) focusProject(project.root);
 		},
-		[focusProject],
+		[focusProject, keepAbandoned],
 	);
 	// Open…, a drop on the window and a paste on Home: whatever it was, one rule opens it
 	const opener = useOpen({
@@ -519,17 +532,6 @@ export function App() {
 		openTab(project);
 	});
 	const startNew = newProject.start;
-	/** An untitled project closed empty, on its way to the Trash behind an Undo. */
-	const abandon = useAbandonUntitled({
-		hide: (root) => setForgetting((roots) => new Set([...roots, root])),
-		show: (root) => setForgetting((roots) => new Set([...roots].filter((held) => held !== root))),
-		onUndo: (project) => openTab(project),
-		onGone: (root) => {
-			projectRevision.current += 1;
-			setProjects((cards) => cards.filter((card) => card.root !== root));
-		},
-	});
-	const abandonClosed = abandon.closed;
 
 	// back and forward: to a tab's address, that tab; to one of Home's places, Home, which goes there itself
 	useEffect(() => {
@@ -585,13 +587,14 @@ export function App() {
 		const { tab, rest } = popClosed(closedTabs.current, (root) => !loaded || cards.has(root));
 		closedTabs.current = rest;
 		if (tab === undefined) return;
+		keepAbandoned(tab.root);
 		if (!openRef.current.includes(tab.root)) {
 			const next = reopenedOrder(openRef.current, tab);
 			setOpen(next);
 			putReopenedTab(tab.root, next);
 		}
 		focusProject(tab.root);
-	}, [focusProject]);
+	}, [focusProject, keepAbandoned]);
 
 	/**
 	 * ⌘W: what is on top first, then the focused tab, and on Home the window.
