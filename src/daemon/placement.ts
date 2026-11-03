@@ -19,7 +19,8 @@ import type { Footprint } from "./sidecar";
  */
 export const DEFAULT_W = 1440;
 export const DEFAULT_H = 900;
-const GUTTER = 80;
+/** The space left between two things on a field. */
+export const GUTTER = 80;
 
 export const DEFAULT_FOOTPRINT: Footprint = { w: DEFAULT_W, h: DEFAULT_H };
 

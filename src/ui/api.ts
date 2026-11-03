@@ -798,10 +798,22 @@ export async function movePages(project: string, pages: string[], page: string):
 	}
 }
 
-/** No page asked for leaves each copy where its original lives. */
-export async function duplicateFrames(project: string, frames: string[], page?: string): Promise<ExplorerCopies> {
+/**
+ * No page asked for leaves each copy where its original lives. A variant
+ * (#220) is named `<name>--b`, the next letter free, and already stands beside
+ * its original, so the canvas places nothing.
+ */
+export async function duplicateFrames(
+	project: string,
+	frames: string[],
+	page?: string,
+	variant?: true,
+): Promise<ExplorerCopies> {
 	try {
-		const res = await client.api.p[":project"].frames.duplicate.$post({ param: { project }, json: { frames, page } });
+		const res = await client.api.p[":project"].frames.duplicate.$post({
+			param: { project },
+			json: { frames, page, ...(variant === undefined ? {} : { variant }) },
+		});
 		if (!res.ok) return await refusalOf(res);
 		return { kind: "done", copies: ((await res.json()) as { frames: FrameCopy[] }).frames };
 	} catch {

@@ -471,6 +471,32 @@ describe("duplicating frames", () => {
 		expect(readFileSync(designFile(root, "frames", "checkout-copy", "frame.tsx"), "utf8")).toBe(checkout);
 	});
 
+	it("names a variant with the next letter free and stands it beside its original, past what is there", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		writeFrame(root, "card", label("card"));
+		writeDesignFile(root, "frames/card/frame.json", '{ "x": 40, "y": 60, "w": 390, "h": 844 }\n');
+		writeFrame(root, "card--b", label("an earlier variant"));
+		writeDesignFile(root, "frames/card--b/frame.json", '{ "x": 510, "y": 60, "w": 390, "h": 844 }\n');
+		const app = makeApp(spoolDir);
+		const variant = async (frame: string) =>
+			(await (
+				await app.request(`/api/p/${name}/frames/duplicate`, jsonPost({ frames: [frame], variant: true }))
+			).json()) as unknown;
+
+		expect(await variant("card")).toEqual({ frames: [{ from: "card", to: "card--c" }] });
+		expect(readJson(designFile(root, "frames", "card--c", "frame.json"))).toEqual({ x: 980, y: 60, w: 390, h: 844 });
+		// a variant of a variant is the next of the original's letters
+		expect(await variant("card--b")).toEqual({ frames: [{ from: "card--b", to: "card--d" }] });
+		expect(
+			(
+				await app.request(
+					`/api/p/${name}/frames/duplicate`,
+					jsonPost({ frames: ["card"], variant: true, page: "shop" }),
+				)
+			).status,
+		).toBe(400);
+	});
+
 	it("resolves every source before the first copy", async () => {
 		const { spoolDir, root, name } = explorerProject();
 		writeFrame(root, "home", label("home"));

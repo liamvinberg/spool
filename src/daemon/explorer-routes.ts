@@ -139,20 +139,28 @@ export function explorerRoutes(deps: {
 			validator("json", (value, c) => {
 				const body = bodyFields(value);
 				const frames = nameList(body.frames);
-				const { page } = body;
-				if (frames === undefined || (page !== undefined && typeof page !== "string")) {
-					return c.text('a duplicate is { "frames": [name, ...], "page"?: "…" }', 400);
+				const { page, variant } = body;
+				if (
+					frames === undefined ||
+					(page !== undefined && typeof page !== "string") ||
+					(variant !== undefined && variant !== true) ||
+					(variant === true && page !== undefined)
+				) {
+					return c.text(
+						'a duplicate is { "frames": [name, ...], "page"?: "…" } or { "frames", "variant": true }',
+						400,
+					);
 				}
-				return { frames, page };
+				return { frames, page, ...(variant === true ? { variant } : {}) };
 			}),
 			(c) =>
 				withProject(c, deps.resolve, (root) => {
-					const { frames, page } = c.req.valid("json");
+					const { frames, page, variant } = c.req.valid("json");
 					// the minted names come straight back: only this side knows them, and
 					// the rail has copies to select the moment it hears they exist
 					return explorerVerb(
 						c,
-						() => duplicateFrames(root, frames, page),
+						() => duplicateFrames(root, frames, page, variant === true),
 						(done) => c.json({ frames: done.copies }),
 					);
 				}),
