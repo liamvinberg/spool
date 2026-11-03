@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { SpoolError } from "../errors";
-import { kebabName, nameFirst } from "./agent-naming";
+import { fixtureAgentExecutor } from "../test-helpers";
+import { askOnce, kebabName, nameFirst } from "./agent-naming";
 
 describe("a reply as a project name", () => {
 	it("keeps one to three words, lowercase and hyphenated, from the reply's last line", () => {
@@ -11,6 +12,19 @@ describe("a reply as a project name", () => {
 		expect(kebabName("")).toBeNull();
 		expect(kebabName("!!!")).toBeNull();
 		expect(kebabName("untitled-2")).toBeNull();
+	});
+});
+
+describe("asking the agent", () => {
+	it("hears a reply only from a clean exit: a signed-out agent says so on stdout", async () => {
+		const answering = (code: number, line: string) =>
+			fixtureAgentExecutor(undefined, (proc) => {
+				proc.emit(line);
+				proc.exit(code);
+			}).executor;
+		const spawn = { command: "claude", args: ["-p"], cwd: "/w", env: {} };
+		expect(await askOnce(answering(0, "tide-planner"), spawn)).toBe("tide-planner");
+		expect(await askOnce(answering(1, "Not logged in"), spawn)).toBeNull();
 	});
 });
 

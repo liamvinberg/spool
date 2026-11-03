@@ -37,8 +37,8 @@ export function kebabName(reply: string): string | null {
 }
 
 /**
- * One plain-text question to an agent's binary: everything it printed, or null when it could not be asked. A
- * binary that fails prints its reason on stderr, which this never reads, so a failure is an empty reply.
+ * One plain-text question to an agent's binary: everything it printed, or null when it could not be asked or
+ * failed. A failure can print on stdout too (a signed-out claude says so there), so only a clean exit answers.
  */
 export async function askOnce(
 	executor: AgentExecutor,
@@ -52,16 +52,22 @@ export async function askOnce(
 		return null;
 	}
 	const said: string[] = [];
+	let code: number | null | undefined;
 	await probeAgent(
 		proc,
 		NAMING_TIMEOUT_MS,
-		() => {
+		(finish) => {
 			proc.onLine((line) => said.push(line));
+			// the exit is heard here rather than by the probe, for its code: the first one, not the kill after it
+			proc.onExit((exit) => {
+				code ??= exit;
+				finish();
+			});
 			proc.end();
 		},
 		signal,
 	);
-	return said.join("\n");
+	return code === 0 ? said.join("\n") : null;
 }
 
 /**
