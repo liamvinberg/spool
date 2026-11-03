@@ -862,7 +862,7 @@ describe("the folder picker", () => {
 		expect(await res.json()).toEqual({ root, name });
 	});
 
-	it("offers init when the walk-up finds nothing, and init scaffolds through the one code path", async () => {
+	it("finds nothing to open when the walk-up finds nothing, and init scaffolds through the one code path", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const bare = makeTempDir();
 		const app = makeApp(spoolDir);
@@ -873,7 +873,6 @@ describe("the folder picker", () => {
 			body: JSON.stringify({ path: bare }),
 		});
 		expect(miss.status).toBe(404);
-		expect(((await miss.json()) as { offerInit: boolean }).offerInit).toBe(true);
 
 		const init = await app.request("/api/projects/init", {
 			method: "POST",
@@ -892,31 +891,6 @@ describe("the folder picker", () => {
 			body: JSON.stringify({ path: bare }),
 		});
 		expect(twice.status).toBe(409);
-	});
-
-	it("creates a folder and scaffolds it through the one code path, and refuses a name that is a path", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const parent = makeTempDir();
-		const app = makeApp(spoolDir);
-		const post = (body: unknown) =>
-			app.request("/api/projects/create", {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(body),
-			});
-
-		const made = await post({ path: parent, name: "tvarso" });
-		expect(made.status).toBe(200);
-		expect(await made.json()).toEqual({ root: join(realpathSync(parent), "tvarso"), name: "tvarso" });
-		expect(existsSync(join(parent, "tvarso", "design", "canvas.json"))).toBe(true);
-
-		// the folder is there now, and the picker's next Enter must not silently reuse it
-		expect((await post({ path: parent, name: "tvarso" })).status).toBe(409);
-		// a name is one segment: the picker is where you choose where
-		expect((await post({ path: parent, name: "a/b" })).status).toBe(409);
-		expect((await post({ path: parent, name: ".." })).status).toBe(409);
-		expect(existsSync(join(parent, "a"))).toBe(false);
-		expect((await post({ path: parent })).status).toBe(400);
 	});
 });
 
@@ -1215,29 +1189,6 @@ describe("what an open canvas shows, for the photo booth's order", () => {
 });
 
 describe("start designing", () => {
-	it("creates named or unnamed projects at an explicit location without changing the default", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const parent = join(makeTempDir(), "new-location");
-		const defaultParent = makeTempDir();
-		const store = createSettingsStore(spoolDir);
-		store.write("projects.location", defaultParent);
-		const app = makeApp(spoolDir);
-		const create = (name: string) =>
-			app.request("/api/projects/create", {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ path: parent, name }),
-			});
-		expect(existsSync(parent)).toBe(false);
-		expect(await (await create(" coffee ")).json()).toMatchObject({ name: "coffee" });
-		const anonymous = await Promise.all([create(""), create("   ")]);
-		expect(
-			await Promise.all(anonymous.map(async (response) => ((await response.json()) as { name: string }).name)),
-		).toEqual(["untitled", "untitled-2"]);
-		expect(existsSync(join(parent, "coffee", "design", "canvas.json"))).toBe(true);
-		expect(store.read().entries.find((entry) => entry.key === "projects.location")?.value).toBe(defaultParent);
-	});
-
 	it("creates lazily, preserves existing folders, and allocates distinct projects for simultaneous requests", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const parent = join(makeTempDir(), "projects");

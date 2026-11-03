@@ -289,3 +289,12 @@ describe("a team export from this Mac", () => {
 		expect(readdirSync(into)).toEqual([]);
 	});
 });
+
+it("makes a team's new project only under an address shaped like a team's, as it becomes a folder", async () => {
+	const { api, asked } = harness({ token: TOKEN });
+	expect(await api(`/teams/${encodeURIComponent("../escape")}/projects`, "POST")).toEqual({
+		status: 400,
+		body: { error: "No team has this address." },
+	});
+	expect(asked).toEqual([]);
+});

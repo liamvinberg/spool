@@ -171,6 +171,7 @@ export function AgentRail({
 	request,
 	model,
 	preferred,
+	naming,
 }: {
 	/** the pane's settled width (`pane-window.tsx`), which the composer measures its chip strip against */
 	width: number;
@@ -200,6 +201,8 @@ export function AgentRail({
 	model: AgentModelDeck;
 	/** the machine's usual agent: what a chat's row and the model trigger leave unsaid (#364) */
 	preferred?: AgentEngineId | null | undefined;
+	/** the thread whose first turn waits while the daemon names the new project from its ask (spool#51) */
+	naming?: string | undefined;
 }) {
 	const {
 		entries,
@@ -408,7 +411,11 @@ export function AgentRail({
 							<Transcript
 								entries={entries}
 								afterLog={
-									legacy ? (
+									naming === threads.open ? (
+										<p data-agent-naming="" className="flex items-center gap-2 text-secondary type-body">
+											Naming the project <SpinRing className="size-3.5" />
+										</p>
+									) : legacy ? (
 										<p data-agent-legacy="" className="text-secondary type-detail">
 											This chat ran on spool’s built-in agent, which is gone. It can’t be continued; what you
 											send starts a new chat.

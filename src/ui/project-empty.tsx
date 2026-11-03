@@ -1,33 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { isUntitled } from "../untitled";
 import { ArrowRightIcon, RibbonMark } from "./icons";
 import { Button } from "./primitives/actions";
 import { EmptyState } from "./primitives/feedback";
+import { type MarkTeam, TeamMark } from "./teams";
 
 /** The empty project's name belongs to its folder; only a successful rename changes it. */
 export function ProjectEmpty({
 	project,
 	root,
 	onRename,
-	onFolder,
 	onUseAgent,
-	focusName = false,
-	onNameFocused,
+	team,
 }: {
 	project: string;
-	focusName?: boolean | undefined;
-	onNameFocused?: (() => void) | undefined;
+	/** A team project's local copy: the name row says its team. */
+	team?: MarkTeam | undefined;
 	root?: string | undefined;
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
-	onFolder?: (() => void) | undefined;
 	onUseAgent?: (() => void) | undefined;
 }) {
 	const inputRef = useRef<HTMLInputElement>(null);
-	useEffect(() => {
-		if (!focusName) return;
-		inputRef.current?.focus();
-		inputRef.current?.select();
-		onNameFocused?.();
-	}, [focusName, onNameFocused]);
 	const [draft, setDraft] = useState(project);
 	const [renaming, setRenaming] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -148,23 +141,26 @@ export function ProjectEmpty({
 						}
 					}}
 				/>
-				<span>{renaming ? "renaming…" : "saved on this mac"}</span>
+				{team === undefined ? null : (
+					<div className="flex items-center gap-1.5 type-label">
+						<TeamMark team={team} size={14} /> <span className="text-primary">{team.name}</span>
+					</div>
+				)}
+				<span>
+					{renaming
+						? "renaming…"
+						: team !== undefined
+							? "synced with spool.page"
+							: isUntitled(project)
+								? "goes to the Trash if closed with no frames"
+								: "saved on this mac"}
+				</span>
 				{notice && (
 					<p id="project-rename-notice" role="alert">
 						{notice}
 					</p>
 				)}
 			</div>
-			{onFolder && (
-				<button
-					type="button"
-					className="project-empty-folder -translate-x-1/2 pointer-events-auto absolute bottom-[91px] left-1/2 rounded-xs text-secondary focus-ring type-label hover:text-primary"
-					onPointerDown={(event) => event.stopPropagation()}
-					onClick={onFolder}
-				>
-					Open an existing project folder
-				</button>
-			)}
 		</div>
 	);
 }

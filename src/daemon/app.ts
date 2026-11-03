@@ -34,6 +34,7 @@ import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { createPlaceholderLedger } from "./agent-frames";
 import { createAgentTurns } from "./agent-live";
 import { createAgentModelPreferences } from "./agent-model-preferences";
+import type { Namings } from "./agent-naming";
 import type { Look } from "./agent-preflight";
 import { createAgentPresence } from "./agent-presence";
 import { agentRoutes } from "./agent-routes";
@@ -75,6 +76,7 @@ import { machineRoutes } from "./machine-routes";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
 import { movedAwayRoots } from "./moved-away";
 import { watchForMoves } from "./moved-in";
+import { openRoutes } from "./open-routes";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
@@ -89,6 +91,7 @@ import {
 	listProjectFramesAwaited,
 	readFrameGeometry,
 } from "./projection";
+import { createRenamer } from "./renamer";
 import { createResolvePass } from "./resolve-pass";
 import {
 	CAPTURE_HOST,
@@ -193,7 +196,7 @@ export interface DaemonOptions {
 	/** History's idle window (#157) — driven by tests instead of by the clock. */
 	historyClock?: HistoryClock;
 	/**
-	 * The home the picker's search walks (#251), and Get it's scan of the code folders (spool#193) — swapped by seam
+	 * The home the folder chooser's search walks (#251), and Get it's scan of the code folders (spool#193) — swapped by seam
 	 * tests, so a walk reads a fixture home rather than whatever is on the machine running them.
 	 */
 	home?: string | undefined;
@@ -522,7 +525,10 @@ export function createDaemonApp({
 	});
 	// #281: every setting, behind one read and one write over the three files
 	const settings = createSettingsStore(spoolDir);
-	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
+	/** Where new projects go: the default project location. */
+	const projectsLocation = () =>
+		String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool");
+	/** The home the folder chooser's search indexes, and the registry that marks its projects (#251/#277). */
 	const fsIndex = { home: home ?? homedir(), spoolDir };
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
 
@@ -885,6 +891,8 @@ export function createDaemonApp({
 	// the agent, model, effort and mode a new thread starts on, one choice per machine (#361)
 	const agentDefaults = createAgentDefaults(spoolDir, () => engines.values());
 	const projectRenames = new Set<string>();
+	/** Projects whose first turn waits on the agent's name for them (spool#51). */
+	const namings: Namings = new Map();
 
 	/**
 	 * Every turn this daemon is holding, by the conversation it belongs to (#211).
@@ -898,6 +906,17 @@ export function createDaemonApp({
 	 */
 	const liveTurns = createAgentTurns();
 	const modelPreferences = createAgentModelPreferences(spoolDir, agentDefaults);
+	const renameProject = createRenamer({
+		spoolDir,
+		projectRenames,
+		trashingProjects,
+		namings,
+		liveTurns,
+		hub,
+		selections,
+		machineStateWatch,
+		emitAppEvent,
+	});
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -1220,13 +1239,14 @@ export function createDaemonApp({
 			homeRoutes({
 				resolve: resolveProject,
 				spoolDir,
-				settings,
+				location: projectsLocation,
 				fsIndex,
 				projectRenames,
 				trashingProjects,
+				namings,
 				liveTurns,
 				hub,
-				selections,
+				rename: renameProject,
 				machineStateWatch,
 				emitAppEvent,
 				registeredRoots,
@@ -1355,6 +1375,9 @@ export function createDaemonApp({
 				agentPresence,
 				agentAppLauncher,
 				emitAppEvent,
+				rename: renameProject,
+				namings,
+				registeredRoots,
 				account: () => account(spoolDir, { ...cloud, origin: originOf(cloud) }),
 				commentsForPrompt: (root, ids) =>
 					commentsForPrompt(ids, {
@@ -1806,6 +1829,7 @@ export function createDaemonApp({
 		cloudTeamRoutes({
 			spoolDir,
 			cloud,
+			location: projectsLocation,
 			// a team paid for again, as an admin who just paid from this Mac sees it: its copies here follow it now
 			onTeams: (teams) => {
 				for (const team of teams) if (team.billing?.state !== "lapsed") teamSync.recheck(team.address);
@@ -1818,8 +1842,7 @@ export function createDaemonApp({
 			spoolDir,
 			home: fsIndex.home,
 			cloud,
-			location: () =>
-				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
+			location: projectsLocation,
 			notice: teamNotice,
 			signal: moving.signal,
 			hooks: {
@@ -1838,6 +1861,15 @@ export function createDaemonApp({
 				trash: trashImpl,
 			},
 			changed: () => emitAppEvent({ kind: "registry" }),
+		}),
+	);
+	app.route(
+		"/api/projects",
+		openRoutes({
+			spoolDir,
+			home: fsIndex.home,
+			cloud,
+			location: projectsLocation,
 		}),
 	);
 	app.route("/api/p", projectShares.routes);
@@ -2281,7 +2313,7 @@ export function createDaemonApp({
 		startUpdateCheck: () => {
 			if (updateCheck === true) updateChecker.start();
 		},
-		/** Walk home for the picker's search now, so the first keystroke ever finds an index standing (#277). */
+		/** Walk home for the folder chooser's search now, so the first keystroke ever finds an index standing (#277). */
 		warmFsIndex: () => {
 			void refreshIndex(fsIndex);
 		},

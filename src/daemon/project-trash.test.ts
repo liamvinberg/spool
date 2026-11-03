@@ -5,7 +5,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
 import * as registry from "../registry";
 import { readRegistry } from "../registry";
-import { fixtureAgentExecutor, makeApp, makeProject, makeTempDir, sseReader, until } from "../test-helpers";
+import { fixtureAgentExecutor, makeApp, makeProject, makeTempDir, sseReader, until, writeFrame } from "../test-helpers";
 import { readSession } from "./session";
 
 vi.mock("trash", () => ({ default: vi.fn() }));
@@ -15,6 +15,7 @@ const post = (body: unknown): RequestInit => ({
 	headers: { "content-type": "application/json" },
 	body: JSON.stringify(body),
 });
+const put = (body: unknown): RequestInit => ({ ...post(body), method: "PUT" });
 
 it("moves the whole folder before forgetting it, closes its tab and tells other windows", async () => {
 	const spoolDir = join(makeTempDir(), ".spool");
@@ -42,6 +43,27 @@ it("moves the whole folder before forgetting it, closes its tab and tells other 
 	expect(readSession(spoolDir).open).toEqual([kept.root]);
 	expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
 	expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+});
+
+it("trashes a project as abandoned only while it is closed, untitled and with no frames", async () => {
+	const spoolDir = join(makeTempDir(), ".spool");
+	const untitled = (n: string) => {
+		const dir = join(makeTempDir(), n);
+		mkdirSync(dir);
+		return initProject(dir, spoolDir).root;
+	};
+	const named = makeProject(spoolDir).root;
+	const drawn = untitled("untitled-2");
+	writeFrame(drawn, "home", "export default () => <h1>Home</h1>");
+	const empty = untitled("untitled");
+	const moveToTrash = vi.fn(async () => {});
+	const app = makeApp(spoolDir, { moveToTrash });
+	// its tab open again, as ⌘⇧T or another window opens it while the Undo toast still stands, keeps it
+	for (const root of [named, drawn, empty])
+		expect((await app.request("/api/projects/trash", post({ root, abandoned: true }))).status).toBe(409);
+	await app.request("/api/session", put({ root: empty, open: false }));
+	expect((await app.request("/api/projects/trash", post({ root: empty, abandoned: true }))).status).toBe(204);
+	expect(moveToTrash).toHaveBeenCalledExactlyOnceWith([empty]);
 });
 
 it("keeps a failed move registered and open, then permits a retry", async () => {

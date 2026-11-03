@@ -66,6 +66,7 @@ import { useSetting, useWriteSetting } from "../settings";
 import { openShare, type ShareContext } from "../share-control";
 import { useShares } from "../shares";
 import { useStableCallback } from "../stable-callback";
+import type { MarkTeam } from "../teams";
 import { beforeUpdate } from "../update-lifecycle";
 import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
@@ -404,10 +405,15 @@ export function ownsFrameMessage(
 interface ProjectCanvasProps {
 	project: string;
 	root?: string;
-	focusName?: boolean | undefined;
-	onNameFocused?: (() => void) | undefined;
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
-	onFolder?: (() => void) | undefined;
+	/** A project New just made: its canvas opens with the Agent pane out, its composer not focused. */
+	agentOpen?: boolean | undefined;
+	/** The Agent pane `agentOpen` asked for is out: the ask is spent, so a later visit keeps the layout as it is. */
+	onAgentOpened?: (() => void) | undefined;
+	/** A team project's local copy: its team, which the empty project's name row says. */
+	team?: MarkTeam | undefined;
+	/** The thread whose first ask the daemon is naming this project from, while it does. */
+	naming?: string | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
 }
 
@@ -437,9 +443,10 @@ function CanvasField({
 	root,
 	onChrome,
 	onRename,
-	onFolder,
-	focusName,
-	onNameFocused,
+	agentOpen = false,
+	onAgentOpened,
+	team: markTeam,
+	naming,
 	deck,
 	agentDefaults,
 }: ProjectCanvasProps & { deck: DeckStore; agentDefaults: AgentDefaultsDeck }) {
@@ -5531,6 +5538,7 @@ function CanvasField({
 					install={install}
 					offeredModel={offeredModel}
 					agentDefaults={agentDefaults}
+					naming={naming}
 				/>
 			),
 		},
@@ -5564,11 +5572,14 @@ function CanvasField({
 					// History asked for since the last agent request shows it, once the canvas knows it is a team's
 					team && historyAsk !== null && historyAsk.agent === agentRequest?.id
 						? { pane: "history", key: `history-${historyAsk.key}` }
-						: agentRequest === undefined
-							? undefined
-							: { pane: "agent", key: agentRequest.id }
+						: agentRequest !== undefined
+							? { pane: "agent", key: agentRequest.id }
+							: agentOpen
+								? { pane: "agent", key: "new-project" }
+								: undefined
 				}
 				onShown={(panes) => {
+					if (agentOpen && panes.includes("agent")) onAgentOpened?.();
 					setRailShown(panes.includes("agent"));
 					setCommentsShown(panes.includes("comments"));
 				}}
@@ -6018,10 +6029,8 @@ function CanvasField({
 								onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
 								project={project}
 								root={root}
+								team={markTeam}
 								onRename={onRename}
-								onFolder={onFolder}
-								focusName={focusName}
-								onNameFocused={onNameFocused}
 							/>
 						</div>
 					)}

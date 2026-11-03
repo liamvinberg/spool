@@ -36,6 +36,8 @@ export interface ServeDaemonOptions {
 	teamNotice?: ((message: string, root?: string) => void) | undefined;
 	/** Who Home's sidebar says is signed in, as a browser test sets it. */
 	cloudAccountServices?: CloudAccountServices | undefined;
+	/** Where a trashed project goes, so a browser test leaves the machine's Trash alone. */
+	moveToTrash?: ((paths: string[]) => Promise<void>) | undefined;
 }
 
 export interface RunningDaemon {
@@ -66,6 +68,7 @@ export function serveDaemon({
 	agentExecutor,
 	agentEngines,
 	agentLook,
+	moveToTrash,
 	booth,
 	cloud,
 	teamNotice,
@@ -84,6 +87,7 @@ export function serveDaemon({
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
 		...(agentEngines === undefined ? {} : { agentEngines }),
 		...(agentLook === undefined ? {} : { agentLook }),
+		...(moveToTrash === undefined ? {} : { moveToTrash }),
 		...(booth === undefined ? {} : { booth }),
 		...(cloud === undefined ? {} : { cloud }),
 		...(teamNotice === undefined ? {} : { teamNotice }),
@@ -97,7 +101,7 @@ export function serveDaemon({
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
 			// listening first, asking after — the registry never delays the canvas
 			daemon.startUpdateCheck();
-			// the picker's index, walked once now rather than on the first keystroke
+			// the folder chooser's index, walked once now rather than on the first keystroke
 			daemon.warmFsIndex();
 			writeDaemonState(spoolDir, {
 				pid: process.pid,

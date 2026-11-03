@@ -13,6 +13,7 @@ import { startCodexTurn } from "./agent-codex-turn";
 import { mountDesigner } from "./agent-designer";
 import type { AgentEngine, EngineDeps } from "./agent-engine";
 import { type AgentExecutor, probeAgent } from "./agent-exec";
+import { askOnce, namingPrompt } from "./agent-naming";
 import type { AgentAsk, AgentModel, AgentOffer } from "./agent-offer";
 import { type AgentLogin, agentInstalled } from "./agent-preflight";
 import { engineSessions } from "./agent-sessions";
@@ -267,6 +268,28 @@ export function createCodexEngine({
 		},
 		choice: codexChoice,
 		continuable: (_root, session) => sessions.read(session.id) !== undefined,
+		// `codex exec` prints only the final answer on stdout; a name needs little thought
+		name: (root, brief, ask, signal) =>
+			askOnce(
+				executor,
+				{
+					command: CODEX_COMMAND,
+					args: [
+						"exec",
+						"--ephemeral",
+						"--skip-git-repo-check",
+						"-s",
+						"read-only",
+						"-c",
+						"model_reasoning_effort=low",
+						...(ask.value === undefined ? [] : ["-m", ask.value]),
+						namingPrompt(brief),
+					],
+					cwd: root,
+					env: { ...process.env },
+				},
+				signal,
+			),
 		start: ({ root, session, said, ask, permissions }) =>
 			startCodexTurn({
 				executor,

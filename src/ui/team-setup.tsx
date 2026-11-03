@@ -475,7 +475,7 @@ function MoveStep({ team, host, onSkip }: { team: CloudTeam; host: SetupHost; on
 		return (
 			<div className="flex flex-col gap-[12px]">
 				<p className="text-secondary type-label">
-					No projects of your own on this Mac yet. New project… starts one in {team.name}.
+					No projects of your own on this Mac yet. New project starts one in {team.name}.
 				</p>
 				<div className="flex items-center gap-[8px]">{skip}</div>
 				{said}

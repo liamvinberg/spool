@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browseRows, crumbsOf, shortPath, within } from "./picker-model";
+import { browseRows, crumbsOf, shortPath } from "./folder-paths";
 
 const HOME = "/Users/liam";
 
@@ -30,30 +30,32 @@ describe("crumbsOf", () => {
 });
 
 describe("browseRows", () => {
-	it("gives a browsed folder the same shape a search answers with, lit by nothing", () => {
-		expect(
-			browseRows({
-				path: `${HOME}/personal`,
-				parent: HOME,
-				isProject: false,
-				dirs: [{ name: "projects", path: `${HOME}/personal/projects`, isProject: false }],
-			}),
-		).toEqual([
+	it("gives a browsed folder the same shape a search answers with, and its .spool files only when asked", () => {
+		const listing = {
+			path: `${HOME}/personal`,
+			parent: HOME,
+			isProject: false,
+			dirs: [{ name: "projects", path: `${HOME}/personal/projects`, isProject: false }],
+			spools: [{ name: "kaffe.spool", path: `${HOME}/personal/kaffe.spool` }],
+		};
+		const folder = {
+			name: "projects",
+			path: `${HOME}/personal/projects`,
+			parent: `${HOME}/personal`,
+			isProject: false,
+			matched: [],
+		};
+		expect(browseRows(listing)).toEqual([folder]);
+		expect(browseRows(listing, true)).toEqual([
+			folder,
 			{
-				name: "projects",
-				path: `${HOME}/personal/projects`,
+				name: "kaffe.spool",
+				path: `${HOME}/personal/kaffe.spool`,
 				parent: `${HOME}/personal`,
 				isProject: false,
 				matched: [],
+				file: true,
 			},
 		]);
-	});
-});
-
-describe("within", () => {
-	it("prints where a hit sits relative to the folder searched, and nothing when it sits right there", () => {
-		expect(within(`${HOME}/projects/droneit/spikes`, `${HOME}/projects`)).toBe("droneit/spikes");
-		expect(within(`${HOME}/projects`, `${HOME}/projects`)).toBe("");
-		expect(within("/etc", `${HOME}/projects`)).toBe("/etc");
 	});
 });

@@ -1,21 +1,22 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, resolve, sep } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import { z } from "zod";
 import { SpoolError } from "../errors";
 import { checkoutOf } from "../git-remote";
-import { createProject, initProject, startProject } from "../init";
-import { mutateMachineState } from "../machine-state";
+import { initProject, startProject } from "../init";
 import { openProject } from "../open";
 import { forgetResolvedProject, readRegistry } from "../registry";
 import { backInGitOffered } from "../team-moves";
+import { isUntitled } from "../untitled";
 import { updateLine } from "../update-how";
 import type { createAgentTurns } from "./agent-live";
+import type { Namings } from "./agent-naming";
 import { DesignBoundaryError } from "./design-path";
 import type { createChangeHub } from "./events";
-import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
+import { listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import type { MovedAway } from "./moved-away";
 import {
 	type createIconWatch,
@@ -34,14 +35,12 @@ import {
 	setThumbnailFromFrame,
 	ThumbnailRefused,
 } from "./project-thumbnail";
-import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
-import { describeMissingFrame, frameExists, type ProjectCard, summarizeProject } from "./projection";
-import type { createSelectionStore } from "./selection";
-import type { AppEvent, watchMachineState } from "./session";
-import type { createSettingsStore } from "./settings";
+import { exportProject, importArchive, TRANSFER_LIMITS, TransferError } from "./project-transfer";
+import { describeMissingFrame, discoverFrames, frameExists, type ProjectCard, summarizeProject } from "./projection";
+import { type AppEvent, readSession, type watchMachineState } from "./session";
 import { type createTeamSync, endedWith, followedLink, goneLocalWith, movedOutOf } from "./team-sync";
 
-/** Body of the picker's POSTs: { path } — anything else is a 400. */
+/** Body of opening and designing in a folder: { path } — anything else is a 400. */
 function requestedPath(value: unknown, c: Context): { path: string } | Response {
 	const path = (value as { path?: unknown }).path;
 	if (typeof path !== "string" || path === "") {
@@ -50,32 +49,27 @@ function requestedPath(value: unknown, c: Context): { path: string } | Response 
 	return { path };
 }
 
-/** Body of the picker's create: { path, name } — the folder to make it in, and what to call it. */
-function requestedNewProject(value: unknown, c: Context): { path: string; name: string } | Response {
-	const parsed = z.object({ path: z.string().min(1), name: z.string() }).safeParse(value);
-	if (!parsed.success) {
-		return c.json({ error: 'expected { "path": "/abs/dir", "name": "folder" }' }, 400);
-	}
-	return parsed.data;
-}
-
 /**
- * Home over HTTP, mounted under `/api`: the folder picker, the project list and each card's icon and
+ * Home over HTTP, mounted under `/api`: the folder chooser's reads, the project list and each card's icon and
  * thumbnail, and what a hand does to a whole project there (open, create, rename, export, import, forget,
  * trash).
  */
 export function homeRoutes(deps: {
 	resolve: ResolveProject;
 	spoolDir: string;
-	settings: Pick<ReturnType<typeof createSettingsStore>, "read">;
-	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
+	/** Where new projects go, as the setting says it (`~/spool`). */
+	location: () => string;
+	/** The home the folder chooser's search indexes, and the registry that marks its projects (#251/#277). */
 	fsIndex: { home: string; spoolDir: string };
 	/** Projects mid-rename or mid-trash, which every other project change waits out. */
 	projectRenames: Set<string>;
 	trashingProjects: Set<string>;
-	liveTurns: Pick<ReturnType<typeof createAgentTurns>, "of" | "relocate">;
+	/** Projects the agent is naming, which stay until it has answered. */
+	namings: Pick<Namings, "has">;
+	liveTurns: Pick<ReturnType<typeof createAgentTurns>, "of">;
 	hub: Pick<ReturnType<typeof createChangeHub>, "forget">;
-	selections: Pick<ReturnType<typeof createSelectionStore>, "relocate">;
+	/** A project renamed, as `createRenamer` does it. */
+	rename: (root: string, name: string) => { root: string; name: string };
 	machineStateWatch: Pick<ReturnType<typeof watchMachineState>, "acknowledgeRegistry" | "acknowledgeSession">;
 	emitAppEvent: (event: AppEvent) => void;
 	registeredRoots: () => string[];
@@ -88,13 +82,13 @@ export function homeRoutes(deps: {
 }) {
 	const {
 		spoolDir,
-		settings,
+		location,
 		fsIndex,
 		projectRenames,
 		trashingProjects,
+		namings,
 		liveTurns,
 		hub,
-		selections,
 		machineStateWatch,
 		emitAppEvent,
 		registeredRoots,
@@ -112,18 +106,9 @@ export function homeRoutes(deps: {
 				const path = c.req.query("path");
 				const listing = listDirectory(path);
 				if (listing === undefined) return c.json({ error: "no such directory" }, 404);
-				// no path is the picker opening: the moment to walk home again behind the index that stands (#277)
+				// no path is the chooser opening: the moment to walk home again behind the index that stands (#277)
 				if (path === undefined) void refreshIndex(fsIndex);
 				return c.json(listing);
-			})
-			.post("/fs/create", validator("json", requestedNewProject), (c) => {
-				try {
-					const { path, name } = c.req.valid("json");
-					return c.json(createDirectory(path, name));
-				} catch (error) {
-					if (!(error instanceof SpoolError)) throw error;
-					return c.json({ error: error.message }, 409);
-				}
 			})
 			.get("/fs/search", async (c) => {
 				// one indexed walk of home, answered under the folder asked for: the browse is what an empty query still shows
@@ -186,37 +171,9 @@ export function homeRoutes(deps: {
 					const declared = Number(c.req.header("content-length"));
 					if (declared > TRANSFER_LIMITS.compressedBytes)
 						throw new TransferError("The archive exceeds the compressed size limit.");
-					const reader = c.req.raw.body?.getReader();
-					if (!reader) throw new TransferError("Choose a Spool project file.");
-					const cancelUpload = () => {
-						void reader.cancel().catch(() => {});
-					};
-					controller.signal.addEventListener("abort", cancelUpload, { once: true });
-					const chunks: Uint8Array[] = [];
-					let length = 0;
-					try {
-						for (;;) {
-							controller.signal.throwIfAborted();
-							const chunk = await reader.read();
-							if (chunk.done) break;
-							length += chunk.value.length;
-							if (length > TRANSFER_LIMITS.compressedBytes)
-								throw new TransferError("The archive exceeds the compressed size limit.");
-							chunks.push(chunk.value);
-						}
-					} finally {
-						controller.signal.removeEventListener("abort", cancelUpload);
-						await reader.cancel();
-					}
-					const location = settings.read().entries.find((entry) => entry.key === "projects.location");
-					return c.json(
-						await importProject(
-							Buffer.concat(chunks),
-							String(location?.value ?? "~/spool"),
-							spoolDir,
-							controller.signal,
-						),
-					);
+					const body = c.req.raw.body;
+					if (!body) throw new TransferError("Choose a Spool project file.");
+					return c.json(await importArchive(body, location(), spoolDir, controller.signal));
 				} catch (error) {
 					if (controller.signal.aborted) return c.json({ error: "Import cancelled.", cancelled: true }, 409);
 					return c.json({ error: error instanceof Error ? error.message : "Import failed." }, 400);
@@ -230,8 +187,7 @@ export function homeRoutes(deps: {
 					return c.json({ root, name: basename(root) });
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;
-					// nothing found by walk-up: the picker's next move is offering init
-					return c.json({ error: error.message, offerInit: true }, 404);
+					return c.json({ error: error.message }, 404);
 				}
 			})
 			.post("/projects/init", validator("json", requestedPath), (c) => {
@@ -243,10 +199,10 @@ export function homeRoutes(deps: {
 					return c.json({ error: error.message }, 409);
 				}
 			})
+			// New project: the next free untitled in the projects location, opened at once
 			.post("/projects/start", (c) => {
 				try {
-					const location = settings.read().entries.find((entry) => entry.key === "projects.location");
-					const { root } = startProject(String(location?.value ?? "~/spool"), spoolDir);
+					const { root } = startProject(location(), spoolDir);
 					return c.json({ root, name: basename(root) });
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;
@@ -259,48 +215,16 @@ export function homeRoutes(deps: {
 					const parsed = z.object({ root: z.string(), name: z.string() }).safeParse(value);
 					return parsed.success ? parsed.data : c.json({ error: "Expected a project root and name." }, 400);
 				}),
-				async (c) => {
+				(c) => {
 					const { root, name } = c.req.valid("json");
-					const target = join(dirname(root), name.trim());
-					if (projectRenames.has(root) || projectRenames.has(target))
-						return c.json({ error: "Project change is in progress." }, 409);
-					if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-					if ([...liveTurns.of(root)].some((turn) => turn.running)) {
-						return c.json({ error: "Let the agent finish or stop its turn before renaming this project." }, 409);
-					}
-					projectRenames.add(root);
-					projectRenames.add(target);
 					try {
-						const result = mutateMachineState(spoolDir, { kind: "rename-project", root, name });
-						if (result.root !== root) {
-							hub.forget(root);
-							liveTurns.relocate(root, result.root);
-							selections.relocate(root, result.root);
-						}
-						machineStateWatch.acknowledgeRegistry(result.registry);
-						machineStateWatch.acknowledgeSession(result.session);
-						emitAppEvent({ kind: "project-renamed", from: root, root: result.root, name: result.name });
-						return c.json({ root: result.root, name: result.name });
+						return c.json(deps.rename(root, name));
 					} catch (error) {
 						if (!(error instanceof SpoolError)) throw error;
 						return c.json({ error: error.message }, 409);
-					} finally {
-						projectRenames.delete(root);
-						projectRenames.delete(target);
 					}
 				},
 			)
-			.post("/projects/create", validator("json", requestedNewProject), (c) => {
-				try {
-					const { path, name } = c.req.valid("json");
-					// the "+" (#242): mkdir, then the same scaffold init runs
-					const { root } = createProject(path, name, spoolDir);
-					return c.json({ root, name: basename(root) });
-				} catch (error) {
-					if (!(error instanceof SpoolError)) throw error;
-					return c.json({ error: error.message }, 409);
-				}
-			})
 			.post(
 				"/projects/forget",
 				validator("json", (value, c) => {
@@ -332,16 +256,22 @@ export function homeRoutes(deps: {
 			.post(
 				"/projects/trash",
 				validator("json", (value, c) => {
-					const parsed = z.object({ root: z.string().min(1) }).safeParse(value);
+					const parsed = z
+						.object({ root: z.string().min(1), abandoned: z.literal(true).optional() })
+						.safeParse(value);
 					return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
 				}),
 				async (c) => {
-					const { root } = c.req.valid("json");
+					const { root, abandoned } = c.req.valid("json");
 					const roots = registeredRoots();
 					if (!roots.includes(root)) return c.json({ error: "This project is no longer registered." }, 404);
+					// a closed project nobody named or drew in goes by itself, and only while it still is one (spool#51)
+					if (abandoned === true && !isAbandoned(spoolDir, root)) {
+						return c.json({ error: "This project is open, named or has frames, so it stays." }, 409);
+					}
 					if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
 					if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-					if ([...liveTurns.of(root)].some((turn) => turn.running)) {
+					if (namings.has(root) || [...liveTurns.of(root)].some((turn) => turn.running)) {
 						return c.json({ error: "Let the agent finish or stop its turn before trashing this project." }, 409);
 					}
 					const stateRoot = realpathSync(spoolDir);
@@ -546,5 +476,18 @@ export function homeRoutes(deps: {
 					return c.json({ thumbnail: null });
 				},
 			)
+	);
+}
+
+/**
+ * Still an untitled project on this Mac only, with no frames, and closed: what New made and nobody used. A tab open
+ * on it again, in any window, is someone using it after all.
+ */
+function isAbandoned(spoolDir: string, root: string): boolean {
+	return (
+		isUntitled(basename(root)) &&
+		followedLink(root) === undefined &&
+		(discoverFrames(root)?.length ?? 0) === 0 &&
+		!readSession(spoolDir).open.includes(root)
 	);
 }

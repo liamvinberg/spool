@@ -183,7 +183,7 @@ describe("Home's sidebar of places", () => {
 			"You watch Harbour Bank. A project opens live in your browser, and nothing comes to this Mac.",
 		);
 		expect([...(main?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).not.toContain(
-			"New project…",
+			"New project",
 		);
 		const cover = main?.querySelector<HTMLAnchorElement>("a[aria-label='Open brand']");
 		expect(cover?.getAttribute("href")).toBe("https://spool.page/harbour-bank/brand");
@@ -200,7 +200,7 @@ describe("Home's sidebar of places", () => {
 		expect(app.heading()).toBe("Your projects");
 		const head = app.host.querySelector("main header");
 		expect([...(head?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).toEqual(
-			expect.arrayContaining(["Open…", "New project…"]),
+			expect.arrayContaining(["Open…", "New project"]),
 		);
 		expect(app.host.querySelector("main")?.textContent).toContain(
 			"On this Mac only. Move one to a team from its menu.",

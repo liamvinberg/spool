@@ -7,7 +7,7 @@ import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { ArrowRightIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
 import { MovedArt, MovedSheet, movedBy } from "./moved-away";
 import { tilde } from "./paths";
-import { Button, IconButton, SplitButton } from "./primitives/actions";
+import { Button, IconButton } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { SearchField } from "./primitives/inputs";
 import { NavItem } from "./primitives/navigation";
@@ -55,8 +55,7 @@ export function Home({
 	onTrashProject,
 	onRenameProject,
 	onStart,
-	onFolder,
-	onImport,
+	onOpen,
 	onExportProject,
 	moveItems,
 	onChangeIcon,
@@ -76,8 +75,8 @@ export function Home({
 	onTrashProject: (project: { root: string; name: string }) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onStart: () => void;
-	onFolder: () => void;
-	onImport?: () => void;
+	/** Open…: a folder, a .spool file or a link, through the system's open panel */
+	onOpen: () => void;
 	onExportProject?: (project: ProjectCard) => void;
 	/** The ways each cover's project can move: "Move to team…" and the like. */
 	moveItems?: MoveItems | undefined;
@@ -103,7 +102,6 @@ export function Home({
 	const [ownQuery, setOwnQuery] = useState("");
 	const [sort, setSort] = useState<Sort>("Recent");
 	const [menuRoot, setMenuRoot] = useState<string | null>(null);
-	const [headMenu, setHeadMenu] = useState<"start" | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	// with Search in the sidebar, the page has none of its own
 	const query = everywhere?.query ?? ownQuery;
@@ -122,10 +120,7 @@ export function Home({
 			attachHotkeyLayer({
 				scope: "home",
 				handlers: {
-					"home.close-menu": () => {
-						setMenuRoot(null);
-						setHeadMenu(null);
-					},
+					"home.close-menu": () => setMenuRoot(null),
 					"home.search": (event) => {
 						event?.preventDefault();
 						searchRef.current?.focus();
@@ -153,51 +148,14 @@ export function Home({
 		/>
 	);
 	const start = (
-		<div className="relative">
-			<SplitButton
-				size="lg"
-				icon={<PlusIcon />}
-				onClick={onStart}
-				menuLabel="More ways to start"
-				menuOpen={headMenu === "start"}
-				onMenu={() => setHeadMenu(headMenu === "start" ? null : "start")}
-			>
-				New project…
-			</SplitButton>
-			{headMenu === "start" && (
-				<>
-					<MenuBackdrop onClose={() => setHeadMenu(null)} />
-					<Menu aria-label="Start a project" className="absolute top-full right-0 z-20 mt-1">
-						<MenuItem
-							label="New project…"
-							shortcut={hotkeyKey("app.new-project")}
-							onClick={() => {
-								setHeadMenu(null);
-								onStart();
-							}}
-						/>
-						<MenuSeparator />
-						<MenuItem
-							label="Open folder…"
-							shortcut={hotkeyKey("app.open-project")}
-							onClick={() => {
-								setHeadMenu(null);
-								onFolder();
-							}}
-						/>
-						{onImport && (
-							<MenuItem
-								label="Import .spool file…"
-								onClick={() => {
-									setHeadMenu(null);
-									onImport();
-								}}
-							/>
-						)}
-					</Menu>
-				</>
-			)}
-		</div>
+		<>
+			<Button size="lg" icon={<FolderIcon />} title={`Open… ${hotkeyKey("app.open-project")}`} onClick={onOpen}>
+				Open…
+			</Button>
+			<Button size="lg" variant="primary" icon={<PlusIcon />} onClick={onStart}>
+				New project
+			</Button>
+		</>
 	);
 	const welcome = (
 		<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
@@ -217,7 +175,7 @@ export function Home({
 						>
 							<PlusIcon />
 							<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-								New project…
+								New project
 								<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 							</strong>
 							<small className="mt-[10px] text-secondary type-control">
@@ -229,7 +187,7 @@ export function Home({
 						<button
 							type="button"
 							className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
-							onClick={onFolder}
+							onClick={onOpen}
 						>
 							<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
 							<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
@@ -237,22 +195,10 @@ export function Home({
 								<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 							</strong>
 							<small className="mt-[10px] text-secondary type-control">
-								Bring your codebase.
+								A folder, a .spool file or a link.
 								<br />
-								Keep the design beside your code.
+								Drop one here, or paste it.
 							</small>
-						</button>
-						<button
-							type="button"
-							className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
-							onClick={onImport}
-						>
-							<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
-							<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-								Import…
-								<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-							</strong>
-							<small className="mt-[10px] text-secondary type-control">Open a .spool project file.</small>
 						</button>
 					</div>
 				}
@@ -296,18 +242,7 @@ export function Home({
 						/>
 					)
 				}
-				actions={
-					everywhere ? (
-						<>
-							<Button size="lg" icon={<FolderIcon />} onClick={onFolder}>
-								Open…
-							</Button>
-							{start}
-						</>
-					) : (
-						start
-					)
-				}
+				actions={start}
 			/>
 			{everywhere && (
 				<p className="pj-own-line -mt-[17px] mb-[26px] text-secondary type-control">

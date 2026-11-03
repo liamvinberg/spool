@@ -184,7 +184,7 @@ it("gives an admin Export… on a team project's cover, and an editor or someone
 			onTrashProject: vi.fn(),
 			onRenameProject: vi.fn(),
 			onStart: vi.fn(),
-			onFolder: vi.fn(),
+			onOpen: vi.fn(),
 			moveItems: items,
 		}),
 	);

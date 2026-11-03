@@ -168,6 +168,7 @@ function otherAgent(count: number): AgentEngine {
 			throw new Error("the other agent is never started here");
 		},
 		continuable: () => false,
+		name: async () => null,
 	};
 }
 

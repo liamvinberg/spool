@@ -25,6 +25,11 @@ export interface ProjectLink {
 
 const SEGMENT = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/u;
 
+/** Whether a name has the shape of a team's or a team project's address: lowercase words joined by hyphens. */
+export function isAddress(name: string): boolean {
+	return SEGMENT.test(name);
+}
+
 /**
  * Whether the folder is a team project's root: the link sits beside `design/`. A `spool.json` that holds no team
  * project's link is another tool's file, never read as one and never written over.
@@ -53,7 +58,7 @@ export function parseProjectLink(value: unknown): ProjectLink | undefined {
 	const [team, project, ...rest] = url.pathname.slice(1).split("/");
 	if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || rest.length > 0)
 		return undefined;
-	if (team === undefined || project === undefined || !SEGMENT.test(team) || !SEGMENT.test(project)) return undefined;
+	if (team === undefined || project === undefined || !isAddress(team) || !isAddress(project)) return undefined;
 	return { url: `${url.origin}/${team}/${project}`, origin: url.origin, team, project };
 }
 

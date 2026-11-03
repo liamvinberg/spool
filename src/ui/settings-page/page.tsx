@@ -4,7 +4,7 @@ import { fetchCloudTeams } from "../api";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { BackIcon, ColoursIcon, LookIcon, MachineIcon } from "../icons";
-import { ProjectPicker } from "../picker";
+import { PlaceChooser } from "../place-chooser";
 import { Button } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
 import { NavItem } from "../primitives/navigation";
@@ -229,12 +229,14 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 							Change…
 						</Button>
 						{picking && (
-							<ProjectPicker
-								initial="location"
-								location={String(entry.value)}
-								onOpened={() => {}}
-								onClose={() => setPicking(false)}
-								onLocation={(path) => write(entry.key, path)}
+							<PlaceChooser
+								purpose="location"
+								start={String(entry.value)}
+								onCancel={() => setPicking(false)}
+								onChoose={(path) => {
+									setPicking(false);
+									void move(path);
+								}}
 							/>
 						)}
 					</>

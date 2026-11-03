@@ -299,6 +299,39 @@ async function unpack(
 	}
 }
 
+/**
+ * A `.spool` read as it arrives, an upload or a file on this Mac, and imported as `importProject` imports it:
+ * refused the moment it passes the compressed cap, and dropped the moment `signal` aborts.
+ */
+export async function importArchive(
+	body: ReadableStream<Uint8Array>,
+	location: string,
+	spoolDir: string,
+	signal: AbortSignal,
+): Promise<{ root: string; name: string }> {
+	const reader = body.getReader();
+	const cancel = () => {
+		void reader.cancel().catch(() => {});
+	};
+	signal.addEventListener("abort", cancel, { once: true });
+	const chunks: Uint8Array[] = [];
+	let length = 0;
+	try {
+		for (;;) {
+			signal.throwIfAborted();
+			const chunk = await reader.read();
+			if (chunk.done) break;
+			length += chunk.value.length;
+			if (length > TRANSFER_LIMITS.compressedBytes) fail("The archive exceeds the compressed size limit.");
+			chunks.push(chunk.value);
+		}
+	} finally {
+		signal.removeEventListener("abort", cancel);
+		await reader.cancel();
+	}
+	return importProject(Buffer.concat(chunks), location, spoolDir, signal);
+}
+
 export async function importProject(
 	bytes: Uint8Array,
 	location: string,

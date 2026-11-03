@@ -47,21 +47,27 @@ describe("empty project title", () => {
 		expect(input.value).toBe("untitled");
 	});
 
-	it("selects the name only when asked for a newly created project", () => {
-		const focused = vi.fn();
-		const input = mount(vi.fn().mockResolvedValue(null), true, focused);
-		expect(document.activeElement).toBe(input);
-		expect(input.selectionStart).toBe(0);
-		expect(input.selectionEnd).toBe("untitled".length);
-		expect(focused).toHaveBeenCalledOnce();
+	it("says an untitled one goes to the Trash closed empty, and a team copy's team instead", () => {
+		const detail = (props: Partial<Parameters<typeof ProjectEmpty>[0]>) => {
+			const host = document.createElement("div");
+			document.body.append(host);
+			const root = createRoot(host);
+			onTestFinished(() => {
+				act(() => root.unmount());
+				host.remove();
+			});
+			act(() => root.render(createElement(ProjectEmpty, { project: "untitled", root: "/tmp/untitled", ...props })));
+			return host.querySelector(".project-empty-title")?.textContent;
+		};
+		expect(detail({})).toBe("goes to the Trash if closed with no frames");
+		expect(detail({ project: "coffee" })).toBe("saved on this mac");
+		expect(detail({ team: { address: "devosurf", name: "Devosurf", logo: null } })).toBe(
+			"D Devosurfsynced with spool.page",
+		);
 	});
 });
 
-function mount(
-	onRename: (name: string) => Promise<string | null>,
-	focusName = false,
-	onNameFocused = vi.fn(),
-): HTMLInputElement {
+function mount(onRename: (name: string) => Promise<string | null>): HTMLInputElement {
 	const host = document.createElement("div");
 	document.body.append(host);
 	const root = createRoot(host);
@@ -75,8 +81,6 @@ function mount(
 				project: "untitled",
 				root: "/tmp/untitled",
 				onRename,
-				focusName,
-				onNameFocused,
 			}),
 		),
 	);

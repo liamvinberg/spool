@@ -19,13 +19,23 @@ import {
 } from "./agent-frames";
 import type { AgentHeld, createAgentTurns } from "./agent-live";
 import { acceptedModelChoice, type createAgentModelPreferences } from "./agent-model-preferences";
+import { type Namings, nameFirst, spokenBefore } from "./agent-naming";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentPictureEnding } from "./agent-picture";
 import type { createAgentPresence } from "./agent-presence";
-import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
+import {
+	closeThread,
+	isThreadId,
+	parseThreadPut,
+	putThread,
+	readThread,
+	readThreads,
+	serveThreads,
+} from "./agent-threads";
 import type { CommentPrompt } from "./comment-prompt";
 import type { createChangeHub } from "./events";
 import { type ResolveProject, withProject } from "./project-route";
+import { discoverFrames } from "./projection";
 import { type createSelectionStore, parseSelectionEntries, type SelectionEntry } from "./selection";
 import { selectionBlock } from "./selection-block";
 import type { AppEvent } from "./session";
@@ -125,6 +135,11 @@ export function agentRoutes(deps: {
 	account: () => Promise<{ accountId: string; name: string }>;
 	/** Comments the person sent to the agent, as the prompt carries them: their blocks, and stills that ride along. */
 	commentsForPrompt: (root: string, ids: readonly string[]) => Promise<CommentPrompt>;
+	/** A project renamed, as `createRenamer` does it: how a new project takes the name its first ask gave it. */
+	rename: (root: string, name: string) => { root: string; name: string };
+	/** Projects whose first turn waits while the agent names them, which a stop ends. */
+	namings: Namings;
+	registeredRoots: () => string[];
 }) {
 	const {
 		spoolDir,
@@ -362,7 +377,7 @@ export function agentRoutes(deps: {
 					};
 				}),
 				(c) =>
-					withProject(c, deps.resolve, async (root) => {
+					withProject(c, deps.resolve, async (asked) => {
 						// one turn, streamed as it arrives (#191): the prompt goes down the
 						// binary's stdin and its events come back over this response in the
 						// order the wire sent them
@@ -371,9 +386,36 @@ export function agentRoutes(deps: {
 						// run without a pause between its check that no turn is running and holding this one
 						const commented = await Promise.all(
 							said.map((one) =>
-								one.comments === undefined ? undefined : deps.commentsForPrompt(root, one.comments),
+								one.comments === undefined ? undefined : deps.commentsForPrompt(asked, one.comments),
 							),
 						);
+						// a new project is named from its first ask before anything in it is written (spool#51). A
+						// team copy keeps its name, which is the team's: renaming the folder would not rename that
+						if (deps.namings.has(asked))
+							return c.text("This project is being named. Try again in a moment.", 409);
+						const root =
+							followedLink(asked) !== undefined
+								? asked
+								: await nameFirst(asked, {
+										hasFrames: (at) => (discoverFrames(at)?.length ?? 0) > 0,
+										spoken: (at) => spokenBefore(readThreads(spoolDir, at, true), thread),
+										ask: (signal) => {
+											const selected = engineFor(c, asked, thread, requested);
+											if ("response" in selected) return Promise.resolve(null);
+											const { engine } = selected;
+											const ask = modelPreferences.read(asked, thread, engine.id);
+											return engine.name(asked, said[0]?.prompt ?? "", ask, signal);
+										},
+										rename: deps.rename,
+										namings: deps.namings,
+										turn: named,
+										signal: c.req.raw.signal,
+										registered: (at) => deps.registeredRoots().includes(at),
+										beat: (naming) =>
+											emitAppEvent({ kind: "naming", root: asked, thread: naming ? thread : null }),
+									});
+						// stopped while it was named, or the project went: the turn never starts
+						if (root === null) return c.text("stopped", 410);
 						/*
 						 * One turn per conversation, refused rather than replaced (#211).
 						 *
@@ -559,6 +601,12 @@ export function agentRoutes(deps: {
 						 * nothing: everything there is to say arrives on the stream.
 						 */
 						const { turn: named } = c.req.valid("json");
+						// a first turn still waiting on its name stops there, before it starts
+						const naming = deps.namings.get(root);
+						if (naming !== undefined && naming.turn === named) {
+							naming.stop.abort();
+							return c.body(null, 204);
+						}
 						for (const held of liveTurns.of(root)) {
 							if (held.id === named && held.interrupt()) return c.body(null, 204);
 						}

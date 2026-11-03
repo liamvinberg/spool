@@ -44,6 +44,7 @@ function fakeEngine(id: AgentEngineId) {
 		},
 		choice: (result) => ({ value: result.current.value ?? id }),
 		continuable: async () => sessionPresent,
+		name: async () => null,
 		start: (options) => {
 			starts.push(options);
 			let finish: (() => void) | undefined;

@@ -96,18 +96,9 @@ async function checkProjectOpening(directory: string): Promise<void> {
 	const warm = join(state, "Warm.spool");
 	writeFileSync(cold, "cold archive");
 	writeFileSync(warm, "warm archive");
-	const imports: string[] = [];
-	const sessions: unknown[] = [];
-	// The cold file's import answers once the canvas is on screen but still loading, as
-	// a real canvas can be: sending the window to the project then cuts that load off.
-	let canvasShown = () => {};
-	const shown = new Promise<void>((resolve) => (canvasShown = resolve));
+	// what the canvas was handed, in order: its Open… reads each path, as it reads one chosen in the panel
+	const handed: string[] = [];
 	const server = createServer(async (request, response) => {
-		if (request.url === "/shown") {
-			canvasShown();
-			response.end();
-			return;
-		}
 		if (request.url === "/api/health") {
 			response.end(
 				JSON.stringify({
@@ -119,20 +110,11 @@ async function checkProjectOpening(directory: string): Promise<void> {
 			);
 			return;
 		}
-		if (request.url?.startsWith("/api/projects/import?") || request.url === "/api/session") {
-			assert.equal(request.headers["x-spool-control"], "smoke-control");
+		if (request.url === "/handed") {
 			const chunks: Buffer[] = [];
 			for await (const chunk of request) chunks.push(Buffer.from(chunk));
-			const body = Buffer.concat(chunks).toString();
-			if (request.url === "/api/session") {
-				sessions.push(JSON.parse(body));
-				response.writeHead(204).end();
-			} else {
-				await shown;
-				imports.push(body);
-				const name = imports.length === 1 ? "cold" : "warm";
-				response.end(JSON.stringify({ root: `/projects/${name}`, name }));
-			}
+			handed.push(Buffer.concat(chunks).toString());
+			response.end();
 			return;
 		}
 		response.writeHead(200, { "Content-Type": "text/html" });
@@ -140,8 +122,14 @@ async function checkProjectOpening(directory: string): Promise<void> {
 			response.end("<!doctype html><title>Native project open check</title>");
 			return;
 		}
-		response.write("<!doctype html><title>Native project open check</title><script>fetch('/shown')</script>");
-		void shown.then(() => setTimeout(() => response.end(), 500));
+		// a canvas that takes Finder's documents, then says it is up, as the real one does once it has painted
+		response.end(`<!doctype html><title>Native project open check</title><script>
+			spoolCanvasWindow.onOpenPath(async (path) => {
+				await fetch("/handed", { method: "POST", body: path });
+				location.href = "/p/" + path.split("/").at(-1).replace(".spool", "").toLowerCase();
+			});
+			spoolCanvasWindow.setCanvasActive(false);
+		</script>`);
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
@@ -164,8 +152,7 @@ async function checkProjectOpening(directory: string): Promise<void> {
 		const { app } = require("electron");
 		const { boot } = require(${JSON.stringify(join(__dirname, "main.js"))});
 		app.on("browser-window-created", (_event, window) => {
-			// the canvas is sent to the daemon once: a second load aborts the first, and the
-			// aborted load's failure can land on the project's load after it
+			// the canvas is loaded once, and the cold file waits for it rather than for a load of its own
 			let canvasLoads = 0;
 			window.webContents.on("did-start-navigation", (details) => {
 				if (details.isMainFrame && !details.isSameDocument && new URL(details.url).pathname === "/") canvasLoads++;
@@ -174,12 +161,13 @@ async function checkProjectOpening(directory: string): Promise<void> {
 				const url = window.webContents.getURL();
 				if (url.endsWith("/p/cold")) {
 					if (canvasLoads !== 1) {
-						process.stderr.write("the canvas was loaded " + canvasLoads + " times before the project\\n");
+						process.stderr.write("the canvas was loaded " + canvasLoads + " times before the file\\n");
 						return app.exit(1);
 					}
+					// a warm file with the window closed brings the canvas back, and goes to it
 					setTimeout(() => {
+						window.once("closed", () => app.emit("open-file", { preventDefault() {} }, ${JSON.stringify(warm)}));
 						window.close();
-						app.emit("open-file", { preventDefault() {} }, ${JSON.stringify(warm)});
 					}, 50);
 				}
 				if (url.endsWith("/p/warm")) app.exit(0);
@@ -201,7 +189,7 @@ async function checkProjectOpening(directory: string): Promise<void> {
 				child.kill();
 				reject(
 					new Error(
-						`native project opening timed out: ${errors}\n${readFileSync(join(state, "app.log"), "utf8")}\n${JSON.stringify(imports)}`,
+						`native project opening timed out: ${errors}\n${readFileSync(join(state, "app.log"), "utf8")}\n${JSON.stringify(handed)}`,
 					),
 				);
 			}, 20_000);
@@ -212,11 +200,7 @@ async function checkProjectOpening(directory: string): Promise<void> {
 				else reject(new Error(`native project opening exited ${code}: ${errors}`));
 			});
 		});
-		assert.deepEqual(imports, ["cold archive", "warm archive"]);
-		assert.deepEqual(sessions, [
-			{ root: "/projects/cold", open: true },
-			{ root: "/projects/warm", open: true },
-		]);
+		assert.deepEqual(handed, [cold, warm]);
 	} finally {
 		server.close();
 	}

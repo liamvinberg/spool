@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { placeOf } from "../home-places";
 import { accelPressed } from "../runtime/platform-keys";
 import type { TabPresence } from "../team-sync-protocol";
+import { useAbandonUntitled } from "./abandon-untitled";
 import { AccountFoot } from "./account-foot";
 import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon, ProjectThumbnail } from "./api";
 import {
@@ -38,15 +39,16 @@ import { coversOf, Home, type MoveItems, ProjectGrid } from "./home";
 import { attachHotkeyLayer, closeTopmost, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import type { HotkeyId, HotkeyIdFor } from "./hotkeys";
-import { ProjectPicker } from "./picker";
+import { useOpen } from "./open-flow";
 import { ProjectTeams } from "./project-icon";
 import { useIconChange } from "./project-icon-change";
-import { useProjectTransfer } from "./project-transfer";
+import { useProjectExport } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
-import { settingsMoved, useSetting, useSettings } from "./settings";
+import { settingsMoved, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
 import { ShareControl } from "./share-control";
 import { useShares } from "./shares";
+import { useStartProject } from "./start-project";
 import {
 	type ClosedTab,
 	lastTab,
@@ -78,7 +80,7 @@ import { type UpdateToast, UpdateToastPill } from "./update-toast";
 /**
  * The shell (#4/#12/#13): one top bar with a pinned Home button, one
  * tab per open project (focus-not-duplicate, machine session restored), "+"
- * as the picker — and the focused view below. Routerless: / and /p/<name>
+ * as New project — and the focused view below. Routerless: / and /p/<name>
  * only; the path is read once at boot and replaceState'd on focus.
  */
 
@@ -108,13 +110,9 @@ export function App() {
 	const [handed, setHanded] = useState(() => handedOver(window.location.search));
 	/** A team, or one project of it, that spool.page's Export handed this page, to export once the teams are read. */
 	const [exportAsked] = useState(() => (handed?.export ? { team: handed.team, project: handed.project } : null));
-	const [picking, setPicking] = useState<"new" | "folder" | false>(false);
-	const location = useSetting("projects.location");
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
 	const [account, setAccount] = useState<CloudAccountState>({ state: "unreachable" });
 	const readAccount = useCallback(async () => setAccount(await fetchCloudAccount()), []);
-	/** The team New project starts in, while the picker is open for one. */
-	const [pickingTeam, setPickingTeam] = useState<string | undefined>();
 	const [teamMenu, setTeamMenu] = useState<string | null>(null);
 	/** The project "Move to team…" is asking about, and the team it goes to when a setup list asked. */
 	const [moving, setMoving] = useState<{ root: string; name: string; team?: string } | null>(null);
@@ -132,6 +130,10 @@ export function App() {
 		new Promise<string | null>((resolve) => setRenameRequest({ project, initialName, resolve }));
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
 	const [forgetting, setForgetting] = useState<ReadonlySet<string>>(new Set());
+	/** The projects a first ask is naming, and the thread each is named from. */
+	const [naming, setNaming] = useState<ReadonlyMap<string, string>>(new Map());
+	const namingRef = useRef(naming);
+	namingRef.current = naming;
 	const [keysOpen, setKeysOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [toast, setToast] = useState<UpdateToast | null>(null);
@@ -309,8 +311,9 @@ export function App() {
 				hello: (data) => {
 					const { latest } = data as { latest?: unknown };
 					if (typeof latest === "string") offerUpdate(latest);
-					// who is in each team project is said again after every hello
+					// who is in each team project is said again after every hello, and a naming the gap hid is over
 					resetTabPresence();
+					setNaming(new Map());
 				},
 				app: (data) => {
 					const event = data as {
@@ -337,6 +340,17 @@ export function App() {
 					if (event.kind === "thumbnail" && typeof event.root === "string") {
 						const thumbnail = (data as { thumbnail?: ProjectThumbnail | null }).thumbnail ?? undefined;
 						return setThumbnail(event.root, thumbnail);
+					}
+					// a new project's first ask is naming it: its rail says so until the naming is over
+					if (event.kind === "naming" && typeof event.root === "string") {
+						const { root } = event;
+						const { thread } = data as { thread?: unknown };
+						return setNaming((was) => {
+							const next = new Map(was);
+							if (typeof thread === "string") next.set(root, thread);
+							else next.delete(root);
+							return next;
+						});
 					}
 					// who else is in a team project, for its tab while another is focused
 					if (event.kind === "presence" && typeof event.root === "string") {
@@ -468,6 +482,18 @@ export function App() {
 		window.history.replaceState(null, "", path);
 	}, []);
 
+	/** An untitled project closed empty, on its way to the Trash behind an Undo; opening it again keeps it. */
+	const abandon = useAbandonUntitled({
+		hide: (root) => setForgetting((roots) => new Set([...roots, root])),
+		show: (root) => setForgetting((roots) => new Set([...roots].filter((held) => held !== root))),
+		reopen: (project) => openTab(project),
+		onGone: (root) => {
+			projectRevision.current += 1;
+			setProjects((cards) => cards.filter((card) => card.root !== root));
+		},
+	});
+	const { closed: abandonClosed, keep: keepAbandoned } = abandon;
+
 	/**
 	 * Open-or-focus (#4 focus-not-duplicate). Local state moves first, the PUT
 	 * follows, and the session SSE event is the convergence path — no eager
@@ -475,8 +501,9 @@ export function App() {
 	 */
 	const openTab = useCallback(
 		(project: TabProject, focus = true) => {
-			// a project forgotten earlier and opened again is kept like any other
+			// a project forgotten earlier and opened again is kept like any other, as is one closed on its way to the Trash
 			keep(project.root);
+			keepAbandoned(project.root);
 			if (!openRef.current.includes(project.root)) {
 				const next = [...openRef.current, project.root];
 				setOpen(next);
@@ -484,8 +511,27 @@ export function App() {
 			}
 			if (focus) focusProject(project.root);
 		},
-		[focusProject],
+		[focusProject, keepAbandoned],
 	);
+	// Open…, a drop on the window and a paste on Home: whatever it was, one rule opens it
+	const opener = useOpen({
+		home: focusedTab === undefined && !settingsOpen,
+		onOpened: (project) => {
+			void refetch();
+			openTab(project);
+		},
+	});
+	const { choose, close: closeOpen, take: openGiven } = opener;
+	// a .spool or a folder Finder handed the Mac app goes through the same Open…
+	useEffect(() => appWindow?.onOpenPath?.(openGiven), [appWindow, openGiven]);
+
+	/** The project New just made, whose canvas opens with the Agent pane out, once. */
+	const [started, setStarted] = useState<string | null>(null);
+	const newProject = useStartProject((project) => {
+		setStarted(project.root);
+		openTab(project);
+	});
+	const startNew = newProject.start;
 
 	// back and forward: to a tab's address, that tab; to one of Home's places, Home, which goes there itself
 	useEffect(() => {
@@ -523,8 +569,12 @@ export function App() {
 			setOpen(next);
 			putSession(root, false);
 			if (focusedRef.current === root) focusProject(focusAfterClose(openRef.current, root));
+			const card = projectsRef.current.byRoot.get(root);
+			// one being named has a first ask on its way in, so it stays the way one with a turn running does
+			if (card !== undefined && !namingRef.current.has(root))
+				abandonClosed({ root, name: card.name, teamAddress: card.team?.team });
 		},
-		[focusProject],
+		[focusProject, abandonClosed],
 	);
 
 	/**
@@ -539,13 +589,14 @@ export function App() {
 		const { tab, rest } = popClosed(closedTabs.current, (root) => !loaded || cards.has(root));
 		closedTabs.current = rest;
 		if (tab === undefined) return;
+		keepAbandoned(tab.root);
 		if (!openRef.current.includes(tab.root)) {
 			const next = reopenedOrder(openRef.current, tab);
 			setOpen(next);
 			putReopenedTab(tab.root, next);
 		}
 		focusProject(tab.root);
-	}, [focusProject]);
+	}, [focusProject, keepAbandoned]);
 
 	/**
 	 * ⌘W: what is on top first, then the focused tab, and on Home the window.
@@ -603,11 +654,11 @@ export function App() {
 		const handlers = {
 			"app.new-project": (event) => {
 				event?.preventDefault();
-				setPicking("new");
+				startNew();
 			},
 			"app.open-project": (event) => {
 				event?.preventDefault();
-				setPicking("folder");
+				choose();
 			},
 			"app.help": () => {
 				setSettingsOpen(false);
@@ -654,7 +705,7 @@ export function App() {
 			scope: "app",
 			handlers: appWindow === undefined ? withoutTabKeys(handlers) : handlers,
 		});
-	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot]);
+	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot, startNew, choose]);
 
 	useEffect(() => {
 		return appWindow?.onCommand((command) => {
@@ -662,19 +713,20 @@ export function App() {
 				case "app.new-project":
 					setSettingsOpen(false);
 					setKeysOpen(false);
-					setPicking("new");
+					closeOpen();
+					startNew();
 					break;
 				case "app.open-project":
 					setSettingsOpen(false);
 					setKeysOpen(false);
-					setPicking("folder");
+					choose();
 					break;
 				case "app.settings":
-					setPicking(false);
+					closeOpen();
 					openSettings();
 					break;
 				case "app.help":
-					setPicking(false);
+					closeOpen();
 					setSettingsOpen(false);
 					setKeysOpen(true);
 					break;
@@ -686,13 +738,10 @@ export function App() {
 					runMenuHotkey(command);
 			}
 		});
-	}, [appWindow, openSettings, closeOnTop]);
+	}, [appWindow, openSettings, closeOnTop, startNew, choose, closeOpen]);
 
 	const icons = useIconChange(setIcon, setThumbnail);
-	const transfer = useProjectTransfer(async (project) => {
-		await refetch();
-		openTab(project);
-	});
+	const transfer = useProjectExport();
 	const teamHome = useTeamHome(
 		account,
 		openExternally,
@@ -722,10 +771,7 @@ export function App() {
 					/>
 				);
 			},
-			onNewProject: (team) => {
-				setPickingTeam(team.address);
-				setPicking("new");
-			},
+			onNewProject: (team) => startNew(team.address),
 			// keyed on this Mac's copies of the team's projects, so one just got leaves the list
 			away: (team, here, teams) => (
 				<TeamProjectsAway
@@ -808,13 +854,13 @@ export function App() {
 	const canvasActive =
 		focusedTab !== undefined &&
 		chrome !== null &&
-		!picking &&
 		!keysOpen &&
 		!settingsOpen &&
 		renameRequest === null &&
 		trashRequest === null &&
 		moving === null &&
-		!transfer.confirming;
+		!transfer.confirming &&
+		!opener.up;
 	useEffect(() => {
 		appWindow?.setMenuKeys?.(menuAccelerators());
 	}, [appWindow]);
@@ -847,7 +893,7 @@ export function App() {
 								focusProject(project.root);
 								askProjectHistory(project.name);
 							}}
-							onPick={() => setPicking("new")}
+							onPick={() => startNew()}
 						/>
 					</div>
 
@@ -887,12 +933,8 @@ export function App() {
 										(project.team === undefined || !teamHome.teams.has(project.team.team)),
 								)}
 								loading={!projectsLoaded}
-								onStart={() => {
-									setPickingTeam(undefined);
-									setPicking("new");
-								}}
-								onFolder={() => setPicking("folder")}
-								onImport={transfer.importProject}
+								onStart={() => startNew()}
+								onOpen={choose}
 								onExportProject={transfer.exportProject}
 								onChangeIcon={icons.change}
 								onRemoveIcon={icons.remove}
@@ -958,7 +1000,18 @@ export function App() {
 								project={focusedTab.name}
 								root={focusedTab.root}
 								onChrome={setChrome}
-								onFolder={() => setPicking("folder")}
+								agentOpen={focusedTab.root === started}
+								onAgentOpened={() => setStarted(null)}
+								naming={naming.get(focusedTab.root)}
+								team={
+									focusedTab.teamAddress === undefined
+										? undefined
+										: (markTeams.get(focusedTab.teamAddress) ?? {
+												address: focusedTab.teamAddress,
+												name: focusedTab.teamAddress,
+												logo: null,
+											})
+								}
 								onRename={(name) => requestRename(focusedTab, name)}
 							/>
 						)}
@@ -979,7 +1032,10 @@ export function App() {
 					)}
 				</main>
 
+				{newProject.toast}
+				{abandon.toast}
 				{transfer.surface}
+				{opener.surface}
 				{icons.surface}
 				{focusedTab === undefined && teamHome.toast}
 				{teamHome.exportSurface}
@@ -990,34 +1046,6 @@ export function App() {
 						aboveCanvasTools={focusedTab !== undefined && chrome !== null}
 						onUpdate={() => (toast.kind === "app" ? bridge?.install() : void startUpgrade())}
 						onDismiss={dismissToast}
-					/>
-				)}
-
-				{picking === "new" && (
-					<ProjectPicker
-						initial="start"
-						location={
-							pickingTeam === undefined || location === undefined ? location : `${location}/${pickingTeam}`
-						}
-						team={pickingTeam}
-						onOpened={(project) => {
-							setPicking(false);
-							setPickingTeam(undefined);
-							openTab(project);
-						}}
-						onClose={() => {
-							setPicking(false);
-							setPickingTeam(undefined);
-						}}
-					/>
-				)}
-				{picking === "folder" && (
-					<ProjectPicker
-						onOpened={(project) => {
-							setPicking(false);
-							openTab(project);
-						}}
-						onClose={() => setPicking(false)}
 					/>
 				)}
 

@@ -19,11 +19,13 @@ describe("native app commands", () => {
 			setCanvasActive,
 		} satisfies DesktopWindow;
 		vi.stubGlobal("spoolCanvasWindow", bridge);
+		const posts: string[] = [];
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async (input: RequestInfo | URL) => {
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				const raw = input instanceof Request ? input.url : String(input);
 				const { pathname } = new URL(raw, window.location.href);
+				if (init?.method === "POST") posts.push(pathname);
 				if (pathname.endsWith("/events")) {
 					return new Response(new ReadableStream<Uint8Array>({ start: () => {} }), {
 						headers: { "content-type": "text/event-stream" },
@@ -33,7 +35,7 @@ describe("native app commands", () => {
 				if (pathname === "/api/projects") return Response.json({ projects: [] });
 				if (pathname === "/api/settings") return Response.json({ project: null, entries: [] });
 				if (pathname === "/api/fs/list")
-					return Response.json({ path: "/Users/test", parent: "/Users", isProject: false, dirs: [] });
+					return Response.json({ path: "/Users/test", parent: "/Users", isProject: false, dirs: [], spools: [] });
 				return Response.json({});
 			}),
 		);
@@ -49,13 +51,14 @@ describe("native app commands", () => {
 		expect(command).toBeDefined();
 		expect(setCanvasActive).toHaveBeenLastCalledWith(false);
 
+		// New Project asks nothing: it makes the project
 		await act(async () => command?.("app.new-project"));
-		expect(host.querySelector("dialog")?.getAttribute("aria-label")).toBe("New project");
-		expect(document.activeElement?.getAttribute("placeholder")).toBe("Project name (optional)");
+		expect(posts).toEqual(["/api/projects/start"]);
+		expect(host.querySelector("dialog")).toBeNull();
 		await act(async () => command?.("app.open-project"));
-		expect(host.querySelector('dialog[aria-label="Choose a project folder"]')).not.toBeNull();
+		expect(host.querySelector('dialog[aria-label="Open"]')).not.toBeNull();
 		await act(async () => command?.("app.settings"));
-		expect(host.querySelector('dialog[aria-label="Choose a project folder"]')).toBeNull();
+		expect(host.querySelector('dialog[aria-label="Open"]')).toBeNull();
 		expect(host.querySelector('section[aria-label="Settings"]')).not.toBeNull();
 		await act(async () => command?.("app.help"));
 		expect(host.querySelector('section[aria-label="Settings"]')).toBeNull();

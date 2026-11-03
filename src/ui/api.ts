@@ -34,6 +34,7 @@ import type { EditedNode, Place as MovePlace, PatchRefusal, StampShift } from ".
 import type { BranchesTouchingDesign } from "../daemon/history";
 import type { LocatedRange } from "../daemon/locate";
 import type { MovedAway } from "../daemon/moved-away";
+import type { Finding } from "../daemon/open-finding";
 import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectThumbnail } from "../daemon/project-thumbnail";
@@ -43,6 +44,7 @@ import type { ShownSetAside } from "../daemon/set-aside-routes";
 import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-projects";
 import type { SyncState } from "../daemon/team-sync";
 import type { PlaceSurvey, Survey } from "../get-it-places";
+import type { CloneProgress } from "../git-clone";
 import type { MoveProgress } from "../move-in";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import {
@@ -251,28 +253,65 @@ export async function browseDirectory(path?: string): Promise<FsListing | undefi
 	return (await res.json()) as FsListing;
 }
 
-export async function createDirectoryAt(path: string, name: string): Promise<FsListing> {
-	const res = await client.api.fs.create.$post({ json: { path, name } });
-	if (!res.ok) throw new Error(await errorText(res));
-	return (await res.json()) as FsListing;
-}
-
-/** Every folder under `under` (home when absent) the query answers to, ranked (#251/#277) — the daemon walks, the picker draws. */
+/** Every folder under `under` (home when absent) the query answers to, ranked (#251/#277) — the daemon walks, the chooser draws. */
 export async function searchDirectories(query: string, under?: string): Promise<FsSearch | undefined> {
 	const res = await client.api.fs.search.$get({ query: under === undefined ? { q: query } : { q: query, under } });
 	if (!res.ok) return undefined;
 	return (await res.json()) as FsSearch;
 }
 
-export type OpenOutcome =
-	| { kind: "opened"; root: string; name: string }
-	| { kind: "offer-init" }
-	| { kind: "error"; message: string };
+export type { CloneProgress, Finding };
+
+/** What a folder, a .spool file or a link handed to Open… is, read by the daemon: the one action that fits it. */
+export async function findOpenable(given: string): Promise<Finding> {
+	try {
+		const response = await controlFetch(`/api/projects/find?${new URLSearchParams({ given })}`);
+		if (response.ok) return (await response.json()) as Finding;
+		return { kind: "nothing", says: await errorText(response) };
+	} catch {
+		return { kind: "nothing", says: "spool could not be reached. Try again." };
+	}
+}
+
+/** Clone a git link into the projects location, then what the clone is, read again; throws what git said. */
+export async function cloneRepo(url: string, transfer: string, signal?: AbortSignal): Promise<Finding> {
+	const response = await controlFetch("/api/projects/clone", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ url, transfer }),
+		...(signal === undefined ? {} : { signal }),
+	});
+	if (!response.ok) throw new Error(await errorText(response));
+	return (await response.json()) as Finding;
+}
+
+/** How far the clone under `transfer` has got; null once it is over or before it starts. */
+export async function fetchCloneProgress(transfer: string): Promise<CloneProgress | null> {
+	try {
+		const response = await controlFetch(`/api/projects/clone/progress?${new URLSearchParams({ transfer })}`);
+		return response.ok ? ((await response.json()) as CloneProgress | null) : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Import the .spool file at `path` into the projects location, read where it lies. */
+export async function importProjectFrom(path: string, signal?: AbortSignal): Promise<{ root: string; name: string }> {
+	const response = await controlFetch("/api/projects/import/path", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ path }),
+		...(signal === undefined ? {} : { signal }),
+	});
+	if (!response.ok) throw new Error(await errorText(response));
+	return (await response.json()) as { root: string; name: string };
+}
+
+export type OpenOutcome = { kind: "opened"; root: string; name: string } | { kind: "error"; message: string };
 
 export async function openProjectAt(path: string): Promise<OpenOutcome> {
 	const res = await client.api.projects.open.$post({ json: { path } });
 	if (res.ok) return { kind: "opened", ...((await res.json()) as { root: string; name: string }) };
-	if (res.status === 404) return { kind: "offer-init" };
 	return { kind: "error", message: await errorText(res) };
 }
 
@@ -282,22 +321,17 @@ export async function initProjectAt(path: string): Promise<OpenOutcome> {
 	return { kind: "error", message: await errorText(res) };
 }
 
-/** The "+" (#242): make `name` inside `path` and scaffold it, one round trip. */
-export async function createProjectAt(path: string, name: string): Promise<OpenOutcome> {
-	const res = await client.api.projects.create.$post({ json: { path, name } });
-	if (res.ok) return { kind: "opened", ...((await res.json()) as { root: string; name: string }) };
-	return { kind: "error", message: await errorText(res) };
-}
-
-/** New project while a team is chosen in Home: a team project in a new folder, uploaded to the team. */
-export async function createTeamProjectAt(team: string, path: string, name: string): Promise<OpenOutcome> {
+/**
+ * New project, asking nothing: the next free `untitled` in the default project location, or, with a team chosen
+ * in Home, a team project in `<location>/<team>` uploaded to the team.
+ */
+export async function startProject(team?: string): Promise<OpenOutcome> {
 	let response: Response;
 	try {
-		response = await controlFetch(`/api/cloud/teams/${encodeURIComponent(team)}/projects`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ path, name }),
-		});
+		response = await controlFetch(
+			team === undefined ? "/api/projects/start" : `/api/cloud/teams/${encodeURIComponent(team)}/projects`,
+			{ method: "POST" },
+		);
 	} catch {
 		return { kind: "error", message: "spool could not be reached. Try again." };
 	}
@@ -362,6 +396,15 @@ export async function removeProjectThumbnail(root: string): Promise<void> {
 export async function trashProject(root: string): Promise<void> {
 	const res = await client.api.projects.trash.$post({ json: { root } });
 	if (!res.ok) throw new Error(await errorText(res));
+}
+
+/** A closed project New made and nobody named or drew in, to the Trash; false when it turned out to be used. */
+export async function trashAbandoned(root: string): Promise<boolean> {
+	try {
+		return (await client.api.projects.trash.$post({ json: { root, abandoned: true } })).ok;
+	} catch {
+		return false;
+	}
 }
 
 export type UpgradeStart = { ok: true } | { ok: false; error: string };

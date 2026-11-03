@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { type Context, Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { validator } from "hono/validator";
@@ -14,7 +14,8 @@ import {
 	type TeamRole,
 } from "../cloud-teams";
 import { SpoolError } from "../errors";
-import { createTeamProject } from "../init";
+import { startTeamProject } from "../init";
+import { isAddress } from "../team-project";
 import type { DaemonCloud } from "./app";
 import { teamExportRoutes } from "./team-export";
 
@@ -51,6 +52,8 @@ const roleBody = validator("json", (value, c) => {
 export function cloudTeamRoutes(options: {
 	spoolDir: string;
 	cloud?: DaemonCloud | undefined;
+	/** The machine's projects location, where a team's new projects go under the team's address. */
+	location: () => string;
 	/** The teams this account is in, as just read: a copy gone local asks again once its team no longer lapsed. */
 	onTeams?: (teams: readonly CloudTeam[]) => void;
 }) {
@@ -171,32 +174,26 @@ export function cloudTeamRoutes(options: {
 			.delete("/teams/:team/members/:member", (c) =>
 				act(c, () => client().removeMember(c.req.param("team"), c.req.param("member"))),
 			)
-			// New project while the team is chosen in Home: a team project in a new folder, as `spool init --team` makes
-			.post(
-				"/teams/:team/projects",
-				validator("json", (value, c) => {
-					const { path, name } = value as { path?: unknown; name?: unknown };
-					if (typeof path !== "string" || path === "" || typeof name !== "string")
-						return c.json({ error: 'expected { "path": "/abs/dir", "name": "folder" }' }, 400);
-					return { path, name };
-				}),
-				async (c) => {
-					const { path, name } = c.req.valid("json");
-					try {
-						const { root } = await createTeamProject(path, name, options.spoolDir, {
-							team: c.req.param("team"),
-							origin: origin(),
-							...(options.cloud === undefined ? {} : { request: options.cloud }),
-							...(options.cloud?.openSocket === undefined ? {} : { openSocket: options.cloud.openSocket }),
-						});
-						return c.json({ root, name: basename(root) });
-					} catch (error) {
-						if (error instanceof CloudTeamRefused) return c.json({ error: error.message, code: error.code }, 409);
-						if (error instanceof SpoolError) return c.json({ error: error.message }, 409);
-						return c.json({ error: "spool.page could not be reached. Try again." }, 503);
-					}
-				},
-			)
+			// New project while the team is chosen in Home: the next untitled in `<projects location>/<team>`, a team
+			// project as `spool init --team` makes one
+			.post("/teams/:team/projects", async (c) => {
+				const team = c.req.param("team");
+				// the address becomes a folder under the projects location, so it is one before it is used as one
+				if (!isAddress(team)) return c.json({ error: "No team has this address." }, 400);
+				try {
+					const { root } = await startTeamProject(join(options.location(), team), options.spoolDir, {
+						team,
+						origin: origin(),
+						...(options.cloud === undefined ? {} : { request: options.cloud }),
+						...(options.cloud?.openSocket === undefined ? {} : { openSocket: options.cloud.openSocket }),
+					});
+					return c.json({ root, name: basename(root) });
+				} catch (error) {
+					if (error instanceof CloudTeamRefused) return c.json({ error: error.message, code: error.code }, 409);
+					if (error instanceof SpoolError) return c.json({ error: error.message }, 409);
+					return c.json({ error: "spool.page could not be reached. Try again." }, 503);
+				}
+			})
 			.get("/teams/:team/billing", (c) => act(c, () => client().billing(c.req.param("team"))))
 			.post(
 				"/teams/:team/billing/checkout",

@@ -63,12 +63,25 @@ export interface Checkout {
 
 const run = promisify(execFile);
 
+/**
+ * The environment git runs in when spool asks it something: the daemon's own git environment taken off, so it asks
+ * about the folder or remote named, and never a prompt, for a password or a host key nobody is there to answer.
+ */
+export const quietGit = (): NodeJS.ProcessEnv => ({
+	...process.env,
+	GIT_DIR: undefined,
+	GIT_WORK_TREE: undefined,
+	GIT_TERMINAL_PROMPT: "0",
+	GIT_SSH_COMMAND: "ssh -oBatchMode=yes",
+});
+
 /** The checkout a folder is in. Asks git, with the daemon's own git environment taken off so it asks about this folder. */
 export async function checkoutOf(dir: string): Promise<Checkout | undefined> {
 	const git = async (args: string[]) => {
 		try {
-			const env = { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_TERMINAL_PROMPT: "0" };
-			return (await run("git", args, { cwd: dir, env, timeout: 10_000, windowsHide: true })).stdout.trim();
+			return (
+				await run("git", args, { cwd: dir, env: quietGit(), timeout: 10_000, windowsHide: true })
+			).stdout.trim();
 		} catch {
 			return undefined;
 		}

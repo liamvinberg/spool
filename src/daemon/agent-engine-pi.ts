@@ -4,6 +4,7 @@ import { DESIGNER_FRAMING, mountDesigner } from "./agent-designer";
 import { type AgentEngine, type AgentMessage, type EngineDeps, saidText } from "./agent-engine";
 import { type AgentExecutor, type AgentProcess, probeAgent } from "./agent-exec";
 import { framing } from "./agent-framing";
+import { askOnce, namingPrompt } from "./agent-naming";
 import { type AgentAsk, type AgentModel, type AgentOffer, askFrom } from "./agent-offer";
 import { createPiRpc, piModelValue } from "./agent-pi";
 import { startPiTurn } from "./agent-pi-turn";
@@ -218,6 +219,24 @@ export function createPiEngine({ executor, spoolDir, look }: EngineDeps): AgentE
 		offer: ({ root, ask, choose, signal }) =>
 			askPiOffer(executor, root, { ...ask, ...choose }, { levels: true, ...(signal ? { signal } : {}) }),
 		choice: askFrom,
+		// the thread's own model: pi's default may be one this account can't run
+		name: (root, brief, ask, signal) =>
+			askOnce(
+				executor,
+				{
+					command: PI_COMMAND,
+					args: [
+						"-p",
+						"--no-session",
+						"--no-tools",
+						...(ask.value === undefined ? [] : ["--model", ask.value]),
+						namingPrompt(brief),
+					],
+					cwd: root,
+					env: { ...process.env },
+				},
+				signal,
+			),
 		continuable: (_root, session) => {
 			const file = sessions.read(session.id);
 			return file !== undefined && existsSync(file);

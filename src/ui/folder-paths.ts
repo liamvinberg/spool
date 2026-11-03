@@ -1,13 +1,22 @@
 import type { FsHit, FsListing } from "./api";
 
-/** `droneit/spikes` for a folder under the one being searched; nothing for a folder directly in it. */
-export function within(path: string, scope: string): string {
-	if (path === scope) return "";
-	return path.startsWith(`${scope}/`) ? path.slice(scope.length + 1) : path;
-}
+/** A row the chooser lists: a folder, or with `file` a .spool project file beside them. */
+export type FolderRow = FsHit & { file?: true };
 
-export function browseRows(listing: FsListing): readonly FsHit[] {
-	return listing.dirs.map((dir) => ({ ...dir, parent: listing.path, matched: [] }));
+/** A browsed folder in the shape a search answers with: its folders, and its .spool files when they are wanted. */
+export function browseRows(listing: FsListing, files = false): readonly FolderRow[] {
+	const dirs: FolderRow[] = listing.dirs.map((dir) => ({ ...dir, parent: listing.path, matched: [] }));
+	if (!files) return dirs;
+	return [
+		...dirs,
+		...listing.spools.map((spool) => ({
+			...spool,
+			parent: listing.path,
+			isProject: false,
+			matched: [],
+			file: true as const,
+		})),
+	];
 }
 
 /** `~/personal/projects` — the only form a path under home is ever printed in. */

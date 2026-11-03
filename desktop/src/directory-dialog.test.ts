@@ -4,14 +4,20 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { directoryDialogOptions } from "./directory-dialog";
 
-test("native folder actions use the selected directory and allow making folders only for setup", () => {
-	for (const purpose of ["location", "add", "open"]) {
-		const options = directoryDialogOptions({ purpose, defaultPath: "~/spool" });
-		equal(options.defaultPath, join(homedir(), "spool"));
-		deepEqual(options.properties, purpose === "open" ? ["openDirectory"] : ["openDirectory", "createDirectory"]);
-	}
-	equal(directoryDialogOptions({ purpose: "open", defaultPath: "~" }).defaultPath, homedir());
-	equal(directoryDialogOptions({ purpose: "add", defaultPath: "/tmp/my codebase" }).defaultPath, "/tmp/my codebase");
+test("open takes a folder or a .spool file, and a location a folder it may make", () => {
+	const open = directoryDialogOptions({ purpose: "open", defaultPath: "~" });
+	equal(open.defaultPath, homedir());
+	deepEqual(open.properties, ["openDirectory", "openFile"]);
+	deepEqual(open.filters, [{ name: "spool project", extensions: ["spool"] }]);
+	const location = directoryDialogOptions({ purpose: "location", defaultPath: "~/spool" });
+	equal(location.defaultPath, join(homedir(), "spool"));
+	deepEqual(location.properties, ["openDirectory", "createDirectory"]);
+	equal(directoryDialogOptions({ purpose: "location", defaultPath: "/tmp/my code" }).defaultPath, "/tmp/my code");
+	// a team project's checkout is asked for in its own words, not as where new projects go
+	equal(
+		directoryDialogOptions({ purpose: "checkout", defaultPath: "~" }).message,
+		"Choose the checkout this project goes into.",
+	);
 });
 
 test("an export asks for the folder it is written into", () => {
@@ -26,6 +32,7 @@ test("rejects malformed requests from the renderer", () => {
 		null,
 		{},
 		{ purpose: "delete", defaultPath: "~" },
+		{ purpose: "add", defaultPath: "~" },
 		{ purpose: "open", defaultPath: 2 },
 		{ purpose: "open", defaultPath: "relative" },
 		{ purpose: "open", defaultPath: "/tmp/\0" },

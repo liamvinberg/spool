@@ -50,7 +50,7 @@ async function home(
 					return createElement(Home, {
 						projects: [{ root: "/w/kaffe", name: "kaffe", openedAt: new Date().toISOString(), frameCount: 3, covers: [] }],
 						onOpenProject() {}, onForgetProject() {}, onTrashProject() {}, onRenameProject() {},
-						onStart() {}, onFolder() {},
+						onStart() {}, onOpen() {},
 						places: createElement(HomePlaces, {
 							teams: teams.teams,
 							current: scope,
