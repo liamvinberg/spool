@@ -494,7 +494,9 @@ export function App() {
 			openTab(project);
 		},
 	});
-	const { choose, close: closeOpen } = opener;
+	const { choose, close: closeOpen, take: openGiven } = opener;
+	// a .spool or a folder Finder handed the Mac app goes through the same Open…
+	useEffect(() => appWindow?.onOpenPath?.(openGiven), [appWindow, openGiven]);
 
 	/** The project New just made, whose canvas opens with the Agent pane out. */
 	const [started, setStarted] = useState<string | null>(null);

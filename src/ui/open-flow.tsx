@@ -248,6 +248,8 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 		setSheet(null);
 		setChoosing(true);
 	}, [stop]);
+	// the same one across renders, for a listener that outlives them (the Mac app's Finder documents)
+	const takeGiven = useCallback((given: string) => void live.current.take(given), []);
 	const close = useCallback(() => {
 		stop();
 		setSheet(null);
@@ -261,7 +263,7 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 		/** the chooser or the sheet is up, which keeps the keys from the canvas */
 		up: choosing || sheet !== null,
 		/** a path or a link from elsewhere, the Mac app's own Open With included */
-		take: (given: string) => void take(given),
+		take: takeGiven,
 		surface: (
 			<>
 				{choosing && (

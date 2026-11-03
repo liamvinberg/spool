@@ -47,6 +47,8 @@ export interface DesktopWindow {
 	): () => void;
 	/** the system's open panel: a folder, or for Open… a folder or a .spool file */
 	chooseDirectory?(request: DirectoryRequest): Promise<string | null>;
+	/** a document Finder handed the app, a .spool opened with it say, for Open… to read */
+	onOpenPath?(listener: (path: string) => void): () => void;
 	/** where a dropped file or folder lies on this Mac; an older app has no such call */
 	pathForFile?(file: File): string;
 }

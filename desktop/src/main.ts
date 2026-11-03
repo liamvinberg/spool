@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import {
 	app,
 	BrowserWindow,
@@ -43,7 +43,6 @@ import {
 	writeRect,
 } from "./play-window";
 import { installProjectDownloads } from "./project-download";
-import { importProjectFile, ProjectOpenQueue } from "./project-open";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import { UpdateCover } from "./update-cover";
 import {
@@ -832,6 +831,30 @@ function sendCanvasCommand(command: CanvasCommand): void {
 	else pendingCanvasCommand = command;
 }
 
+/** Finder's documents (a .spool opened with spool, say), waiting for a canvas to take them. */
+const openedPaths: string[] = [];
+
+/**
+ * A document from Finder goes to the canvas's own Open…, which reads it as it reads anything it is handed and asks
+ * before it imports. Before the launch is ready it only waits: the launch opens the canvas, which takes it once up.
+ */
+function openPath(path: string): void {
+	openedPaths.push(path);
+	if (!app.isReady()) return;
+	if (window === undefined) {
+		void openCanvas();
+		return;
+	}
+	window.show();
+	window.focus();
+	handOpenedPaths();
+}
+
+function handOpenedPaths(): void {
+	if (!canvasReady || window === undefined) return;
+	for (const path of openedPaths.splice(0)) window.webContents.send("spool:canvas-open-path", path);
+}
+
 /**
  * A tab key from the menu. ⌘W in another of the app's windows closes that
  * window, as it always has; in the canvas the page decides what closes, and
@@ -929,6 +952,7 @@ function installCanvasChannels(): void {
 			pendingCanvasCommand = undefined;
 			sendCanvasCommand(command);
 		}
+		handOpenedPaths();
 	});
 }
 
@@ -1847,36 +1871,10 @@ export async function shutdown(requireStopped = false): Promise<void> {
 }
 
 export function boot(): void {
-	const documents = new ProjectOpenQueue(
-		async (path) => {
-			if (shuttingDown) return;
-			await openCanvas();
-			const current = await daemon.status(DIRECTORY);
-			if (!current.running)
-				throw new Error("Spool could not start. Open the file again after the daemon is running.");
-			const url = await importProjectFile(path, current.url, current.controlToken);
-			if (shuttingDown) return;
-			if (window === undefined || window.isDestroyed()) await openCanvas();
-			await pointing?.settled;
-			await window?.loadURL(url);
-			window?.show();
-			window?.focus();
-		},
-		async (path, error) => {
-			const detail = error instanceof Error ? error.message : String(error);
-			log("project open", "FAIL", detail);
-			await dialog.showMessageBox({
-				type: "error",
-				message: `Could not open ${basename(path)}.`,
-				detail,
-				buttons: ["OK"],
-			});
-		},
-	);
 	// Registered synchronously: Finder sends cold-launch documents before ready.
 	app.on("open-file", (event, path) => {
 		event.preventDefault();
-		documents.add(path);
+		openPath(path);
 	});
 	openLog(DIRECTORY);
 	const restart = updateRestartState(DIRECTORY, version());
@@ -1958,7 +1956,6 @@ export function boot(): void {
 		scheduleChecks();
 		await openCanvas();
 		watchCanvas();
-		documents.start();
 		// a convenience: nothing about it may stop a launch or escape as a rejection
 		void offerCommand().catch((error: unknown) => log("command", "FAIL", String(error)));
 	});
