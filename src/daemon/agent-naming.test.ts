@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { SpoolError } from "../errors";
 import { fixtureAgentExecutor } from "../test-helpers";
-import { askOnce, kebabName, nameFirst } from "./agent-naming";
+import { askOnce, kebabName, nameFirst, spokenBefore } from "./agent-naming";
 
 describe("a reply as a project name", () => {
 	it("keeps one to three words, lowercase and hyphenated, from the reply's last line", () => {
@@ -38,7 +38,11 @@ describe("naming a new project from its first ask", () => {
 	const named = (root: string, hasFrames = false, reply: string | null = "tide-planner") => {
 		const ask = vi.fn(async () => reply);
 		const rename = vi.fn((from: string, name: string) => ({ root: from.replace(/[^/]+$/u, name) }));
-		return { ask, rename, root: nameFirst(root, { ...waiting, hasFrames: () => hasFrames, ask, rename }) };
+		return {
+			ask,
+			rename,
+			root: nameFirst(root, { ...waiting, hasFrames: () => hasFrames, spoken: () => false, ask, rename }),
+		};
 	};
 
 	it("renames an untitled project with no frames to the agent's name for it", async () => {
@@ -54,12 +58,23 @@ describe("naming a new project from its first ask", () => {
 		}
 	});
 
+	it("names from the very first ask only: not after a turn in this chat, nor with another chat in the project", () => {
+		const user = { kind: "user", text: "A tide planner" };
+		expect(spokenBefore([], "a")).toBe(false);
+		expect(spokenBefore([{ id: "a", entries: [user] }], "a")).toBe(false);
+		expect(spokenBefore([{ id: "a", entries: [user, { kind: "prose", text: "Here it is." }, user] }], "a")).toBe(
+			true,
+		);
+		expect(spokenBefore([{ id: "b", entries: [user] }], "a")).toBe(true);
+	});
+
 	it("stays untitled when the agent gives no name, or the name is refused", async () => {
 		expect(await named("/w/untitled", false, null).root).toBe("/w/untitled");
 		expect(await named("/w/untitled", false, "I can't name this without more context.").root).toBe("/w/untitled");
 		const refused = nameFirst("/w/untitled", {
 			...waiting,
 			hasFrames: () => false,
+			spoken: () => false,
 			ask: async () => "coffee",
 			rename: () => {
 				throw new SpoolError("A project with that name is already open in Spool. Choose another name.");

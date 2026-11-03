@@ -71,6 +71,16 @@ export async function askOnce(
 }
 
 /**
+ * Whether a project was talked to before the ask now sent in `thread`: another chat, closed ones too, or a turn in
+ * this one. The rail saves what was said before it sends, so this ask's own words may stand on disk already.
+ */
+export function spokenBefore(threads: readonly { id: string; entries: readonly unknown[] }[], thread: string): boolean {
+	return threads.some(
+		(one) => one.id !== thread || one.entries.some((entry) => (entry as { kind?: unknown }).kind !== "user"),
+	);
+}
+
+/**
  * Projects being named, by root: the turn each is named for, which a stop quotes, and the stop itself. A hand's
  * rename and the trash refuse a project while it is here, as they refuse one a turn runs in.
  */
@@ -86,6 +96,8 @@ export async function nameFirst(
 	deps: {
 		/** whether the project has frames yet: one that has is past naming */
 		hasFrames: (root: string) => boolean;
+		/** whether anything was said in the project before this ask: only its very first is named from */
+		spoken: (root: string) => boolean;
 		/** the agent's reply to `namingPrompt`, or null */
 		ask: (signal: AbortSignal) => Promise<string | null>;
 		rename: (root: string, name: string) => { root: string };
@@ -98,7 +110,7 @@ export async function nameFirst(
 		registered: (root: string) => boolean;
 	},
 ): Promise<string | null> {
-	if (!isUntitled(basename(root)) || deps.hasFrames(root)) return root;
+	if (!isUntitled(basename(root)) || deps.hasFrames(root) || deps.spoken(root)) return root;
 	const stop = new AbortController();
 	const asked = AbortSignal.any([stop.signal, deps.signal]);
 	deps.namings.set(root, { turn: deps.turn, stop });

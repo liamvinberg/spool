@@ -19,11 +19,19 @@ import {
 } from "./agent-frames";
 import type { AgentHeld, createAgentTurns } from "./agent-live";
 import { acceptedModelChoice, type createAgentModelPreferences } from "./agent-model-preferences";
-import { type Namings, nameFirst } from "./agent-naming";
+import { type Namings, nameFirst, spokenBefore } from "./agent-naming";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentPictureEnding } from "./agent-picture";
 import type { createAgentPresence } from "./agent-presence";
-import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
+import {
+	closeThread,
+	isThreadId,
+	parseThreadPut,
+	putThread,
+	readThread,
+	readThreads,
+	serveThreads,
+} from "./agent-threads";
 import type { CommentPrompt } from "./comment-prompt";
 import type { createChangeHub } from "./events";
 import { type ResolveProject, withProject } from "./project-route";
@@ -390,6 +398,7 @@ export function agentRoutes(deps: {
 								? asked
 								: await nameFirst(asked, {
 										hasFrames: (at) => (discoverFrames(at)?.length ?? 0) > 0,
+										spoken: (at) => spokenBefore(readThreads(spoolDir, at, true), thread),
 										ask: (signal) => {
 											const selected = engineFor(c, asked, thread, requested);
 											if ("response" in selected) return Promise.resolve(null);
