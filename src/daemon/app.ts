@@ -75,6 +75,7 @@ import { machineRoutes } from "./machine-routes";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
 import { movedAwayRoots } from "./moved-away";
 import { watchForMoves } from "./moved-in";
+import { openRoutes } from "./open-routes";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
@@ -1853,6 +1854,16 @@ export function createDaemonApp({
 				trash: trashImpl,
 			},
 			changed: () => emitAppEvent({ kind: "registry" }),
+		}),
+	);
+	app.route(
+		"/api/open",
+		openRoutes({
+			spoolDir,
+			home: fsIndex.home,
+			cloud,
+			location: () =>
+				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
 		}),
 	);
 	app.route("/api/p", projectShares.routes);
