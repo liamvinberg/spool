@@ -403,7 +403,23 @@ function parseCaptureError(text: string): CaptureError | undefined {
 	return known === undefined ? undefined : { error, at, kind: known };
 }
 
-/** Every frame whose last cover failed through its own fault, read without holding the event loop. */
+/** Every frame whose last cover failed through its own fault. */
+export function scanBrokenFramesSync(root: string): Map<string, BrokenFrame> {
+	const broken = new Map<string, BrokenFrame>();
+	const store = coverStoreDir(root);
+	for (const { frame, folder } of framesIn(store)) {
+		if (!filesIn(join(store, folder)).includes(CAPTURE_ERROR_NAME)) continue;
+		let text = "";
+		try {
+			text = readFileSync(join(store, folder, CAPTURE_ERROR_NAME), "utf8");
+		} catch {}
+		const recorded = parseCaptureError(text);
+		if (recorded !== undefined && recorded.kind !== "capture") broken.set(frame, { ...recorded, kind: recorded.kind });
+	}
+	return broken;
+}
+
+/** The same, read without holding the event loop. */
 export async function scanBrokenFrames(root: string): Promise<Map<string, BrokenFrame>> {
 	const store = coverStoreDir(root);
 	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
@@ -411,8 +427,10 @@ export async function scanBrokenFrames(root: string): Promise<Map<string, Broken
 		folders.map(async (folder) => {
 			const frame = segmentFrame(folder);
 			if (frame === undefined) return undefined;
-			const text = await readFile(join(store, folder, CAPTURE_ERROR_NAME), "utf8").catch(() => undefined);
-			const recorded = text === undefined ? undefined : parseCaptureError(text);
+			const names = (await listed(join(store, folder))).filter((entry) => entry.isFile()).map((entry) => entry.name);
+			if (!names.includes(CAPTURE_ERROR_NAME)) return undefined;
+			const text = await readFile(join(store, folder, CAPTURE_ERROR_NAME), "utf8").catch(() => "");
+			const recorded = parseCaptureError(text);
 			if (recorded === undefined || recorded.kind === "capture") return undefined;
 			return [frame, { error: recorded.error, at: recorded.at, kind: recorded.kind }] as const;
 		}),

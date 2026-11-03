@@ -746,7 +746,9 @@ export function createDaemonApp({
 			if (source !== undefined) projectShares.covered(root, frame, source, bytes);
 		},
 		failed: (root, frame, reason, kind) => {
-			if (frameExists(root, frame)) writeCaptureError(root, frame, reason, kind);
+			if (!frameExists(root, frame)) return;
+			writeCaptureError(root, frame, reason, kind);
+			hub.publish(root, { kind: "cover-failed", frame });
 		},
 		paced: (root, frame, pace) => {
 			if (frameExists(root, frame)) writePace(root, frame, pace);
