@@ -73,9 +73,29 @@ export async function initTeamProject(
 	const root = realDir(targetDir);
 	refuseExisting(root);
 	refuseForeignLink(root);
-	const request = { ...options.request, origin: options.origin };
-	const teams = cloudTeams(spoolDir, request);
+	const teams = cloudTeams(spoolDir, { ...options.request, origin: options.origin });
 	const team = await chosenTeam(teams, options.team);
+	const made = await makeTeamProject(root, spoolDir, teams, team);
+	let uploaded = true;
+	try {
+		await syncLocalCopy(root, spoolDir, options);
+	} catch {
+		// the files are here and the daemon sends them the next time it can reach spool.page
+		uploaded = false;
+	}
+	return { ...made, uploaded };
+}
+
+/**
+ * The team's project made at spool.page under the folder's name, then scaffolded, linked and registered here. Nothing
+ * is uploaded yet: that is the caller's, once or by the daemon's own copy.
+ */
+async function makeTeamProject(
+	root: string,
+	spoolDir: string,
+	teams: CloudTeamsClient,
+	team: CloudTeam,
+): Promise<{ root: string; link: ProjectLink; agents?: string }> {
 	// where the code lives, as the team will see it: information, never a permission
 	const checkout = await checkoutOf(root);
 	const repo = checkout?.repo;
@@ -91,14 +111,7 @@ export async function initTeamProject(
 	writeProjectLink(root, link);
 	const agents = checkout === undefined ? undefined : await addAgentsLine(checkout.top);
 	registerAndOpenProject(spoolDir, root);
-	let uploaded = true;
-	try {
-		await syncLocalCopy(root, spoolDir, options);
-	} catch {
-		// the files are here and the daemon sends them the next time it can reach spool.page
-		uploaded = false;
-	}
-	return { root, link, uploaded, ...(agents === undefined ? {} : { agents }) };
+	return { root, link, ...(agents === undefined ? {} : { agents }) };
 }
 
 /**
@@ -184,7 +197,7 @@ export async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promi
 	return team;
 }
 
-/** The team already has a project by the folder's name. */
+/** The team already has a project by the folder's name, live or in its trash. */
 class ProjectNameTaken extends SpoolError {}
 
 export function teamProjectRefusal(error: unknown, team: string, folder: string): unknown {
@@ -193,6 +206,10 @@ export function teamProjectRefusal(error: unknown, team: string, folder: string)
 	if (error.code === "project_taken")
 		return new ProjectNameTaken(
 			`${team} already has a project called "${folder}"; start this one in a folder with another name`,
+		);
+	if (error.code === "name_in_trash")
+		return new ProjectNameTaken(
+			`a project in ${team}'s trash holds the name "${folder}"; restore or delete it there, or start this one in a folder with another name`,
 		);
 	if (error.code === "invalid_project_name" || error.code === "project_name_reserved")
 		return new SpoolError(
@@ -243,17 +260,27 @@ export async function startTeamProject(
 	parentDir: string,
 	spoolDir: string,
 	options: TeamInitOptions,
-): Promise<{ root: string; link: ProjectLink; uploaded: boolean }> {
+): Promise<{ root: string; link: ProjectLink }> {
 	const parent = expandHome(parentDir);
 	mkdirSync(parent, { recursive: true });
 	const registered = new Set(readRegistry(spoolDir).projects.map((project) => basename(project.root)));
+	const teams = cloudTeams(spoolDir, { ...options.request, origin: options.origin });
+	// the team's names are read beside it, so the first try is a free name rather than one round trip per taken one
+	const [team, theirs] = await Promise.all([
+		chosenTeam(teams, options.team),
+		teams.projects(options.team).then(
+			({ projects }) => new Set(projects.map((project) => project.name)),
+			() => new Set<string>(),
+		),
+	]);
 	for (let suffix = 1; suffix <= 100; suffix++) {
 		const folder = untitledName(suffix);
 		const target = join(realDir(parent), folder);
-		if (registered.has(folder) || existsSync(target)) continue;
+		if (registered.has(folder) || theirs.has(folder) || existsSync(target)) continue;
 		mkdirSync(target);
 		try {
-			return await initTeamProject(target, spoolDir, options);
+			// the daemon's own copy of it uploads the scaffold, as it does any change: nothing waits on that here
+			return await makeTeamProject(realDir(target), spoolDir, teams, team);
 		} catch (error) {
 			rmSync(target, { recursive: true, force: true });
 			if (!(error instanceof ProjectNameTaken)) throw error;
