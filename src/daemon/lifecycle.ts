@@ -315,7 +315,11 @@ interface LiveDaemon {
 	url: string;
 }
 
-type RecordedProbe = { kind: "live"; daemon: LiveDaemon } | { kind: "stale"; state: DaemonState } | { kind: "absent" };
+type RecordedProbe =
+	| { kind: "live"; daemon: LiveDaemon }
+	| { kind: "stale"; state: DaemonState }
+	| { kind: "unanswered"; state: DaemonState }
+	| { kind: "absent" };
 
 /**
  * What daemon.json describes, checked against who actually answers — and, on
@@ -324,14 +328,17 @@ type RecordedProbe = { kind: "live"; daemon: LiveDaemon } | { kind: "stale"; sta
  * written while the health probe was in flight (and fetchHealth gives up
  * after a second, so a busy daemon reads as dead), and deleting a live
  * daemon's credential strands it — nothing can talk to it, stop it, or write
- * the token back, because only that daemon ever knew it.
+ * the token back, because only that daemon ever knew it. So silence alone
+ * proves nothing while the recorded pid lives: the state is stale only when
+ * another daemon answers or the process is gone.
  */
 async function probeRecorded(spoolDir: string): Promise<RecordedProbe> {
 	const state = readDaemonState(spoolDir);
 	if (state === undefined) return { kind: "absent" };
 	const url = daemonUrl(state.host, state.port);
 	const health = await fetchHealth(url);
-	if (health === undefined || health.pid !== state.pid) return { kind: "stale", state };
+	if (health === undefined) return { kind: isAlive(state.pid) ? "unanswered" : "stale", state };
+	if (health.pid !== state.pid) return { kind: "stale", state };
 	return { kind: "live", daemon: { state, url } };
 }
 
@@ -548,7 +555,8 @@ function isAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;
-	} catch {
-		return false;
+	} catch (error) {
+		// EPERM: it exists, it is just not ours to signal
+		return (error as NodeJS.ErrnoException).code !== "ESRCH";
 	}
 }

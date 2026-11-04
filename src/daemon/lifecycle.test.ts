@@ -299,6 +299,13 @@ describe("statusDaemon", () => {
 
 		expect(await statusDaemon(spoolDir)).toEqual({ running: false });
 		expect(existsSync(join(spoolDir, "daemon.json"))).toBe(false);
+
+		// a live pid that does not answer is a busy daemon, not a dead one:
+		// sweeping its state would strand it without a credential
+		const busy = { ...stale, pid: process.pid };
+		writeFileSync(join(spoolDir, "daemon.json"), JSON.stringify(busy));
+		expect(await statusDaemon(spoolDir)).toEqual({ running: false });
+		expect(readDaemonState(spoolDir)).toEqual(busy);
 	});
 
 	it("never sweeps state a successor wrote while the health probe was in flight", async () => {
