@@ -1115,6 +1115,7 @@ export function App() {
 				{renameRequest !== null && (
 					<RenameProjectDialog
 						project={renameRequest.project}
+						team={teamNameOf(renameRequest.project.root)}
 						initialName={renameRequest.initialName}
 						onRename={async (name) => {
 							const renamed = await renameTo(renameRequest.project.root, name);

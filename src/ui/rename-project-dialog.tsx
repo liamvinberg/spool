@@ -4,22 +4,30 @@ import { Field, TextField } from "./primitives/inputs";
 
 export function RenameProjectDialog({
 	project,
+	team,
 	initialName,
 	onRename,
 	onClose,
 }: {
 	project: { root: string; name: string };
+	/** The team a team copy's project is in, by name: it is renamed there first, for everyone. */
+	team?: string | undefined;
 	initialName: string;
 	onRename: (name: string) => Promise<void>;
 	onClose: () => void;
 }) {
 	const [draft, setDraft] = useState(initialName);
-	const name = draft.trim();
+	// a team names its projects in lowercase, and the folder takes the team's name
+	const name = team === undefined ? draft.trim() : draft.trim().toLowerCase();
 	const parent = project.root.slice(0, project.root.lastIndexOf("/"));
 	return (
 		<ConfirmDialog
 			title="Rename project"
-			description="This also renames the folder on your Mac."
+			description={
+				team === undefined
+					? "This also renames the folder on your Mac."
+					: `This renames it in ${team} for everyone, and its folder on your Mac.`
+			}
 			confirmLabel="Rename folder"
 			disabled={name === "" || name === project.name}
 			onConfirm={() => onRename(name)}
