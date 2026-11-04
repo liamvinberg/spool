@@ -95,6 +95,8 @@ interface Project {
 	id: string;
 	team: string;
 	name: string;
+	/** Who started it (`team_projects.created_by`): they may delete it for good while it is untouched. */
+	createdBy?: string;
 	files: Map<string, TeamVersion>;
 	/** Every save it took, and whether it was a move's, which counts against no limit. */
 	saves: { path: string; base: number | null; deleted: boolean; by: string; outcome: string; moved: boolean }[];
@@ -265,6 +267,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const trash = new Map<string, { at: Project; by: string; when: number }>();
 	/** Every move spool.page took, in order. */
 	const moves: { from: string; to: string; by: string }[] = [];
+	/** Every rename spool.page took, in order, as `<team>/<name>` from and to. */
+	const renames: { from: string; to: string; by: string }[] = [];
 	/** Every read of a project's team history, by `<team>/<name>`: its route and query, in order. */
 	const historyAsks = new Map<string, string[]>();
 	let ids = 0;
@@ -452,7 +456,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return Response.json(described(held.at));
 		}
 		const match =
-			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still|\/history\/(?:saves|files|stretches|stretch|moved-in|blobs\/[^/]+))?$/u.exec(
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/rename|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still|\/history\/(?:saves|files|stretches|stretch|moved-in|blobs\/[^/]+))?$/u.exec(
 				path,
 			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -487,6 +491,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					id: `p${++ids}`,
 					team: address,
 					name,
+					createdBy: person.accountId,
 					files: new Map(),
 					saves: [],
 					refused: [],
@@ -607,6 +612,40 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				for (const socket of at.sockets) socket.close(CLOSE_NOT_EDITOR);
 				return Response.json({ ...described(at), losing: gone });
 			});
+		// the same project under another name in its team: its old address forwards, as a move's does
+		if (match[3] === "/rename" && request.method === "POST")
+			return request.json().then((body: { name?: unknown }) => {
+				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
+				const name = typeof body.name === "string" ? body.name.toLowerCase() : "";
+				if (!/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/u.test(name))
+					return Response.json({ error: "invalid_project_name" }, { status: 400 });
+				if (name === at.name) return Response.json(described(at));
+				if (projects.has(`${address}/${name}`)) return Response.json({ error: "project_taken" }, { status: 409 });
+				const holds = trash.get(`${address}/${name}`);
+				if (holds !== undefined)
+					return Response.json({ error: "name_in_trash", frees: holds.when + 30 * 86400 }, { status: 409 });
+				const from = `${at.team}/${at.name}`;
+				projects.delete(from);
+				forwards.set(from, at);
+				at.name = name;
+				arrive(at);
+				renames.push({ from, to: `${at.team}/${at.name}`, by: person.accountId });
+				// every connection asks its standing again, and meets the old address's answer, as after a move
+				for (const socket of at.sockets) socket.close(CLOSE_NOT_EDITOR);
+				return Response.json(described(at));
+			});
+		// an untouched project, gone for good at once: its admins' and its creator's
+		if (request.method === "DELETE" && match[3] === undefined && url.searchParams.get("empty") === "1") {
+			if (role !== "admin" && !(role === "editor" && at.createdBy === person.accountId))
+				return Response.json({ error: "admin_required" }, { status: 403 });
+			const frames = [...at.files].some(([path, file]) => path.startsWith("frames/") && file.bytes !== null);
+			if (frames || at.comments.length > 0 || at.shares.size > 0)
+				return Response.json({ error: "project_not_empty" }, { status: 409 });
+			remove(at, false, person.accountId);
+			trash.delete(`${at.team}/${at.name}`);
+			return new Response(null, { status: 204 });
+		}
 		if (request.method === "DELETE" && match[3] === undefined) {
 			if (role !== "admin") return Response.json({ error: "admin_required" }, { status: 403 });
 			// to the team's trash, its comments and shares with it
@@ -1878,6 +1917,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		},
 		/** Every move spool.page took, as `<team>/<name>` from and to, and who moved it. */
 		moves,
+		/** Every rename spool.page took, as `<team>/<name>` from and to, and who renamed it. */
+		renames,
+		/** Whether a project lives at an address now, live in its team. */
+		has: (name: string) => project(name) !== undefined,
 		/** Where an old address leads now, as `<team>/<name>`, or nothing. */
 		forward(address: string) {
 			const to = forwards.get(address);
