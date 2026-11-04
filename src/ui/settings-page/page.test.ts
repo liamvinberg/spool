@@ -2,6 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
+import { EXPERIMENTS } from "../../settings/experiments";
 import { SETTINGS, type SettingKey, type SettingReading, type SettingsSnapshot } from "../../settings/registry";
 import type { TabProject } from "../tab-strip";
 
@@ -89,10 +90,10 @@ afterEach(() => {
 	delete (window as Window & { __SPOOL_CONTROL__?: string }).__SPOOL_CONTROL__;
 });
 
-it("lists the project, This Mac, Appearance and Colours from a project, and opens on This Mac", async () => {
+it("lists the project, This Mac, Appearance, Colours and Experimental from a project, and opens on This Mac", async () => {
 	const { host, page, unmount } = await mount(() => Response.json(snapshot()));
 	expect(page()).not.toBeNull();
-	expect(sectionsOf(host)).toEqual(["project", "machine", "appearance", "colours"]);
+	expect(sectionsOf(host)).toEqual(["project", "machine", "appearance", "colours", "experimental"]);
 	const project = host.querySelector('[data-section="project"]');
 	expect(project?.querySelector('[data-project-icon="letter"]')).not.toBeNull();
 	expect(project?.textContent?.endsWith("demo")).toBe(true);
@@ -103,7 +104,7 @@ it("lists the project, This Mac, Appearance and Colours from a project, and open
 
 it("has no project section from Home, and goes back to Home", async () => {
 	const { host, unmount } = await mount(() => Response.json({ ...snapshot(), project: null }), { project: undefined });
-	expect(sectionsOf(host)).toEqual(["machine", "appearance", "colours"]);
+	expect(sectionsOf(host)).toEqual(["machine", "appearance", "colours", "experimental"]);
 	expect(host.querySelector('button[aria-label="Back to Home"]')).not.toBeNull();
 	unmount();
 });
@@ -234,6 +235,53 @@ it("applies a preset as one write of ten tokens into its look", async () => {
 	expect(writes[0]?.writes).toHaveLength(10);
 	expect(writes[0]?.writes.every((write) => write.key.startsWith("theme.dark."))).toBe(true);
 	expect(writes[0]?.writes.find((write) => write.key === "theme.dark.thread")?.value).toBe("#88c0d0");
+	unmount();
+});
+
+it("draws every experiment with its trade-off, finds them by any word, and offers a reload once one moved", async () => {
+	let knobs = true;
+	const writes: unknown[] = [];
+	Object.assign(window, { __SPOOL_EXPERIMENTS__: ["knobs"] });
+	const { host, page, go, settle, unmount } = await mount((init) => {
+		if (reads(init)) return Response.json(snapshot({ "experimental.knobs": knobs }));
+		const body = bodyOf(init);
+		writes.push(body);
+		knobs = body.value as boolean;
+		return Response.json(snapshot({ "experimental.knobs": knobs }).entries.find((entry) => entry.key === body.key));
+	});
+	await go("experimental");
+	const text = page()?.textContent ?? "";
+	for (const experiment of Object.values(EXPERIMENTS)) {
+		expect(text).toContain(experiment.name);
+		expect(text).toContain(experiment.tradeoff);
+	}
+	expect(button(host, "Reload canvas")).toBeUndefined();
+
+	const search = host.querySelector<HTMLInputElement>('input[type="search"]');
+	const find = async (words: string) => {
+		await act(async () => {
+			const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+			set?.call(search, words);
+			search?.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+	};
+	const rows = () =>
+		[...host.querySelectorAll<HTMLInputElement>('[role="switch"]')].map((row) => row.getAttribute("aria-label"));
+	await find("blur zoom");
+	expect(rows()).toEqual(["Frame resolution"]);
+	await find("beta");
+	expect(rows()).toEqual(["Knobs"]);
+	await find("nothing like it");
+	expect(rows()).toEqual([]);
+	expect(page()?.textContent).toContain("No experiment matches “nothing like it”");
+
+	await find("");
+	await act(async () => host.querySelector<HTMLInputElement>('[role="switch"][aria-label="Knobs"]')?.click());
+	await settle();
+	expect(writes).toMatchObject([{ key: "experimental.knobs", value: false }]);
+	expect(button(host, "Reload canvas")).toBeDefined();
+	expect(page()?.textContent).toContain("reload to apply");
+	delete window.__SPOOL_EXPERIMENTS__;
 	unmount();
 });
 

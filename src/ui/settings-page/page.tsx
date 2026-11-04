@@ -3,7 +3,7 @@ import type { SettingReading } from "../../settings/registry";
 import { fetchCloudTeams } from "../api";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
-import { BackIcon, ColoursIcon, LookIcon, MachineIcon } from "../icons";
+import { BackIcon, ColoursIcon, FlaskIcon, LookIcon, MachineIcon } from "../icons";
 import { PlaceChooser } from "../place-chooser";
 import { Button } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
@@ -14,6 +14,7 @@ import { ProjectMark } from "../project-icon";
 import { useSettings, useWriteSetting, useWriteSettings } from "../settings";
 import type { TabProject } from "../tab-strip";
 import { AppearanceSection, ColoursSection } from "./appearance";
+import { ExperimentalSection } from "./experimental";
 import { Choice, ColourControl, FILES, Head, Says, SettingLine, type Write } from "./parts";
 
 /**
@@ -34,11 +35,13 @@ import { Choice, ColourControl, FILES, Head, Says, SettingLine, type Write } fro
 
 const UNTYPED = new Set(["checkbox", "radio"]);
 
-export type SettingsSection = "project" | "machine" | "appearance" | "colours";
+export type SettingsSection = "project" | "machine" | "appearance" | "colours" | "experimental";
 
 /** The sections there are: the project's only when opened from one. */
 export function settingsSections(project: boolean): readonly SettingsSection[] {
-	return project ? ["project", "machine", "appearance", "colours"] : ["machine", "appearance", "colours"];
+	return project
+		? ["project", "machine", "appearance", "colours", "experimental"]
+		: ["machine", "appearance", "colours", "experimental"];
 }
 
 export function SettingsPage({
@@ -91,6 +94,7 @@ export function SettingsPage({
 		machine: { name: "This Mac", icon: <MachineIcon /> },
 		appearance: { name: "Appearance", icon: <LookIcon /> },
 		colours: { name: "Colours", icon: <ColoursIcon /> },
+		experimental: { name: "Experimental", icon: <FlaskIcon /> },
 	};
 	const back = project?.name ?? "Home";
 
@@ -141,6 +145,8 @@ export function SettingsPage({
 						<MachineSection entries={entries} write={write} />
 					) : shown === "appearance" ? (
 						<AppearanceSection entries={entries} write={write} writeMany={writeMany} />
+					) : shown === "experimental" ? (
+						<ExperimentalSection entries={entries} write={write} />
 					) : (
 						<ColoursSection entries={entries} write={write} writeMany={writeMany} />
 					)}
