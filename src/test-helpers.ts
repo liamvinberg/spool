@@ -18,6 +18,7 @@ import { inertWebfonts } from "./daemon/webfonts";
 import { initProject } from "./init";
 import { setNested } from "./machine-state";
 import { lookupProjectByName } from "./registry";
+import type { ExperimentId } from "./settings/experiments";
 import { canvasJson } from "./templates";
 import { defaultLayout } from "./ui/canvas/pane-layout";
 
@@ -219,12 +220,23 @@ export function chooseAgent(spoolDir: string, choice: { engine?: AgentEngineId; 
 }
 
 /** A registered project behind a really-served daemon on an ephemeral port. */
-export async function serveProject(options?: Partial<Parameters<typeof serveDaemon>[0]>) {
+export async function serveProject({
+	experiments,
+	...options
+}: Partial<Parameters<typeof serveDaemon>[0]> & {
+	/** switches for this machine's config.json, as Settings writes them */
+	experiments?: Partial<Record<ExperimentId, boolean>>;
+} = {}) {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
+	if (experiments !== undefined) {
+		const file = join(spoolDir, "config.json");
+		const config = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>) : {};
+		writeFileSync(file, JSON.stringify({ ...config, experimental: experiments }));
+	}
 	// A Claude fixture, or the first engine a test hands over, is the one it intends to exercise.
-	if (options?.agentExecutor !== undefined) chooseAgent(spoolDir, { engine: "claude" });
-	else if (options?.agentEngines?.[0] !== undefined) chooseAgent(spoolDir, { engine: options.agentEngines[0].id });
+	if (options.agentExecutor !== undefined) chooseAgent(spoolDir, { engine: "claude" });
+	else if (options.agentEngines?.[0] !== undefined) chooseAgent(spoolDir, { engine: options.agentEngines[0].id });
 	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0, ...options });
 	closeAfterTest(daemon);
 	return {

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { getNested, setNested } from "../machine-state";
+import { experimentOfKey, legacyExperiments } from "../settings/experiments";
 import {
 	isSettingKey,
 	parseSetting,
@@ -59,8 +60,14 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 		switch (SETTINGS[key].scope) {
 			case "project":
 				return root === undefined ? undefined : getNested(readCanvasFields(root), path);
-			case "machine":
-				return getNested(readConfig(configFile).fields, path);
+			case "machine": {
+				const fields = readConfig(configFile).fields;
+				const value = getNested(fields, path);
+				if (value !== undefined) return value;
+				// an experiment the old `experiments` list names is on until the map says otherwise
+				const experiment = experimentOfKey(key);
+				return experiment !== undefined && legacyExperiments(fields).has(experiment) ? true : undefined;
+			}
 		}
 	}
 

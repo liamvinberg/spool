@@ -35,8 +35,6 @@ export interface ServeConfig {
 	updateCheck: boolean;
 	/** #158: false turns history off on this machine, whatever a project's flag says */
 	history: boolean;
-	/** #238: the experimental surfaces this machine has switched on, by name */
-	experiments: readonly string[];
 	/** what was in the config and could not be honored, for the caller to narrate */
 	notices: readonly string[];
 }
@@ -96,7 +94,6 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 	let port = DEFAULT_PORT;
 	let updateCheck = true;
 	let history = true;
-	let experiments: readonly string[] = [];
 	const notices: string[] = [];
 
 	let raw: string | undefined;
@@ -154,15 +151,6 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 			}
 			history = config.history;
 		}
-		if (config.experiments !== undefined) {
-			// the vocabulary is the UI's, not this file's: a name nothing answers to is
-			// carried across and ignored where it would have been read, so a config
-			// written for a newer spool still boots on an older one
-			if (!Array.isArray(config.experiments) || config.experiments.some((name) => typeof name !== "string")) {
-				throw new SpoolError(`config at ${file}: "experiments" must be a list of names`);
-			}
-			experiments = config.experiments as readonly string[];
-		}
 	}
 
 	if (env.SPOOL_HOST !== undefined && env.SPOOL_HOST !== "") host = env.SPOOL_HOST;
@@ -178,7 +166,7 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 	// one source that gets refused rather than ignored
 	assertLoopbackHost(host);
 
-	return { host, port, updateCheck, history, experiments, notices };
+	return { host, port, updateCheck, history, notices };
 }
 
 export function assertLoopbackHost(host: string): void {

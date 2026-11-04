@@ -19,6 +19,7 @@ import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
+import { experimentsOn } from "../settings/experiments";
 import { appearanceOf, themeInline } from "../settings/registry";
 import { backInGitOffered, finishOwedCommits, putBackInGit } from "../team-moves";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
@@ -166,8 +167,6 @@ export interface DaemonOptions {
 	moveToTrash?: (paths: string[]) => Promise<void>;
 	/** #30 phone-home: on only when `spool serve` resolves it on from config. */
 	updateCheck?: boolean | undefined;
-	/** #238: the experiment names config.json switched on, handed to the canvas at boot. */
-	experiments?: readonly string[] | undefined;
 	/**
 	 * #158: the per-user history switch off config.json. Absent means on, because
 	 * only `false` is a refusal — the project flag is what turns history on, and
@@ -307,7 +306,6 @@ export function createDaemonApp({
 	development,
 	moveToTrash,
 	updateCheck,
-	experiments,
 	history: historyAllowed,
 	fetchLatest,
 	upgrade,
@@ -2105,10 +2103,11 @@ export function createDaemonApp({
 		protectControlDocument(c);
 		c.header("content-type", index.contentType);
 		c.header("cache-control", "no-store");
-		// the experiments ride the same boot script rather than a route: a surface
-		// that is off has to be absent from the first paint, and a fetch the page
-		// waits for would show it first and take it away after
-		const boot = `<script>window.__SPOOL_CONTROL__ = ${escapeJsonScript(controlToken)}; window.__SPOOL_RENDER_ORIGIN__ = ${escapeJsonScript(renderOrigin)}; window.__SPOOL_CAPTURE_ORIGIN__ = ${escapeJsonScript(captureOrigin)}; window.__SPOOL_EXPERIMENTS__ = ${escapeJsonScript([...(experiments ?? [])])};</script>`;
+		const readings = settings.read().entries;
+		// the experiments this machine has on ride the same boot script rather than a
+		// route: a surface that is off has to be absent from the first paint, and a
+		// fetch the page waits for would show it first and take it away after
+		const boot = `<script>window.__SPOOL_CONTROL__ = ${escapeJsonScript(controlToken)}; window.__SPOOL_RENDER_ORIGIN__ = ${escapeJsonScript(renderOrigin)}; window.__SPOOL_CAPTURE_ORIGIN__ = ${escapeJsonScript(captureOrigin)}; window.__SPOOL_EXPERIMENTS__ = ${escapeJsonScript(experimentsOn(readings))};</script>`;
 		// A development daemon's canvas wears the blue on its ribbon mark, the way
 		// its favicon and the lane app's icon already do, so a checkout window and
 		// the daily one are not two of the same picture. The mark alone: the thread
@@ -2121,7 +2120,6 @@ export function createDaemonApp({
 		// attribute is the appearance and the inline style is the moved tokens,
 		// which is exactly what the canvas keeps current after boot, so there is
 		// one place for both and no order of stylesheets to get right.
-		const readings = settings.read().entries;
 		const theme = themeInline(readings);
 		const dressed = `data-appearance="${appearanceOf(readings)}"${theme === "" ? "" : ` style="${theme}"`}`;
 		const head = `${mark}${boot}`;

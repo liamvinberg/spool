@@ -422,6 +422,22 @@ export function MachineIcon({ className }: { className?: string }) {
 	);
 }
 
+/** Settings' Experimental: a flask, with what is being tried in it. */
+export function FlaskIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M5.75 2h4.5M6.5 2v4L3 12.2A1.2 1.2 0 0 0 4.05 14h7.9A1.2 1.2 0 0 0 13 12.2L9.5 6V2"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+			<path d="M4.6 10h6.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
+
 /** Comments: the pin drawn as itself, a round with one corner at the spot (spool#170). */
 export function CommentIcon({ className }: { className?: string }) {
 	return (

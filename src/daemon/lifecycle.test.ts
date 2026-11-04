@@ -78,7 +78,6 @@ describe("resolveServeConfig", () => {
 			port: 7766,
 			updateCheck: true,
 			history: true,
-			experiments: [],
 			notices: [],
 		});
 	});
@@ -93,7 +92,6 @@ describe("resolveServeConfig", () => {
 			port: 7800,
 			updateCheck: true,
 			history: true,
-			experiments: [],
 			notices: [],
 		});
 	});
@@ -110,7 +108,6 @@ describe("resolveServeConfig", () => {
 			port: 7801,
 			updateCheck: true,
 			history: true,
-			experiments: [],
 			notices: [],
 		});
 	});
@@ -138,26 +135,6 @@ describe("resolveServeConfig", () => {
 
 		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ history: "off" }));
 		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/history/);
-	});
-
-	it("reads the experiments the machine switched on, and judges none of them (#238)", () => {
-		const spoolDir = makeSpoolDir();
-		mkdirSync(spoolDir, { recursive: true });
-
-		// no file at all, and a file that never mentions them: nothing is on
-		expect(resolveServeConfig(spoolDir, {}).experiments).toEqual([]);
-		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ port: 7800 }));
-		expect(resolveServeConfig(spoolDir, {}).experiments).toEqual([]);
-
-		// a name this version has never heard of is carried across rather than
-		// refused: the vocabulary belongs to the surface that reads it
-		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experiments: ["agent-panel", "not-a-thing"] }));
-		expect(resolveServeConfig(spoolDir, {}).experiments).toEqual(["agent-panel", "not-a-thing"]);
-
-		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experiments: "agent-panel" }));
-		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/experiments/);
-		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experiments: ["agent-panel", 7] }));
-		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/experiments/);
 	});
 
 	it("rejects malformed config loudly instead of guessing", () => {

@@ -1,3 +1,5 @@
+import { type ExperimentId, experimentDefault } from "../settings/experiments";
+
 declare global {
 	interface Window {
 		__SPOOL_EXPERIMENTS__?: readonly string[];
@@ -5,32 +7,20 @@ declare global {
 }
 
 /**
- * The experimental surfaces this machine has switched on (#238).
+ * Whether one experimental feature (`settings/experiments.ts`) is on in this page.
  *
- * The switch is a list of names in `~/.spool/config.json`, beside `updateCheck`,
- * and it rides the boot script the daemon already writes into the canvas
- * document. That is what makes an experiment absent rather than hidden: the page
- * knows before its first paint, so a surface that is off never renders once and
- * disappears, and there is nothing in the DOM for a key or a click to find.
+ * The daemon writes the ones this machine has on into the canvas document's
+ * boot script, read from config.json as the page is served. That is what makes
+ * a feature that is off absent rather than hidden: the page knows before its
+ * first paint, so it never renders once and disappears. It is also why a switch
+ * moved in Settings shows after a reload and not before: nothing flips under a
+ * frame that is open.
  *
- * The daemon carries whatever the file said and never judges it, so the
- * vocabulary lives here. A name nothing on this side asks about does nothing —
- * a config written for a newer spool is not an error on an older one, and
- * neither is one written for an older spool naming a flag that has since
- * graduated. `agent-panel` is that: the agent is a surface the canvas has now
- * (#268), nothing asks about the name any more, and a machine still carrying it
- * in config.json boots exactly as it did. `element-tree` holds the pages rail's
- * element tree back while its direction is still open: off, Edit leaves the
- * rail exactly as Select does. `frame-resolution` has a live frame draw its
- * canvases at the density it is shown at rather than the screen's (spool#218):
- * cheaper at overview zooms, a short blur while a zoom in settles. `fast-refresh`
- * swaps a saved frame's components into its open document with React Refresh,
- * state kept, rather than reloading it (spool#218, `daemon/fast-refresh.ts`):
- * off, every save reloads.
+ * A page no daemon booted (spool.page, a test) has no list and runs every
+ * feature at its default.
  */
-export type Experiment = "agent-panel" | "element-tree" | "fast-refresh" | "frame-resolution";
-
-export function experimentOn(name: Experiment): boolean {
-	const enabled = typeof window === "undefined" ? undefined : window.__SPOOL_EXPERIMENTS__;
-	return Array.isArray(enabled) && enabled.includes(name);
+export function experimentOn(id: ExperimentId): boolean {
+	const on = typeof window === "undefined" ? undefined : window.__SPOOL_EXPERIMENTS__;
+	if (!Array.isArray(on)) return experimentDefault(id);
+	return on.includes(id);
 }

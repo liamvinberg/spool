@@ -46,6 +46,7 @@ import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
+import { listExperiments, switchExperiment } from "./experiments-verb";
 import { historyAt, historyMoment, historyPath, listHistory } from "./history-verb";
 import { checkInitTarget, chooseInitTarget, initDestination, initProject, initTeamProject } from "./init";
 import { runMove } from "./move-verb";
@@ -690,6 +691,27 @@ program
 		process.stdout.write(`${skillText(...topics)}\n`);
 	});
 
+const experiments = program
+	.command("experiments")
+	.description("list spool's experimental features, or switch one on or off on this machine");
+
+experiments
+	.command("list", { isDefault: true })
+	.description("print each experiment, whether it is on, what it does and its trade-off")
+	.action(() => {
+		process.stdout.write(`${listExperiments(createSettingsStore(spoolDir))}\n`);
+	});
+
+for (const on of [true, false]) {
+	experiments
+		.command(on ? "on" : "off")
+		.description(on ? "switch an experiment on" : "switch an experiment off")
+		.argument("<id>", "the experiment, as the list names it")
+		.action((id: string) => {
+			process.stdout.write(`${switchExperiment(createSettingsStore(spoolDir), id, on)}\n`);
+		});
+}
+
 program
 	.command("serve")
 	.description("start the daemon if it is not already running")
@@ -714,7 +736,6 @@ program
 					// #30: an install no package manager owns cannot take an upgrade,
 					// so it is never offered one — the checkout included
 					updateCheck: config.updateCheck && selfUpgradeable(),
-					experiments: config.experiments,
 					history: config.history,
 				});
 			} catch (error) {

@@ -5593,16 +5593,21 @@ function CanvasField({
 						onGeometry: setFrameGeometry,
 						onGeometryPreview: previewFrameGeometry,
 						onGeometryCommit: commitFrameGeometry,
-						knobs: {
-							lane: knobs,
-							variantOf: (frame) => {
-								const names = new Set(store.get().frames.map((one) => one.name));
-								return (
-									variantName(pageName(frame), (name) => names.has(pageUnder(pageParent(frame), name))) ?? ""
-								);
-							},
-							onSaveVariant: (frame) => void saveVariant(frame),
-						},
+						// off, frames still run on their code's values: only the rail's section goes
+						knobs: experimentOn("knobs")
+							? {
+									lane: knobs,
+									variantOf: (frame) => {
+										const names = new Set(store.get().frames.map((one) => one.name));
+										return (
+											variantName(pageName(frame), (name) =>
+												names.has(pageUnder(pageParent(frame), name)),
+											) ?? ""
+										);
+									},
+									onSaveVariant: (frame) => void saveVariant(frame),
+								}
+							: undefined,
 					}}
 				/>
 			),

@@ -31,7 +31,7 @@ it("stands in for the tab and gives it back as it was", { timeout: 120_000 }, as
 		settings.locator("[data-section]").evaluateAll((items) => items.map((item) => item.getAttribute("data-section")));
 	await page.keyboard.press("ControlOrMeta+Comma");
 	await settings.waitFor();
-	expect(await sections()).toEqual(["project", "machine", "appearance", "colours"]);
+	expect(await sections()).toEqual(["project", "machine", "appearance", "colours", "experimental"]);
 	const behind = () => canvas.evaluate((element) => element.closest("[inert]") !== null);
 	expect(await behind()).toBe(true);
 	// under the real window bar, not over it
@@ -58,7 +58,7 @@ it("stands in for the tab and gives it back as it was", { timeout: 120_000 }, as
 	await page.getByRole("button", { name: "Home", exact: true }).click();
 	await page.locator("header.app-header").getByRole("button", { name: "Settings", exact: true }).click();
 	await settings.waitFor();
-	expect(await sections()).toEqual(["machine", "appearance", "colours"]);
+	expect(await sections()).toEqual(["machine", "appearance", "colours", "experimental"]);
 	await settings.getByRole("button", { name: "Back to Home" }).click();
 	await expect.poll(() => settings.count()).toBe(0);
 	await page.getByRole("heading", { name: "Projects" }).waitFor();

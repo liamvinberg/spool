@@ -940,21 +940,32 @@ describe("serving the canvas page", () => {
 		expect((await app.request(`/ui/assets/${encodeURIComponent("../../../etc/passwd")}`)).status).toBe(404);
 	});
 
-	it("boots the page with the experiments this machine switched on (#238)", async () => {
+	it("boots the page with the experiments this machine has on, as config.json says them now (#238)", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		makeProject(spoolDir);
-		const uiDir = makeUi();
+		const app = makeApp(spoolDir, { uiDir: makeUi() });
+		const config = (fields: unknown) => writeFileSync(join(spoolDir, "config.json"), JSON.stringify(fields));
+		const booted = async () =>
+			JSON.parse(
+				(await (await app.request("/")).text()).match(/__SPOOL_EXPERIMENTS__ = (\[[^\]]*\])/)?.[1] ?? "null",
+			);
 
-		// nothing named: the page boots with an empty list rather than with no
-		// answer, so every surface reading it says off without asking anybody
-		const plain = makeApp(spoolDir, { uiDir });
-		expect(await (await plain.request("/")).text()).toContain("window.__SPOOL_EXPERIMENTS__ = []");
+		// nobody chose: each at its stage's default, a beta on
+		expect(await booted()).toEqual(["knobs"]);
 
-		// the daemon carries the names across and judges none of them
-		const switched = makeApp(spoolDir, { uiDir, experiments: ["agent-panel", "not-a-thing"] });
-		expect(await (await switched.request("/")).text()).toContain(
-			'window.__SPOOL_EXPERIMENTS__ = ["agent-panel","not-a-thing"]',
-		);
+		// a switch moved, read on the next load with no restart; an id this spool
+		// never heard of and a value of the wrong shape do nothing
+		config({ experimental: { "fast-refresh": true, knobs: false, "not-a-thing": true, "element-tree": "yes" } });
+		expect(await booted()).toEqual(["fast-refresh"]);
+
+		// the hand-written list of #238 still switches on, under what the map says
+		config({
+			experiments: ["frame-resolution", "fast-refresh", "agent-panel"],
+			experimental: { "fast-refresh": false },
+		});
+		expect(await booted()).toEqual(["frame-resolution", "knobs"]);
+		config({ experiments: "fast-refresh", experimental: [true] });
+		expect(await booted()).toEqual(["knobs"]);
 	});
 
 	it("serves the blue mark for the development daemon", async () => {

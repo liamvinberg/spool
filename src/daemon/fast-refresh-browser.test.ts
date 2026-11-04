@@ -21,7 +21,7 @@ it("swaps a saved frame into its open document with its state kept, and reloads 
 }, async () => {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
-	const project = await serveProject({ uiDir, experiments: ["fast-refresh"] });
+	const project = await serveProject({ uiDir, experiments: { "fast-refresh": true } });
 	// a shared component over a module that is no boundary: a store that must keep its one instance
 	writeDesignFile(project.root, "shared/store.ts", "export const born = String(Math.random());\n");
 	const badge = (label: string) =>
