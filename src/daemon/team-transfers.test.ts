@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AGENTS_LINE } from "../agents-line";
 import { initTeamProject } from "../init";
@@ -257,6 +257,7 @@ describe("Move to team, from one team to another", () => {
 			team: "northlight",
 			project: "tidemark-site",
 			inRepo: true,
+			ownFolder: false,
 		});
 	});
 
@@ -496,33 +497,38 @@ describe("Move into a checkout", () => {
 });
 
 describe("Rename a team project", () => {
-	it("renames it in the team, moves this Mac's folder with spool.json committed, and a teammate's copy follows", {
+	it("renames it in the team as spool.page cleans the name, a checkout keeping its folder and a team folder following", {
 		timeout: 30_000,
 	}, async () => {
 		const cloud = teams();
 		const ada = mac(cloud, "ada", { tidemark: "editor" });
-		const sam = mac(cloud, "sam", { tidemark: "editor" });
-		const { root, remote } = await adaStarts(cloud, ada);
-		const clone = await cloneOf(remote, sam);
+		const ben = mac(cloud, "ben", { tidemark: "editor" });
+		const { root } = await adaStarts(cloud, ada);
 		const before = git(root, "rev-parse", "HEAD");
+		const got = await ben.call("POST", "/teams/tidemark/projects/site/get", { where: "mac" });
+		const theirs = got.body.root as string;
+		expect(theirs).toBe(join(ben.location, "tidemark", "site"));
+		await until(() => text(theirs, "frames/home/frame.tsx") !== undefined, 10_000);
 
-		const renamed = await ada.home("rename", { root, name: "Harbour" });
-		const moved = join(dirname(root), "harbour");
-		expect(renamed).toEqual({ status: 200, body: { root: moved, name: "harbour" } });
-		expect(cloud.forward("tidemark/site")).toBe("tidemark/harbour");
-		expect(existsSync(root)).toBe(false);
-		expect(link(moved)).toBe(`${TEAM_ORIGIN}/tidemark/harbour`);
-		expect(git(moved, "rev-parse", "HEAD~1")).toBe(before);
-		expect(git(moved, "log", "-1", "--format=%s")).toBe("spool: rename site to harbour");
-		expect(status(moved)).toEqual([]);
-		expect(readRegistry(ada.state).projects.map((project) => project.root)).toEqual([moved]);
+		// Ada's checkout is her repo's: only its spool.json changes, in one commit
+		expect(await ada.home("rename", { root, name: "My Harbour" })).toEqual({
+			status: 200,
+			body: { root, name: "site" },
+		});
+		expect(cloud.forward("tidemark/site")).toBe("tidemark/my-harbour");
+		expect(link(root)).toBe(`${TEAM_ORIGIN}/tidemark/my-harbour`);
+		expect(git(root, "rev-parse", "HEAD~1")).toBe(before);
+		expect(git(root, "log", "-1", "--format=%s")).toBe("spool: rename site to my-harbour");
+		expect(status(root)).toEqual([]);
 
-		// the same project at its new address, both ways, Sam's copy following it by itself
-		writeFrame(moved, "news", "export default () => <h1>News</h1>;\n");
-		await until(() => text(clone, "frames/news/frame.tsx") !== undefined, 10_000);
-		writeFrame(clone, "from-sam", "export default () => <h1>Sam</h1>;\n");
-		await until(() => cloud.file("tidemark/harbour", "frames/from-sam/frame.tsx")?.includes("Sam") === true, 10_000);
-		await until(() => text(moved, "frames/from-sam/frame.tsx") !== undefined, 10_000);
+		// Ben's copy in the team's own folder follows the rename by itself, folder and all, and syncs both ways there
+		const followed = join(ben.location, "tidemark", "my-harbour");
+		await until(() => readRegistry(ben.state).projects.some((project) => project.root === followed), 10_000);
+		expect(existsSync(theirs)).toBe(false);
+		writeFrame(root, "news", "export default () => <h1>News</h1>;\n");
+		await until(() => text(followed, "frames/news/frame.tsx") !== undefined, 10_000);
+		writeFrame(followed, "from-ben", "export default () => <h1>Ben</h1>;\n");
+		await until(() => text(root, "frames/from-ben/frame.tsx") !== undefined, 10_000);
 	});
 
 	it("says what spool.page refused in plain words, and changes nothing here", { timeout: 30_000 }, async () => {
@@ -540,11 +546,11 @@ describe("Rename a team project", () => {
 		});
 		cloud.removeProject("docs");
 
-		expect(await ada.home("rename", { root, name: "my site" })).toEqual({
+		expect(await ada.home("rename", { root, name: "?!" })).toEqual({
 			status: 409,
-			body: { error: "“my site” can’t name a team project. Use 2 to 40 lowercase letters, digits and hyphens." },
+			body: { error: "“?!” can’t name a team project. Use at least two letters or digits." },
 		});
-		expect((await ada.home("rename", { root, name: "docs" })).body).toEqual({
+		expect((await ada.home("rename", { root, name: "Docs" })).body).toEqual({
 			error: "A project in Tidemark’s trash holds the name docs until it’s deleted from there. Choose another name.",
 		});
 		cloud.restoreProject("docs");
@@ -562,7 +568,7 @@ describe("Rename a team project", () => {
 });
 
 describe("Delete a team project", () => {
-	it("takes it to the team's trash for an admin, its folder here to the Trash and forgotten", {
+	it("takes it to the team's trash for an admin, a checkout sending only its design/ to the Trash", {
 		timeout: 30_000,
 	}, async () => {
 		const cloud = teams();
@@ -578,18 +584,19 @@ describe("Delete a team project", () => {
 		expect(cloud.has("site")).toBe(true);
 		expect(sam.trashed).toEqual([]);
 
+		// the repo is Ada's: its tracked spool.json stays for her to change, and the rest of it is never trashed
 		expect(await ada.home("trash", { root, fromTeam: true })).toEqual({ status: 204, body: null });
 		expect(cloud.inTrash("site")).toBe(true);
-		expect(ada.trashed).toEqual([root]);
+		expect(ada.trashed).toEqual([join(root, "design")]);
 		expect(readRegistry(ada.state).projects).toEqual([]);
 	});
 
-	it("deletes an untitled one New made and nobody used for good, once closed, as its creator", {
+	it("deletes an untitled one this Mac's New made and nobody used for good, once closed", {
 		timeout: 30_000,
 	}, async () => {
 		const cloud = teams();
 		const sam = mac(cloud, "sam", { tidemark: "editor" });
-		const ben = mac(cloud, "ben", { tidemark: "editor" });
+		const ben = mac(cloud, "ben", { tidemark: "admin" });
 		const started = await sam.call("POST", "/teams/tidemark/projects", {});
 		const root = started.body.root as string;
 		expect(started.body.name).toBe("untitled");
@@ -606,12 +613,11 @@ describe("Delete a team project", () => {
 				headers: json,
 				body: JSON.stringify({ root: at, open: false }),
 			});
+		expect((await sam.cards())[0]?.team).toMatchObject({ startedHere: true, ownFolder: true });
+		expect((await ben.cards())[0]?.team).not.toHaveProperty("startedHere");
 
-		// not Ben's to delete: his copy simply stays, and so does the project
-		expect(await ben.home("trash", { root: theirs, abandoned: true })).toEqual({
-			status: 409,
-			body: { error: "Only an admin of Tidemark can delete its projects." },
-		});
+		// a teammate's copy isn't this Mac's to delete, admin or not: it stays, and so does the project
+		expect((await ben.home("trash", { root: theirs, abandoned: true })).status).toBe(409);
 		expect(ben.trashed).toEqual([]);
 		expect(cloud.has("untitled")).toBe(true);
 

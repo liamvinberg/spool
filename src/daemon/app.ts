@@ -25,10 +25,12 @@ import {
 	backInGitOffered,
 	deleteTeamProject,
 	finishOwedCommits,
+	ownsFolder,
 	putBackInGit,
 	renameTeamCopy,
 	type TeamMoveOptions,
 } from "../team-moves";
+import type { ProjectLink } from "../team-project";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { type UpdateHow, updateLine } from "../update-how";
 import { requestUpgrade } from "../upgrade";
@@ -619,6 +621,8 @@ export function createDaemonApp({
 		},
 		// a copy whose project moved out of its team ended: its cover says so
 		onEnded: () => emitAppEvent({ kind: "registry" }),
+		// a copy in the team's own folder takes its project's new name, as one renamed here does (spool#411)
+		onForwarded: (root, from, to) => void followRename(root, from, to),
 		// who else is in a team project, for its tab while another is focused (task 139)
 		onRoster: (root, people) => emitAppEvent({ kind: "presence", root, people }),
 		// the comments a copy knows changed: its open canvases read them again (ADR 0011)
@@ -934,6 +938,16 @@ export function createDaemonApp({
 		team: (root, name, folder) =>
 			renameTeamCopy(spoolDir, root, name, teamAsked(), { hold: (copy) => teamSync.hold(copy), folder }),
 	});
+	async function followRename(root: string, from: ProjectLink, to: ProjectLink): Promise<void> {
+		if (from.team !== to.team || from.project === to.project) return;
+		if (!(await ownsFolder(root, from, { location: projectsLocation() }))) return;
+		const release = teamSync.hold(root);
+		try {
+			renameProject.follow(root, to.project);
+		} finally {
+			release();
+		}
+	}
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);

@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { SpoolError } from "../errors";
 import { mutateMachineState } from "../machine-state";
+import { teamProjectName } from "../team-project-name";
 import type { createAgentTurns } from "./agent-live";
 import type { Namings } from "./agent-naming";
 import type { createChangeHub } from "./events";
@@ -34,7 +35,14 @@ export function createRenamer(deps: {
 	 * by `folder`, this same rename. Without it, a team copy's folder is renamed as any project's is.
 	 */
 	team?: (root: string, name: string, folder: (name: string) => { root: string; name: string }) => Promise<Renamed>;
-}): (root: string, name: string) => Promise<Renamed> {
+}): ((root: string, name: string) => Promise<Renamed>) & {
+	/**
+	 * A team copy's folder takes the name its project was given on another Mac, as it follows the rename: only the
+	 * folder, as nothing else is asked. Undefined when the project is busy, or the folder can't take the name: it
+	 * keeps the one it has.
+	 */
+	follow: (root: string, name: string) => Renamed | undefined;
+} {
 	const {
 		spoolDir,
 		projectRenames,
@@ -59,8 +67,31 @@ export function createRenamer(deps: {
 		emitAppEvent({ kind: "project-renamed", from: root, root: result.root, name: result.name });
 		return { root: result.root, name: result.name };
 	};
-	return async (root, name) => {
-		const target = join(dirname(root), name.trim());
+	const busy = (root: string, target: string) =>
+		projectRenames.has(root) ||
+		projectRenames.has(target) ||
+		trashingProjects.has(root) ||
+		namings.has(root) ||
+		[...liveTurns.of(root)].some((turn) => turn.running);
+	const follow = (root: string, name: string): Renamed | undefined => {
+		const target = join(dirname(root), name);
+		if (busy(root, target)) return undefined;
+		projectRenames.add(root);
+		projectRenames.add(target);
+		try {
+			return folder(root, name);
+		} catch {
+			return undefined;
+		} finally {
+			projectRenames.delete(root);
+			projectRenames.delete(target);
+		}
+	};
+	const rename = async (root: string, name: string): Promise<Renamed> => {
+		// a team copy's name is cleaned as spool.page cleans it, so the guard holds the folder it would move to
+		const team = deps.team !== undefined && followedLink(root) !== undefined ? deps.team : undefined;
+		const named = team === undefined ? name.trim() : (teamProjectName(name) ?? name.trim());
+		const target = join(dirname(root), named);
 		if (projectRenames.has(root) || projectRenames.has(target))
 			throw new SpoolError("Project change is in progress.");
 		if (trashingProjects.has(root)) throw new SpoolError("This project is moving to the trash.");
@@ -70,12 +101,12 @@ export function createRenamer(deps: {
 		projectRenames.add(root);
 		projectRenames.add(target);
 		try {
-			if (deps.team !== undefined && followedLink(root) !== undefined)
-				return await deps.team(root, name, (named) => folder(root, named));
+			if (team !== undefined) return await team(root, named, (to) => folder(root, to));
 			return folder(root, name);
 		} finally {
 			projectRenames.delete(root);
 			projectRenames.delete(target);
 		}
 	};
+	return Object.assign(rename, { follow });
 }

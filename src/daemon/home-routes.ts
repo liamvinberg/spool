@@ -9,7 +9,7 @@ import { checkoutOf } from "../git-remote";
 import { initProject, startProject } from "../init";
 import { openProject } from "../open";
 import { forgetResolvedProject, readRegistry } from "../registry";
-import { backInGitOffered } from "../team-moves";
+import { backInGitOffered, ownsFolder, teamCopyLeaves } from "../team-moves";
 import type { ProjectLink } from "../team-project";
 import { isUntitled } from "../untitled";
 import { updateLine } from "../update-how";
@@ -39,6 +39,7 @@ import {
 import { exportProject, importArchive, TRANSFER_LIMITS, TransferError } from "./project-transfer";
 import { describeMissingFrame, discoverFrames, frameExists, type ProjectCard, summarizeProject } from "./projection";
 import { type AppEvent, readSession, type watchMachineState } from "./session";
+import { forgetStartedHere, startedHere } from "./started-here";
 import { type createTeamSync, endedWith, followedLink, goneLocalWith, movedOutOf } from "./team-sync";
 
 /** Body of opening and designing in a folder: { path } — anything else is a 400. */
@@ -323,8 +324,15 @@ export function homeRoutes(deps: {
 								return c.json({ error: error.message }, 409);
 							}
 						}
-						await deps.trash([root]);
+						// a checkout, or a folder picked by hand, keeps everything but the team's design/ (spool#411)
+						const gone =
+							link === undefined
+								? { paths: [root] }
+								: await teamCopyLeaves(root, link, { location: location() });
+						await deps.trash(gone.paths);
 						moved = true;
+						// gone from here, it is no longer this Mac's to delete by itself, Got again or not
+						if (link !== undefined) forgetStartedHere(spoolDir, link.url);
 						const result = forgetResolvedProject(spoolDir, root);
 						hub.forget(root);
 						if (result.removed) {
@@ -370,11 +378,12 @@ export function homeRoutes(deps: {
 								: (sync.paused ?? (sync.update === null ? null : updateLine(sync.update.team)));
 						const goneLocal = link === undefined ? undefined : goneLocalWith(project.root);
 						const moved = movedAway(project.root);
-						const [summary, icon, thumbnail, inRepo, backInGit] = await Promise.all([
+						const [summary, icon, thumbnail, inRepo, ownFolder, backInGit] = await Promise.all([
 							summarizeProject(project.root),
 							findProjectIcon(project.root),
 							findProjectThumbnail(project.root),
 							link === undefined ? false : checkoutOf(project.root).then((found) => found !== undefined),
+							link === undefined ? false : ownsFolder(project.root, link, { location: location() }),
 							backInGitOffered(project.root),
 						]);
 						return {
@@ -383,7 +392,16 @@ export function homeRoutes(deps: {
 							openedAt: project.openedAt,
 							...(link === undefined
 								? {}
-								: { team: { url: link.url, team: link.team, project: link.project, inRepo } }),
+								: {
+										team: {
+											url: link.url,
+											team: link.team,
+											project: link.project,
+											inRepo,
+											ownFolder,
+											...(startedHere(spoolDir, link.url) ? { startedHere: true } : {}),
+										},
+									}),
 							...(ended === undefined ? {} : { ended }),
 							...(movedOut === undefined ? {} : { movedOut }),
 							...(icon === undefined ? {} : { icon }),
@@ -515,8 +533,11 @@ export function homeRoutes(deps: {
  * open on it again, in any window, is someone using it after all.
  */
 function isAbandoned(spoolDir: string, root: string): boolean {
+	// a team copy is judged by its team project's name, and only one this Mac started goes: a teammate's would come back
+	const link = followedLink(root);
+	if (link !== undefined && !startedHere(spoolDir, link.url)) return false;
 	return (
-		isUntitled(basename(root)) &&
+		isUntitled(link === undefined ? basename(root) : link.project) &&
 		(discoverFrames(root)?.length ?? 0) === 0 &&
 		!readSession(spoolDir).open.includes(root)
 	);

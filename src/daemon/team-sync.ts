@@ -2060,6 +2060,8 @@ export function createTeamSync(deps: {
 	onGoneLocal?: (root: string) => void;
 	/** A local copy ended because its project was moved out of its team. */
 	onEnded?: (root: string) => void;
+	/** A local copy follows its project to a new address, renamed or moved elsewhere on another Mac (spool#411). */
+	onForwarded?: (root: string, from: ProjectLink, to: ProjectLink) => void;
 	/** Who else is in a local copy's project changed as its tab shows it; nobody once the copy stops. */
 	onRoster?: (root: string, people: TabPresence[]) => void;
 	/** The comments a local copy knows changed. */
@@ -2253,6 +2255,7 @@ export function createTeamSync(deps: {
 			root,
 		);
 		follow(root, to);
+		deps.onForwarded?.(root, from, to);
 		return true;
 	};
 

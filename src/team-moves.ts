@@ -23,6 +23,7 @@ import {
 	TEAM_GITIGNORE,
 	writeProjectLink,
 } from "./team-project";
+import { teamProjectName } from "./team-project-name";
 import { SOLO_GITIGNORE } from "./templates";
 
 /**
@@ -194,8 +195,9 @@ export async function moveToTeam(
 export function renameSentence(code: string, about: { team: string; name: string }): string {
 	switch (code) {
 		case "invalid_project_name":
+			return `“${about.name}” can’t name a team project. Use at least two letters or digits.`;
 		case "project_name_reserved":
-			return `“${about.name}” can’t name a team project. Use 2 to 40 lowercase letters, digits and hyphens.`;
+			return `spool.page keeps “${about.name}” for itself. Choose another name.`;
 		case "project_taken":
 			return `${about.team} already has a project called ${about.name}. Choose another name.`;
 		case "name_in_trash":
@@ -215,9 +217,11 @@ export function renameSentence(code: string, about: { team: string; name: string
 }
 
 /**
- * A team copy renamed (spool#411): spool.page renames the project first, its old address forwarding as a move's does,
- * then every copy here takes the new `spool.json` (one commit where it is tracked) and follows the new address, and
- * the copy asked about moves to its new folder by `folder`, the same rename a local project gets. A name this Mac
+ * A team copy renamed (spool#411): the typed name cleaned as spool.page cleans it ("My Site" is `my-site`), spool.page
+ * renames the project first, its old address forwarding as a move's does, then every copy here takes the new
+ * `spool.json` (one commit where it is tracked) and follows the new address. The copy asked about moves to its new
+ * folder by `folder`, the same rename a local project gets, only where a move would move it: in no repo at exactly
+ * `<projects location>/<team>/<old name>`. A checkout, or a folder picked by hand, keeps its name. A name this Mac
  * can't give the folder is refused before spool.page is asked.
  */
 export async function renameTeamCopy(
@@ -229,12 +233,17 @@ export async function renameTeamCopy(
 ): Promise<{ root: string; name: string }> {
 	const was = followedLink(root);
 	if (was === undefined) throw new SpoolError(`${root} isn't a team project's copy.`);
-	const name = requested.trim().toLowerCase();
-	const target = renameTarget(spoolDir, root, name);
-	if (target !== root && existsSync(target) && realpathSync(target) !== root)
-		throw new SpoolError("A folder or file with that name already exists. Choose another name.");
-	// the name it has already: only the folder, if it is called otherwise, takes it
-	if (name === was.project) return hooks.folder(name);
+	const name = teamProjectName(requested);
+	if (name === undefined)
+		throw new SpoolError(renameSentence("invalid_project_name", { team: was.team, name: requested.trim() }));
+	const moves = await movesFolder(root, was, options);
+	if (moves) {
+		const target = renameTarget(spoolDir, root, name);
+		if (target !== root && existsSync(target) && realpathSync(target) !== root)
+			throw new SpoolError("A folder or file with that name already exists. Choose another name.");
+	}
+	const kept = { root, name: basename(root) };
+	if (name === was.project) return kept;
 	let renamed: CloudTeamProject;
 	try {
 		renamed = await client(spoolDir, options).renameProject(was.team, was.project, name);
@@ -246,7 +255,7 @@ export async function renameTeamCopy(
 	}
 	const link = parseProjectLink(renamed.url);
 	if (link === undefined) throw new SpoolError("spool.page returned an invalid team project");
-	let result = { root, name: basename(root) };
+	let result = kept;
 	const copies = copiesOf(spoolDir, was);
 	for (const copy of copies.includes(root) ? copies : [root, ...copies]) {
 		const release = hooks.hold(copy);
@@ -257,7 +266,7 @@ export async function renameTeamCopy(
 				await answered(
 					owe(copy, { message: `spool: rename ${was.project} to ${link.project}`, add: [PROJECT_LINK] }, options),
 				);
-			if (copy === root) {
+			if (copy === root && moves) {
 				try {
 					result = hooks.folder(link.project);
 				} catch (error) {
@@ -271,6 +280,32 @@ export async function renameTeamCopy(
 		}
 	}
 	return result;
+}
+
+/**
+ * What goes to the Trash when a team copy leaves this Mac: its whole folder where it is the team's own, in no repo at
+ * exactly `<projects location>/<team>/<name>`, as a move would move it. A checkout, or a folder picked by hand, is
+ * somebody's: only its `design/` goes, with a `spool.json` beside it that git doesn't track. A tracked one stays, the
+ * repo's to change.
+ */
+export async function teamCopyLeaves(
+	root: string,
+	link: ProjectLink,
+	options: Pick<TeamMoveOptions, "location">,
+): Promise<{ paths: string[]; wholeFolder: boolean }> {
+	if (await ownsFolder(root, link, options)) return { paths: [root], wholeFolder: true };
+	const spoolJson = join(root, PROJECT_LINK);
+	const untracked = existsSync(spoolJson) && !(await tracked(root, PROJECT_LINK).catch(() => false));
+	return { paths: [join(root, "design"), ...(untracked ? [spoolJson] : [])], wholeFolder: false };
+}
+
+/** Whether a team copy's folder is the team's own on this Mac: in no repo at exactly `<location>/<team>/<name>`. */
+export function ownsFolder(
+	root: string,
+	link: Pick<ProjectLink, "team" | "project">,
+	options: Pick<TeamMoveOptions, "location">,
+): Promise<boolean> {
+	return movesFolder(root, link, options);
 }
 
 /**
