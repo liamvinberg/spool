@@ -26,6 +26,9 @@ export interface CloudAccountServices {
 
 /** How long Home may show the account it last read before asking spool.page again. */
 const FRESH_MS = 60_000;
+/** The first wait before asking again after spool.page did not answer, doubled each time it still doesn't. */
+const RETRY_MS = 2_000;
+const RETRY_CAP_MS = 60_000;
 
 /**
  * The app's Sign in: the same browser handoff as `spool login`, held by the daemon so Home can show it
@@ -38,12 +41,19 @@ export function createCloudAccount(options: {
 	now?: () => number;
 	/** A line for daemon.log: a packaged app has no console, and a failed sign-in is otherwise silent. */
 	log?: (line: string) => void;
+	retryMs?: number;
 }) {
 	const services = options.services ?? defaultServices();
 	const now = options.now ?? Date.now;
 	let pending: { cancel: AbortController; url: string | null } | null = null;
 	let known: { account: CloudAccount; at: number } | null = null;
 	let failed: string | null = null;
+	const retryMs = options.retryMs ?? RETRY_MS;
+	let retryIn = retryMs;
+	let retry: ReturnType<typeof setTimeout> | undefined;
+	/** Whether the last answer was unreachable, so every page and menu holding it is told once it isn't. */
+	let unanswered = false;
+	let closed = false;
 
 	const signedIn = (current: CloudAccount): CloudAccountState => ({
 		state: "signed-in",
@@ -52,7 +62,36 @@ export function createCloudAccount(options: {
 		accountId: current.accountId,
 	});
 
+	/**
+	 * A daemon that just started, as after an update, can miss spool.page on its first ask, and a page that read
+	 * "unreachable" then kept it until reloaded. So the daemon asks again by itself, backing off, and says `account`
+	 * once there is a real answer.
+	 */
 	async function read(): Promise<CloudAccountState> {
+		const state = await ask();
+		if (state.state === "unreachable") {
+			unanswered = true;
+			if (retry === undefined && !closed) {
+				retry = setTimeout(() => {
+					retry = undefined;
+					void read();
+				}, retryIn);
+				retry.unref();
+				retryIn = Math.min(retryIn * 2, RETRY_CAP_MS);
+			}
+			return state;
+		}
+		clearTimeout(retry);
+		retry = undefined;
+		retryIn = retryMs;
+		if (unanswered) {
+			unanswered = false;
+			options.onChange();
+		}
+		return state;
+	}
+
+	async function ask(): Promise<CloudAccountState> {
 		if (pending) return { state: "signing-in" };
 		if (known && now() - known.at < FRESH_MS) return signedIn(known.account);
 		try {
@@ -98,6 +137,11 @@ export function createCloudAccount(options: {
 	return {
 		read,
 		signIn,
+		close(): void {
+			closed = true;
+			clearTimeout(retry);
+			retry = undefined;
+		},
 		/** The browser tab was closed or lost: open the same sign-in page again. */
 		reopen(): boolean {
 			if (!pending?.url) return false;

@@ -335,6 +335,8 @@ export function App() {
 				hello: (data) => {
 					const { latest } = data as { latest?: unknown };
 					if (typeof latest === "string") offerUpdate(latest);
+					// read again once subscribed: an account change before then, or while the stream was down, sent no event here
+					void readAccount();
 					// who is in each team project is said again after every hello, and a naming the gap hid is over
 					resetTabPresence();
 					setNaming(new Map());

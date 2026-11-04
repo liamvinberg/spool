@@ -2343,6 +2343,7 @@ export function createDaemonApp({
 			projectShares.close();
 			movedIn.close();
 			movedAwayFrom.close();
+			cloudAccount.close();
 			moving.abort();
 			liveTurns.close();
 			for (const stop of boothWatches.values()) stop();
