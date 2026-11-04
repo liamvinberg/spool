@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { CloudRequestOptions } from "./cloud-auth";
 import type { OpenSyncSocket, SyncSocketEvents } from "./daemon/team-sync";
+import { teamProjectName } from "./team-project-name";
 import {
 	ACCEPTED_PROTOCOLS,
 	bundleParts,
@@ -617,9 +618,9 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return request.json().then((body: { name?: unknown }) => {
 				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
 				if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
-				const name = typeof body.name === "string" ? body.name.toLowerCase() : "";
-				if (!/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/u.test(name))
-					return Response.json({ error: "invalid_project_name" }, { status: 400 });
+				// cleaned as spool.page's projectName cleans it: "My Site" is my-site
+				const name = teamProjectName(typeof body.name === "string" ? body.name : "");
+				if (name === undefined) return Response.json({ error: "invalid_project_name" }, { status: 400 });
 				if (name === at.name) return Response.json(described(at));
 				if (projects.has(`${address}/${name}`)) return Response.json({ error: "project_taken" }, { status: 409 });
 				const holds = trash.get(`${address}/${name}`);
@@ -635,12 +636,14 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				for (const socket of at.sockets) socket.close(CLOSE_NOT_EDITOR);
 				return Response.json(described(at));
 			});
-		// an untouched project, gone for good at once: its admins' and its creator's
+		// an untouched project, gone for good at once: its creator's alone, while they still edit in the team
 		if (request.method === "DELETE" && match[3] === undefined && url.searchParams.get("empty") === "1") {
-			if (role !== "admin" && !(role === "editor" && at.createdBy === person.accountId))
+			if (!edits(person, address) || at.createdBy !== person.accountId)
 				return Response.json({ error: "admin_required" }, { status: 403 });
-			const frames = [...at.files].some(([path, file]) => path.startsWith("frames/") && file.bytes !== null);
-			if (frames || at.comments.length > 0 || at.shares.size > 0)
+			// touched: a frame ever saved (a deleted one too), a comment, a share, or anyone else's save
+			const frames = [...at.files.keys()].some((path) => path.startsWith("frames/"));
+			const others = at.saves.some((save) => save.by !== at.createdBy);
+			if (frames || others || at.comments.length > 0 || at.shares.size > 0)
 				return Response.json({ error: "project_not_empty" }, { status: 409 });
 			remove(at, false, person.accountId);
 			trash.delete(`${at.team}/${at.name}`);
