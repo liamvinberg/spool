@@ -29,7 +29,7 @@ export function ProjectTabMenu({
 	onClose: () => void;
 	onExport: () => void;
 	onCloseTab: () => void;
-	/** "Rename…": the tab's name becomes a field in place. Not offered on a team project, whose name is its team's. */
+	/** "Rename…": the tab's name becomes a field in place. Not offered to a viewer of the project's team. */
 	onRename?: () => void;
 	onChangeIcon?: () => void;
 	/** Offered only while the icon is the project's own file: a favicon or a letter has nothing to remove. */
@@ -105,7 +105,7 @@ export function ProjectTabMenu({
 				</div>
 			</div>
 			<MenuSeparator />
-			{onRename && project.teamAddress === undefined && <MenuItem label="Rename…" onClick={() => act(onRename)} />}
+			{onRename && team?.role !== "viewer" && <MenuItem label="Rename…" onClick={() => act(onRename)} />}
 			{onChangeIcon && <MenuItem label="Change icon…" onClick={() => act(onChangeIcon)} />}
 			{onRemoveIcon && project.icon?.from === "file" && (
 				<MenuItem label="Remove icon" onClick={() => act(onRemoveIcon)} />

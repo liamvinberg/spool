@@ -8,14 +8,14 @@ import {
 	usePresence,
 	useReducedMotion,
 } from "motion/react";
-import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import type { ProjectIcon } from "./api";
 import { PRESENCE_INK } from "./canvas/presence-faces";
 import { cn } from "./cn";
 import { CloseIcon, HomeIcon, PlusIcon } from "./icons";
 import { IconButton } from "./primitives/actions";
-import { ProjectMark } from "./project-icon";
+import { ProjectMark, ProjectTeams } from "./project-icon";
 import { ProjectTabMenu } from "./project-tab-menu";
 import type { TabMate } from "./tab-presence";
 
@@ -249,6 +249,8 @@ export function TabStrip({
 	onRename?: (root: string, name: string) => Promise<unknown>;
 }) {
 	const [menu, setMenu] = useState<{ project: TabProject; x: number; y: number; anchor: HTMLElement } | null>(null);
+	/** the teams this account is in, whose viewers rename none of their projects */
+	const teams = useContext(ProjectTeams);
 	const nav = useRef<HTMLElement | null>(null);
 	const strip = useRef<HTMLDivElement | null>(null);
 	const reduced = useReducedMotion() === true;
@@ -659,7 +661,9 @@ export function TabStrip({
 								onClose={(byPointer) => (byPointer ? closeHolding(tab.root) : onClose(tab.root))}
 								onMenu={(x, y, anchor) => setMenu({ project: tab, x, y, anchor })}
 								editing={renaming === tab.root}
-								{...(onRenaming === undefined || onRename === undefined || tab.teamAddress !== undefined
+								{...(onRenaming === undefined ||
+								onRename === undefined ||
+								(tab.teamAddress !== undefined && teams.get(tab.teamAddress)?.role === "viewer")
 									? {}
 									: {
 											onEdit: () => onRenaming(tab.root),

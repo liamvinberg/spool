@@ -4,15 +4,18 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { initProject } from "../init";
 import { readRegistry } from "../registry";
+import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { testBrowser } from "../test-browser";
 import {
 	builtUi,
+	closeAfterTest,
 	type FakeAgentProc,
 	fixtureAgentExecutor,
 	makeTempDir,
 	readModelsReply,
 	serveProject,
 } from "../test-helpers";
+import { serveDaemon } from "./server";
 import { createSettingsStore } from "./settings";
 
 it("starts a project at once with the Agent pane out, names it from its tab or the first ask, and opens existing work from Open… and a paste", {
@@ -160,5 +163,81 @@ it("starts a project at once with the Agent pane out, names it from its tab or t
 	expect(await page.locator("dialog").count()).toBe(0);
 	expect(readRegistry(project.spoolDir).projects.some((item) => item.root === shared)).toBe(true);
 	expect(readFileSync(join(shared, "design", "canvas.json"), "utf8")).toBe(sharedCanvas);
+	expect(errors).toEqual([]);
+});
+
+it("starts a team project with its name ready to type, deletes an unused one by itself, and deletes one from the team", {
+	timeout: 120_000,
+}, async () => {
+	const cloud = fakeTeam("devosurf", "Devosurf");
+	const ada = cloud.machine("ada", "admin");
+	const state = join(makeTempDir(), ".spool");
+	const parent = realpathSync(makeTempDir());
+	mkdirSync(state, { recursive: true });
+	createSettingsStore(state).write("projects.location", parent);
+	const trashed: string[] = [];
+	const daemon = await serveDaemon({
+		spoolDir: state,
+		version: "0.0.0-test",
+		host: "127.0.0.1",
+		port: 0,
+		uiDir: await builtUi(),
+		cloud: ada.cloud,
+		teamNotice: () => {},
+		moveToTrash: async (paths) => {
+			for (const path of paths) rmSync(path, { recursive: true });
+			trashed.push(...paths);
+		},
+		// signed in as ada, so Home has her team to show
+		cloudAccountServices: {
+			origin: () => TEAM_ORIGIN,
+			account: async () => ({
+				accountId: "ada",
+				email: "ada@example.test",
+				name: "ada",
+				sessionId: "s",
+				expiresAt: Date.now() + 3_600_000,
+			}),
+			login: () => new Promise(() => {}),
+			logout: async () => {},
+			open: () => {},
+		},
+	});
+	closeAfterTest(daemon);
+	const page = await (await testBrowser()).newPage({
+		viewport: { width: 1360, height: 900 },
+		reducedMotion: "reduce",
+	});
+	const errors: string[] = [];
+	page.on("pageerror", (error) => errors.push(error.message));
+	await page.goto(`${daemon.url}/devosurf`);
+	const newProject = page.getByRole("main").getByRole("button", { name: "New project", exact: true });
+
+	// a team's New opens with its name a field, as a local one does, and Enter renames it in the team
+	await newProject.click();
+	const tabName = page.getByRole("navigation", { name: "Open projects" }).getByRole("textbox");
+	await tabName.waitFor();
+	await page.keyboard.type("kelp-team");
+	await page.keyboard.press("Enter");
+	await page.getByRole("button", { name: "Close kelp-team", exact: true }).waitFor();
+	expect(cloud.renames).toEqual([{ from: "devosurf/untitled", to: "devosurf/kelp-team", by: "ada" }]);
+	expect(existsSync(join(parent, "devosurf", "kelp-team", "design", "canvas.json"))).toBe(true);
+
+	// one closed untitled and empty is deleted from the team by itself once its toast drains
+	await page.getByRole("button", { name: "Home", exact: true }).click();
+	await newProject.click();
+	await page.getByRole("button", { name: "Close untitled", exact: true }).click();
+	await page.getByText("Deleted untitled", { exact: true }).waitFor();
+	await expect.poll(() => trashed, { timeout: 10_000 }).toEqual([join(parent, "devosurf", "untitled")]);
+	expect(cloud.has("untitled")).toBe(false);
+
+	// Delete from the team, on its cover, asks first and takes it to the team's trash
+	await page.getByRole("button", { name: "Close kelp-team", exact: true }).click();
+	await page.getByRole("button", { name: "Manage kelp-team", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Delete from Devosurf…", exact: true }).click();
+	const confirm = page.getByRole("dialog", { name: "Delete “kelp-team” from Devosurf?", exact: true });
+	await confirm.getByRole("button", { name: "Delete from Devosurf", exact: true }).click();
+	await expect.poll(() => cloud.inTrash("kelp-team"), { timeout: 10_000 }).toBe(true);
+	expect(trashed).toContain(join(parent, "devosurf", "kelp-team"));
 	expect(errors).toEqual([]);
 });

@@ -394,8 +394,8 @@ export async function removeProjectThumbnail(root: string): Promise<void> {
 	if (!res.ok) throw new Error(await errorText(res));
 }
 
-export async function trashProject(root: string): Promise<void> {
-	const res = await client.api.projects.trash.$post({ json: { root } });
+export async function trashProject(root: string, how: { fromTeam?: boolean } = {}): Promise<void> {
+	const res = await client.api.projects.trash.$post({ json: { root, ...(how.fromTeam ? { fromTeam: true } : {}) } });
 	if (!res.ok) throw new Error(await errorText(res));
 }
 
