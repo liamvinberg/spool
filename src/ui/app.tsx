@@ -73,7 +73,7 @@ import {
 	useCoverMoves,
 } from "./team-moves";
 import { useTeamHome } from "./teams";
-import { DeleteFromTeamDialog, TrashProjectDialog } from "./trash-project-dialog";
+import { type CopyTeam, DeleteFromTeamDialog, TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
@@ -602,7 +602,7 @@ export function App() {
 			const card = projectsRef.current.byRoot.get(root);
 			// one being named has a first ask on its way in, so it stays the way one with a turn running does
 			if (card !== undefined && !namingRef.current.has(root))
-				abandonClosed({ root, name: card.name, teamAddress: card.team?.team });
+				abandonClosed({ root, name: card.name, teamAddress: card.team?.team }, card.team);
 		},
 		[focusProject, abandonClosed],
 	);
@@ -881,9 +881,14 @@ export function App() {
 	/** The teams this Mac knows, for the marks a team project's tab and cover wear. */
 	const markTeams = useMemo(() => new Map(teamHome.all.map((team) => [team.address, team])), [teamHome.all]);
 	/** The name of the team a team copy's project is in, as its people know it; undefined for a project in none. */
-	const teamNameOf = (root: string) => {
-		const address = byRoot.get(root)?.team?.team;
-		return address === undefined ? undefined : (markTeams.get(address)?.name ?? address);
+	const teamOf = (root: string): CopyTeam | undefined => {
+		const team = byRoot.get(root)?.team;
+		if (team === undefined) return undefined;
+		return {
+			name: markTeams.get(team.team)?.name ?? team.team,
+			project: team.project,
+			ownFolder: team.ownFolder !== false,
+		};
 	};
 	/**
 	 * A project's folder to the Trash, and, `fromTeam`, the project from its team first: its card and tab go. Throws
@@ -1115,7 +1120,7 @@ export function App() {
 				{renameRequest !== null && (
 					<RenameProjectDialog
 						project={renameRequest.project}
-						team={teamNameOf(renameRequest.project.root)}
+						team={teamOf(renameRequest.project.root)}
 						initialName={renameRequest.initialName}
 						onRename={async (name) => {
 							const renamed = await renameTo(renameRequest.project.root, name);
@@ -1131,7 +1136,7 @@ export function App() {
 				{trashRequest !== null && (
 					<TrashProjectDialog
 						project={trashRequest}
-						team={teamNameOf(trashRequest.root)}
+						team={teamOf(trashRequest.root)}
 						onTrash={() => trashGone(trashRequest.root)}
 						onClose={() => setTrashRequest(null)}
 					/>
@@ -1139,7 +1144,13 @@ export function App() {
 				{deleteRequest?.team !== undefined && (
 					<DeleteFromTeamDialog
 						project={deleteRequest}
-						team={teamNameOf(deleteRequest.root) ?? deleteRequest.team.team}
+						team={
+							teamOf(deleteRequest.root) ?? {
+								name: deleteRequest.team.team,
+								project: deleteRequest.team.project,
+								ownFolder: deleteRequest.team.ownFolder !== false,
+							}
+						}
 						onDelete={() => trashGone(deleteRequest.root, { fromTeam: true })}
 						onClose={() => setDeleteRequest(null)}
 					/>
