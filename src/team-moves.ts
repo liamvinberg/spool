@@ -1,18 +1,19 @@
 import { execFile } from "node:child_process";
 import { cpSync, existsSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import { addAgentsLine } from "./agents-line";
 import { writeAtomic } from "./atomic-write";
-import { cloudTeams, type MoveLoser } from "./cloud-teams";
+import { type CloudTeamProject, CloudTeamRefused, cloudTeams, type MoveLoser } from "./cloud-teams";
 import { commitPaths, type MoveCommit, onBranch, type PathsCommit, tracked } from "./daemon/history";
-import { goneLocalWith, hasEnded, movedOutOf, readdressCopy, travellingFiles } from "./daemon/team-sync";
+import { followedLink, goneLocalWith, hasEnded, movedOutOf, readdressCopy, travellingFiles } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
 import type { TeamInitOptions } from "./init";
 import { catchUp, type MoveProgress } from "./move-in";
 import { expandHome, realDir } from "./paths";
 import { readRegistry, teamProjects } from "./registry";
+import { renameTarget } from "./rename-project";
 import {
 	isTeamProject,
 	localCopyOf,
@@ -187,6 +188,130 @@ export async function moveToTeam(
 		roots.push(at);
 	}
 	return { team: link.team, name: link.project, url: link.url, roots, committed, commitWaiting, losing: moved.losing };
+}
+
+/** What a team project's rename refusal says, by spool.page's code (spool#411), for the tab's toast and the dialog. */
+export function renameSentence(code: string, about: { team: string; name: string }): string {
+	switch (code) {
+		case "invalid_project_name":
+		case "project_name_reserved":
+			return `“${about.name}” can’t name a team project. Use 2 to 40 lowercase letters, digits and hyphens.`;
+		case "project_taken":
+			return `${about.team} already has a project called ${about.name}. Choose another name.`;
+		case "name_in_trash":
+			return `A project in ${about.team}’s trash holds the name ${about.name} until it’s deleted from there. Choose another name.`;
+		case "editor_required":
+			return `You’re a viewer of ${about.team}. Only its editors and admins can rename its projects.`;
+		case "unpaid":
+			return `${about.team} has gone local. Its projects can be renamed again once an admin pays for it.`;
+		case "project_not_found":
+		case "team_not_found":
+			return `${about.team} has no such project any more, or you’re no longer in it.`;
+		case "project_moved":
+			return "This project has moved. Rename it once this copy follows it to its new place.";
+		default:
+			return `spool.page refused the rename: ${code}`;
+	}
+}
+
+/**
+ * A team copy renamed (spool#411): spool.page renames the project first, its old address forwarding as a move's does,
+ * then every copy here takes the new `spool.json` (one commit where it is tracked) and follows the new address, and
+ * the copy asked about moves to its new folder by `folder`, the same rename a local project gets. A name this Mac
+ * can't give the folder is refused before spool.page is asked.
+ */
+export async function renameTeamCopy(
+	spoolDir: string,
+	root: string,
+	requested: string,
+	options: TeamMoveOptions,
+	hooks: Pick<MoveHooks, "hold"> & { folder: (name: string) => { root: string; name: string } },
+): Promise<{ root: string; name: string }> {
+	const was = followedLink(root);
+	if (was === undefined) throw new SpoolError(`${root} isn't a team project's copy.`);
+	const name = requested.trim().toLowerCase();
+	const target = renameTarget(spoolDir, root, name);
+	if (target !== root && existsSync(target) && realpathSync(target) !== root)
+		throw new SpoolError("A folder or file with that name already exists. Choose another name.");
+	// the name it has already: only the folder, if it is called otherwise, takes it
+	if (name === was.project) return hooks.folder(name);
+	let renamed: CloudTeamProject;
+	try {
+		renamed = await client(spoolDir, options).renameProject(was.team, was.project, name);
+	} catch (error) {
+		if (error instanceof CloudTeamRefused)
+			throw new SpoolError(renameSentence(error.code, { team: await teamName(spoolDir, options, was.team), name }));
+		if (error instanceof SpoolError) throw error;
+		throw new SpoolError("spool.page can’t be reached just now, so the team project keeps its name. Try again.");
+	}
+	const link = parseProjectLink(renamed.url);
+	if (link === undefined) throw new SpoolError("spool.page returned an invalid team project");
+	let result = { root, name: basename(root) };
+	const copies = copiesOf(spoolDir, was);
+	for (const copy of copies.includes(root) ? copies : [root, ...copies]) {
+		const release = hooks.hold(copy);
+		try {
+			if (isTeamProject(copy)) writeProjectLink(copy, link);
+			readdressCopy(copy, was, link, { forwarded: false });
+			if (await linkTracked(copy))
+				await answered(
+					owe(copy, { message: `spool: rename ${was.project} to ${link.project}`, add: [PROJECT_LINK] }, options),
+				);
+			if (copy === root) {
+				try {
+					result = hooks.folder(link.project);
+				} catch (error) {
+					throw new SpoolError(
+						`Renamed ${link.project} in its team, but this Mac’s folder kept its name: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			}
+		} finally {
+			release();
+		}
+	}
+	return result;
+}
+
+/**
+ * A team project deleted from its team, from this Mac (spool#411): to the team's trash for 30 days, its admins'
+ * alone; or, `empty`, an untouched one gone for good at once, its creator's too. Refused as a SpoolError in plain words.
+ */
+export async function deleteTeamProject(
+	spoolDir: string,
+	link: ProjectLink,
+	how: { empty: boolean },
+	options: Omit<TeamInitOptions, "team">,
+): Promise<void> {
+	const teams = client(spoolDir, options);
+	try {
+		if (how.empty) await teams.deleteEmptyProject(link.team, link.project);
+		else await teams.deleteProject(link.team, link.project);
+	} catch (error) {
+		if (!(error instanceof CloudTeamRefused)) throw error;
+		const team = await teamName(spoolDir, options, link.team);
+		switch (error.code) {
+			case "admin_required":
+				throw new SpoolError(`Only an admin of ${team} can delete its projects.`);
+			case "project_not_empty":
+				throw new SpoolError(`${link.project} has frames, comments or shares now, so it stays in ${team}.`);
+			case "project_not_found":
+			case "team_not_found":
+			case "project_removed":
+				throw new SpoolError(`${team} has no project called ${link.project} any more, or you’re no longer in it.`);
+			default:
+				throw new SpoolError(`spool.page refused to delete ${link.project}: ${error.code}`);
+		}
+	}
+}
+
+/** A team's name as its people know it, or its address while spool.page can't say. */
+async function teamName(spoolDir: string, options: Omit<TeamInitOptions, "team">, address: string): Promise<string> {
+	try {
+		return (await client(spoolDir, options).list()).teams.find((team) => team.address === address)?.name ?? address;
+	} catch {
+		return address;
+	}
 }
 
 export interface MovedOut {

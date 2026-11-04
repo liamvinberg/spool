@@ -21,7 +21,14 @@ import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
 import { experimentsOn } from "../settings/experiments";
 import { appearanceOf, themeInline } from "../settings/registry";
-import { backInGitOffered, finishOwedCommits, putBackInGit } from "../team-moves";
+import {
+	backInGitOffered,
+	deleteTeamProject,
+	finishOwedCommits,
+	putBackInGit,
+	renameTeamCopy,
+	type TeamMoveOptions,
+} from "../team-moves";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { type UpdateHow, updateLine } from "../update-how";
 import { requestUpgrade } from "../upgrade";
@@ -906,6 +913,14 @@ export function createDaemonApp({
 	 */
 	const liveTurns = createAgentTurns();
 	const modelPreferences = createAgentModelPreferences(spoolDir, agentDefaults);
+	/** How this daemon asks spool.page about a team project it renames or deletes (spool#411). */
+	const teamAsked = (): TeamMoveOptions => ({
+		origin: originOf(cloud),
+		...(cloud === undefined ? {} : { request: cloud }),
+		...(cloud?.openSocket === undefined ? {} : { openSocket: cloud.openSocket }),
+		location: projectsLocation(),
+		signal: moving.signal,
+	});
 	const renameProject = createRenamer({
 		spoolDir,
 		projectRenames,
@@ -916,6 +931,8 @@ export function createDaemonApp({
 		selections,
 		machineStateWatch,
 		emitAppEvent,
+		team: (root, name, folder) =>
+			renameTeamCopy(spoolDir, root, name, teamAsked(), { hold: (copy) => teamSync.hold(copy), folder }),
 	});
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
@@ -1252,6 +1269,7 @@ export function createDaemonApp({
 				registeredRoots,
 				trash: trashImpl,
 				teamSync,
+				deleteFromTeam: (link, how) => deleteTeamProject(spoolDir, link, how, teamAsked()),
 				movedAway: (root) => movedAwayFrom.get(root),
 				iconWatch,
 				thumbnailWatch,

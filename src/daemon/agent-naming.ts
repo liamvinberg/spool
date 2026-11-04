@@ -100,7 +100,7 @@ export async function nameFirst(
 		spoken: (root: string) => boolean;
 		/** the agent's reply to `namingPrompt`, or null */
 		ask: (signal: AbortSignal) => Promise<string | null>;
-		rename: (root: string, name: string) => { root: string };
+		rename: (root: string, name: string) => Promise<{ root: string }>;
 		namings: Namings;
 		/** the turn being named for, as a stop names it */
 		turn: string | undefined;
@@ -128,7 +128,7 @@ export async function nameFirst(
 	const name = kebabName(reply ?? "");
 	if (name === null) return root;
 	try {
-		return deps.rename(root, name).root;
+		return (await deps.rename(root, name)).root;
 	} catch (error) {
 		if (error instanceof SpoolError) return root;
 		throw error;

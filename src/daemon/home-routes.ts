@@ -10,6 +10,7 @@ import { initProject, startProject } from "../init";
 import { openProject } from "../open";
 import { forgetResolvedProject, readRegistry } from "../registry";
 import { backInGitOffered } from "../team-moves";
+import type { ProjectLink } from "../team-project";
 import { isUntitled } from "../untitled";
 import { updateLine } from "../update-how";
 import type { createAgentTurns } from "./agent-live";
@@ -69,12 +70,17 @@ export function homeRoutes(deps: {
 	liveTurns: Pick<ReturnType<typeof createAgentTurns>, "of">;
 	hub: Pick<ReturnType<typeof createChangeHub>, "forget">;
 	/** A project renamed, as `createRenamer` does it. */
-	rename: (root: string, name: string) => { root: string; name: string };
+	rename: (root: string, name: string) => Promise<{ root: string; name: string }>;
 	machineStateWatch: Pick<ReturnType<typeof watchMachineState>, "acknowledgeRegistry" | "acknowledgeSession">;
 	emitAppEvent: (event: AppEvent) => void;
 	registeredRoots: () => string[];
 	trash: (paths: string[]) => Promise<void>;
-	teamSync: Pick<ReturnType<typeof createTeamSync>, "state">;
+	teamSync: Pick<ReturnType<typeof createTeamSync>, "state" | "hold">;
+	/**
+	 * A team project deleted at spool.page (spool#411): to its team's trash, or `empty`, an untouched one for good.
+	 * Throws what refused it, as a SpoolError in plain words.
+	 */
+	deleteFromTeam: (link: ProjectLink, how: { empty: boolean }) => Promise<void>;
 	/** A project whose design/ moved into a team this account can't edit (spool#194), as its cover says. */
 	movedAway: (root: string) => MovedAway | undefined;
 	iconWatch: Pick<ReturnType<typeof createIconWatch>, "saw">;
@@ -215,10 +221,10 @@ export function homeRoutes(deps: {
 					const parsed = z.object({ root: z.string(), name: z.string() }).safeParse(value);
 					return parsed.success ? parsed.data : c.json({ error: "Expected a project root and name." }, 400);
 				}),
-				(c) => {
+				async (c) => {
 					const { root, name } = c.req.valid("json");
 					try {
-						return c.json(deps.rename(root, name));
+						return c.json(await deps.rename(root, name));
 					} catch (error) {
 						if (!(error instanceof SpoolError)) throw error;
 						return c.json({ error: error.message }, 409);
@@ -257,12 +263,16 @@ export function homeRoutes(deps: {
 				"/projects/trash",
 				validator("json", (value, c) => {
 					const parsed = z
-						.object({ root: z.string().min(1), abandoned: z.literal(true).optional() })
+						.object({
+							root: z.string().min(1),
+							abandoned: z.literal(true).optional(),
+							fromTeam: z.literal(true).optional(),
+						})
 						.safeParse(value);
 					return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
 				}),
 				async (c) => {
-					const { root, abandoned } = c.req.valid("json");
+					const { root, abandoned, fromTeam } = c.req.valid("json");
 					const roots = registeredRoots();
 					if (!roots.includes(root)) return c.json({ error: "This project is no longer registered." }, 404);
 					// a closed project nobody named or drew in goes by itself, and only while it still is one (spool#51)
@@ -286,14 +296,32 @@ export function homeRoutes(deps: {
 							409,
 						);
 					}
+					// a team copy leaves its team first, when that is asked: an untitled one New made and nobody used
+					// for good, or Delete from the team to its trash (spool#411)
+					const link = followedLink(root);
+					const leaves = link !== undefined && (fromTeam === true || abandoned === true) ? link : undefined;
+					if (fromTeam === true && leaves === undefined)
+						return c.json({ error: "This project isn't in a team any more." }, 409);
 					trashingProjects.add(root);
 					let moved = false;
+					let release: (() => void) | undefined;
 					try {
 						if (!lstatSync(root).isDirectory() || realpathSync(root) !== root) {
 							return c.json(
 								{ error: "The project folder has changed. Open its folder again before trashing it." },
 								409,
 							);
+						}
+						if (leaves !== undefined) {
+							release = teamSync.hold(root);
+							try {
+								await deps.deleteFromTeam(leaves, { empty: abandoned === true });
+							} catch (error) {
+								release();
+								release = undefined;
+								if (!(error instanceof SpoolError)) throw error;
+								return c.json({ error: error.message }, 409);
+							}
 						}
 						await deps.trash([root]);
 						moved = true;
@@ -314,11 +342,14 @@ export function homeRoutes(deps: {
 							{
 								error: moved
 									? `The folder moved to the trash, but Spool could not remove it from the list. Hide it instead. ${detail}`
-									: `Could not trash the project: ${detail}`,
+									: leaves !== undefined && release !== undefined
+										? `It was deleted from ${leaves.team}, but its folder could not move to the trash: ${detail}`
+										: `Could not trash the project: ${detail}`,
 							},
 							409,
 						);
 					} finally {
+						release?.();
 						trashingProjects.delete(root);
 					}
 				},
@@ -480,13 +511,12 @@ export function homeRoutes(deps: {
 }
 
 /**
- * Still an untitled project on this Mac only, with no frames, and closed: what New made and nobody used. A tab open
- * on it again, in any window, is someone using it after all.
+ * Still an untitled project with no frames, and closed: what New made and nobody used, on this Mac or in a team. A tab
+ * open on it again, in any window, is someone using it after all.
  */
 function isAbandoned(spoolDir: string, root: string): boolean {
 	return (
 		isUntitled(basename(root)) &&
-		followedLink(root) === undefined &&
 		(discoverFrames(root)?.length ?? 0) === 0 &&
 		!readSession(spoolDir).open.includes(root)
 	);

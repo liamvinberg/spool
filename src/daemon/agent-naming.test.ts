@@ -38,7 +38,7 @@ describe("naming a new project from its first ask", () => {
 	};
 	const named = (root: string, hasFrames = false, reply: string | null = "tide-planner") => {
 		const ask = vi.fn(async () => reply);
-		const rename = vi.fn((from: string, name: string) => ({ root: from.replace(/[^/]+$/u, name) }));
+		const rename = vi.fn(async (from: string, name: string) => ({ root: from.replace(/[^/]+$/u, name) }));
 		return {
 			ask,
 			rename,
@@ -77,7 +77,7 @@ describe("naming a new project from its first ask", () => {
 			hasFrames: () => false,
 			spoken: () => false,
 			ask: async () => "coffee",
-			rename: () => {
+			rename: async () => {
 				throw new SpoolError("A project with that name is already open in Spool. Choose another name.");
 			},
 		});
