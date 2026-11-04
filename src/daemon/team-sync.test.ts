@@ -325,23 +325,25 @@ describe("New project in the app, while a team is chosen", () => {
 				headers: { origin: "http://localhost:7766" },
 			});
 
-		// the folder untitled is taken here, and the team already has untitled-2
+		// the folder untitled is taken here, the team already has untitled-2, and its trash holds untitled-3
 		const parent = join(realpathSync(location), "devosurf");
 		mkdirSync(join(parent, "untitled"), { recursive: true });
-		await cloudTeams(join(makeTempDir(), ".spool"), cloud.machine("ben").request).createProject(
-			"devosurf",
-			"untitled-2",
-		);
+		const ben = cloudTeams(join(makeTempDir(), ".spool"), cloud.machine("ben").request);
+		await ben.createProject("devosurf", "untitled-2");
+		await ben.createProject("devosurf", "untitled-3");
+		cloud.removeProject("untitled-3");
 		const started = await start();
 		expect(started.status).toBe(200);
-		const root = join(parent, "untitled-3");
-		expect(await started.json()).toEqual({ root, name: "untitled-3" });
+		const root = join(parent, "untitled-4");
+		expect(await started.json()).toEqual({ root, name: "untitled-4" });
 		expect(JSON.parse(readFileSync(join(root, "spool.json"), "utf8"))).toEqual({
-			project: `${TEAM_ORIGIN}/devosurf/untitled-3`,
+			project: `${TEAM_ORIGIN}/devosurf/untitled-4`,
 		});
-		expect(cloud.paths("untitled-3")).toContain("canvas.json");
 		expect(readRegistry(state).projects.map((project) => project.root)).toEqual([root]);
 		expect(existsSync(join(parent, "untitled-2"))).toBe(false);
+		expect(existsSync(join(parent, "untitled-3"))).toBe(false);
+		// answered before the upload: the daemon's own copy sends the scaffold after
+		await until(() => cloud.paths("untitled-4").includes("canvas.json"));
 
 		// a team gone local takes no new project: said with spool.page's reason, for Home to word
 		cloud.lapse();
