@@ -20,8 +20,6 @@ export interface ServeDaemonOptions {
 	development?: boolean | undefined;
 	/** #30 phone-home — absent means off, so tests and tools stay silent. */
 	updateCheck?: boolean | undefined;
-	/** #238 experiment flags off ~/.spool/config.json — absent means none are on. */
-	experiments?: readonly string[] | undefined;
 	/** #158 the per-user history switch — absent means on, since only `false` is a refusal. */
 	history?: boolean | undefined;
 	/** A stand-in for the agent binary, so a browser test can drive a whole turn. */
@@ -63,7 +61,6 @@ export function serveDaemon({
 	uiDir,
 	development,
 	updateCheck,
-	experiments,
 	history,
 	agentExecutor,
 	agentEngines,
@@ -82,7 +79,6 @@ export function serveDaemon({
 		uiDir,
 		development,
 		updateCheck,
-		experiments,
 		history,
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
 		...(agentEngines === undefined ? {} : { agentEngines }),

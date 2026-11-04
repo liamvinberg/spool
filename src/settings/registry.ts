@@ -1,3 +1,5 @@
+import { EXPERIMENT_IDS, EXPERIMENTS, type ExperimentKey, experimentDefault, experimentKey } from "./experiments";
+
 /**
  * Every setting spool has, declared once (#281).
  *
@@ -19,7 +21,7 @@ export type SettingScope =
 	/** config.json: this install */
 	| "machine";
 
-export type SettingGroup = "general" | "agent" | "appearance" | "theme";
+export type SettingGroup = "general" | "agent" | "appearance" | "theme" | "experimental";
 
 export type SettingKind =
 	| { readonly kind: "boolean" }
@@ -137,6 +139,21 @@ const themeEntries = Object.fromEntries(
 	),
 ) as { readonly [Key in ThemeKey]: SettingEntry<string> };
 
+/** One switch per experimental feature (`experiments.ts`), on this machine. */
+const experimentEntries = Object.fromEntries(
+	EXPERIMENT_IDS.map((id) => [
+		experimentKey(id),
+		{
+			scope: "machine",
+			group: "experimental",
+			shape: { kind: "boolean" },
+			fallback: experimentDefault(id),
+			label: EXPERIMENTS[id].name,
+			says: EXPERIMENTS[id].says,
+		} satisfies SettingEntry<boolean>,
+	]),
+) as { readonly [Key in ExperimentKey]: SettingEntry<boolean> };
+
 export const SETTINGS = {
 	"projects.location": {
 		scope: "machine",
@@ -187,6 +204,7 @@ export const SETTINGS = {
 		says: "Dark, light, or whichever the system is set to.",
 	},
 	...themeEntries,
+	...experimentEntries,
 } as const satisfies Record<string, SettingEntry>;
 
 export type SettingKey = keyof typeof SETTINGS;
