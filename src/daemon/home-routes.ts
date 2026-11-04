@@ -332,7 +332,7 @@ export function homeRoutes(deps: {
 						await deps.trash(gone.paths);
 						moved = true;
 						// gone from here, it is no longer this Mac's to delete by itself, Got again or not
-						if (link !== undefined) forgetStartedHere(spoolDir, link.url);
+						if (link !== undefined) forgetStartedHere(spoolDir, root);
 						const result = forgetResolvedProject(spoolDir, root);
 						hub.forget(root);
 						if (result.removed) {
@@ -399,7 +399,7 @@ export function homeRoutes(deps: {
 											project: link.project,
 											inRepo,
 											ownFolder,
-											...(startedHere(spoolDir, link.url) ? { startedHere: true } : {}),
+											...(startedHere(spoolDir, project.root) ? { startedHere: true } : {}),
 										},
 									}),
 							...(ended === undefined ? {} : { ended }),
@@ -535,7 +535,7 @@ export function homeRoutes(deps: {
 function isAbandoned(spoolDir: string, root: string): boolean {
 	// a team copy is judged by its team project's name, and only one this Mac started goes: a teammate's would come back
 	const link = followedLink(root);
-	if (link !== undefined && !startedHere(spoolDir, link.url)) return false;
+	if (link !== undefined && !startedHere(spoolDir, root)) return false;
 	return (
 		isUntitled(link === undefined ? basename(root) : link.project) &&
 		(discoverFrames(root)?.length ?? 0) === 0 &&

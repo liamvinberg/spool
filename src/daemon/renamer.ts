@@ -7,6 +7,7 @@ import type { Namings } from "./agent-naming";
 import type { createChangeHub } from "./events";
 import type { createSelectionStore } from "./selection";
 import type { AppEvent, watchMachineState } from "./session";
+import { forgetStartedHere } from "./started-here";
 import { followedLink } from "./team-sync";
 
 /** A project after its rename: where its folder is now, and what it is called. */
@@ -58,6 +59,8 @@ export function createRenamer(deps: {
 	const folder = (root: string, name: string): Renamed => {
 		const result = mutateMachineState(spoolDir, { kind: "rename-project", root, name });
 		if (result.root !== root) {
+			// named, it is no longer New's untitled one, and its old folder may later hold a teammate's
+			forgetStartedHere(spoolDir, root);
 			hub.forget(root);
 			liveTurns.relocate(root, result.root);
 			selections.relocate(root, result.root);

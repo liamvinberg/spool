@@ -10,6 +10,7 @@ import {
 	cloudTeams,
 } from "./cloud-teams";
 import { registerAndOpenProject } from "./daemon/session";
+import { forgetStartedHere, markStartedHere } from "./daemon/started-here";
 import { type OpenSyncSocket, syncLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
@@ -278,10 +279,13 @@ export async function startTeamProject(
 		const target = join(realDir(parent), folder);
 		if (registered.has(folder) || theirs.has(folder) || existsSync(target)) continue;
 		mkdirSync(target);
+		// this Mac's own: closed untitled and empty, it may go from the team by itself (spool#411)
+		markStartedHere(spoolDir, realDir(target));
 		try {
 			// the daemon's own copy of it uploads the scaffold, as it does any change: nothing waits on that here
 			return await makeTeamProject(realDir(target), spoolDir, teams, team);
 		} catch (error) {
+			forgetStartedHere(spoolDir, realDir(target));
 			rmSync(target, { recursive: true, force: true });
 			if (!(error instanceof ProjectNameTaken)) throw error;
 		}

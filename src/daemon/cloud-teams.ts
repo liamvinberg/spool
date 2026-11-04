@@ -17,7 +17,6 @@ import { SpoolError } from "../errors";
 import { startTeamProject } from "../init";
 import { isAddress } from "../team-project";
 import type { DaemonCloud } from "./app";
-import { markStartedHere } from "./started-here";
 import { teamExportRoutes } from "./team-export";
 
 /** What Home's switcher and invite line show. */
@@ -182,14 +181,12 @@ export function cloudTeamRoutes(options: {
 				// the address becomes a folder under the projects location, so it is one before it is used as one
 				if (!isAddress(team)) return c.json({ error: "No team has this address." }, 400);
 				try {
-					const { root, link } = await startTeamProject(join(options.location(), team), options.spoolDir, {
+					const { root } = await startTeamProject(join(options.location(), team), options.spoolDir, {
 						team,
 						origin: origin(),
 						...(options.cloud === undefined ? {} : { request: options.cloud }),
 						...(options.cloud?.openSocket === undefined ? {} : { openSocket: options.cloud.openSocket }),
 					});
-					// one closed untitled and empty may go from the team by itself, being this Mac's own
-					markStartedHere(options.spoolDir, link.url);
 					return c.json({ root, name: basename(root) });
 				} catch (error) {
 					if (error instanceof CloudTeamRefused) return c.json({ error: error.message, code: error.code }, 409);
