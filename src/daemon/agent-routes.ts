@@ -136,7 +136,7 @@ export function agentRoutes(deps: {
 	/** Comments the person sent to the agent, as the prompt carries them: their blocks, and stills that ride along. */
 	commentsForPrompt: (root: string, ids: readonly string[]) => Promise<CommentPrompt>;
 	/** A project renamed, as `createRenamer` does it: how a new project takes the name its first ask gave it. */
-	rename: (root: string, name: string) => { root: string; name: string };
+	rename: (root: string, name: string) => Promise<{ root: string; name: string }>;
 	/** Projects whose first turn waits while the agent names them, which a stop ends. */
 	namings: Namings;
 	registeredRoots: () => string[];
@@ -389,31 +389,27 @@ export function agentRoutes(deps: {
 								one.comments === undefined ? undefined : deps.commentsForPrompt(asked, one.comments),
 							),
 						);
-						// a new project is named from its first ask before anything in it is written (spool#51). A
-						// team copy keeps its name, which is the team's: renaming the folder would not rename that
+						// a new project is named from its first ask before anything in it is written (spool#51), a
+						// team copy in its team too (spool#411)
 						if (deps.namings.has(asked))
 							return c.text("This project is being named. Try again in a moment.", 409);
-						const root =
-							followedLink(asked) !== undefined
-								? asked
-								: await nameFirst(asked, {
-										hasFrames: (at) => (discoverFrames(at)?.length ?? 0) > 0,
-										spoken: (at) => spokenBefore(readThreads(spoolDir, at, true), thread),
-										ask: (signal) => {
-											const selected = engineFor(c, asked, thread, requested);
-											if ("response" in selected) return Promise.resolve(null);
-											const { engine } = selected;
-											const ask = modelPreferences.read(asked, thread, engine.id);
-											return engine.name(asked, said[0]?.prompt ?? "", ask, signal);
-										},
-										rename: deps.rename,
-										namings: deps.namings,
-										turn: named,
-										signal: c.req.raw.signal,
-										registered: (at) => deps.registeredRoots().includes(at),
-										beat: (naming) =>
-											emitAppEvent({ kind: "naming", root: asked, thread: naming ? thread : null }),
-									});
+						const root = await nameFirst(asked, {
+							hasFrames: (at) => (discoverFrames(at)?.length ?? 0) > 0,
+							spoken: (at) => spokenBefore(readThreads(spoolDir, at, true), thread),
+							ask: (signal) => {
+								const selected = engineFor(c, asked, thread, requested);
+								if ("response" in selected) return Promise.resolve(null);
+								const { engine } = selected;
+								const ask = modelPreferences.read(asked, thread, engine.id);
+								return engine.name(asked, said[0]?.prompt ?? "", ask, signal);
+							},
+							rename: deps.rename,
+							namings: deps.namings,
+							turn: named,
+							signal: c.req.raw.signal,
+							registered: (at) => deps.registeredRoots().includes(at),
+							beat: (naming) => emitAppEvent({ kind: "naming", root: asked, thread: naming ? thread : null }),
+						});
 						// stopped while it was named, or the project went: the turn never starts
 						if (root === null) return c.text("stopped", 410);
 						/*

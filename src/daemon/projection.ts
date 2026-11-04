@@ -761,9 +761,18 @@ export interface ProjectCard extends ProjectSummary {
 	/**
 	 * The team project this root is a local copy of: Home shows all of one's copies as one cover. `inRepo` is whether
 	 * the copy's root is inside a git work tree (task 136): one in no repo may move into a checkout. The daemon always
-	 * says it.
+	 * says it. `ownFolder` is whether the folder is the team's own on this Mac (in no repo at
+	 * `<location>/<team>/<project>`), the whole of which leaves with it; otherwise only its design/ does (spool#411).
+	 * `startedHere` is a project this Mac started with New, the only kind that goes by itself closed untitled and empty.
 	 */
-	team?: { url: string; team: string; project: string; inRepo?: boolean };
+	team?: {
+		url: string;
+		team: string;
+		project: string;
+		inRepo?: boolean;
+		ownFolder?: boolean;
+		startedHere?: boolean;
+	};
 	/** The team this folder was a local copy for until the project ended here: its cover goes on saying so. */
 	ended?: string;
 	/**

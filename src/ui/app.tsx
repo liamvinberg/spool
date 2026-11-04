@@ -73,7 +73,7 @@ import {
 	useCoverMoves,
 } from "./team-moves";
 import { useTeamHome } from "./teams";
-import { TrashProjectDialog } from "./trash-project-dialog";
+import { type CopyTeam, DeleteFromTeamDialog, TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
@@ -111,6 +111,8 @@ export function App() {
 	/** A team, or one project of it, that spool.page's Export handed this page, to export once the teams are read. */
 	const [exportAsked] = useState(() => (handed?.export ? { team: handed.team, project: handed.project } : null));
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
+	/** The team copy "Delete from <team>…" is asking about. */
+	const [deleteRequest, setDeleteRequest] = useState<ProjectCard | null>(null);
 	const [account, setAccount] = useState<CloudAccountState>({ state: "unreachable" });
 	const readAccount = useCallback(async () => setAccount(await fetchCloudAccount()), []);
 	const [teamMenu, setTeamMenu] = useState<string | null>(null);
@@ -553,11 +555,11 @@ export function App() {
 
 	/** The project New just made, whose canvas opens with the Agent pane out, once. */
 	const [started, setStarted] = useState<string | null>(null);
-	// a local one opens with its name a field, which typing names and anything else leaves untitled
-	const newProject = useStartProject(({ team, ...project }) => {
-		setStarted(project.root);
-		openTab(project);
-		if (team === undefined) setRenaming(project.root);
+	// it opens with its name a field, a team's too, which typing names and anything else leaves untitled
+	const newProject = useStartProject(({ root, name }) => {
+		setStarted(root);
+		openTab({ root, name });
+		setRenaming(root);
 	});
 	const startNew = newProject.start;
 
@@ -600,7 +602,7 @@ export function App() {
 			const card = projectsRef.current.byRoot.get(root);
 			// one being named has a first ask on its way in, so it stays the way one with a turn running does
 			if (card !== undefined && !namingRef.current.has(root))
-				abandonClosed({ root, name: card.name, teamAddress: card.team?.team });
+				abandonClosed({ root, name: card.name, teamAddress: card.team?.team }, card.team);
 		},
 		[focusProject, abandonClosed],
 	);
@@ -788,6 +790,7 @@ export function App() {
 						onOpenProject={(project) => openTab(project)}
 						onForgetProject={(project) => void forgetProject(project)}
 						onTrashProject={setTrashRequest}
+						onDeleteFromTeam={setDeleteRequest}
 						onRenameProject={(project) => void requestRename(project)}
 						onExportProject={transfer.exportProject}
 						onChangeIcon={icons.change}
@@ -877,6 +880,34 @@ export function App() {
 	const coverItems: MoveItems = (project) => [...coverMoves.moveItems(project), ...exportItems(project)];
 	/** The teams this Mac knows, for the marks a team project's tab and cover wear. */
 	const markTeams = useMemo(() => new Map(teamHome.all.map((team) => [team.address, team])), [teamHome.all]);
+	/** The name of the team a team copy's project is in, as its people know it; undefined for a project in none. */
+	const teamOf = (root: string): CopyTeam | undefined => {
+		const team = byRoot.get(root)?.team;
+		if (team === undefined) return undefined;
+		return {
+			name: markTeams.get(team.team)?.name ?? team.team,
+			project: team.project,
+			ownFolder: team.ownFolder !== false,
+		};
+	};
+	/**
+	 * A project's folder to the Trash, and, `fromTeam`, the project from its team first: its card and tab go. Throws
+	 * what the daemon refused, for the dialog to say.
+	 */
+	const trashGone = async (root: string, how: { fromTeam?: boolean } = {}) => {
+		letGo(root);
+		try {
+			await trashProject(root, how);
+		} catch (error) {
+			keep(root);
+			throw error;
+		}
+		projectRevision.current += 1;
+		setProjects((cards) => cards.filter((card) => card.root !== root));
+		setOpen((roots) => roots.filter((open) => open !== root));
+		if (focused === root) focusProject(null);
+		void refetch();
+	};
 	const focusedSolo =
 		focusedTab !== undefined && byRoot.get(focusedTab.root)?.team === undefined ? focusedTab : undefined;
 	const canvasActive =
@@ -887,6 +918,7 @@ export function App() {
 		renameRequest === null &&
 		renaming === null &&
 		trashRequest === null &&
+		deleteRequest === null &&
 		moving === null &&
 		!transfer.confirming &&
 		!opener.up;
@@ -974,6 +1006,7 @@ export function App() {
 								onOpenProject={(project) => openTab(project)}
 								onForgetProject={(project) => void forgetProject(project)}
 								onTrashProject={setTrashRequest}
+								onDeleteFromTeam={setDeleteRequest}
 								onRenameProject={(project) => void requestRename(project)}
 								moveItems={coverItems}
 								places={teamHome.places}
@@ -1087,6 +1120,7 @@ export function App() {
 				{renameRequest !== null && (
 					<RenameProjectDialog
 						project={renameRequest.project}
+						team={teamOf(renameRequest.project.root)}
 						initialName={renameRequest.initialName}
 						onRename={async (name) => {
 							const renamed = await renameTo(renameRequest.project.root, name);
@@ -1102,21 +1136,23 @@ export function App() {
 				{trashRequest !== null && (
 					<TrashProjectDialog
 						project={trashRequest}
-						onTrash={async () => {
-							letGo(trashRequest.root);
-							try {
-								await trashProject(trashRequest.root);
-							} catch (error) {
-								keep(trashRequest.root);
-								throw error;
-							}
-							projectRevision.current += 1;
-							setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
-							setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
-							if (focused === trashRequest.root) focusProject(null);
-							void refetch();
-						}}
+						team={teamOf(trashRequest.root)}
+						onTrash={() => trashGone(trashRequest.root)}
 						onClose={() => setTrashRequest(null)}
+					/>
+				)}
+				{deleteRequest?.team !== undefined && (
+					<DeleteFromTeamDialog
+						project={deleteRequest}
+						team={
+							teamOf(deleteRequest.root) ?? {
+								name: deleteRequest.team.team,
+								project: deleteRequest.team.project,
+								ownFolder: deleteRequest.team.ownFolder !== false,
+							}
+						}
+						onDelete={() => trashGone(deleteRequest.root, { fromTeam: true })}
+						onClose={() => setDeleteRequest(null)}
 					/>
 				)}
 

@@ -53,6 +53,7 @@ export function Home({
 	onOpenProject,
 	onForgetProject,
 	onTrashProject,
+	onDeleteFromTeam,
 	onRenameProject,
 	onStart,
 	onOpen,
@@ -73,6 +74,8 @@ export function Home({
 	onOpenProject: (project: { root: string; name: string }) => void;
 	onForgetProject: (project: { root: string; name: string }) => void;
 	onTrashProject: (project: { root: string; name: string }) => void;
+	/** "Delete from <team>…" on a team copy's cover, for the team's admins. */
+	onDeleteFromTeam?: (project: ProjectCard) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onStart: () => void;
 	/** Open…: a folder, a .spool file or a link, through the system's open panel */
@@ -138,6 +141,7 @@ export function Home({
 			onOpenProject={onOpenProject}
 			onForgetProject={onForgetProject}
 			onTrashProject={onTrashProject}
+			{...(onDeleteFromTeam === undefined ? {} : { onDeleteFromTeam })}
 			onRenameProject={onRenameProject}
 			{...(onExportProject === undefined ? {} : { onExportProject })}
 			{...(moveItems === undefined ? {} : { moveItems })}
@@ -501,6 +505,7 @@ export function ProjectGrid({
 	onOpenProject,
 	onForgetProject,
 	onTrashProject,
+	onDeleteFromTeam,
 	onRenameProject,
 	onExportProject,
 	moveItems,
@@ -518,6 +523,8 @@ export function ProjectGrid({
 	onOpenProject: (project: { root: string; name: string }) => void;
 	onForgetProject: (project: { root: string; name: string }) => void;
 	onTrashProject: (project: { root: string; name: string }) => void;
+	/** "Delete from <team>…" on a team copy's cover, for the team's admins. */
+	onDeleteFromTeam?: (project: ProjectCard) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onExportProject?: (project: ProjectCard) => void;
 	/** The ways each cover's project can move, as this account may move it. */
@@ -546,6 +553,7 @@ export function ProjectGrid({
 						onOpen={() => onOpenProject(project)}
 						onForget={() => onForgetProject(project)}
 						onTrash={() => onTrashProject(project)}
+						{...(onDeleteFromTeam === undefined ? {} : { onDeleteFromTeam: () => onDeleteFromTeam(project) })}
 						onRename={() => onRenameProject(project)}
 						onExport={() => onExportProject?.(project)}
 						moves={moveItems?.(project) ?? []}
@@ -576,6 +584,7 @@ function ProjectTile({
 	onOpen,
 	onForget,
 	onTrash,
+	onDeleteFromTeam,
 	onRename,
 	onExport,
 	moves,
@@ -593,6 +602,7 @@ function ProjectTile({
 	onOpen: () => void;
 	onForget: () => void;
 	onTrash: () => void;
+	onDeleteFromTeam?: () => void;
 	onRename: () => void;
 	onExport: () => void;
 	moves: readonly MoveItem[];
@@ -601,6 +611,8 @@ function ProjectTile({
 	onRemoveThumbnail?: () => void;
 }) {
 	const cover = project.covers[0];
+	// a team copy is renamed by its team's editors and admins, and deleted from the team by its admins alone
+	const team = useMarkTeam(project.team?.team);
 	// a project whose design/ moved into a team this account can't edit opens the sheet saying where it went
 	const [movedOpen, setMovedOpen] = useState(false);
 	const moved = project.moved;
@@ -693,14 +705,16 @@ function ProjectTile({
 								onExport();
 							}}
 						/>
-						<MenuItem
-							label="Rename…"
-							onClick={() => {
-								refocus();
-								close();
-								onRename();
-							}}
-						/>
+						{team?.role !== "viewer" && (
+							<MenuItem
+								label="Rename…"
+								onClick={() => {
+									refocus();
+									close();
+									onRename();
+								}}
+							/>
+						)}
 						{moves
 							.filter((move) => !move.end)
 							.map((move) => (
@@ -744,7 +758,8 @@ function ProjectTile({
 								/>
 							))}
 						<MenuItem
-							label={`Move to ${systemTrashName()}…`}
+							// a team copy's folder goes, and the team keeps the project
+							label={team === undefined ? `Move to ${systemTrashName()}…` : "Remove from this Mac…"}
 							destructive
 							onClick={() => {
 								refocus();
@@ -752,6 +767,17 @@ function ProjectTile({
 								onTrash();
 							}}
 						/>
+						{team?.role === "admin" && onDeleteFromTeam && (
+							<MenuItem
+								label={`Delete from ${team.name}…`}
+								destructive
+								onClick={() => {
+									refocus();
+									close();
+									onDeleteFromTeam();
+								}}
+							/>
+						)}
 					</>
 				)}
 			/>

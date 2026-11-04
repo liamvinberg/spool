@@ -16,16 +16,31 @@ export interface ProjectRename {
 /** Only the closed machine-state operation calls this, with its cross-process lock held. */
 export function renameProjectUnlocked(spoolDir: string, root: string, requestedName: string): ProjectRename {
 	const name = requestedName.trim();
+	const registry = readMachineRegistry(spoolDir);
+	const session = readMachineSession(spoolDir);
+	const target = renameTarget(spoolDir, root, name, registry);
+	if (target === root) return { root, name, registry, session };
+	return relocate(spoolDir, root, target, { folder: true, registry, session });
+}
+
+/**
+ * Where a rename would move the project's folder, refused as a SpoolError when this Mac can't move it there: what a
+ * team copy's rename asks before spool.page renames anything.
+ */
+export function renameTarget(
+	spoolDir: string,
+	root: string,
+	name: string,
+	registry: Registry = readMachineRegistry(spoolDir),
+): string {
 	if (!isSafeName(name) || [...name].some((character) => character.charCodeAt(0) < 32)) {
 		throw new SpoolError("Use a folder name without slashes or a leading dot.");
 	}
-	const registry = readMachineRegistry(spoolDir);
-	const session = readMachineSession(spoolDir);
 	if (!registry.projects.some((project) => project.root === root)) {
 		throw new SpoolError("This project is no longer registered. Open its folder again.");
 	}
 	const target = join(dirname(root), name);
-	if (target === root) return { root, name, registry, session };
+	if (target === root) return target;
 	if (registry.projects.some((project) => project.root !== root && basename(project.root) === name)) {
 		throw new SpoolError("A project with that name is already open in Spool. Choose another name.");
 	}
@@ -36,7 +51,7 @@ export function renameProjectUnlocked(spoolDir: string, root: string, requestedN
 	) {
 		throw new SpoolError("This folder contains another Spool project or its app data and cannot be renamed here.");
 	}
-	return relocate(spoolDir, root, target, { folder: true, registry, session });
+	return target;
 }
 
 /**

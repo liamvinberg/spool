@@ -310,6 +310,18 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 				"DELETE",
 				`${team(address)}/projects/${encodeURIComponent(name)}${options.out === true ? "?out=1" : ""}`,
 			),
+		/**
+		 * A project nobody has touched yet (no frames, comments or shares) gone for good at once, never waiting in the
+		 * trash. Its admins' and its creator's; `project_not_empty` once it holds anything.
+		 */
+		deleteEmptyProject: (address: string, name: string) =>
+			call<null>("DELETE", `${team(address)}/projects/${encodeURIComponent(name)}?empty=1`),
+		/**
+		 * The same project under another name in its team, its id, history, comments and shares kept; the old address
+		 * forwards to it. Editors and admins.
+		 */
+		renameProject: (address: string, name: string, to: string) =>
+			call<CloudTeamProject>("POST", `${team(address)}/projects/${encodeURIComponent(name)}/rename`, { name: to }),
 		/** The team's trash: its removed projects, latest first. Admins only. */
 		removed: (address: string) => call<{ projects: RemovedTeamProject[] }>("GET", `${team(address)}/removed`),
 		/** A removed project back in the team, with everything it kept. Admins only; refused while the team is unpaid. */

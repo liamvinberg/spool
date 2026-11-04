@@ -70,6 +70,8 @@ export interface MarkTeam {
 	address: string;
 	name: string;
 	logo: string | null;
+	/** This account's role in it, where the account's teams were read: what renaming and deleting its projects asks. */
+	role?: TeamRole;
 }
 
 /**

@@ -4,6 +4,7 @@ import { isUntitled } from "../untitled";
 import type { AgentExecutor } from "./agent-exec";
 import { probeAgent } from "./agent-exec";
 import type { AgentSpawn } from "./agent-spawn";
+import { followedLink } from "./team-sync";
 
 /**
  * Naming a new project from its first ask (spool#51): an untitled project's first turn waits while the same
@@ -100,7 +101,7 @@ export async function nameFirst(
 		spoken: (root: string) => boolean;
 		/** the agent's reply to `namingPrompt`, or null */
 		ask: (signal: AbortSignal) => Promise<string | null>;
-		rename: (root: string, name: string) => { root: string };
+		rename: (root: string, name: string) => Promise<{ root: string }>;
 		namings: Namings;
 		/** the turn being named for, as a stop names it */
 		turn: string | undefined;
@@ -112,7 +113,9 @@ export async function nameFirst(
 		beat: (naming: boolean) => void;
 	},
 ): Promise<string | null> {
-	if (!isUntitled(basename(root)) || deps.hasFrames(root) || deps.spoken(root)) return root;
+	// a team copy is untitled while its team project is, whatever its folder is called (spool#411)
+	const named = followedLink(root)?.project ?? basename(root);
+	if (!isUntitled(named) || deps.hasFrames(root) || deps.spoken(root)) return root;
 	const stop = new AbortController();
 	const asked = AbortSignal.any([stop.signal, deps.signal]);
 	deps.namings.set(root, { turn: deps.turn, stop });
@@ -128,7 +131,7 @@ export async function nameFirst(
 	const name = kebabName(reply ?? "");
 	if (name === null) return root;
 	try {
-		return deps.rename(root, name).root;
+		return (await deps.rename(root, name)).root;
 	} catch (error) {
 		if (error instanceof SpoolError) return root;
 		throw error;

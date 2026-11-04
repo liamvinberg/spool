@@ -5,6 +5,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import type { CloudTeam, ProjectCard, TeamPeople } from "./api";
 import { fakeTeamsSource } from "./fake-teams-source";
 import { Home } from "./home";
+import { ProjectTeams } from "./project-icon";
 import type { MoveDone } from "./team-move";
 import { TeamProjectsAway, useCoverMoves } from "./team-moves";
 import { TeamProjects, TeamsSourceContext } from "./teams";
@@ -101,19 +102,24 @@ function home(
 			onDone: (said) => done.push(said),
 		});
 		return createElement(
-			TeamsSourceContext.Provider,
-			{ value: fake.source },
-			createElement(Home, {
-				projects,
-				onOpenProject: vi.fn(),
-				onForgetProject: vi.fn(),
-				onTrashProject: vi.fn(),
-				onRenameProject: vi.fn(),
-				onStart: vi.fn(),
-				onOpen: vi.fn(),
-				moveItems: moves.moveItems,
-			}),
-			moves.surface,
+			ProjectTeams.Provider,
+			{ value: new Map(teams.map((each) => [each.address, each])) },
+			createElement(
+				TeamsSourceContext.Provider,
+				{ value: fake.source },
+				createElement(Home, {
+					projects,
+					onOpenProject: vi.fn(),
+					onForgetProject: vi.fn(),
+					onTrashProject: vi.fn(),
+					onDeleteFromTeam: vi.fn(),
+					onRenameProject: vi.fn(),
+					onStart: vi.fn(),
+					onOpen: vi.fn(),
+					moveItems: moves.moveItems,
+				}),
+				moves.surface,
+			),
 		);
 	}
 	return { host: render(createElement(Covers)), done, movedIn };
@@ -188,7 +194,7 @@ async function type(input: HTMLInputElement | null | undefined, value: string) {
 	await settle(300);
 }
 
-it("offers an admin of the copy's team Move to team, and Move out at the foot with Hide and Trash", async () => {
+it("offers an admin of the copy's team Move to team, and Move out at the foot with Hide, Remove and Delete", async () => {
 	daemon();
 	const { host } = home(fakeTeamsSource({ teams: ADA }), ADA);
 	await openMenu(host, "tidemark-site");
@@ -200,8 +206,12 @@ it("offers an admin of the copy's team Move to team, and Move out at the foot wi
 		"Copy path",
 		"Hide from Spool",
 		"!Move out of Tidemark…",
-		"!Move to Trash…",
+		"!Remove from this Mac…",
+		"!Delete from Tidemark…",
 	]);
+	// a project in no team keeps Move to Trash, and nothing to delete from
+	await openMenu(host, "kaffe");
+	expect(items(host).filter((item) => item.startsWith("!"))).toEqual(["!Move to Trash…"]);
 });
 
 it("offers Move into a checkout on a team copy in no repo, to anyone with the copy", async () => {
@@ -221,7 +231,18 @@ it("offers an editor of the copy's team neither Move to team nor Move out", asyn
 	daemon();
 	const { host } = home(fakeTeamsSource({ teams: MIRA }), MIRA);
 	await openMenu(host, "tidemark-site");
-	expect(items(host).filter((item) => item.includes("Move"))).toEqual(["!Move to Trash…"]);
+	expect(items(host).filter((item) => item.includes("Move"))).toEqual([]);
+	expect(items(host)).toContain("Rename…");
+	expect(items(host)).not.toContain("!Delete from Tidemark…");
+});
+
+it("offers a viewer of the copy's team no Rename", async () => {
+	daemon();
+	const teams = [team("tidemark", "Tidemark", "viewer")];
+	const { host } = home(fakeTeamsSource({ teams }), teams);
+	await openMenu(host, "tidemark-site");
+	expect(items(host)).not.toContain("Rename…");
+	expect(items(host)).toContain("!Remove from this Mac…");
 });
 
 it("offers no Move to team to an admin with no other team to edit in, but still Move out", async () => {
