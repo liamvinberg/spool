@@ -3,7 +3,7 @@ import { type CloudAccount, CloudSignedOut } from "../cloud-auth";
 import { SpoolError } from "../errors";
 import { makeTempDir, sseReader } from "../test-helpers";
 import { createDaemonApp } from "./app";
-import type { CloudAccountServices } from "./cloud-account";
+import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 
 const ADA: CloudAccount = {
 	accountId: "account",
@@ -145,4 +145,37 @@ it("keeps the account behind the control token", async () => {
 	const { daemon } = harness();
 	const response = await daemon.app.request("http://localhost/api/cloud/account/sign-in", { method: "POST" });
 	expect(response.status).toBe(401);
+});
+
+it("asks spool.page again after it did not answer, and says so once it does", async () => {
+	vi.useFakeTimers();
+	onTestFinished(() => {
+		vi.useRealTimers();
+	});
+	let answers = false;
+	const onChange = vi.fn();
+	const cloudAccount = createCloudAccount({
+		spoolDir: makeTempDir(),
+		onChange,
+		services: {
+			origin: () => "https://cloud.test",
+			account: async () => {
+				if (!answers) throw new SpoolError("spool.page could not be reached; local spool is still available");
+				return ADA;
+			},
+			login: () => new Promise(() => {}),
+			logout: async () => {},
+			open: () => {},
+		},
+	});
+	onTestFinished(() => cloudAccount.close());
+	expect(await cloudAccount.read()).toEqual({ state: "unreachable" });
+	await vi.advanceTimersByTimeAsync(2_000);
+	expect(onChange).not.toHaveBeenCalled();
+	answers = true;
+	await vi.advanceTimersByTimeAsync(4_000);
+	expect(onChange).toHaveBeenCalledOnce();
+	expect(await cloudAccount.read()).toMatchObject({ state: "signed-in", email: ADA.email });
+	await vi.advanceTimersByTimeAsync(60_000);
+	expect(onChange).toHaveBeenCalledOnce();
 });
