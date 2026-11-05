@@ -59,6 +59,7 @@ const { targetId } = await send("Target.createTarget", { url: "about:blank", wid
 const { sessionId: s } = await send("Target.attachToTarget", { targetId, flatten: true });
 const S = (m, p) => send(m, p, s);
 await S("Page.enable");
+await S("Page.addScriptToEvaluateOnNewDocument", { source: readFileSync(join(import.meta.dirname, "audio-shim.js"), "utf8") });
 await S("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false });
 
 // Load with virtual time paused until network is idle, pumping frames so layout runs.
@@ -95,8 +96,16 @@ for (let i = 0; i < frames; i++) {
 	ticks += STEP;
 	const r = await S("HeadlessExperimental.beginFrame", { frameTimeTicks: ticks, interval: STEP, screenshot: { format: "png" } });
 	await Promise.all(inputs);
+	if (i % 60 === 0) console.log("frame", i);
 	if (r.screenshotData) writeFileSync(join(out, `${String(i).padStart(5, "0")}.png`), Buffer.from(r.screenshotData, "base64"));
 	else console.log(`frame ${i}: no damage, no screenshot`);
 }
+console.log("frames done"); await S("Emulation.setVirtualTimePolicy", { policy: "advance" });
+const audio = await S("Runtime.evaluate", { awaitPromise: true, returnByValue: true, expression: `(async () => {
+  const { left, contexts } = await window.__spoolRecordedAudio(0);
+  const loud = []; for (let w = 0; w < left.length / 4800; w++) { let e = 0; for (let i = w * 4800; i < (w + 1) * 4800; i++) e = Math.max(e, Math.abs(left[i])); if (e > 0.05) loud.push((w * 0.1).toFixed(1)); }
+  return { contexts, loud };
+})()` });
+console.log("audio", JSON.stringify(audio.result.value ?? audio));
 console.log(`${frames} frames of ${(duration / 1000).toFixed(2)} s rendered in ${((performance.now() - t0) / 1000).toFixed(2)} s`);
 ws.close(); proc.kill(); rmSync(userDir, { recursive: true, force: true });

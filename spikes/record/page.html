@@ -35,7 +35,14 @@
     r.style.left = e.clientX + "px"; r.style.top = e.clientY + "px";
     document.body.appendChild(r); setTimeout(() => r.remove(), 800);
   });
-  b.addEventListener("click", () => { clicks++; b.textContent = "Clicked " + clicks; });
+  let ac;
+  b.addEventListener("click", () => {
+    clicks++; b.textContent = "Clicked " + clicks;
+    ac ??= new AudioContext();
+    const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+    o.frequency.value = 880; g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    o.connect(g).connect(ac.destination); o.start(t); o.stop(t + 0.2);
+  });
   function tick(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     const k = 170, d = 14;
