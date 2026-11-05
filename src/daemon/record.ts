@@ -406,6 +406,7 @@ async function openFrameTab(
 	const page = await arriving;
 	const cdp = await context.newCDPSession(page);
 	await cdp.send("Page.enable");
+	await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: RANDOM_SOURCE });
 	await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: AUDIO_SOURCE });
 	return { page, cdp };
 }
@@ -695,6 +696,21 @@ const ENCODER_SOURCE = `(() => {
 			if (failure) throw failure;
 			return { config, chunks };
 		},
+	};
+})()`;
+
+/**
+ * Math.random from one seed, the same in every part, so a frame that draws
+ * from it draws the same in each and the parts join without a jump. It cannot
+ * be what the frame drew while it was recorded: the clip's random is its own.
+ */
+const RANDOM_SOURCE = `(() => {
+	let seed = 0x5bd1e995;
+	Math.random = () => {
+		seed = (seed + 0x6d2b79f5) | 0;
+		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 	};
 })()`;
 
