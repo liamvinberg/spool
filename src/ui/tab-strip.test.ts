@@ -441,14 +441,14 @@ it("offers Match the team in a team project's tab menu only", async () => {
 		const labels = [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
 		return labels;
 	};
-	expect(await items(1)).not.toContain("Match the team");
+	expect(await items(1)).not.toContain("Reset to team's version");
 	await act(async () =>
 		document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
 	);
-	expect(await items(3)).toEqual(["Export project…", "Match the team", "Close tab"]);
+	expect(await items(3)).toEqual(["Export project…", "Reset to team's version", "Close tab"]);
 	await act(async () =>
 		[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
-			.find((item) => item.textContent === "Match the team")
+			.find((item) => item.textContent === "Reset to team's version")
 			?.click(),
 	);
 	expect(onMatchTeam).toHaveBeenCalledWith(team);

@@ -753,7 +753,7 @@ describe("offline (#205)", () => {
 		expect(refused.status).toBe(409);
 		expect(await refused.json()).toEqual({
 			error: "offline",
-			message: "Match the team needs a connection to spool.page. Nothing was changed.",
+			message: "Resetting to the team's version needs a connection to spool.page. Nothing was changed.",
 		});
 		expect(text(ben.root, "frames/mine/frame.tsx")).toBe("mine\n");
 		expect(await marks(ben.daemon)).toEqual([]);

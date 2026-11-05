@@ -240,7 +240,7 @@ export function SyncNotices({
 					</TextAction>
 				);
 				const match = matches && onMatchTeam !== undefined && (
-					<TextAction onClick={onMatchTeam}>Match the team</TextAction>
+					<TextAction onClick={onMatchTeam}>Reset to team's version</TextAction>
 				);
 				// the app downloads its update by itself: the action stands once it is ready to restart into
 				const install =

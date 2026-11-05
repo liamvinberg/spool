@@ -112,7 +112,7 @@ export function ProjectTabMenu({
 			)}
 			<MenuItem label="Export project…" onClick={() => act(onExport)} />
 			{onMatchTeam && project.teamAddress !== undefined && (
-				<MenuItem label="Match the team" onClick={() => act(onMatchTeam)} />
+				<MenuItem label="Reset to team's version" onClick={() => act(onMatchTeam)} />
 			)}
 			{onHistory && project.teamAddress !== undefined && (
 				<MenuItem label="History…" onClick={() => act(onHistory)} />

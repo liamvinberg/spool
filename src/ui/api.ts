@@ -2119,7 +2119,7 @@ export async function matchTeam(project: string): Promise<{ marked: number } | {
 	}
 }
 
-const MATCH_REFUSED = "Match the team needs a connection to spool.page. Nothing was changed.";
+const MATCH_REFUSED = "Resetting to the team's version needs a connection to spool.page. Nothing was changed.";
 
 /** Project transfer uses the same control token as every project lifecycle write. */
 export async function exportProject(root: string, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {
