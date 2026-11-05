@@ -381,19 +381,9 @@ function RecordControl({ recorder }: { recorder: PlayerRecorder }) {
 							{aspect}
 						</button>
 					))}
-					<span className="spool-bar-tipped">
-						<button
-							type="button"
-							className="spool-bar-icon"
-							aria-label="Discard the recording"
-							onClick={recorder.discard}
-						>
-							<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-								<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
-							</svg>
-						</button>
-						<Tip label="Discard" />
-					</span>
+					<button type="button" className="spool-bar-share spool-record-discard" onClick={recorder.discard}>
+						discard
+					</button>
 				</span>
 			);
 	}

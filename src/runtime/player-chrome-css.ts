@@ -231,6 +231,7 @@ body { margin: 0; background: #0e0e0e; }
 .spool-record-on.is-near { color: #f5391a; }
 .spool-record-choice { display: flex; align-items: center; gap: 2px; }
 .spool-record-choice > .spool-bar-hint { margin-right: 4px; }
+.spool-record-discard { margin-left: 6px; color: #94918d; }
 .spool-record-failed { color: #f5391a; cursor: help; }
 @media (prefers-reduced-motion: reduce) { .spool-record-on .spool-record-dot { animation: none; } }
 .spool-top button:focus-visible {
