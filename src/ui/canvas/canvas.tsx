@@ -1824,9 +1824,9 @@ function CanvasField({
 	 * is closed.
 	 */
 	const playFrame = useCallback(
-		(name: string) => {
+		(name: string, record = false) => {
 			window.open(
-				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}`,
+				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}${record ? "&record=1" : ""}`,
 				"_blank",
 				"noopener,noreferrer",
 			);
@@ -4749,7 +4749,7 @@ function CanvasField({
 		// A context click acts on the existing frame selection. Element picking
 		// belongs to Select's click, double-click and ⌘-click gestures.
 		cancelPicks();
-		const menuSize = contextMenuSize(!elementSelection, team);
+		const menuSize = contextMenuSize(!elementSelection, team, experimentOn("record"));
 		const viewport = viewportRef.current;
 		const x = viewport === null ? p.x : Math.min(p.x, viewport.clientWidth - menuSize.w - 8);
 		const y = viewport === null ? p.y : Math.min(p.y, viewport.clientHeight - menuSize.h - 8);
@@ -6069,6 +6069,16 @@ function CanvasField({
 								setMenu(null);
 								playFrame(frame);
 							}}
+							onRecord={
+								experimentOn("record")
+									? () => {
+											const frame = menu.frame;
+											setMenu(null);
+											// Record (spool#221): the player, opened recording from the frame's arrival
+											playFrame(frame, true);
+										}
+									: undefined
+							}
 							onCopyPath={() => {
 								const pick = store.get().picked.find((candidate) => candidate.frame === menu.frame);
 								copySourcePath(pick !== undefined ? sourcePathOf(pick) : frameSourcePath(menu.frame));

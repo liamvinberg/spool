@@ -1,12 +1,13 @@
 /**
  * The right-click menu (#23), the second door to decided actions only (#7),
- * Play from here / Copy path / History… / Reload / Set as thumbnail / Tidy /
+ * Play from here / Record / Copy path / History… / Reload / Set as thumbnail / Tidy /
  * adaptive export / Move to Trash. History… is a team project's (spool#187). Set as thumbnail makes the frame's
  * still as it is now the project's picture on Home; it waits, disabled, until
  * the frame has one. Export exists only for a frame selection: one frame downloads
  * immediately; a multi-selection opens the format choice. Tidy is always here —
  * it lays out the field, so it answers to no one frame.
  * Play is the player's door (#13/#24); the player owns cinema in its own tab.
+ * Record (spool#221) is the same door, opened recording; only while that experiment is on.
  *
  * Every item that has a bare key wears it, so the menu teaches the shortcut
  * that replaces it. Copying the source path is the one verb without one: it
@@ -28,8 +29,8 @@ const ROW = 28;
 const RULE = 9;
 const FRAME = 10;
 
-export function contextMenuSize(canExport: boolean, history = false): { w: number; h: number } {
-	const rows = 6 + (canExport ? 1 : 0) + (history ? 1 : 0);
+export function contextMenuSize(canExport: boolean, history = false, record = false): { w: number; h: number } {
+	const rows = 6 + (canExport ? 1 : 0) + (history ? 1 : 0) + (record ? 1 : 0);
 	const rules = 2;
 	return { w: MENU_WIDTH, h: rows * ROW + rules * RULE + FRAME };
 }
@@ -40,6 +41,7 @@ export function ContextMenu({
 	tidyLabel,
 	onTidy,
 	onPlay,
+	onRecord,
 	onCopyPath,
 	onHistory,
 	onReload,
@@ -51,6 +53,8 @@ export function ContextMenu({
 	tidyLabel: string;
 	onTidy: () => void;
 	onPlay: () => void;
+	/** "Record": the player opened recording; absent while the experiment is off. */
+	onRecord?: (() => void) | undefined;
 	onCopyPath: () => void;
 	/** "History…": the frame's team history in the History pane; absent on a project that isn't a team's. */
 	onHistory?: (() => void) | undefined;
@@ -67,6 +71,7 @@ export function ContextMenu({
 			onContextMenu={(event) => event.preventDefault()}
 		>
 			<MenuItem label="Play from here" shortcut={hotkeyKey("canvas.play")} onClick={onPlay} />
+			{onRecord === undefined ? null : <MenuItem label="Record" onClick={onRecord} />}
 			<MenuItem label="Copy path" onClick={onCopyPath} />
 			{onHistory === undefined ? null : <MenuItem label="History…" onClick={onHistory} />}
 			<MenuItem label="Reload frame" shortcut={hotkeyKey("canvas.reload")} onClick={onReload} />
