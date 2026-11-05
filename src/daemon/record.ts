@@ -8,7 +8,7 @@ import {
 	MissingHeadlessShellError,
 	missingLibrary,
 } from "../headless-shell";
-import { type ClipAspect, clipWindow, type RecordedInput } from "../runtime/record-protocol";
+import { type ClipAspect, clipWindow, RECORD_LIMIT_MS, type RecordedInput } from "../runtime/record-protocol";
 
 /**
  * The recorder (spool#221): a recording played back into a fresh copy of the
@@ -205,6 +205,7 @@ async function render(
 	let still = (await frame(true)).screenshotData;
 	await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" });
 	const origin = await evaluate<number>(cdp, "performance.now()");
+	await evaluate(cdp, `${SOUND}?.ends(${origin + end})`);
 
 	const first = Math.floor(start / STEP_MS);
 	const last = Math.ceil(end / STEP_MS);
@@ -234,7 +235,7 @@ async function render(
 	await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance" });
 	const sound = await evaluate<{ left: string; right: string } | null>(
 		cdp,
-		`window[${JSON.stringify(AUDIO_KEY)}]?.(${origin + start}, ${end - start}) ?? null`,
+		`${SOUND}?.finish(${origin + start}, ${end - start}) ?? null`,
 		true,
 	);
 	await page.close().catch(() => {});
@@ -538,40 +539,207 @@ const ENCODER_SOURCE = `(() => {
 	};
 })()`;
 
-const AUDIO_KEY = "__spoolRecordedSound";
+export const AUDIO_KEY = "__spoolRecordedSound";
+const SOUND = `window[${JSON.stringify(AUDIO_KEY)}]`;
 
 /**
  * The frame tab's sound, as source, evaluated before any of the frame's own
- * scripts. Every AudioContext is an OfflineAudioContext whose clock is the
- * page's (virtual) performance clock since it was made, and that says it is
- * running, so a frame schedules its sounds exactly as it would live. At the end
- * each is rendered and mixed into one stereo track at the moment it was made,
- * cut to the clip. A frame that never made one has no sound and no track.
+ * scripts. Every AudioContext is an OfflineAudioContext that says it is
+ * running, whose clock is the page's (virtual) performance clock since it was
+ * made, and all of them are rendered once the recording is played.
+ *
+ * An offline context is only ever at its beginning before it renders, so
+ * whatever means "now" to a live one would land at the start: a node started
+ * with no time, a param's value set, a past time, a disconnect. Every such call
+ * is moved to the moment it was made instead (spool#221). Connections go
+ * through a gain of their own, open from the moment of connecting and shut at
+ * the moment of disconnecting, since an offline graph can only be wired once.
+ * At the end each context is mixed into one stereo track at the moment it was
+ * made, cut to the clip. A frame that never made one has no sound and no
+ * track. Sound played through media elements is not caught.
  */
-const AUDIO_SOURCE = `(() => {
+export const AUDIO_SOURCE = `(() => {
 	const RATE = ${AUDIO_RATE};
-	const LENGTH = RATE * ${Math.ceil(70)};
 	const Offline = window.OfflineAudioContext;
 	if (typeof Offline !== "function") return;
+	// how long a context made before the recording's end was known renders for
+	const FALLBACK_MS = ${RECORD_LIMIT_MS + 10_000};
+	let ends;
 	const made = [];
+	const born = new WeakMap();
+	const contextOf = new WeakMap();
+	let latest;
+	const nowIn = (context) => {
+		const at = context === undefined ? undefined : born.get(context);
+		return at === undefined ? undefined : (performance.now() - at) / 1000;
+	};
+
+	const proto = BaseAudioContext.prototype;
+	const node = AudioNode.prototype;
+	const param = AudioParam.prototype;
+	const raw = {
+		connect: node.connect,
+		disconnect: node.disconnect,
+		createGain: proto.createGain,
+		setValueAtTime: param.setValueAtTime,
+		valueGet: Object.getOwnPropertyDescriptor(param, "value").get,
+		valueSet: Object.getOwnPropertyDescriptor(param, "value").set,
+	};
+
 	function RecordedAudioContext() {
-		const context = new Offline({ numberOfChannels: 2, length: LENGTH, sampleRate: RATE });
-		const born = performance.now();
-		made.push({ context, born });
+		const at = performance.now();
+		const until = ends === undefined ? at + FALLBACK_MS : ends;
+		const length = Math.max(128, Math.ceil(((until - at) / 1000) * RATE) + 128);
+		const context = new Offline({ numberOfChannels: 2, length, sampleRate: RATE });
+		born.set(context, at);
+		latest = context;
+		made.push({ context, at });
 		const define = (name, get) => Object.defineProperty(context, name, { get, configurable: true });
-		define("currentTime", () => (performance.now() - born) / 1000);
+		define("currentTime", () => nowIn(context));
 		define("state", () => "running");
 		define("baseLatency", () => 0);
 		define("outputLatency", () => 0);
 		context.resume = () => Promise.resolve();
 		context.suspend = () => Promise.resolve();
 		context.close = () => Promise.resolve();
-		context.getOutputTimestamp = () => ({ contextTime: context.currentTime, performanceTime: performance.now() });
+		context.getOutputTimestamp = () => ({ contextTime: nowIn(context), performanceTime: performance.now() });
 		return context;
 	}
 	RecordedAudioContext.prototype = Offline.prototype;
 	window.AudioContext = RecordedAudioContext;
 	window.webkitAudioContext = RecordedAudioContext;
+
+	// a param knows its node's context once a node made in one is touched
+	const claim = (made) => {
+		if (!(made instanceof AudioNode) || born.get(made.context) === undefined) return made;
+		for (const key in made) {
+			const value = made[key];
+			if (value instanceof AudioParam) contextOf.set(value, made.context);
+		}
+		if (made.parameters instanceof Map || typeof made.parameters?.forEach === "function") {
+			made.parameters.forEach((value) => contextOf.set(value, made.context));
+		}
+		return made;
+	};
+	for (const name of Object.getOwnPropertyNames(proto)) {
+		if (!name.startsWith("create") || typeof proto[name] !== "function") continue;
+		const create = proto[name];
+		proto[name] = function (...args) { return claim(create.apply(this, args)); };
+	}
+	const paramNow = (target) => nowIn(contextOf.get(target) ?? latest);
+
+	// sources start and stop no earlier than the moment they were told to
+	const timed = (owner, name) => {
+		if (!Object.prototype.hasOwnProperty.call(owner, name)) return;
+		const call = owner[name];
+		owner[name] = function (when, ...rest) {
+			const now = nowIn(this.context);
+			if (now !== undefined) when = Math.max(Number(when) || 0, now);
+			return call.call(this, when, ...rest);
+		};
+	};
+	for (const owner of [AudioScheduledSourceNode.prototype, AudioBufferSourceNode.prototype]) {
+		timed(owner, "start");
+		timed(owner, "stop");
+	}
+
+	// a param's events land no earlier than now; what it was last told is what it reads as
+	const told = new WeakMap();
+	const stateOf = (target) => {
+		let state = told.get(target);
+		if (state === undefined) told.set(target, (state = { value: undefined, last: undefined }));
+		return state;
+	};
+	const held = (target) => stateOf(target).value ?? raw.valueGet.call(target);
+	Object.defineProperty(param, "value", {
+		configurable: true,
+		get() { return held(this); },
+		set(value) {
+			const now = paramNow(this);
+			if (now === undefined) raw.valueSet.call(this, value);
+			else param.setValueAtTime.call(this, value, now);
+		},
+	});
+	const event = (name, shape) => {
+		const call = param[name];
+		param[name] = function (...args) {
+			const now = paramNow(this);
+			if (now === undefined) return call.apply(this, args);
+			return shape(this, now, args, (...shaped) => call.apply(this, shaped));
+		};
+	};
+	event("setValueAtTime", (target, now, [value, time], call) => {
+		const at = Math.max(Number(time) || 0, now);
+		Object.assign(stateOf(target), { value, last: at });
+		return call(value, at);
+	});
+	for (const name of ["linearRampToValueAtTime", "exponentialRampToValueAtTime"]) {
+		event(name, (target, now, [value, time], call) => {
+			const state = stateOf(target);
+			// a ramp with nothing before it starts from now, at what the param holds
+			if (state.last === undefined) raw.setValueAtTime.call(target, held(target), now);
+			const at = Math.max(Number(time) || 0, now);
+			Object.assign(state, { value, last: at });
+			return call(value, at);
+		});
+	}
+	event("setTargetAtTime", (target, now, [value, time, constant], call) => {
+		const at = Math.max(Number(time) || 0, now);
+		Object.assign(stateOf(target), { value, last: at });
+		return call(value, at, constant);
+	});
+	event("setValueCurveAtTime", (target, now, [curve, time, duration], call) => {
+		const at = Math.max(Number(time) || 0, now);
+		Object.assign(stateOf(target), { value: curve[curve.length - 1], last: at + duration });
+		return call(curve, at, duration);
+	});
+	for (const name of ["cancelScheduledValues", "cancelAndHoldAtTime"]) {
+		if (typeof param[name] !== "function") continue;
+		event(name, (target, now, [time], call) => {
+			const at = Math.max(Number(time) || 0, now);
+			const state = stateOf(target);
+			if (state.last !== undefined && at <= state.last) state.last = name === "cancelAndHoldAtTime" ? at : undefined;
+			return call(at);
+		});
+	}
+
+	// a connection is a gain shut until it is made and shut again when it is undone
+	const wired = new WeakMap();
+	node.connect = function (destination, output = 0, input = 0) {
+		const now = nowIn(this.context);
+		if (now === undefined) return raw.connect.apply(this, arguments);
+		let links = wired.get(this);
+		if (links === undefined) wired.set(this, (links = []));
+		if (links.some((link) => link.destination === destination && link.output === output && link.input === input)) {
+			return destination;
+		}
+		const gate = raw.createGain.call(this.context);
+		raw.setValueAtTime.call(gate.gain, 0, 0);
+		raw.setValueAtTime.call(gate.gain, 1, now);
+		raw.connect.call(this, gate, output);
+		if (destination instanceof AudioParam) raw.connect.call(gate, destination, 0);
+		else raw.connect.call(gate, destination, 0, input);
+		links.push({ destination, output, input, gate });
+		return destination;
+	};
+	node.disconnect = function (...args) {
+		const now = nowIn(this.context);
+		const links = wired.get(this);
+		if (now === undefined || links === undefined) return raw.disconnect.apply(this, args);
+		const [first, output, input] = args;
+		const matches = (link) =>
+			args.length === 0 ||
+			(typeof first === "number"
+				? link.output === first
+				: link.destination === first &&
+					(output === undefined || link.output === output) &&
+					(input === undefined || link.input === input));
+		for (const link of links.filter(matches)) {
+			raw.setValueAtTime.call(link.gate.gain, 0, Math.max(now, 0));
+			links.splice(links.indexOf(link), 1);
+		}
+	};
+
 	const base64 = (floats) => {
 		const bytes = new Uint8Array(floats.buffer, floats.byteOffset, floats.byteLength);
 		let text = "";
@@ -579,24 +747,27 @@ const AUDIO_SOURCE = `(() => {
 		return btoa(text);
 	};
 	Object.defineProperty(window, ${JSON.stringify(AUDIO_KEY)}, {
-		value: async (from, length) => {
-			if (made.length === 0) return null;
-			const frames = Math.max(1, Math.round((length / 1000) * RATE));
-			const left = new Float32Array(frames);
-			const right = new Float32Array(frames);
-			for (const { context, born } of made) {
-				const buffer = await context.startRendering();
-				const offset = Math.round(((born - from) / 1000) * RATE);
-				const l = buffer.getChannelData(0);
-				const r = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : l;
-				const begin = Math.max(0, -offset);
-				const stop = Math.min(l.length, frames - offset);
-				for (let i = begin; i < stop; i++) {
-					left[i + offset] += l[i];
-					right[i + offset] += r[i];
+		value: {
+			ends(at) { ends = at; },
+			async finish(from, length) {
+				if (made.length === 0) return null;
+				const frames = Math.max(1, Math.round((length / 1000) * RATE));
+				const left = new Float32Array(frames);
+				const right = new Float32Array(frames);
+				for (const { context, at } of made) {
+					const buffer = await context.startRendering();
+					const offset = Math.round(((at - from) / 1000) * RATE);
+					const l = buffer.getChannelData(0);
+					const r = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : l;
+					const begin = Math.max(0, -offset);
+					const stop = Math.min(l.length, frames - offset);
+					for (let i = begin; i < stop; i++) {
+						left[i + offset] += l[i];
+						right[i + offset] += r[i];
+					}
 				}
-			}
-			return { left: base64(left), right: base64(right) };
+				return { left: base64(left), right: base64(right) };
+			},
 		},
 	});
 })()`;
