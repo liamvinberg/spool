@@ -339,11 +339,11 @@ export class RestoreOffline extends SpoolError {}
 /** Why a file git put in design/ that the team doesn't have stays on this machine. */
 const GIT_ONLY = "git put it here and your team doesn't have it; edit it to send it";
 /** Why a file over the size limit stays on the machine that wrote it. */
-const TOO_BIG = `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`;
+export const TOO_BIG = `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`;
 /** What an agent is told to do about a file too big to travel: Spool never shrinks anything itself. */
 const SHRINK = `teammates see it missing; shrink it under ${FILE_LIMIT_BYTES / 1_000_000} MB on this Mac (the skill says how)`;
 /** Why a file outside the layout stays on the machine that wrote it. */
-const OUTSIDE_LAYOUT = "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync";
+export const OUTSIDE_LAYOUT = "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync";
 /** How sync says each limit it paused on. */
 const LIMITS: Record<Limited, string> = {
 	project_full: `the team's design/ is at its ${PROJECT_LIMIT_BYTES / 1_000_000_000} GB limit`,
