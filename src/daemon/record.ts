@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
 import {
@@ -48,6 +48,23 @@ export interface ClipRequest {
 export const CLIP_FPS = 60;
 const STEP_MS = 1000 / CLIP_FPS;
 const AUDIO_RATE = 48_000;
+/** How many pictures may wait on the encoder while the next one is taken. */
+const PUSH_AHEAD = 3;
+/**
+ * The frame's clock while it loads, from its document's time origin: past the
+ * origin, since a BeginFrame from before it hands rAF a timestamp of 0 and
+ * stops every transition.
+ */
+const LOADED_AT_MS = 1000;
+const CLOCK_KEY = "__spoolRecordClock";
+/** How long a BeginFrame may take before it is drawn without the page's work. */
+const FRAME_PATIENCE_MS = 5000;
+/**
+ * Each picture as a JPEG at a quality an H.264 encode never shows the
+ * difference from: a PNG of a full-size frame takes several times as long to
+ * make and to read back.
+ */
+const SHOT = { format: "jpeg", quality: 95 } as const;
 /** Kept under what Discord carries, so an agent can hand a clip over in chat. */
 const CLIP_BYTES = 18 * 1024 * 1024;
 const MAX_BITRATE = 16_000_000;
@@ -115,19 +132,26 @@ export async function renderClip(request: ClipRequest, deps: RecorderDeps = {}):
 	const { start, end } = clipWindow(request.inputs, request.duration);
 	const layout = clipLayout(request.viewport, request.aspect);
 	const deadlineMs = deps.deadlineMs ?? LOAD_MS + 20 * (end + 2000);
-	const context = await (deps.launch ?? launchRecorder)(layout.scale);
+	const launch = deps.launch ?? launchRecorder;
+	const contexts: BrowserContext[] = [];
+	const closeAll = () => Promise.all(contexts.map((context) => context.close().catch(() => {})));
 	let timer: NodeJS.Timeout | undefined;
 	const deadline = new Promise<never>((_, fail) => {
 		timer = setTimeout(() => {
 			fail(new Error(`the recording took longer than ${Math.round(deadlineMs / 1000)} s to render`));
-			void context.close().catch(() => {});
+			void closeAll();
 		}, deadlineMs);
 	});
+	const opened = async () => {
+		const context = await launch(layout.scale);
+		contexts.push(context);
+		return context;
+	};
 	try {
-		return await Promise.race([render(context, request, layout, start, end), deadline]);
+		return await Promise.race([render(opened, request, layout, start, end), deadline]);
 	} finally {
 		clearTimeout(timer);
-		await context.close().catch(() => {});
+		await closeAll();
 	}
 }
 
@@ -164,54 +188,172 @@ interface EncodedVideo {
 	chunks: { key: boolean; ts: number; dur: number; data: string }[];
 }
 
+/**
+ * The clip in parts, rendered side by side (spool#221): each part replays the
+ * recording from its beginning in a browser of its own (BeginFrame control is
+ * one frame at a time per browser), quickly and without
+ * pictures up to where its part starts, and photographs and encodes only its
+ * part. The replay is deterministic, so where one part ends the next carries
+ * on as if one tab had made both. The last part also keeps the sound, since it
+ * is the one tab that plays the whole recording.
+ */
 async function render(
-	context: BrowserContext,
+	launch: () => Promise<BrowserContext>,
 	request: ClipRequest,
 	layout: ClipLayout,
 	start: number,
 	end: number,
 ): Promise<Uint8Array<ArrayBuffer>> {
-	const encoder = context.pages()[0] ?? (await context.newPage());
+	const first = Math.floor(start / STEP_MS);
+	const last = Math.ceil(end / STEP_MS);
+	const bitrate = Math.min(MAX_BITRATE, Math.floor((CLIP_BYTES * 8) / Math.max(1, (end - start) / 1000)));
+	const parts = clipParts(first, last + 1, RECORD_WORKERS);
+	const made = await Promise.all(
+		parts.map((part, index) =>
+			launch().then((context) =>
+				renderPart(context, request, {
+					layout,
+					bitrate,
+					first,
+					part,
+					sound: index === parts.length - 1,
+					start,
+					end,
+				}),
+			),
+		),
+	);
+	const [head] = made;
+	if (head === undefined) throw new Error("the clip had no frames");
+	if (made.some((one) => one.video.config.description !== head.video.config.description)) {
+		throw new Error("the clip's parts were encoded differently");
+	}
+	const video = { config: head.video.config, chunks: made.flatMap((one) => one.video.chunks) };
+	return await mux(video, made.at(-1)?.sound ?? null);
+}
+
+/** How many browsers a clip is rendered in at once: each takes a few cores to draw and encode. */
+const RECORD_WORKERS = Math.max(1, Math.min(6, Math.floor(availableParallelism() / 4)));
+/** The shortest part worth a tab of its own, in frames. */
+const PART_MIN = CLIP_FPS;
+/** What replaying a frame without its picture costs, against taking and encoding one. */
+const REPLAY_COST = 0.15;
+
+/**
+ * The clip's frames `[from, to)` split into at most `workers` parts of about
+ * equal work. A part also replays every frame before it, cheaply, so the later
+ * a part starts the fewer frames it photographs.
+ */
+export function clipParts(from: number, to: number, workers: number): { from: number; to: number }[] {
+	const count = to - from;
+	const k = Math.max(1, Math.min(workers, Math.floor(count / PART_MIN)));
+	if (k === 1) return [{ from, to }];
+	// the work every part gets, found by halving: the least that covers the clip in k parts
+	const covers = (work: number) => {
+		let at = 0;
+		for (let i = 0; i < k; i++) at += Math.max(1, work - REPLAY_COST * (from + at));
+		return at >= count;
+	};
+	let low = count / k;
+	let high = count + REPLAY_COST * to;
+	for (let i = 0; i < 40; i++) {
+		const mid = (low + high) / 2;
+		if (covers(mid)) high = mid;
+		else low = mid;
+	}
+	const parts: { from: number; to: number }[] = [];
+	let at = from;
+	for (let i = 0; i < k && at < to; i++) {
+		const next = i === k - 1 ? to : Math.min(to, at + Math.max(1, Math.round(high - REPLAY_COST * at)));
+		parts.push({ from: at, to: next });
+		at = next;
+	}
+	return parts;
+}
+
+interface PartPlan {
+	layout: ClipLayout;
+	bitrate: number;
+	/** The clip's first frame, which its time counts from. */
+	first: number;
+	part: { from: number; to: number };
+	sound: boolean;
+	start: number;
+	end: number;
+}
+
+async function renderPart(
+	context: BrowserContext,
+	request: ClipRequest,
+	plan: PartPlan,
+): Promise<{ video: EncodedVideo; sound: { left: string; right: string } | null }> {
+	const { layout, bitrate, first, part, start, end } = plan;
+	const encoder = await context.newPage();
 	// WebCodecs is only on a secure origin, and this page is nothing but the encoder
 	await encoder.route(ENCODER_URL, (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html>" }));
 	await encoder.goto(ENCODER_URL);
-	const bitrate = Math.min(MAX_BITRATE, Math.floor((CLIP_BYTES * 8) / Math.max(1, (end - start) / 1000)));
 	await encoder.evaluate(ENCODER_SOURCE);
 	await encoder.evaluate(clipCall("start", { ...layout, codec: H264, fps: CLIP_FPS, bitrate }));
+	// pushed over a session of its own: Playwright's evaluate loses track of several at once
+	const drawer = await context.newCDPSession(encoder);
 
 	const { page, cdp } = await openFrameTab(context, encoder, request);
-	let ticks = monotonicMs();
+	let ticks = 0;
+	let held = true;
 	const frame = (screenshot: boolean) => {
-		ticks += STEP_MS;
+		if (!held) ticks += STEP_MS;
 		return cdp.send("HeadlessExperimental.beginFrame", {
 			frameTimeTicks: ticks,
-			interval: STEP_MS,
-			...(screenshot ? { screenshot: { format: "png" as const } } : { noDisplayUpdates: true }),
+			// as long as a frame may take: a frame drawn past its deadline leaves the page's own work behind
+			interval: FRAME_PATIENCE_MS,
+			...(screenshot ? { screenshot: SHOT } : { noDisplayUpdates: true }),
 		});
 	};
 
-	// The frame loads on the real clock: on a paused one its load never fires.
+	// The frame loads on virtual time, which stands still while anything it
+	// fetches is on its way and otherwise moves a frame at a time: so however
+	// busy the machine, it has loaded at the same reading of its clock in every
+	// part, and every part's replay begins in the same state.
+	await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" });
 	void cdp.send("Page.navigate", { url: request.url });
 	const loading = Date.now() + LOAD_MS;
-	for (let pumped = 0; ; pumped++) {
+	let committed = false;
+	while (!committed) {
+		if (Date.now() > loading) throw new Error("the frame did not start loading for its recording");
+		committed = await evaluate<boolean>(cdp, `location.protocol !== "about:"`).catch(() => false);
+		if (!committed) await new Promise((done) => setTimeout(done, 10));
+	}
+	// The frames drawn meanwhile keep one reading too, counted from the
+	// document's time origin, so every animation it starts on them starts at the
+	// same moment. That origin is read off one frame drawn while the document is
+	// still empty.
+	const step = async () => {
+		const expired = once(cdp, "Emulation.virtualTimeBudgetExpired");
+		await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pauseIfNetworkFetchesPending", budget: STEP_MS });
+		await expired;
+	};
+	await evaluate(cdp, `requestAnimationFrame((at) => { window.${CLOCK_KEY} = at; })`);
+	ticks = monotonicMs();
+	await step();
+	await frame(false);
+	const read = await evaluate<number | undefined>(cdp, `window.${CLOCK_KEY}`);
+	if (read === undefined || read <= 0) throw new Error("the frame's clock could not be read for its recording");
+	ticks = ticks - read + Math.max(LOADED_AT_MS, read + STEP_MS);
+	for (;;) {
+		await step();
 		await frame(false);
-		if (pumped % 6 === 0 && (await evaluate<boolean>(cdp, ARRIVED))) break;
+		if (await evaluate<boolean>(cdp, ARRIVED)) break;
 		if (Date.now() > loading) throw new Error("the frame did not finish loading for its recording");
 	}
-	// Then the clock is the recorder's. `ticks` only ever moves forward from the
-	// real now it started at: a BeginFrame from before the document's own time
-	// origin hands rAF a timestamp of 0 and stops every transition.
-	ticks = Math.max(ticks, monotonicMs());
+	held = false;
 	let still = (await frame(true)).screenshotData;
-	await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" });
 	const origin = await evaluate<number>(cdp, "performance.now()");
 	await evaluate(cdp, `${SOUND}?.ends(${origin + end})`);
 
-	const first = Math.floor(start / STEP_MS);
-	const last = Math.ceil(end / STEP_MS);
 	const hands = createHands(cdp);
 	let next = 0;
-	for (let index = 0; index <= last; index++) {
+	const pushing: Promise<unknown>[] = [];
+	for (let index = 0; index < part.to; index++) {
 		const t = index * STEP_MS;
 		const sent: Promise<unknown>[] = [];
 		while (next < request.inputs.length && (request.inputs[next] as RecordedInput).t <= t) {
@@ -221,25 +363,30 @@ async function render(
 		const expired = once(cdp, "Emulation.virtualTimeBudgetExpired");
 		await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: STEP_MS });
 		await expired;
-		// every frame is photographed, the lead-in too: a frame with nothing new
-		// to draw returns no picture, and the clip's first frame must still have one
-		const drawn = await frame(true);
+		// a frame with nothing new to draw returns no picture, so the one before
+		// the part is photographed too: the part's first frame must have one
+		const drawn = await frame(index >= part.from - 1);
 		await Promise.all(sent);
 		if (drawn.screenshotData !== undefined) still = drawn.screenshotData;
-		if (index < first || still === undefined) continue;
-		await encoder.evaluate(clipCall("push", still, hands.pointer(), (index - first) * STEP_MS));
+		if (index < part.from) continue;
+		if (still === undefined) throw new Error("the recording drew no picture");
+		// the encoder draws while the next frame is taken; a few pictures ahead at most
+		const at = (index - first) * STEP_MS;
+		pushing.push(evaluate(drawer, clipCall("push", still, hands.pointer(), at, index === part.from), true));
+		if (pushing.length > PUSH_AHEAD) await pushing.shift();
 	}
-	const video = (await encoder.evaluate(clipCall("finish"))) as EncodedVideo;
+	await Promise.all(pushing);
+	const video = await evaluate<EncodedVideo>(drawer, clipCall("finish"), true);
 
-	// The sound renders on the real clock: an offline render finishes on a task virtual time would hold.
-	await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance" });
-	const sound = await evaluate<{ left: string; right: string } | null>(
-		cdp,
-		`${SOUND}?.finish(${origin + start}, ${end - start}) ?? null`,
-		true,
-	);
+	let sound: { left: string; right: string } | null = null;
+	if (plan.sound) {
+		// The sound renders on the real clock: an offline render finishes on a task virtual time would hold.
+		await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance" });
+		sound = await evaluate(cdp, `${SOUND}?.finish(${origin + start}, ${end - start}) ?? null`, true);
+	}
 	await page.close().catch(() => {});
-	return await mux(video, sound);
+	await encoder.close().catch(() => {});
+	return { video, sound };
 }
 
 /** The frame's tab: made with BeginFrame control, at the played size, its sound kept. */
@@ -452,7 +599,10 @@ const ENCODER_URL = "https://record.spool.invalid/";
  * One call into the encoder tab, as an expression: functions handed to
  * `evaluate` carry whatever helpers the bundler wrapped them in.
  */
-function clipCall(method: "start" | "push" | "finish", ...args: readonly (string | number | object | null)[]): string {
+function clipCall(
+	method: "start" | "push" | "finish",
+	...args: readonly (string | number | boolean | object | null)[]
+): string {
 	return `window.__spoolClip.${method}(${args.map((arg) => JSON.stringify(arg)).join(", ")})`;
 }
 
@@ -465,6 +615,7 @@ function clipCall(method: "start" | "push" | "finish", ...args: readonly (string
  */
 const ENCODER_SOURCE = `(() => {
 	let canvas, g, encoder, layout, config, failure;
+	let queue = Promise.resolve();
 	const background = new OffscreenCanvas(1, 1).getContext("2d", { willReadFrequently: true });
 	const chunks = [];
 	const arrow = new Path2D("M0 0L0 16.5L4 12.6L6.9 19.2L9.6 18.1L6.8 11.7L12.2 11.7Z");
@@ -496,10 +647,16 @@ const ENCODER_SOURCE = `(() => {
 				bitrate: given.bitrate, latencyMode: "quality", avc: { format: "avc" },
 			});
 		},
-		async push(picture, cursor, at) {
+		// pictures arrive while earlier ones are still drawing, and are drawn in the order they came
+		push(picture, cursor, at, opens) {
+			const drawn = queue.then(() => this.draw(picture, cursor, at, opens));
+			queue = drawn.catch(() => {});
+			return drawn;
+		},
+		async draw(picture, cursor, at, opens) {
 			if (failure) throw failure;
 			const bytes = Uint8Array.from(atob(picture), (c) => c.charCodeAt(0));
-			const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+			const image = await createImageBitmap(new Blob([bytes]));
 			// the surround is the screen's own colour, taken again every picture so a walk takes it along
 			background.drawImage(image, 0, 0, 1, 1, 0, 0, 1, 1);
 			const [r, gr, b] = background.getImageData(0, 0, 1, 1).data;
@@ -527,11 +684,13 @@ const ENCODER_SOURCE = `(() => {
 			const step = 1e6 / layout.fps;
 			const frame = new VideoFrame(canvas, { timestamp: Math.round(at * 1000), duration: Math.round(step) });
 			const index = Math.round((at * 1000) / step);
-			encoder.encode(frame, { keyFrame: index % (layout.fps * 2) === 0 });
+			// a part opens on a key frame, so the parts join into one stream
+			encoder.encode(frame, { keyFrame: opens || index % (layout.fps * 2) === 0 });
 			frame.close();
 			while (encoder.encodeQueueSize > 4) await new Promise((done) => encoder.addEventListener("dequeue", done, { once: true }));
 		},
 		async finish() {
+			await queue;
 			await encoder.flush();
 			if (failure) throw failure;
 			return { config, chunks };
