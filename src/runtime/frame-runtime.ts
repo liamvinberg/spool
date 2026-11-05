@@ -22,6 +22,7 @@ import {
 	parseKnobValues,
 } from "./knob-protocol";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
+import { createHandsLog } from "./record-hands";
 import type { KnobRead, SpoolUi } from "./spool-public";
 import { parseWalkDecision } from "./walk-protocol";
 
@@ -70,6 +71,8 @@ export interface PlayerConfig {
 	frames: Record<string, { w: number; h: number }>;
 	styles?: Record<string, string>;
 	shell?: true;
+	/** The document a recording is played back into (spool#221): the screen alone, walking itself. */
+	recording?: true;
 }
 
 declare global {
@@ -108,6 +111,12 @@ function projectFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
 
 /** Embedded in a canvas iframe: navigation is the host's job, posted over the bridge. */
 const embedded = window.parent !== window;
+/** What the hands do while the player shell records (spool#221). */
+const hands = createHandsLog(window, () => postRecorded());
+function postRecorded(): void {
+	const noted = hands.stop();
+	if (noted !== undefined) postPlayerMessage({ spool: "player-recorded", ...noted });
+}
 let lastEmbeddedWalkId: number | undefined;
 let embeddedWalkPending: { id: number; direction: "go" | "back" } | undefined;
 
@@ -1270,6 +1279,12 @@ function followGeometry(): void {
 			settleClipboardWrite(clipboard);
 			return;
 		}
+		// Record (spool#221): the shell starts and stops noting the hands; what was noted goes back to it
+		if (message.spool === "player-record" && typeof message.on === "boolean") {
+			if (message.on) hands.start();
+			else postRecorded();
+			return;
+		}
 		if (message.spool === "player-geometry") {
 			if (
 				typeof message.revision !== "number" ||
@@ -1758,7 +1773,9 @@ function mountPlayer(config: PlayerConfig): void {
 		return;
 	}
 	createRoot(root).render(
-		createElement(Player, { project: config.project, frames: screens, controller: playerController }),
+		config.recording === true
+			? createElement(PlayerDocument)
+			: createElement(Player, { project: config.project, frames: screens, controller: playerController }),
 	);
 	requestAnimationFrame(() => warmScreens(Object.keys(config.frames)));
 }
