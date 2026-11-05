@@ -53,6 +53,22 @@ it("says a team project ended here, sync paused, and which files didn't travel, 
 	expect(said().join("")).not.toContain("Sync paused");
 });
 
+it("keeps a closed didn't-travel line closed after a reload, and says a file held since on its own", () => {
+	onTestFinished(() => window.localStorage.clear());
+	const held = (paths: string[]) => ({
+		...quiet,
+		held: paths.map((path) => ({ path, why: "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync" })),
+	});
+	const first = mount(createElement(SyncNotices, { project: "shop", state: held(["a.png", "b.png"]) }));
+	act(() => first.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')?.click());
+	expect(first.querySelector("[data-sync-state]")).toBeNull();
+
+	const reloaded = mount(createElement(SyncNotices, { project: "shop", state: held(["a.png", "b.png"]) }));
+	expect(reloaded.querySelector("[data-sync-state]")).toBeNull();
+	const more = mount(createElement(SyncNotices, { project: "shop", state: held(["a.png", "b.png", "c.png"]) }));
+	expect(more.querySelector("[data-sync-state]")?.textContent).toContain("c.png didn't travel");
+});
+
 it("names the one file that didn't travel", () => {
 	const host = mount(
 		createElement(SyncNotices, {
@@ -259,7 +275,7 @@ it("says the copy is offline, with Match the team beside it, and nothing once it
 	expect(back.querySelector("[data-sync-state]")).toBeNull();
 });
 
-it("puts Match the team on every line of a copy that follows its team, never on one that ended", () => {
+it("puts Match the team on the lines of a copy that follows its team, never on one that ended or on what didn't travel", () => {
 	const host = mount(
 		createElement(SyncNotices, {
 			state: {
@@ -279,7 +295,7 @@ it("puts Match the team on every line of a copy that follows its team, never on 
 	const actions = [...host.querySelectorAll("[data-sync-state]")].map((notice) =>
 		[...notice.querySelectorAll("button")].map((button) => button.textContent).filter((label) => label !== ""),
 	);
-	expect(actions.map((labels) => labels.includes("Match the team"))).toEqual([false, true, true]);
+	expect(actions.map((labels) => labels.includes("Match the team"))).toEqual([false, true, false]);
 	expect(actions[2]).toContain("Show");
 });
 
