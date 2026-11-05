@@ -19,6 +19,7 @@ import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
+import { CLIP_ASPECTS, RECORD_LIMIT_MS } from "../runtime/record-protocol";
 import { experimentsOn } from "../settings/experiments";
 import { appearanceOf, themeInline } from "../settings/registry";
 import {
@@ -101,6 +102,7 @@ import {
 	listProjectFramesAwaited,
 	readFrameGeometry,
 } from "./projection";
+import { renderClip } from "./record";
 import { createRenamer } from "./renamer";
 import { createResolvePass } from "./resolve-pass";
 import {
@@ -250,6 +252,10 @@ const playParams = z.object({
 	frame: z.string().refine(isFramePath, { message: "not a frame name" }).optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 	shell: z.literal("1").optional(),
+	/** On the control origin, a player that starts recording once its frame is in (spool#221). */
+	record: z.literal("1").optional(),
+	/** On the render origin, the document a recording is played back into: the screen with no chrome. */
+	recording: z.literal("1").optional(),
 	handoff: z
 		.string()
 		.regex(/^[A-Za-z0-9_-]{43}$/, { message: "not a shell handoff" })
@@ -274,6 +280,52 @@ const bootRequest = z.strictObject({
 	at: z.array(z.number().int().nonnegative().max(SHOT_AT_MAX_MS)).min(1).max(SHOT_AT_MAX_COUNT).optional(),
 	scroll: z.number().int().nonnegative().optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
+});
+
+const at = z
+	.number()
+	.nonnegative()
+	.max(RECORD_LIMIT_MS + 1000);
+const coordinate = z.number().finite();
+/** A recording to render (spool#221): what the hands did in the player, or nothing for a frame that plays itself. */
+const recordRequest = z.strictObject({
+	frame: z.string().refine(isFramePath, { message: "not a frame name" }),
+	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
+	viewport: z.strictObject({ w: z.number().int().min(1).max(4096), h: z.number().int().min(1).max(4096) }).optional(),
+	duration: z
+		.number()
+		.positive()
+		.max(RECORD_LIMIT_MS + 1000),
+	aspect: z.enum(CLIP_ASPECTS),
+	inputs: z
+		.array(
+			z.discriminatedUnion("kind", [
+				z.strictObject({
+					t: at,
+					kind: z.enum(["move", "down", "up"]),
+					x: coordinate,
+					y: coordinate,
+					button: z.number().int().min(0).max(4),
+				}),
+				z.strictObject({
+					t: at,
+					kind: z.literal("wheel"),
+					x: coordinate,
+					y: coordinate,
+					dx: coordinate,
+					dy: coordinate,
+				}),
+				z.strictObject({
+					t: at,
+					kind: z.enum(["key-down", "key-up"]),
+					key: z.string().max(32),
+					code: z.string().max(32),
+					text: z.string().max(4),
+				}),
+				z.strictObject({ t: at, kind: z.literal("leave") }),
+			]),
+		)
+		.max(100_000),
 });
 
 /**
@@ -532,6 +584,10 @@ export function createDaemonApp({
 	});
 	// #281: every setting, behind one read and one write over the three files
 	const settings = createSettingsStore(spoolDir);
+	/** Whether this machine has Record on (spool#221), read fresh so a switch flipped in Settings holds at once. */
+	const recordOn = () => experimentsOn(settings.read().entries).includes("record");
+	/** The recording rendering now, which the next one waits behind. */
+	let recordings: Promise<void> = Promise.resolve();
 	/** Where new projects go: the default project location. */
 	const projectsLocation = () =>
 		String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool");
@@ -1610,7 +1666,7 @@ export function createDaemonApp({
 			}),
 			async (c) => {
 				const name = c.req.param("project");
-				const { frame, scenario, shell, handoff } = c.req.valid("query");
+				const { frame, scenario, shell, handoff, record, recording } = c.req.valid("query");
 				const controlRequest = hostClass(c.req.url) === "control";
 				const shellRender = !controlRequest && shell === "1";
 				const shellDocument = (body: string, status: number) =>
@@ -1652,6 +1708,8 @@ export function createDaemonApp({
 					requestUrl.searchParams.set("scenario", playScenario);
 					requestUrl.searchParams.set("shell", "1");
 					requestUrl.searchParams.set("handoff", issuePlayerHandoff(name, start, playScenario));
+					requestUrl.searchParams.delete("record");
+					const recordable = recordOn();
 					return c.html(
 						assemblePlayerShell({
 							project: name,
@@ -1660,6 +1718,7 @@ export function createDaemonApp({
 							frames,
 							controlToken,
 							innerUrl: `${renderOrigin}${requestUrl.pathname}${requestUrl.search}`,
+							...(recordable ? { record: record === "1" ? ("start" as const) : ("ready" as const) } : {}),
 						}),
 					);
 				}
@@ -1675,6 +1734,7 @@ export function createDaemonApp({
 					scenario: playScenario,
 					frames,
 					...(shell === "1" ? { shell: true as const } : {}),
+					...(shell !== "1" && recording === "1" ? { recording: true as const } : {}),
 				};
 				const etag = playerEtag(compiled.bundle, config);
 				if (!shellRender && c.req.header("if-none-match") === etag) return c.body(null, 304);
@@ -1947,6 +2007,53 @@ export function createDaemonApp({
 			}
 		}),
 	);
+	/**
+	 * Record (spool#221): a recording rendered into an MP4, answered as the file.
+	 * The player sends what the hands did; `spool record` sends nothing and a
+	 * length, for a frame that plays itself. One renders at a time: each is a
+	 * browser of its own, held for as long as the clip takes.
+	 */
+	app.post(
+		"/api/p/:project/record",
+		validator("json", (value, c) => {
+			const parsed = recordRequest.safeParse(value);
+			if (parsed.success) return parsed.data;
+			return c.text(`not a recording: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`, 400);
+		}),
+		(c) =>
+			withProject(c, resolveProject, async (root) => {
+				if (!recordOn()) {
+					return c.text("Record is an experiment that is off on this machine: `spool experiments on record`", 403);
+				}
+				const name = c.req.param("project");
+				const { frame, scenario, viewport, duration, aspect, inputs } = c.req.valid("json");
+				const opening = openingOn(root, frame, name);
+				if ("message" in opening) return c.text(opening.message, 404);
+				const url = new URL(`${renderOrigin}/play/${encodeURIComponent(name)}`);
+				url.searchParams.set("frame", frame);
+				url.searchParams.set("scenario", scenario ?? "default");
+				url.searchParams.set("recording", "1");
+				const { w, h } = viewport ?? readFrameGeometry(root, frame);
+				const turn = recordings.then(() =>
+					renderClip({ url: url.href, viewport: { w, h }, inputs, duration, aspect }),
+				);
+				recordings = turn.then(
+					() => {},
+					() => {},
+				);
+				try {
+					const clip = await turn;
+					const file = `${frame.split("/").at(-1) ?? "clip"}.mp4`;
+					c.header("content-type", "video/mp4");
+					c.header("content-disposition", `attachment; filename="${file}"`);
+					c.header("cache-control", "no-store");
+					return c.body(clip);
+				} catch (error) {
+					console.error(`spool: recording ${frame} failed: ${(error as Error).stack ?? String(error)}`);
+					return c.text(`the recording could not be rendered: ${(error as Error).message}`, 500);
+				}
+			}),
+	);
 	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */
 	app.post("/api/p/:project/sync/untold", (c) =>
 		withProject(c, resolveProject, (root) => c.json({ lines: teamSync.untold(root) })),
@@ -2186,6 +2293,7 @@ export function createDaemonApp({
 		frames,
 		controlToken: shellToken,
 		innerUrl,
+		record,
 	}: {
 		project: string;
 		start: string;
@@ -2193,6 +2301,7 @@ export function createDaemonApp({
 		frames: Record<string, { w: number; h: number }>;
 		controlToken: string;
 		innerUrl: string;
+		record?: "ready" | "start";
 	}): string {
 		const config = escapeJsonScript({
 			project,
@@ -2201,6 +2310,7 @@ export function createDaemonApp({
 			frames,
 			innerUrl,
 			controlToken: shellToken,
+			...(record === undefined ? {} : { record }),
 		});
 		const bridge = `(() => {
 	const config = window.__SPOOL_SHELL__;

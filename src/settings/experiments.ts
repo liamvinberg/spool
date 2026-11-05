@@ -56,6 +56,14 @@ export const EXPERIMENTS = {
 		stage: "experimental",
 		ticket: "spool#218",
 	},
+	record: {
+		name: "Record",
+		says: "Record a frame as you play it, and download it as an MP4 clip with its sound, ready to post.",
+		tradeoff:
+			"A clip renders after you stop, a few seconds for every second recorded. Frames that use Math.random may play back a little differently.",
+		stage: "experimental",
+		ticket: "spool#221",
+	},
 	knobs: {
 		name: "Knobs",
 		says: "The Knobs section in the properties rail, for the values a frame declares with `ui.knobs`.",
