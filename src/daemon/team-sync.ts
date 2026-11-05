@@ -381,7 +381,7 @@ export class SyncStopped extends SpoolError {}
 /** Match the team needs a caught-up connection to spool.page, which this copy hasn't got: nothing changed. */
 export class MatchOffline extends SpoolError {
 	constructor() {
-		super("Match the team needs a connection to spool.page. Nothing was changed.");
+		super("Resetting to the team's version needs a connection to spool.page. Nothing was changed.");
 	}
 }
 

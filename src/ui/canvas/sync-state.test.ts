@@ -267,7 +267,7 @@ it("says the copy is offline, with Match the team beside it, and nothing once it
 	expect(notice?.textContent).toContain("Offline. Your changes go up when you're back.");
 	act(() =>
 		[...(notice?.querySelectorAll("button") ?? [])]
-			.find((button) => button.textContent === "Match the team")
+			.find((button) => button.textContent === "Reset to team's version")
 			?.click(),
 	);
 	expect(onMatchTeam).toHaveBeenCalledOnce();
@@ -295,7 +295,7 @@ it("puts Match the team on the lines of a copy that follows its team, never on o
 	const actions = [...host.querySelectorAll("[data-sync-state]")].map((notice) =>
 		[...notice.querySelectorAll("button")].map((button) => button.textContent).filter((label) => label !== ""),
 	);
-	expect(actions.map((labels) => labels.includes("Match the team"))).toEqual([false, true, false]);
+	expect(actions.map((labels) => labels.includes("Reset to team's version"))).toEqual([false, true, false]);
 	expect(actions[2]).toContain("Show");
 });
 
@@ -304,7 +304,7 @@ it("says why Match the team was refused until the line is closed", () => {
 	const host = mount(
 		createElement(SyncNotices, {
 			state: { ...quiet, offline: true },
-			refused: "Match the team needs a connection to spool.page. Nothing was changed.",
+			refused: "Resetting to the team's version needs a connection to spool.page. Nothing was changed.",
 			onMatchTeam: () => {},
 			onRefusedRead,
 		}),
@@ -312,10 +312,10 @@ it("says why Match the team was refused until the line is closed", () => {
 	const said = [...host.querySelectorAll("[data-sync-state]")];
 	expect(said.map((notice) => notice.textContent)).toEqual([
 		expect.stringContaining("Offline."),
-		expect.stringContaining("Match the team needs a connection to spool.page. Nothing was changed."),
+		expect.stringContaining("Resetting to the team's version needs a connection to spool.page. Nothing was changed."),
 	]);
 	expect([...(said[1]?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).not.toContain(
-		"Match the team",
+		"Reset to team's version",
 	);
 	act(() => said[1]?.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')?.click());
 	expect(onRefusedRead).toHaveBeenCalledOnce();
@@ -338,7 +338,7 @@ it("says to update Spool with the npm command in a browser on the CLI's daemon, 
 	expect(notices).toHaveLength(1);
 	expect(notices[0]?.textContent).toContain("Update Spool to keep syncing with Devosurf:");
 	expect(notices[0]?.textContent).toContain("npm install -g spool.page@latest");
-	expect(notices[0]?.textContent).not.toContain("Match the team");
+	expect(notices[0]?.textContent).not.toContain("Reset to team's version");
 	expect(notices[0]?.textContent).not.toContain("Offline");
 });
 
