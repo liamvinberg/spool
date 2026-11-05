@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -54,10 +54,19 @@ import { fetchLocalCopy, openProject } from "./open";
 import { isFramePath, isSafeName } from "./page-path";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
+import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "./runtime/record-protocol";
 import { skillText } from "./skill";
 import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
-import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, readUntold, resolveRegisteredProject } from "./verbs";
+import {
+	mintPlayerUrl,
+	mintRawUrl,
+	readFlows,
+	readSelection,
+	readUntold,
+	refusalOf,
+	resolveRegisteredProject,
+} from "./verbs";
 import { batchShotFailure, formatBatchShot, logsFrame, shotFrames } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -417,6 +426,22 @@ function framesNamed(root: string, names: readonly string[]): string[] {
 	return [...new Set(frames)];
 }
 
+function parseSeconds(value: string): number {
+	const seconds = Number(value);
+	if (!Number.isFinite(seconds) || seconds <= 0 || seconds > RECORD_LIMIT_MS / 1000) {
+		throw new SpoolError(
+			`--seconds must be a number of seconds above 0 and up to ${RECORD_LIMIT_MS / 1000}, got "${value}"`,
+		);
+	}
+	return seconds;
+}
+
+function parseAspect(value: string): ClipAspect {
+	const aspect = CLIP_ASPECTS.find((candidate) => candidate === value);
+	if (aspect === undefined) throw new SpoolError(`--aspect must be one of ${CLIP_ASPECTS.join(", ")}, got "${value}"`);
+	return aspect;
+}
+
 function parseScenario(value: string): string {
 	if (!isSafeName(value)) {
 		throw new SpoolError(`--scenario must be a scenario name without a leading dot or slash, got "${value}"`);
@@ -495,6 +520,38 @@ program
 			process.stderr.write(`spool: ${failures.join(", ")}\n`);
 			process.exitCode = 1;
 		}
+	});
+
+program
+	.command("record")
+	.description("render a frame that plays itself into an MP4 clip, its sound included (the record experiment)")
+	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
+	.option("--seconds <n>", "how long the clip runs, up to 60", parseSeconds, 10)
+	.option("--aspect <shape>", "16:9, 1:1, or frame for the frame's own shape", parseAspect, "16:9" as ClipAspect)
+	.option("--out <file>", "where the clip goes (default ./<frame>.mp4)")
+	.option("--scenario <name>", "named scenario seed", parseScenario)
+	.action(async (frame: string, options: { seconds: number; aspect: ClipAspect; out?: string; scenario?: string }) => {
+		const { name, daemonUrl, controlToken } = await verbContext();
+		const out = resolvePath(options.out ?? `${frame.split("/").at(-1) ?? "clip"}.mp4`);
+		narrate(`rendering ${options.seconds} s of ${frame}`);
+		const url = `${daemonUrl}/api/p/${encodeURIComponent(name)}/record`;
+		const res = await fetch(url, {
+			method: "POST",
+			headers: { [CONTROL_HEADER]: controlToken, "content-type": "application/json" },
+			body: JSON.stringify({
+				frame,
+				duration: options.seconds * 1000,
+				aspect: options.aspect,
+				inputs: [],
+				...(options.scenario === undefined ? {} : { scenario: options.scenario }),
+			}),
+			// a long clip takes longer to render than undici waits for headers by default
+			dispatcher: new Agent({ headersTimeout: 0, bodyTimeout: 0 }),
+		} as RequestInit);
+		if (!res.ok) throw await refusalOf(res, url);
+		const clip = new Uint8Array(await res.arrayBuffer());
+		writeFileSync(out, clip);
+		process.stdout.write(`${out} (${(clip.byteLength / 1024 / 1024).toFixed(1)} MB)\n`);
 	});
 
 program
