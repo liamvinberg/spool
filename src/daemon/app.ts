@@ -19,7 +19,7 @@ import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
-import { CLIP_ASPECTS, RECORD_LIMIT_MS } from "../runtime/record-protocol";
+import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "../runtime/record-protocol";
 import { experimentsOn } from "../settings/experiments";
 import { appearanceOf, themeInline } from "../settings/registry";
 import {
@@ -252,8 +252,12 @@ const playParams = z.object({
 	frame: z.string().refine(isFramePath, { message: "not a frame name" }).optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 	shell: z.literal("1").optional(),
-	/** On the control origin, a player that starts recording once its frame is in (spool#221). */
-	record: z.literal("1").optional(),
+	/**
+	 * On the control origin (spool#221): `arm` opens the player with Record's
+	 * panel up, and a clip's shape opens it recording at that shape once its
+	 * frame is in.
+	 */
+	record: z.enum(["arm", ...CLIP_ASPECTS]).optional(),
 	/** On the render origin, the document a recording is played back into: the screen with no chrome. */
 	recording: z.literal("1").optional(),
 	handoff: z
@@ -588,6 +592,8 @@ export function createDaemonApp({
 	const recordOn = () => experimentsOn(settings.read().entries).includes("record");
 	/** The recording rendering now, which the next one waits behind. */
 	let recordings: Promise<void> = Promise.resolve();
+	/** How far the clip rendering now has got, 0 to 1, for the player's bar. */
+	let recordingDone = 0;
 	/** Where new projects go: the default project location. */
 	const projectsLocation = () =>
 		String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool");
@@ -1718,7 +1724,16 @@ export function createDaemonApp({
 							frames,
 							controlToken,
 							innerUrl: `${renderOrigin}${requestUrl.pathname}${requestUrl.search}`,
-							...(recordable ? { record: record === "1" ? ("start" as const) : ("ready" as const) } : {}),
+							...(recordable
+								? {
+										record:
+											record === undefined
+												? ("ready" as const)
+												: record === "arm"
+													? record
+													: { start: record },
+									}
+								: {}),
 						}),
 					);
 				}
@@ -2034,9 +2049,13 @@ export function createDaemonApp({
 				url.searchParams.set("scenario", scenario ?? "default");
 				url.searchParams.set("recording", "1");
 				const { w, h } = viewport ?? readFrameGeometry(root, frame);
-				const turn = recordings.then(() =>
-					renderClip({ url: url.href, viewport: { w, h }, inputs, duration, aspect }),
-				);
+				const turn = recordings.then(() => {
+					recordingDone = 0;
+					return renderClip(
+						{ url: url.href, viewport: { w, h }, inputs, duration, aspect },
+						{ progress: (done) => (recordingDone = done) },
+					);
+				});
 				recordings = turn.then(
 					() => {},
 					() => {},
@@ -2053,6 +2072,10 @@ export function createDaemonApp({
 					return c.text(`the recording could not be rendered: ${(error as Error).message}`, 500);
 				}
 			}),
+	);
+	/** How far the clip rendering now has got: one renders at a time, so it is the one the asker is waiting on. */
+	app.get("/api/p/:project/record/progress", (c) =>
+		withProject(c, resolveProject, () => c.json({ done: recordingDone })),
 	);
 	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */
 	app.post("/api/p/:project/sync/untold", (c) =>
@@ -2301,7 +2324,7 @@ export function createDaemonApp({
 		frames: Record<string, { w: number; h: number }>;
 		controlToken: string;
 		innerUrl: string;
-		record?: "ready" | "start";
+		record?: "ready" | "arm" | { start: ClipAspect };
 	}): string {
 		const config = escapeJsonScript({
 			project,

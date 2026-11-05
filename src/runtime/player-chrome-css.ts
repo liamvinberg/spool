@@ -233,7 +233,107 @@ body { margin: 0; background: #0e0e0e; }
 .spool-record-choice > .spool-bar-hint { margin-right: 4px; }
 .spool-record-discard { margin-left: 6px; color: #94918d; }
 .spool-record-failed { color: #f5391a; cursor: help; }
-@media (prefers-reduced-motion: reduce) { .spool-record-on .spool-record-dot { animation: none; } }
+.spool-bar-icon.is-lit .spool-record-dot { color: #f5391a; }
+.spool-record-running { display: flex; align-items: center; gap: 6px; }
+.spool-record-shape { color: #6c6a67; }
+.spool-record-key {
+	padding: 0 5px;
+	border: 1px solid #363636;
+	border-radius: 4px;
+	color: #6c6a67;
+	font: 400 11px/16px "Fragment Mono", ui-monospace, monospace;
+}
+.spool-record-progress { padding: 0 6px; font-variant-numeric: tabular-nums; }
+/* how far the clip has rendered, along the bar's foot */
+.spool-record-line {
+	position: absolute;
+	left: 0;
+	bottom: -1px;
+	height: 1px;
+	background: #f5391a;
+	transition: width 260ms ease-out;
+}
+/* Record's panel, under the dot: the clip's shape, then Start */
+.spool-record-panel {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 6px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	width: 280px;
+	box-sizing: border-box;
+	padding: 12px;
+	background: #282828;
+	border: 1px solid #363636;
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+	animation: spool-record-in 140ms ease-out;
+}
+@keyframes spool-record-in { from { opacity: 0; translate: 0 -4px; } }
+.spool-record-panel-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.spool-record-panel-limit { color: #6c6a67; font-size: 11px; }
+.spool-record-shapes { display: flex; min-width: 0; margin: 0; padding: 1px; border: 1px solid #363636; border-radius: 6px; }
+.spool-record-shape-pick {
+	flex: 1;
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: #94918d;
+	font: inherit;
+	font-size: 11px;
+	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+.spool-record-shape-pick:hover { color: #f0efed; }
+.spool-record-shape-pick.is-on { background: #3a3a3a; color: #f0efed; }
+.spool-record-panel-says { margin: 0; color: #94918d; font-size: 11px; line-height: 16px; }
+.spool-record-panel-foot { display: flex; justify-content: flex-end; gap: 8px; }
+.spool-record-button {
+	height: 24px;
+	margin: 0;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: #94918d;
+	font: 400 12px/18px "Fragment Mono", ui-monospace, monospace;
+	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+.spool-record-button:hover { background: rgb(240 239 237 / 0.06); color: #f0efed; }
+.spool-record-button.is-primary { background: #f0efed; color: #0e0e0e; }
+.spool-record-button.is-primary:hover { background: #ffffff; }
+/* the clip saved, said under the bar for a few seconds */
+.spool-record-toast {
+	position: absolute;
+	top: calc(100% + 8px);
+	right: 8px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 40px;
+	box-sizing: border-box;
+	padding: 0 6px 0 16px;
+	background: #282828;
+	border: 1px solid #363636;
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+	white-space: nowrap;
+	animation: spool-record-in 220ms ease-out;
+}
+.spool-record-toast-message { font-size: 12px; }
+.spool-record-toast-file { color: #94918d; font-size: 11px; }
+/* a frame played at a clip's shape sits in the window's dark, framed, and red while it records */
+.spool-page.has-bar .spool-screen.is-shaped { margin: auto; min-height: 0; outline: 1px solid #363636; }
+.spool-page.has-bar .spool-screen.is-shaped.is-recording { outline-color: #f5391a; }
+@media (prefers-reduced-motion: reduce) {
+	.spool-record-on .spool-record-dot { animation: none; }
+	.spool-record-panel, .spool-record-toast { animation: none; }
+}
 .spool-top button:focus-visible {
 	outline: 2px solid var(--color-accent);
 	outline-offset: 2px;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clipWindow, type RecordedInput } from "./record-protocol";
+import { clipWindow, type RecordedInput, shapedBox } from "./record-protocol";
 
 const move = (t: number): RecordedInput => ({ t, kind: "move", x: t, y: 0, button: 0 });
 
@@ -22,5 +22,13 @@ describe("clipWindow", () => {
 			move(4032),
 		];
 		expect(clipWindow([...inputs, { t: 4040, kind: "leave" }], 5000)).toEqual({ start: 700, end: 4000 });
+	});
+});
+
+describe("shapedBox", () => {
+	it("plays the frame at the post's shape, as large as fits with a margin", () => {
+		expect(shapedBox("16:9", { w: 1440, h: 870 })).toEqual({ w: 1376, h: 774 });
+		expect(shapedBox("1:1", { w: 1440, h: 870 })).toEqual({ w: 806, h: 806 });
+		expect(shapedBox("frame", { w: 1440, h: 870 })).toBeNull();
 	});
 });

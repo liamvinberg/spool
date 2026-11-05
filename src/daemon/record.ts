@@ -126,6 +126,8 @@ export interface RecorderDeps {
 	launch?(scale: number): Promise<BrowserContext>;
 	/** How long one clip may take from launch to file. */
 	deadlineMs?: number;
+	/** Told how far the clip has got, 0 to 1, as its frames are drawn. */
+	progress?(done: number): void;
 }
 
 /** Render one recording to an MP4's bytes. */
@@ -149,7 +151,7 @@ export async function renderClip(request: ClipRequest, deps: RecorderDeps = {}):
 		return context;
 	};
 	try {
-		return await Promise.race([render(opened, request, layout, start, end), deadline]);
+		return await Promise.race([render(opened, request, layout, start, end, deps.progress), deadline]);
 	} finally {
 		clearTimeout(timer);
 		await closeAll();
@@ -204,11 +206,20 @@ async function render(
 	layout: ClipLayout,
 	start: number,
 	end: number,
+	progress: (done: number) => void = () => {},
 ): Promise<Uint8Array<ArrayBuffer>> {
 	const first = Math.floor(start / STEP_MS);
 	const last = Math.ceil(end / STEP_MS);
 	const bitrate = Math.min(MAX_BITRATE, Math.floor((CLIP_BYTES * 8) / Math.max(1, (end - start) / 1000)));
 	const parts = clipParts(first, last + 1, RECORD_WORKERS);
+	// the work is every part's replay up to its start and its pictures after, weighed as clipParts weighs them
+	const work = parts.reduce((sum, part) => sum + part.from * REPLAY_COST + (part.to - part.from), 0);
+	let done = 0;
+	const drew = (frames: number) => {
+		done += frames;
+		// the last few hundredths are the sound and the file
+		progress(Math.min(0.97, done / work));
+	};
 	const made = await Promise.all(
 		parts.map((part, index) =>
 			launch().then((context) =>
@@ -220,6 +231,7 @@ async function render(
 					sound: index === parts.length - 1,
 					start,
 					end,
+					drew,
 				}),
 			),
 		),
@@ -281,6 +293,8 @@ interface PartPlan {
 	sound: boolean;
 	start: number;
 	end: number;
+	/** Told of each frame drawn: a replayed one weighs what it costs against a photographed one. */
+	drew(weight: number): void;
 }
 
 async function renderPart(
@@ -370,6 +384,7 @@ async function renderPart(
 		const drawn = await frame(index >= part.from - 1);
 		await Promise.all(sent);
 		if (drawn.screenshotData !== undefined) still = drawn.screenshotData;
+		plan.drew(index < part.from ? REPLAY_COST : 1);
 		if (index < part.from) continue;
 		if (still === undefined) throw new Error("the recording drew no picture");
 		// the encoder draws while the next frame is taken; a few pictures ahead at most

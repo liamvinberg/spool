@@ -1826,7 +1826,7 @@ function CanvasField({
 	const playFrame = useCallback(
 		(name: string, record = false) => {
 			window.open(
-				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}${record ? "&record=1" : ""}`,
+				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}${record ? "&record=arm" : ""}`,
 				"_blank",
 				"noopener,noreferrer",
 			);

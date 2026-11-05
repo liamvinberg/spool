@@ -14,7 +14,7 @@ import {
 	type Viewport,
 } from "./player-page";
 import type { PlayerRecorder } from "./player-recorder";
-import { CLIP_ASPECTS, RECORD_WARN_MS } from "./record-protocol";
+import { CLIP_ASPECTS, type ClipAspect, RECORD_WARN_MS } from "./record-protocol";
 
 /**
  * The played page (#227). Play opens a browser tab, so the frame stops being a
@@ -65,6 +65,7 @@ export function Player({
 	exitKey = EXIT_KEY,
 	linkable = false,
 	recorder,
+	shaped,
 }: {
 	project: string;
 	frames: Record<string, ComponentType>;
@@ -81,10 +82,15 @@ export function Player({
 	linkable?: boolean;
 	/** Record (spool#221), where the shell can and the experiment is on. */
 	recorder?: PlayerRecorder;
+	/** Whether the frame is played at a clip's shape, in a box of its own rather than the window's. */
+	shaped?: () => boolean;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
+	useSyncExternalStore(recorder?.subscribe ?? noSubscription, recorder?.version ?? noVersion);
 	const { frame, arrival, externalHref } = controller.read();
-	const { w } = controller.geometry(frame);
+	const { w, h } = controller.geometry(frame);
+	const boxed = shaped?.() === true;
+	const recording = recorder?.view().kind === "recording";
 	const viewport = useViewport();
 	const Screen = frames[frame];
 	// Which shell this document is in, asked once: a window the app made and
@@ -125,12 +131,15 @@ export function Player({
 	return (
 		<div className="spool-page has-bar">
 			<div
-				className="spool-screen"
+				className={
+					boxed ? (recording ? "spool-screen is-shaped is-recording" : "spool-screen is-shaped") : "spool-screen"
+				}
 				// The one number spool imposes: the authored width as a cap, and the
 				// real viewport below it. Written here rather than left to `max-width`
 				// so the shell's iframe is exactly the box the runtime inside it will
-				// measure, which is what the geometry handshake compares against.
-				style={{ width: Math.min(viewport.vw, w) }}
+				// measure, which is what the geometry handshake compares against. A
+				// frame played at a clip's shape gets its height too, centred.
+				style={boxed ? { width: w, height: h } : { width: Math.min(viewport.vw, w) }}
 			>
 				{host ?? (Screen === undefined ? null : <Screen key={arrival} />)}
 			</div>
@@ -332,61 +341,149 @@ function TopBar({
 }
 
 /**
- * Record (spool#221) on the bar: a dot to start, the dot lit and the time
- * while it records, pressed again to stop, then the clip's shape to save it
- * as. The time turns the accent colour from {@link RECORD_WARN_MS}, ten
- * seconds before the recording stops itself.
+ * Record (spool#221) on the bar: a dot to start, which opens a panel with the
+ * clip's shape, the frame played at it behind; Start begins it. While it
+ * records, the shape and the time, pressed or Escape to stop; then how far
+ * the clip has rendered, and the file it was saved as. The time turns the
+ * accent colour from {@link RECORD_WARN_MS}, ten seconds before the recording
+ * stops itself.
  */
 function RecordControl({ recorder }: { recorder: PlayerRecorder }) {
 	useSyncExternalStore(recorder.subscribe, recorder.version);
 	const view = recorder.view();
 	switch (view.kind) {
 		case "idle":
-			return (
-				<span className="spool-bar-tipped">
-					<button type="button" className="spool-bar-icon" aria-label="Record" onClick={recorder.record}>
-						<span className="spool-record-dot" />
-					</button>
-					<Tip label="Record a clip" />
-				</span>
-			);
-		case "recording":
-			return <RecordingTime since={view.since} onStop={recorder.stop} />;
-		case "stopping":
-		case "rendering":
-			return (
-				<span className="spool-bar-hint spool-bar-loading" role="status">
-					{view.kind === "stopping" ? "stopping" : "rendering"}
-				</span>
-			);
 		case "saved":
 			return (
-				<span className="spool-bar-hint" role="status">
-					saved
+				<>
+					<span className="spool-bar-tipped">
+						<button type="button" className="spool-bar-icon" aria-label="Record" onClick={recorder.record}>
+							<span className="spool-record-dot" />
+						</button>
+						<Tip label="Record a clip" />
+					</span>
+					{view.kind === "saved" && (
+						<div className="spool-record-toast" role="status">
+							<span className="spool-record-toast-message">Saved</span>
+							<span className="spool-record-toast-file">{view.name}</span>
+							<button type="button" className="spool-bar-icon" aria-label="Dismiss" onClick={recorder.dismiss}>
+								<CloseGlyph />
+							</button>
+						</div>
+					)}
+				</>
+			);
+		case "arming":
+			return (
+				<>
+					<button
+						type="button"
+						className="spool-bar-icon is-lit"
+						aria-label="Record"
+						aria-expanded="true"
+						onClick={recorder.dismiss}
+					>
+						<span className="spool-record-dot" />
+					</button>
+					<RecordPanel aspect={view.aspect} recorder={recorder} />
+				</>
+			);
+		case "recording":
+			return (
+				<span className="spool-record-running">
+					{view.aspect !== "frame" && <span className="spool-bar-hint spool-record-shape">{view.aspect}</span>}
+					<RecordingTime since={view.since} onStop={recorder.stop} />
+					<kbd className="spool-record-key">esc</kbd>
 				</span>
 			);
-		case "choosing":
+		case "stopping":
+			return (
+				<span className="spool-bar-hint spool-bar-loading" role="status">
+					stopping
+				</span>
+			);
+		case "rendering":
+			return (
+				<>
+					<span className="spool-bar-hint spool-record-progress" role="status">
+						rendering {Math.round(view.progress * 100)}%
+					</span>
+					<span className="spool-record-line" style={{ width: `${view.progress * 100}%` }} aria-hidden="true" />
+				</>
+			);
 		case "failed":
 			return (
 				<span className="spool-record-choice">
-					{view.kind === "failed" ? (
-						<span className="spool-bar-hint spool-record-failed" role="alert" title={view.message}>
-							failed, try again
-						</span>
-					) : (
-						<span className="spool-bar-hint">save as</span>
-					)}
-					{CLIP_ASPECTS.map((aspect) => (
-						<button key={aspect} type="button" className="spool-bar-share" onClick={() => recorder.save(aspect)}>
-							{aspect}
-						</button>
-					))}
-					<button type="button" className="spool-bar-share spool-record-discard" onClick={recorder.discard}>
+					<span className="spool-bar-hint spool-record-failed" role="alert" title={view.message}>
+						failed
+					</span>
+					<button type="button" className="spool-bar-share" onClick={recorder.retry}>
+						try again
+					</button>
+					<button type="button" className="spool-bar-share spool-record-discard" onClick={recorder.dismiss}>
 						discard
 					</button>
 				</span>
 			);
 	}
+}
+
+/** What each shape says the clip will be. */
+const SHAPE_SAYS: Record<ClipAspect, string> = {
+	"16:9": "The frame plays at 16:9 while it records, so the clip is the frame edge to edge.",
+	"1:1": "The frame plays square while it records, so the clip is the frame edge to edge.",
+	frame: "The frame as the window plays it.",
+};
+
+/** Record's panel, under the dot: the clip's shape, then Start. Escape or Cancel puts it away. */
+function RecordPanel({ aspect, recorder }: { aspect: ClipAspect; recorder: PlayerRecorder }) {
+	const start = useRef<HTMLButtonElement>(null);
+	useEffect(() => {
+		start.current?.focus({ preventScroll: true });
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key === "Escape") recorder.dismiss();
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [recorder]);
+	return (
+		<div className="spool-record-panel" role="dialog" aria-label="Record a clip">
+			<div className="spool-record-panel-head">
+				<span>Record a clip</span>
+				<span className="spool-record-panel-limit">up to 1:00</span>
+			</div>
+			<fieldset className="spool-record-shapes" aria-label="Shape">
+				{CLIP_ASPECTS.map((each) => (
+					<button
+						key={each}
+						type="button"
+						aria-pressed={each === aspect}
+						className={each === aspect ? "spool-record-shape-pick is-on" : "spool-record-shape-pick"}
+						onClick={() => recorder.pick(each)}
+					>
+						{each}
+					</button>
+				))}
+			</fieldset>
+			<p className="spool-record-panel-says">{SHAPE_SAYS[aspect]}</p>
+			<div className="spool-record-panel-foot">
+				<button type="button" className="spool-record-button" onClick={recorder.dismiss}>
+					Cancel
+				</button>
+				<button ref={start} type="button" className="spool-record-button is-primary" onClick={recorder.begin}>
+					Start recording
+				</button>
+			</div>
+		</div>
+	);
+}
+
+function CloseGlyph() {
+	return (
+		<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+			<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+		</svg>
+	);
 }
 
 function RecordingTime({ since, onStop }: { since: number; onStop: () => void }) {
@@ -483,6 +580,8 @@ export function BrokenFrame({ frame, file, error }: { frame: string; file: strin
 
 /** How this platform closes a tab, printed on the bar so nothing has to be taught. */
 const EXIT_KEY = `${accelLabel()}w`;
+const noSubscription = () => () => {};
+const noVersion = () => 0;
 
 /** How long the bar says the link was copied. */
 const COPIED_MS = 1600;

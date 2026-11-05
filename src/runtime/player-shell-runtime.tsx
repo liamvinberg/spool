@@ -6,6 +6,7 @@ import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
 import { DESK_BAR_PX } from "./player-page";
 import { createPlayerRecorder, type NotedHands, type PlayerRecorder } from "./player-recorder";
+import { type ClipAspect, shapedBox } from "./record-protocol";
 
 /**
  * The player shell: the trusted half of a played session. It holds the
@@ -33,8 +34,11 @@ export interface ShellConfig {
 	innerUrl: string;
 	/** Trusted outer-shell capability. Never forwarded to the authored iframe. */
 	controlToken: string;
-	/** Record (spool#221) is on: the bar can record, and `start` opened this player recording. */
-	record?: "ready" | "start";
+	/**
+	 * Record (spool#221) is on: the bar can record. `arm` opened this player
+	 * with Record's panel up, and `start` opened it recording at a shape.
+	 */
+	record?: "ready" | "arm" | { start: ClipAspect };
 }
 
 interface PlayerState {
@@ -58,10 +62,10 @@ export interface PlayerShellHost {
 	repair(): boolean;
 	/** The shell wants geometry it may not have; answer through geometryApplied. */
 	refreshGeometry(): void;
-	/** Open the player again at `frame`, recording from its arrival (spool#221). */
-	reopenRecording?(frame: string): void;
-	/** Render a recording into a clip. */
-	renderClip?(body: object): Promise<Blob>;
+	/** Open the player again at `frame`, recording at `aspect` from its arrival (spool#221). */
+	reopenRecording?(frame: string, aspect: ClipAspect): void;
+	/** Render a recording into a clip, told how far it has got. */
+	renderClip?(body: object, progress: (done: number) => void): Promise<Blob>;
 	downloadClip?(clip: Blob, name: string): void;
 }
 
@@ -80,6 +84,8 @@ export interface PlayerShell {
 	controller: PlayerController;
 	/** Record, while the experiment is on. */
 	recorder?: PlayerRecorder;
+	/** Whether the frame is played at a clip's shape rather than the window's. */
+	shaped(): boolean;
 	view(): PlayerShellView;
 	/** The iframe finished its document fetch; the connect leg starts here. */
 	loaded(): void;
@@ -182,6 +188,8 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	let runtimePort: MessagePort | undefined;
 	let postToRuntime: ((message: Record<string, unknown>) => void) | undefined;
 	let latestGeometry: { revision: number; frames: { name: string; w: number; h: number }[] } | undefined;
+	/** The clip shape the frame is played at while Record's panel is up or it records (spool#221). */
+	let shapedAs: ClipAspect | null = typeof config.record === "object" ? config.record.start : null;
 	/**
 	 * Geometry as the canvas authored it. `config.frames` holds the played box
 	 * instead — see `playedBox` below — and a window that changes size re-derives one
@@ -251,18 +259,27 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	const recorder =
 		config.record === undefined
 			? undefined
-			: createPlayerRecorder(config.scenario, {
-					note: (on) => postToRuntime?.({ spool: "player-record", on }),
-					reopen: () => host.reopenRecording?.(snapshot.frame),
-					frame: () => snapshot.frame,
-					render: (body) => host.renderClip?.(body) ?? Promise.reject(new Error("this player cannot render")),
-					download: (clip, name) => host.downloadClip?.(clip, name),
-					now: () => performance.now(),
-					later: (run, ms) => {
-						const timer = window.setTimeout(run, ms);
-						return () => window.clearTimeout(timer);
+			: createPlayerRecorder(
+					config.scenario,
+					{
+						note: (on) => postToRuntime?.({ spool: "player-record", on }),
+						shape: (aspect) => {
+							shapedAs = aspect;
+							geometryReplay();
+						},
+						reopen: (aspect) => host.reopenRecording?.(snapshot.frame, aspect),
+						frame: () => snapshot.frame,
+						render: (body, progress) =>
+							host.renderClip?.(body, progress) ?? Promise.reject(new Error("this player cannot render")),
+						download: (clip, name) => host.downloadClip?.(clip, name),
+						now: () => performance.now(),
+						later: (run, ms) => {
+							const timer = window.setTimeout(run, ms);
+							return () => window.clearTimeout(timer);
+						},
 					},
-				});
+					shapedAs ?? "16:9",
+				);
 	let recordStarted = false;
 	const postCommand = (command: string, extra: Record<string, unknown> = {}) =>
 		postToRuntime?.({ spool: "player-command", command, ...extra, generation, frame: snapshot.frame });
@@ -325,10 +342,12 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	 * which is why every w/h that crosses the port is in this space and not the
 	 * authored one, and why being 30px out here wedges the reveal shut.
 	 */
-	const playedBox = (geometry: FrameGeometry): FrameGeometry => ({
-		w: Math.min(window.innerWidth, geometry.w),
-		h: Math.max(window.innerHeight - DESK_BAR_PX, 1),
-	});
+	const playedBox = (geometry: FrameGeometry): FrameGeometry => {
+		const room = { w: window.innerWidth, h: Math.max(window.innerHeight - DESK_BAR_PX, 1) };
+		// a frame played at a clip's shape lays itself out in that shape (spool#221)
+		const shaped = shapedAs === null ? null : shapedBox(shapedAs, room);
+		return shaped ?? { w: Math.min(room.w, geometry.w), h: room.h };
+	};
 	const playedList = (frames: { name: string; w: number; h: number }[]) =>
 		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame) } : frame));
 	const playedRecord = (frames: Record<string, FrameGeometry>): Record<string, FrameGeometry> =>
@@ -762,9 +781,10 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 			ready = true;
 			reconcileVisibility();
 			notify();
-			if (config.record === "start" && !recordStarted) {
+			if (config.record !== undefined && config.record !== "ready" && !recordStarted) {
 				recordStarted = true;
-				recorder?.start();
+				if (config.record === "arm") recorder?.record();
+				else recorder?.start(config.record.start);
 			}
 			return;
 		}
@@ -933,6 +953,7 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	return {
 		controller,
 		...(recorder === undefined ? {} : { recorder }),
+		shaped: () => shapedAs !== null && shapedAs !== "frame",
 		view: () => ({ hidden, revealed, loadError, loadEscape }),
 		loaded: () => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE),
 		geometryPending,
@@ -1035,22 +1056,37 @@ export function bootPlayerShell(config: ShellConfig): void {
 		walked: (from, to) => window.dispatchEvent(new CustomEvent("spool-player-walked", { detail: { from, to } })),
 		repair: reloadForHandoff,
 		refreshGeometry: () => window.dispatchEvent(new Event("spool-player-geometry-request")),
-		reopenRecording: (frame) => {
+		reopenRecording: (frame, aspect) => {
 			const url = new URL(window.location.href);
 			url.searchParams.set("frame", frame);
 			url.searchParams.set("scenario", config.scenario);
-			url.searchParams.set("record", "1");
+			url.searchParams.set("record", aspect);
 			window.location.replace(url);
 		},
-		renderClip: async (body) => {
-			const response = await fetch(`/api/p/${encodeURIComponent(config.project)}/record`, {
-				method: "POST",
-				headers: { [CONTROL_HEADER_NAME]: config.controlToken, "content-type": "application/json" },
-				body: JSON.stringify(body),
-			});
-			if (!response.ok)
-				throw new Error((await response.text()) || `the clip could not be made (${response.status})`);
-			return await response.blob();
+		renderClip: async (body, progress) => {
+			const api = `/api/p/${encodeURIComponent(config.project)}/record`;
+			const headers = { [CONTROL_HEADER_NAME]: config.controlToken };
+			// one clip renders at a time, so how far the one rendering has got is this one's
+			const polling = window.setInterval(() => {
+				fetch(`${api}/progress`, { headers })
+					.then((response) => (response.ok ? response.json() : undefined))
+					.then((answer: unknown) => {
+						if (isRecord(answer) && typeof answer.done === "number") progress(answer.done);
+					})
+					.catch(() => {});
+			}, RENDER_POLL_MS);
+			try {
+				const response = await fetch(api, {
+					method: "POST",
+					headers: { ...headers, "content-type": "application/json" },
+					body: JSON.stringify(body),
+				});
+				if (!response.ok)
+					throw new Error((await response.text()) || `the clip could not be made (${response.status})`);
+				return await response.blob();
+			} finally {
+				window.clearInterval(polling);
+			}
 		},
 		downloadClip: (clip, name) => {
 			const href = URL.createObjectURL(clip);
@@ -1119,11 +1155,14 @@ export function bootPlayerShell(config: ShellConfig): void {
 			frames: {},
 			controller: shell.controller,
 			host: createElement(Host),
-			...(shell.recorder === undefined ? {} : { recorder: shell.recorder }),
+			...(shell.recorder === undefined ? {} : { recorder: shell.recorder, shaped: shell.shaped }),
 		});
 	}
 	createRoot(root).render(createElement(Page));
 }
+
+/** How often a rendering clip's progress is asked for. */
+const RENDER_POLL_MS = 300;
 
 /** The daemon's capability header (daemon/security.ts), which this browser bundle cannot import. */
 const CONTROL_HEADER_NAME = "x-spool-control";

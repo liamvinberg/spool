@@ -55,7 +55,7 @@ const record = (project: { url: string; name: string; controlToken: string }, bo
 		body: JSON.stringify(body),
 	});
 
-it("records from the canvas's Record: the player opens recording, notes the hands, and downloads the clip", async () => {
+it("records from the canvas's Record: the shape picked first, the frame played at it, the hands noted and the clip downloaded", async () => {
 	if (!(await shellAvailable())) return;
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir, experiments: { record: true } });
@@ -70,6 +70,15 @@ it("records from the canvas's Record: the player opens recording, notes the hand
 	const opened = context.waitForEvent("page");
 	await canvas.getByRole("menuitem", { name: "Record" }).click();
 	const played = await opened;
+	await played.getByRole("button", { name: "1:1" }).click();
+	// the frame is played square at once, so what is seen is what the clip holds
+	await expect
+		.poll(async () => {
+			const box = await played.locator("iframe").boundingBox();
+			return box === null ? 0 : Math.round(box.width) - Math.round(box.height);
+		})
+		.toBe(0);
+	await played.getByRole("button", { name: "Start recording" }).click();
 	const stop = played.getByRole("button", { name: "Stop recording" });
 	await stop.waitFor({ timeout: 30_000 });
 
@@ -78,7 +87,6 @@ it("records from the canvas's Record: the player opens recording, notes the hand
 	await expect.poll(() => inner.getByRole("button", { name: "clicked" }).count()).toBe(1);
 	// Escape, pressed in the frame, is the stop rather than a key in the clip
 	await played.keyboard.press("Escape");
-	await played.getByRole("button", { name: "1:1" }).click();
 	const download = await played.waitForEvent("download", { timeout: 60_000 });
 	expect(download.suggestedFilename()).toBe("beeper.mp4");
 	const path = await download.path();
@@ -86,7 +94,7 @@ it("records from the canvas's Record: the player opens recording, notes the hand
 	expect((await clip.getPrimaryVideoTrack())?.displayWidth).toBe(1080);
 	// the click was noted and played back: the clip has the sound it made
 	expect((await clip.getPrimaryAudioTrack())?.codec).toBe("aac");
-	await expect.poll(() => played.getByRole("status").textContent()).toBe("saved");
+	await expect.poll(() => played.getByRole("status").textContent()).toBe("Savedbeeper.mp4");
 }, 180_000);
 
 it("refuses a recording while the experiment is off", async () => {

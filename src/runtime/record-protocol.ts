@@ -18,6 +18,23 @@ export type RecordedInput =
 export const CLIP_ASPECTS = ["16:9", "1:1", "frame"] as const;
 export type ClipAspect = (typeof CLIP_ASPECTS)[number];
 
+/** The gap kept round a frame played at a post's shape, so the window's edge never reads as the clip's. */
+const SHAPED_MARGIN = 32;
+
+/**
+ * The box a frame is played in while it records at a post's shape: the
+ * largest of that shape that fits the room with a margin round it. The frame
+ * lays itself out at that size, so the clip is the frame edge to edge rather
+ * than a wide page with bands above and below. The frame's own shape is
+ * whatever the window gives it, so it has no box of its own.
+ */
+export function shapedBox(aspect: ClipAspect, room: { w: number; h: number }): { w: number; h: number } | null {
+	if (aspect === "frame") return null;
+	const ratio = aspect === "1:1" ? 1 : 16 / 9;
+	const w = Math.max(1, Math.min(room.w - 2 * SHAPED_MARGIN, (room.h - 2 * SHAPED_MARGIN) * ratio));
+	return { w: Math.floor(w), h: Math.max(1, Math.floor(w / ratio)) };
+}
+
 /** A recording stops itself here. */
 export const RECORD_LIMIT_MS = 60_000;
 /** The timer says the limit is near from here. */
