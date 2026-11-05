@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; background: #f4f2ee; font: 600 28px system-ui, sans-serif; }
+  .stage { position: relative; height: 100%; display: grid; place-items: center; }
+  /* CSS transition on :hover and :active */
+  button {
+    font: inherit; padding: 28px 56px; border: 0; border-radius: 20px; background: #1c1c1e; color: #fff;
+    transition: transform 240ms cubic-bezier(.2,.9,.3,1.4), background-color 240ms ease;
+  }
+  button:hover { transform: scale(1.12); background: #3a5bff; }
+  button:active { transform: scale(0.94); }
+  /* rAF spring that follows the pointer */
+  .follower { position: absolute; left: 0; top: 0; width: 36px; height: 36px; border-radius: 50%; background: #ff5a36; pointer-events: none; }
+  /* CSS keyframe animation spawned on click */
+  .ripple { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; border: 3px solid #3a5bff; pointer-events: none; animation: ring 700ms ease-out forwards; }
+  @keyframes ring { to { transform: scale(9); opacity: 0; } }
+  .clock { position: absolute; left: 24px; bottom: 20px; font: 500 20px ui-monospace, monospace; color: #555; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <button id="b">Hover me</button>
+  <div class="follower" id="f"></div>
+  <div class="clock" id="c"></div>
+</div>
+<script>
+  const f = document.getElementById("f"), c = document.getElementById("c"), b = document.getElementById("b");
+  let tx = 100, ty = 100, x = 100, y = 100, vx = 0, vy = 0, last = performance.now(), clicks = 0;
+  addEventListener("pointermove", (e) => { tx = e.clientX; ty = e.clientY; });
+  addEventListener("pointerdown", (e) => {
+    const r = document.createElement("div"); r.className = "ripple";
+    r.style.left = e.clientX + "px"; r.style.top = e.clientY + "px";
+    document.body.appendChild(r); setTimeout(() => r.remove(), 800);
+  });
+  b.addEventListener("click", () => { clicks++; b.textContent = "Clicked " + clicks; });
+  function tick(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    const k = 170, d = 14;
+    vx += (k * (tx - x) - d * vx) * dt; vy += (k * (ty - y) - d * vy) * dt;
+    x += vx * dt; y += vy * dt;
+    f.style.transform = `translate(${x - 18}px, ${y - 18}px)`;
+    c.textContent = `perf ${performance.now().toFixed(1)}  date ${Date.now() % 100000}  rAF ${now.toFixed(1)}`;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+</script>
+</body>
+</html>
