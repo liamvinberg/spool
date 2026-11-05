@@ -9,6 +9,7 @@ import {
 	missingLibrary,
 } from "../headless-shell";
 import { type ClipAspect, clipWindow, RECORD_LIMIT_MS, type RecordedInput } from "../runtime/record-protocol";
+import { cursorTrack } from "./record-cursor";
 
 /**
  * The recorder (spool#221): a recording played back into a fresh copy of the
@@ -351,6 +352,7 @@ async function renderPart(
 	await evaluate(cdp, `${SOUND}?.ends(${origin + end})`);
 
 	const hands = createHands(cdp);
+	const track = cursorTrack(request.inputs, part.to, STEP_MS);
 	let next = 0;
 	const pushing: Promise<unknown>[] = [];
 	for (let index = 0; index < part.to; index++) {
@@ -372,7 +374,15 @@ async function renderPart(
 		if (still === undefined) throw new Error("the recording drew no picture");
 		// the encoder draws while the next frame is taken; a few pictures ahead at most
 		const at = (index - first) * STEP_MS;
-		pushing.push(evaluate(drawer, clipCall("push", still, hands.pointer(), at, index === part.from), true));
+		const place = track[index] ?? null;
+		const pointer = hands.pointer();
+		// the Mac's hand over whatever the frame says can be pressed, read where the real pointer is
+		const hand =
+			place !== null && place.opacity > 0 && pointer !== null
+				? await evaluate<boolean>(cdp, `${POINTS_AT}(${pointer.x}, ${pointer.y})`)
+				: false;
+		const cursor = place === null || place.opacity === 0 ? null : { ...place, hand };
+		pushing.push(evaluate(drawer, clipCall("push", still, cursor, at, index === part.from), true));
 		if (pushing.length > PUSH_AHEAD) await pushing.shift();
 	}
 	await Promise.all(pushing);
@@ -410,6 +420,9 @@ async function openFrameTab(
 	await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: AUDIO_SOURCE });
 	return { page, cdp };
 }
+
+/** Whether the frame shows a pointing hand at a point: its own `cursor: pointer`, as a browser would. */
+const POINTS_AT = `((x, y) => { const at = document.elementFromPoint(x, y); return at !== null && getComputedStyle(at).cursor === "pointer"; })`;
 
 /** The frame is in: loaded, its fonts in, the player's screen mounted. */
 const ARRIVED = `document.readyState === "complete" && document.fonts.status === "loaded" && document.getElementById("root")?.firstElementChild != null`;
@@ -611,15 +624,20 @@ function clipCall(
  * The encoder tab's code, as source, for the same reason as {@link clipCall}.
  *
  * Each frame's picture is drawn centred on the clip at the frame's scale, on
- * the colour of the frame's own top-left pixel, and the cursor over it: the
- * macOS arrow at 1.5 times its size, white-edged, so it reads on any frame.
+ * the colour of the frame's own top-left pixel, and the cursor over it at 1.5
+ * times its size: the Mac's arrow, black with rounded corners and a white
+ * edge, or its pointing hand, white with a black edge, so it reads on any
+ * frame.
  */
 const ENCODER_SOURCE = `(() => {
 	let canvas, g, encoder, layout, config, failure;
 	let queue = Promise.resolve();
 	const background = new OffscreenCanvas(1, 1).getContext("2d", { willReadFrequently: true });
 	const chunks = [];
-	const arrow = new Path2D("M0 0L0 16.5L4 12.6L6.9 19.2L9.6 18.1L6.8 11.7L12.2 11.7Z");
+	// each with its hot spot at 0,0
+	const arrow = new Path2D("M0 0v16.6l4.2-4 2.9 6.6 2.8-1.2-2.8-6.4h5.8Z");
+	const hand = new Path2D("M-1.5 10.5V1.5a1.5 1.5 0 0 1 3 0V8V7a1.5 1.5 0 0 1 3 0v1.5V8a1.5 1.5 0 0 1 3 0v1.5v-.2a1.3 1.3 0 0 1 2.6 0v5.2c0 3.3-2 5.5-5.1 5.5h-2c-1.9 0-3.2-.8-4.3-2.4l-3.6-5a1.4 1.4 0 0 1 2.2-1.7Z");
+	const fingers = new Path2D("M1.5 8v3.2M4.5 8.5v2.7M7.5 9.5v2.2");
 	const base64 = (bytes) => {
 		let text = "";
 		for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
@@ -670,16 +688,29 @@ const ENCODER_SOURCE = `(() => {
 				g.save();
 				g.translate(layout.x + cursor.x * layout.scale, layout.y + cursor.y * layout.scale);
 				g.scale(size, size);
-				g.shadowColor = "rgba(0,0,0,0.25)";
-				g.shadowBlur = 2 * size;
-				g.shadowOffsetY = 0.5 * size;
+				g.globalAlpha = cursor.opacity;
+				g.shadowColor = "rgba(0,0,0,0.4)";
+				g.shadowBlur = 1.5 * size;
+				g.shadowOffsetY = 1 * size;
 				g.lineJoin = "round";
-				g.lineWidth = 1.4;
-				g.strokeStyle = "#fff";
-				g.stroke(arrow);
-				g.shadowColor = "transparent";
-				g.fillStyle = "#000";
-				g.fill(arrow);
+				g.lineCap = "round";
+				if (cursor.hand) {
+					g.fillStyle = "#fff";
+					g.fill(hand);
+					g.shadowColor = "transparent";
+					g.lineWidth = 1.1;
+					g.strokeStyle = "#000";
+					g.stroke(hand);
+					g.lineWidth = 1;
+					g.stroke(fingers);
+				} else {
+					g.lineWidth = 1.6;
+					g.strokeStyle = "#fff";
+					g.stroke(arrow);
+					g.shadowColor = "transparent";
+					g.fillStyle = "#000";
+					g.fill(arrow);
+				}
 				g.restore();
 			}
 			const step = 1e6 / layout.fps;
