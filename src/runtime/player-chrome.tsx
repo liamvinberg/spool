@@ -13,6 +13,8 @@ import {
 	useViewport,
 	type Viewport,
 } from "./player-page";
+import type { PlayerRecorder } from "./player-recorder";
+import { CLIP_ASPECTS, RECORD_WARN_MS } from "./record-protocol";
 
 /**
  * The played page (#227). Play opens a browser tab, so the frame stops being a
@@ -62,6 +64,7 @@ export function Player({
 	closeLabel = "Close the tab",
 	exitKey = EXIT_KEY,
 	linkable = false,
+	recorder,
 }: {
 	project: string;
 	frames: Record<string, ComponentType>;
@@ -76,6 +79,8 @@ export function Player({
 	exitKey?: string;
 	/** Whether the bar copies the address of the screen on show, for an address someone else can open. */
 	linkable?: boolean;
+	/** Record (spool#221), where the shell can and the experiment is on. */
+	recorder?: PlayerRecorder;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
 	const { frame, arrival, externalHref } = controller.read();
@@ -112,6 +117,7 @@ export function Player({
 			frame={frame}
 			viewport={viewport}
 			loading={loading}
+			{...(recorder === undefined ? {} : { recorder })}
 			{...(desk === null ? { onClose: close, closeLabel, exitKey, linkable } : { desk })}
 		/>
 	);
@@ -259,6 +265,7 @@ function TopBar({
 	closeLabel = "Close the tab",
 	exitKey = EXIT_KEY,
 	linkable = false,
+	recorder,
 }: {
 	project: string;
 	frame: string;
@@ -271,6 +278,7 @@ function TopBar({
 	closeLabel?: string;
 	exitKey?: string;
 	linkable?: boolean;
+	recorder?: PlayerRecorder;
 }) {
 	const layout = barLayout(viewport.vw);
 	const resizing = useResizing(viewport);
@@ -315,10 +323,111 @@ function TopBar({
 						</button>
 					</span>
 				)}
+				{recorder !== undefined && <RecordControl recorder={recorder} />}
 				{desk === undefined && linkable && <CopyLinkButton />}
 				{desk === undefined && <CloseButton label={closeLabel} chord={exitKey} onClose={onClose ?? (() => {})} />}
 			</span>
 		</div>
+	);
+}
+
+/**
+ * Record (spool#221) on the bar: a dot to start, the dot lit and the time
+ * while it records, pressed again to stop, then the clip's shape to save it
+ * as. The time turns the accent colour from {@link RECORD_WARN_MS}, ten
+ * seconds before the recording stops itself.
+ */
+function RecordControl({ recorder }: { recorder: PlayerRecorder }) {
+	useSyncExternalStore(recorder.subscribe, recorder.version);
+	const view = recorder.view();
+	switch (view.kind) {
+		case "idle":
+			return (
+				<span className="spool-bar-tipped">
+					<button type="button" className="spool-bar-icon" aria-label="Record" onClick={recorder.record}>
+						<span className="spool-record-dot" />
+					</button>
+					<Tip label="Record a clip" />
+				</span>
+			);
+		case "recording":
+			return <RecordingTime since={view.since} onStop={recorder.stop} />;
+		case "stopping":
+		case "rendering":
+			return (
+				<span className="spool-bar-hint spool-bar-loading" role="status">
+					{view.kind === "stopping" ? "stopping" : "rendering"}
+				</span>
+			);
+		case "saved":
+			return (
+				<span className="spool-bar-hint" role="status">
+					saved
+				</span>
+			);
+		case "choosing":
+		case "failed":
+			return (
+				<span className="spool-record-choice">
+					{view.kind === "failed" ? (
+						<span className="spool-bar-hint spool-record-failed" role="alert" title={view.message}>
+							failed, try again
+						</span>
+					) : (
+						<span className="spool-bar-hint">save as</span>
+					)}
+					{CLIP_ASPECTS.map((aspect) => (
+						<button key={aspect} type="button" className="spool-bar-share" onClick={() => recorder.save(aspect)}>
+							{aspect}
+						</button>
+					))}
+					<span className="spool-bar-tipped">
+						<button
+							type="button"
+							className="spool-bar-icon"
+							aria-label="Discard the recording"
+							onClick={recorder.discard}
+						>
+							<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+								<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+							</svg>
+						</button>
+						<Tip label="Discard" />
+					</span>
+				</span>
+			);
+	}
+}
+
+function RecordingTime({ since, onStop }: { since: number; onStop: () => void }) {
+	const [now, setNow] = useState(() => performance.now());
+	useEffect(() => {
+		const timer = window.setInterval(() => setNow(performance.now()), 250);
+		// Escape stops it from the bar too; in the frame the frame's own document hears it
+		const stopOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") onStop();
+		};
+		window.addEventListener("keydown", stopOnEscape);
+		return () => {
+			window.clearInterval(timer);
+			window.removeEventListener("keydown", stopOnEscape);
+		};
+	}, [onStop]);
+	const elapsed = Math.max(0, now - since);
+	const seconds = Math.floor(elapsed / 1000);
+	return (
+		<span className="spool-bar-tipped">
+			<button
+				type="button"
+				className={elapsed >= RECORD_WARN_MS ? "spool-record-on is-near" : "spool-record-on"}
+				aria-label="Stop recording"
+				onClick={onStop}
+			>
+				<span className="spool-record-dot" />
+				{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}
+			</button>
+			<Tip label="Stop recording" />
+		</span>
 	);
 }
 

@@ -5,6 +5,7 @@ import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
 import { DESK_BAR_PX } from "./player-page";
+import { createPlayerRecorder, type NotedHands, type PlayerRecorder } from "./player-recorder";
 
 /**
  * The player shell: the trusted half of a played session. It holds the
@@ -32,6 +33,8 @@ export interface ShellConfig {
 	innerUrl: string;
 	/** Trusted outer-shell capability. Never forwarded to the authored iframe. */
 	controlToken: string;
+	/** Record (spool#221) is on: the bar can record, and `start` opened this player recording. */
+	record?: "ready" | "start";
 }
 
 interface PlayerState {
@@ -55,6 +58,11 @@ export interface PlayerShellHost {
 	repair(): boolean;
 	/** The shell wants geometry it may not have; answer through geometryApplied. */
 	refreshGeometry(): void;
+	/** Open the player again at `frame`, recording from its arrival (spool#221). */
+	reopenRecording?(frame: string): void;
+	/** Render a recording into a clip. */
+	renderClip?(body: object): Promise<Blob>;
+	downloadClip?(clip: Blob, name: string): void;
 }
 
 /** What a host renders from, read fresh on every change the shell notifies. */
@@ -70,6 +78,8 @@ export interface PlayerShellView {
 
 export interface PlayerShell {
 	controller: PlayerController;
+	/** Record, while the experiment is on. */
+	recorder?: PlayerRecorder;
 	view(): PlayerShellView;
 	/** The iframe finished its document fetch; the connect leg starts here. */
 	loaded(): void;
@@ -238,6 +248,22 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 			notify();
 		}, grace);
 	};
+	const recorder =
+		config.record === undefined
+			? undefined
+			: createPlayerRecorder(config.scenario, {
+					note: (on) => postToRuntime?.({ spool: "player-record", on }),
+					reopen: () => host.reopenRecording?.(snapshot.frame),
+					frame: () => snapshot.frame,
+					render: (body) => host.renderClip?.(body) ?? Promise.reject(new Error("this player cannot render")),
+					download: (clip, name) => host.downloadClip?.(clip, name),
+					now: () => performance.now(),
+					later: (run, ms) => {
+						const timer = window.setTimeout(run, ms);
+						return () => window.clearTimeout(timer);
+					},
+				});
+	let recordStarted = false;
 	const postCommand = (command: string, extra: Record<string, unknown> = {}) =>
 		postToRuntime?.({ spool: "player-command", command, ...extra, generation, frame: snapshot.frame });
 	const allocateControllerRequest = () => {
@@ -736,6 +762,16 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 			ready = true;
 			reconcileVisibility();
 			notify();
+			if (config.record === "start" && !recordStarted) {
+				recordStarted = true;
+				recorder?.start();
+			}
+			return;
+		}
+
+		if (message.spool === "player-recorded") {
+			const noted = notedHands(message);
+			if (noted !== undefined) recorder?.heard(noted);
 			return;
 		}
 
@@ -896,6 +932,7 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 
 	return {
 		controller,
+		...(recorder === undefined ? {} : { recorder }),
 		view: () => ({ hidden, revealed, loadError, loadEscape }),
 		loaded: () => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE),
 		geometryPending,
@@ -998,6 +1035,31 @@ export function bootPlayerShell(config: ShellConfig): void {
 		walked: (from, to) => window.dispatchEvent(new CustomEvent("spool-player-walked", { detail: { from, to } })),
 		repair: reloadForHandoff,
 		refreshGeometry: () => window.dispatchEvent(new Event("spool-player-geometry-request")),
+		reopenRecording: (frame) => {
+			const url = new URL(window.location.href);
+			url.searchParams.set("frame", frame);
+			url.searchParams.set("scenario", config.scenario);
+			url.searchParams.set("record", "1");
+			window.location.replace(url);
+		},
+		renderClip: async (body) => {
+			const response = await fetch(`/api/p/${encodeURIComponent(config.project)}/record`, {
+				method: "POST",
+				headers: { [CONTROL_HEADER_NAME]: config.controlToken, "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+			if (!response.ok)
+				throw new Error((await response.text()) || `the clip could not be made (${response.status})`);
+			return await response.blob();
+		},
+		downloadClip: (clip, name) => {
+			const href = URL.createObjectURL(clip);
+			const link = document.createElement("a");
+			link.href = href;
+			link.download = name;
+			link.click();
+			window.setTimeout(() => URL.revokeObjectURL(href), 60_000);
+		},
 	});
 	// The played box is measured against the window, so a window that changes
 	// size is a geometry change: the same replay the bridge asks for, re-derived
@@ -1057,9 +1119,22 @@ export function bootPlayerShell(config: ShellConfig): void {
 			frames: {},
 			controller: shell.controller,
 			host: createElement(Host),
+			...(shell.recorder === undefined ? {} : { recorder: shell.recorder }),
 		});
 	}
 	createRoot(root).render(createElement(Page));
+}
+
+/** The daemon's capability header (daemon/security.ts), which this browser bundle cannot import. */
+const CONTROL_HEADER_NAME = "x-spool-control";
+
+/** The inner document's recording, checked for shape; the daemon checks every input again. */
+function notedHands(message: Record<string, unknown>): NotedHands | undefined {
+	const { inputs, duration, w, h } = message;
+	if (!Array.isArray(inputs) || typeof duration !== "number" || !isPositiveInteger(w) || !isPositiveInteger(h)) {
+		return undefined;
+	}
+	return { inputs, duration, w, h };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

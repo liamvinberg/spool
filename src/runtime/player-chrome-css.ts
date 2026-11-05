@@ -210,6 +210,29 @@ body { margin: 0; background: #0e0e0e; }
 .spool-bar-share:hover, .spool-bar-share[aria-expanded=true] { background: #1c1c1c; }
 .spool-bar-share:disabled { opacity: .55; cursor: default; }
 .spool-bar-sharing { display: flex; align-items: center; gap: 8px; }
+/* Record (spool#221): a dot to start; while recording the dot lit and the time beside it */
+.spool-record-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.spool-record-on {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 24px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: #f0efed;
+	font: 400 11px/18px "Fragment Mono", ui-monospace, monospace;
+	font-variant-numeric: tabular-nums;
+	cursor: pointer;
+}
+.spool-record-on:hover { background: #1c1c1c; }
+.spool-record-on .spool-record-dot { background: #f5391a; animation: spool-bar-loading 1.2s ease-in-out infinite; }
+.spool-record-on.is-near { color: #f5391a; }
+.spool-record-choice { display: flex; align-items: center; gap: 2px; }
+.spool-record-choice > .spool-bar-hint { margin-right: 4px; }
+.spool-record-failed { color: #f5391a; cursor: help; }
+@media (prefers-reduced-motion: reduce) { .spool-record-on .spool-record-dot { animation: none; } }
 .spool-top button:focus-visible {
 	outline: 2px solid var(--color-accent);
 	outline-offset: 2px;
