@@ -266,11 +266,15 @@ program
 	.action(async (paths: string[]) => {
 		// read-only: a project due its frame-name migration is told so, not migrated
 		const root = await offlineProject(checkStart(process.cwd(), paths), { migrate: false });
-		// check needs no daemon, but a running one knows what of a team project didn't travel
-		const daemon = readDaemonState(spoolDir);
-		if (daemon !== undefined && followedLink(root) !== undefined)
-			await tellUntold(daemonUrl(daemon.host, daemon.port), basename(root), daemon.controlToken);
 		const output = await runCheck(root, process.cwd(), paths);
+		// check needs no daemon, but a running one knows what of a team project didn't travel; what check names as an
+		// error itself isn't said twice
+		const daemon = readDaemonState(spoolDir);
+		if (daemon !== undefined && followedLink(root) !== undefined) {
+			const staying = output.staying ?? [];
+			for (const line of await readUntold(daemonUrl(daemon.host, daemon.port), basename(root), daemon.controlToken))
+				if (!staying.some((path) => line.startsWith(`${path} didn't travel: `))) narrate(line);
+		}
 		for (const line of output.stderr) process.stderr.write(`${line}\n`);
 		for (const line of output.stdout) process.stdout.write(`${line}\n`);
 		if (!output.ok) process.exitCode = 1;

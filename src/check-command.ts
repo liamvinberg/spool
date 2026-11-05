@@ -4,6 +4,7 @@ import { checkProject } from "./check";
 import { altReaders, describeAltReader } from "./check-alt";
 import { describeSlowFrame, slowFrames } from "./check-pace";
 import { realDesignDir } from "./daemon/design-path";
+import { followedLink, OUTSIDE_LAYOUT, staysOnThisMac, TOO_BIG } from "./daemon/team-sync";
 import { scanBrokenFrames } from "./daemon/thumbs";
 
 /** What `spool check [paths…]` says: diagnostics and notes on stderr, the count line on stdout. */
@@ -11,6 +12,8 @@ export interface CheckOutput {
 	stderr: string[];
 	stdout: string[];
 	ok: boolean;
+	/** design-relative files of a team project that stay on this Mac, each said as an error */
+	staying?: string[];
 }
 
 /** Where the walk-up to the project starts: the first named path that exists, else the cwd. */
@@ -106,15 +109,33 @@ export async function runCheck(root: string, cwd: string, paths: string[]): Prom
 			`design/frames/${frame}/frame.tsx: broken on the canvas: ${kind === "compile" ? `failed to compile: ${said.trim()}` : said.trim()}`,
 		);
 	}
+	// a team project's file that stays on this Mac is missing for every teammate: an error, said on every check
+	// until it is moved, shrunk or gone, so an agent that left a screenshot in design/ cleans it up
+	const staying = followedLink(root) === undefined ? [] : staysOnThisMac(root);
+	for (const { path, why } of staying)
+		stderr.push(`design/${path}: stays on this Mac, teammates never get it: ${why}${fixOf(why)}`);
 	const batches = report.batches > 1 ? ` in ${report.batches} batches` : "";
 	const shown = broken.length > 0 ? `; ${broken.length} broken on the canvas` : "";
+	const stays =
+		staying.length > 0
+			? `; ${count(staying.length, "file")} ${staying.length === 1 ? "stays" : "stay"} on this Mac`
+			: "";
 	return {
 		stderr,
 		stdout: [
-			`checked ${count(report.frames.length, "frame")} (${count(report.sources, "source file")})${batches}, ${count(errors, "error")}${shown}`,
+			`checked ${count(report.frames.length, "frame")} (${count(report.sources, "source file")})${batches}, ${count(errors, "error")}${shown}${stays}`,
 		],
-		ok: errors === 0 && report.notChecked.length === 0,
+		ok: errors === 0 && report.notChecked.length === 0 && staying.length === 0,
+		...(staying.length > 0 ? { staying: staying.map(({ path }) => path) } : {}),
 	};
+}
+
+/** What to do about a file that stays on this Mac, by why it stays. */
+function fixOf(why: string): string {
+	if (why === OUTSIDE_LAYOUT)
+		return "; move it under frames/ or shared/ if the design uses it, or out of design/ if it is scratch (a screenshot, a script)";
+	if (why === TOO_BIG) return "; shrink it on this Mac (spool skill team says how)";
+	return "; put the file itself there instead";
 }
 
 /** `design/frames/shop/checkout/frame.tsx` → `shop/checkout`. */

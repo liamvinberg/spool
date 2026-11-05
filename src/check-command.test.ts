@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkSourceLimits } from "./check-budget";
@@ -148,6 +149,23 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 			ok: true,
 		});
 		expect((await runCheck(root, root, ["big"])).stdout).toEqual(["checked 1 frame (1 source file), 0 errors"]);
+	});
+
+	it("fails a team project on each file that stays on this Mac, and says nothing of them in a solo one", async () => {
+		const root = project();
+		writeFrame(root, "home", FRAME);
+		writeDesignFile(root, "p-01-home.png", "png");
+		expect((await runCheck(root, root, [])).ok).toBe(true);
+
+		writeFileSync(join(root, "spool.json"), JSON.stringify({ project: "https://spool.page/devosurf/shop" }));
+		expect(await runCheck(root, root, [])).toEqual({
+			stderr: [
+				"design/p-01-home.png: stays on this Mac, teammates never get it: only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync; move it under frames/ or shared/ if the design uses it, or out of design/ if it is scratch (a screenshot, a script)",
+			],
+			stdout: ["checked 1 frame (1 source file), 0 errors; 1 file stays on this Mac"],
+			ok: false,
+			staying: ["p-01-home.png"],
+		});
 	});
 
 	it("spells out a slow frame only when it is named, and sums up the rest after the diagnostics", async () => {

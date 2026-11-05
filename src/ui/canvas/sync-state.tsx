@@ -4,6 +4,7 @@ import { type AppUpdate, type DesktopBridge, desktopBridge } from "../desktop-br
 import { MovedSheet } from "../moved-away";
 import { TextAction, Toast } from "../primitives/feedback";
 import { Popover } from "../primitives/overlays";
+import { keep, recall } from "../remembered";
 import { backInGitDone } from "../team-move";
 
 /** Said whenever a project's sync changes, so its canvas reads it again. */
@@ -27,8 +28,8 @@ export async function matchTheTeam(project: string): Promise<void> {
 /**
  * A team project's sync, said on its canvas for as long as it lasts and whenever the canvas opens: that the project
  * ended here, that it has gone local until its team pays, that sync is paused on a limit or until Spool is updated, that changes are waiting
- * out a long spell on the minute's limit, that it has been offline a while, and which files didn't travel, each with
- * Match the team beside it. A solo project's canvas says nothing. One whose design/ moved into a team this account
+ * out a long spell on the minute's limit, and that it has been offline a while, each with Match the team beside it, and
+ * which files didn't travel, which matching leaves as they are. A solo project's canvas says nothing. One whose design/ moved into a team this account
  * can't edit stands the moved sheet over the canvas (spool#194).
  */
 export function useSyncState(project: string, root?: string): ReactNode {
@@ -71,6 +72,7 @@ export function useSyncState(project: string, root?: string): ReactNode {
 				/>
 			)}
 			<SyncNotices
+				project={project}
 				state={state}
 				refused={refused}
 				onMatchTeam={() => void matchTheTeam(project)}
@@ -119,9 +121,10 @@ function linesOf(
 	}
 	if (offline) say(OFFLINE);
 	if (sending !== null) lines.push({ key: SENDING, text: `${sending}.`, matches: true });
+	// matching the team leaves a file that didn't travel as it is, so the line offers no match
 	const [only] = held;
-	if (held.length === 1 && only !== undefined) say(`${only.path} didn't travel: ${only.why}`);
-	else if (held.length > 1) say(`${held.length} files didn't travel`);
+	if (held.length === 1 && only !== undefined) say(`${only.path} didn't travel: ${only.why}`, false);
+	else if (held.length > 1) say(`${held.length} files didn't travel`, false);
 	return lines;
 }
 
@@ -146,14 +149,22 @@ export const OFFLINE = "Offline. Your changes go up when you're back.";
 /** What putting design/ back in git came to, said once it is done or refused. */
 const BACK = "back-in-git";
 
+/** Where a browser keeps the files of a project whose didn't-travel line was closed. */
+const closedHeldKey = (project: string) => `sync.closed-held.${project}`;
+const isPaths = (value: unknown): value is string[] =>
+	Array.isArray(value) && value.every((one) => typeof one === "string");
+
 export function SyncNotices({
-	state,
+	project,
+	state: said,
 	refused,
 	onMatchTeam,
 	onRefusedRead,
 	onBackInGit,
 	bridge = desktopBridge(),
 }: {
+	/** Whose notices these are: a didn't-travel line closed stays closed across reloads, in this browser. */
+	project?: string | undefined;
 	state: SyncState;
 	/** The Mac app's bridge, when the canvas is in its window: its update is the update line's action. */
 	bridge?: DesktopBridge | undefined;
@@ -165,6 +176,17 @@ export function SyncNotices({
 	onBackInGit?: (() => Promise<string>) | undefined;
 }) {
 	const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
+	// files a closed didn't-travel line named stay unsaid in this browser: a person who closed it knows, and a new
+	// file held is still said, on a line of its own count
+	const [closedHeld, setClosedHeld] = useState<ReadonlySet<string>>(
+		() => new Set(project === undefined ? [] : (recall(closedHeldKey(project), isPaths) ?? [])),
+	);
+	const state = { ...said, held: said.held.filter(({ path }) => !closedHeld.has(path)) };
+	const closeHeld = () => {
+		const next = new Set([...closedHeld, ...state.held.map(({ path }) => path)]);
+		setClosedHeld(next);
+		if (project !== undefined) keep(closedHeldKey(project), [...next]);
+	};
 	const [open, setOpen] = useState(false);
 	const [backSaid, setBackSaid] = useState<string | null>(null);
 	const [putting, setPutting] = useState(false);
@@ -191,7 +213,8 @@ export function SyncNotices({
 		...(backSaid === null ? [] : [{ key: BACK, text: backSaid, matches: false }]),
 	].filter((line) => !closed.has(line.key));
 	if (lines.length === 0) return null;
-	const many = state.held.length > 1 ? linesOf(state, inApp).at(-1)?.key : undefined;
+	const heldKey = state.held.length > 0 ? linesOf(state, inApp).at(-1)?.key : undefined;
+	const many = state.held.length > 1 ? heldKey : undefined;
 	return (
 		<>
 			{open && many !== undefined && lines.some((line) => line.key === many) && (
@@ -247,6 +270,7 @@ export function SyncNotices({
 						onDismiss={() => {
 							// a refusal closed is read: the next one is said afresh
 							if (key === REFUSED) onRefusedRead?.();
+							else if (key === heldKey) closeHeld();
 							else setClosed((was) => new Set([...was, key]));
 						}}
 					/>
