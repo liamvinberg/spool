@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
@@ -173,7 +174,8 @@ async function launchRecorder(scale: number): Promise<BrowserContext> {
 			viewport: null,
 			args: [...headlessShellArgs(), ...DETERMINISTIC_ARGS, `--force-device-scale-factor=${scale}`],
 		});
-		context.once("close", () => rmSync(profile, { recursive: true, force: true }));
+		// the shell's last writes into its profile can land while it is removed: tried again, never thrown
+		context.once("close", () => void rm(profile, { recursive: true, force: true, maxRetries: 5 }).catch(() => {}));
 		return context;
 	} catch (error) {
 		rmSync(profile, { recursive: true, force: true });
@@ -330,7 +332,8 @@ async function renderPart(
 	// busy the machine, it has loaded at the same reading of its clock in every
 	// part, and every part's replay begins in the same state.
 	await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" });
-	void cdp.send("Page.navigate", { url: request.url });
+	// a navigation that fails shows as no commit below
+	cdp.send("Page.navigate", { url: request.url }).catch(() => {});
 	const loading = Date.now() + LOAD_MS;
 	let committed = false;
 	while (!committed) {
@@ -397,7 +400,10 @@ async function renderPart(
 				? await evaluate<boolean>(cdp, `${POINTS_AT}(${pointer.x}, ${pointer.y})`)
 				: false;
 		const cursor = place === null || place.opacity === 0 ? null : { ...place, hand };
-		pushing.push(evaluate(drawer, clipCall("push", still, cursor, at, index === part.from), true));
+		const pushed = evaluate(drawer, clipCall("push", still, cursor, at, index === part.from), true);
+		// awaited below; a part that fails before then leaves it to fail unheard
+		pushed.catch(() => {});
+		pushing.push(pushed);
 		if (pushing.length > PUSH_AHEAD) await pushing.shift();
 	}
 	await Promise.all(pushing);
@@ -421,14 +427,15 @@ async function openFrameTab(
 	request: ClipRequest,
 ): Promise<{ page: Page; cdp: CDPSession }> {
 	const session = await context.newCDPSession(opener);
-	const arriving = context.waitForEvent("page");
-	await session.send("Target.createTarget", {
-		url: "about:blank",
-		width: request.viewport.w,
-		height: request.viewport.h,
-		enableBeginFrameControl: true,
-	});
-	const page = await arriving;
+	const [page] = await Promise.all([
+		context.waitForEvent("page"),
+		session.send("Target.createTarget", {
+			url: "about:blank",
+			width: request.viewport.w,
+			height: request.viewport.h,
+			enableBeginFrameControl: true,
+		}),
+	]);
 	const cdp = await context.newCDPSession(page);
 	await cdp.send("Page.enable");
 	await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: RANDOM_SOURCE });
