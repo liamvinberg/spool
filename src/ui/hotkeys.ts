@@ -632,7 +632,7 @@ export const HOTKEYS = [
 		id: "peek.open",
 		scope: "peek",
 		group: "Pages",
-		label: "Peek at a folder's frames, over its row or name",
+		label: "Peek at a folder",
 		keys: ["space"],
 		repeats: false,
 	},
