@@ -137,6 +137,12 @@ export type HistoryEntry =
 			readonly frames: readonly Moved[];
 			readonly to: string;
 			readonly lists: readonly OrderList[];
+			/**
+			 * Where frames let go on a spot of a peek stand either side of the move
+			 * (spool#224), by the name each had before it: one gesture, so one entry,
+			 * and running it either way puts each frame on its page and its spot.
+			 */
+			readonly places?: Readonly<Record<string, { readonly before: Geometry; readonly after: Geometry }>>;
 	  }
 	// a page that changed the page holding it, which carries its whole subtree
 	// (#231): its own kind rather than a second list on a move, because putting
@@ -224,6 +230,22 @@ export interface Taken {
 	readonly history: History;
 	/** The entry, narrowed to what the projection still holds. */
 	readonly entry: HistoryEntry;
+}
+
+/**
+ * The spots a move's frames take once it has run this way, by the names they
+ * then have: where each stood for an undo, where it was let go for a redo.
+ */
+export function placesOf(entry: Extract<HistoryEntry, { kind: "move" }>, way: Way): Record<string, Geometry> {
+	const places = entry.places;
+	if (places === undefined) return {};
+	return Object.fromEntries(
+		entry.frames.flatMap((moved) => {
+			const place = places[moved.name];
+			if (place === undefined) return [];
+			return [way === "undo" ? [moved.name, place.before] : [movedOnto(entry.to, moved.name), place.after]] as const;
+		}),
+	);
 }
 
 /** The rects one geometry entry writes, run this way. */
