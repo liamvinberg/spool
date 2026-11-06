@@ -223,10 +223,14 @@ export function usePagePeek({
 				return page === undefined || from === undefined || page === live.current.activePage ? null : { page, from };
 			};
 			const focused = document.activeElement;
+			// a pointer over the canvas is the Hand's, whatever holds the keys
+			const overCanvas = hover.current?.closest('[role="application"]') != null;
 			return (
 				read(hover.current) ??
-				read(focused) ??
-				(focused?.getAttribute("role") === "tree" ? read(focused.querySelector("[data-rail-cursor]")) : null) ??
+				(overCanvas ? null : read(focused)) ??
+				(!overCanvas && focused?.getAttribute("role") === "tree"
+					? read(focused.querySelector("[data-rail-cursor]"))
+					: null) ??
 				read(document.querySelector('[data-peek-from="list"][aria-current="true"]'))
 			);
 		};

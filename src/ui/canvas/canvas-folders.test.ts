@@ -223,9 +223,27 @@ describe("the peek", () => {
 		expect(on(host)).toBe("");
 	});
 
-	it("leaves Space to the Hand on a page of frames", async () => {
+	it("leaves Space to the Hand on a page of frames, the tree's cursor on a folder or not", async () => {
 		const host = await mountCanvas(KAFFE);
 		await into(host, "app");
+		await space();
+		expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
+		expect(card()).toBeNull();
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keyup", { key: " ", code: "Space", bubbles: true }));
+		});
+
+		// the tree holds the keys with its cursor on a folder that is not this page, the pointer over the canvas
+		const tree = host.querySelector<HTMLElement>('[aria-label="Pages tree"]');
+		await act(async () => tree?.focus());
+		const cursor = () => host.querySelector<HTMLElement>('[role="tree"] [data-rail-cursor]')?.dataset.dropPage;
+		for (let step = 0; step < 6 && cursor() !== "explore"; step++) await keydown({ key: "ArrowDown" });
+		await into(host, "explore/checkout");
+		await act(async () => tree?.focus());
+		expect(cursor()).toBe("explore");
+		await act(async () => {
+			host.querySelector('[role="application"]')?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+		});
 		await space();
 		expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
 		expect(card()).toBeNull();
