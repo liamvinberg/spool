@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.51.2
+
+### Patch Changes
+
+- bb3232b: Recording at the frame's own shape plays the frame at its size on the canvas, so the clip looks like the canvas. It used to stretch the frame to the window's height.
+- 55b5512: Clips are sharper. A clip used to top out at 1080p, softer than the frame looked on a Mac's screen. It now grows, up to 4K, until the frame is drawn as sharp as the screen showed it.
+
 ## 0.51.1
 
 ### Patch Changes
