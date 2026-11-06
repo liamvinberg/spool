@@ -19,7 +19,14 @@ const HEADER = `/* Written by \`pnpm design:sync\` from spool's src/ui/theme.css
 
 const SYSTEM = "design/shared/system";
 
-/** The primitives and what they import from the repo, each source file under `src/` once. */
+/**
+ * The experiments as declared, which spool.page's docs list from the canvas copy
+ * (`frames/site/docs--experimental`), so a feature that graduates or goes leaves the
+ * docs with the next sync.
+ */
+const EXPERIMENTS = "src/settings/experiments.ts";
+
+/** The primitives, the experiments, and what they import from the repo, each source file under `src/` once. */
 function code(root: string): string[] {
 	const dir = join(root, "src/ui/primitives");
 	const todo = existsSync(dir)
@@ -27,6 +34,7 @@ function code(root: string): string[] {
 				.filter((name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
 				.map((name) => join(dir, name))
 		: [];
+	if (existsSync(join(root, EXPERIMENTS))) todo.push(join(root, EXPERIMENTS));
 	const seen = new Set<string>();
 	for (let file = todo.pop(); file !== undefined; file = todo.pop()) {
 		if (seen.has(file)) continue;
