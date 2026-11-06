@@ -374,7 +374,8 @@ export function usePagePeek({
 				api.close();
 			},
 		} satisfies Partial<Record<HotkeyIdFor<"peek">, HotkeyHandler>>;
-		const keyOpen = () => peekRef.current?.why === "key";
+		// a drag in flight owns Esc and the arrows, to put it back: the rail's layer sits under this one
+		const keyOpen = () => peekRef.current?.why === "key" && carryingRef.current === null;
 		const detachOpen = attachHotkeyLayer({ scope: "peek", active: keyOpen, handlers: openKeys });
 		const detachSide = attachHotkeyLayer({
 			scope: "peek",
