@@ -52,7 +52,8 @@ export function PageListView({
 						data-page-row={row.page}
 						aria-current={row.page === lit ? "true" : undefined}
 						aria-label={`${row.name}, ${holdsLine(row)}`}
-						onPointerEnter={() => row.page !== lit && onLight(row.page)}
+						// a move, not an arrival: a list drawn under a resting pointer keeps its first row lit
+						onPointerMove={() => row.page !== lit && onLight(row.page)}
 						onClick={() => onGo(row.page)}
 						className={cn(
 							"flex h-16 cursor-pointer items-center gap-3 rounded-md px-2 text-left transition-colors duration-fast ease-out",
