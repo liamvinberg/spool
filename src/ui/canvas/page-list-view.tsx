@@ -4,6 +4,7 @@ import { cn } from "../cn";
 import { ChevronIcon } from "../icons";
 import { Thumbnail } from "../primitives/display";
 import { holdsLine, type PageListRow } from "./page-list";
+import { LIST_ASIDE } from "./use-page-peek";
 
 /**
  * A page of pages, drawn as the list of them (spool#224): centred rows, each
@@ -12,19 +13,25 @@ import { holdsLine, type PageListRow } from "./page-list";
  * go; the pointer lights the row it is over, the arrows walk it, and a click
  * goes in. Nothing here renders a frame: every picture is a still.
  *
- * Each row carries its page as `data-page-row`, which is where a drop and a
- * peek will anchor.
+ * Each row is a folder: a frame dragged onto it moves there, and Space over
+ * it peeks at it, the list stepping aside so the two stand centred together.
  */
 export function PageListView({
 	project,
 	rows,
 	lit,
+	aside = false,
+	dropLit = null,
 	onLight,
 	onGo,
 }: {
 	project: string;
 	rows: readonly PageListRow[];
 	lit: string | null;
+	/** a peek stands beside a row: the list steps aside to make room for it */
+	aside?: boolean;
+	/** the row a drag is aimed at */
+	dropLit?: string | null;
 	onLight: (page: string) => void;
 	onGo: (page: string) => void;
 }) {
@@ -43,13 +50,25 @@ export function PageListView({
 			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}
 		>
-			<div ref={list} className="mx-auto mt-20 mb-16 flex w-[min(560px,calc(100%-48px))] flex-col">
+			<div
+				ref={list}
+				data-page-list-rows=""
+				className="mx-auto mt-20 mb-16 flex w-[min(560px,calc(100%-48px))] flex-col"
+				style={{
+					transform: aside ? `translateX(${-LIST_ASIDE}px)` : "none",
+					transition: "transform var(--transition-duration-slow) var(--ease-snap)",
+				}}
+			>
 				{rows.map((row) => (
 					<button
 						type="button"
 						key={row.page}
 						tabIndex={-1}
 						data-page-row={row.page}
+						data-drop-page={row.page}
+						data-drop-at="list"
+						data-peek-from="list"
+						data-drop-lit={row.page === dropLit ? "" : undefined}
 						aria-current={row.page === lit ? "true" : undefined}
 						aria-label={`${row.name}, ${holdsLine(row)}`}
 						// a move, not an arrival: a list drawn under a resting pointer keeps its first row lit
@@ -57,7 +76,7 @@ export function PageListView({
 						onClick={() => onGo(row.page)}
 						className={cn(
 							"flex h-16 cursor-pointer items-center gap-3 rounded-md px-2 text-left transition-colors duration-fast ease-out",
-							row.page === lit && "bg-state-hover",
+							row.page === dropLit ? "bg-accent-subtle" : row.page === lit && "bg-state-hover",
 						)}
 					>
 						<Thumbnail
@@ -67,7 +86,14 @@ export function PageListView({
 							}
 						/>
 						<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-							<span className="truncate text-primary type-value">{row.name}</span>
+							<span
+								className={cn(
+									"truncate type-value",
+									row.page === dropLit ? "text-accent-strong" : "text-primary",
+								)}
+							>
+								{row.name}
+							</span>
 							<span className="truncate text-secondary tabular-nums type-detail">{holdsLine(row)}</span>
 						</div>
 						<span aria-hidden="true" className="size-3 text-tertiary [&>svg]:size-full">

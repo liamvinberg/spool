@@ -167,6 +167,7 @@ import {
 	type History,
 	type HistoryEntry,
 	type Liveness,
+	placesOf,
 	record,
 	rectsOf,
 	type Staging,
@@ -189,6 +190,7 @@ import {
 } from "./lifecycle";
 import { overviewNeighbours, stepDirection } from "./live-moves";
 import { watchMotionStrain } from "./motion-strain";
+import { isMovedEntry, MOVED_UNDO_MS, MovedToast, movedLine } from "./moved-toast";
 import { NoticeStack } from "./notice-stack";
 import {
 	type ElementPreview,
@@ -204,6 +206,8 @@ import {
 import { OverviewCatcher, OverviewLayer } from "./overview-layer";
 import { chainOf, downOf, listsPages, pageListRows, pageTreeOf } from "./page-list";
 import { PageListView } from "./page-list-view";
+import type { CarryTarget } from "./page-peek";
+import { PagePeekCard } from "./page-peek-view";
 import {
 	camerasFromState,
 	frameFolderRel,
@@ -251,6 +255,7 @@ import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
 import { HOLD_PAINT_MS, PICK_REPLY_MS, useHandEdit } from "./use-hand-edit";
 import { type KnobLane, useKnobLane } from "./use-knobs";
 import { useLiveMoves } from "./use-live-moves";
+import { usePagePeek } from "./use-page-peek";
 import { useFollow, usePointerHidden, usePresenceSender } from "./use-presence";
 import { stepVisits, type Visits, visit, visitsAround, visitsFrom } from "./visits";
 import { WalkLayer, walksOf } from "./walk-layer";
@@ -2041,11 +2046,30 @@ function CanvasField({
 		[store],
 	);
 
+	/** the last move a drag made, said with its Undo until the next change or the drain (spool#224) */
+	const [moved, setMoved] = useState<{ readonly entry: HistoryEntry; readonly line: string } | null>(null);
 	const recordEntry = useCallback(
 		(entry: HistoryEntry) => {
 			updateHistory(record(history.current, entry));
+			setMoved(
+				isMovedEntry(entry)
+					? { entry, line: movedLine(entry, (page) => (page === ROOT_PAGE ? project : pageName(page))) }
+					: null,
+			);
 		},
-		[updateHistory],
+		[updateHistory, project],
+	);
+	useEffect(() => {
+		if (moved === null) return;
+		const timer = setTimeout(() => setMoved(null), MOVED_UNDO_MS);
+		return () => clearTimeout(timer);
+	}, [moved]);
+	/** frames let go on a spot of a peek: where they stand on their new page is the plane's, so it is written here */
+	const placeLanded = useCallback(
+		(rects: Record<string, Geometry>) => {
+			void putGeometry(project, rects).then(() => refetchFrames());
+		},
+		[project, refetchFrames],
 	);
 
 	// --- tidy: the layered drawing of the graph, laid over the field ------------
@@ -2679,6 +2703,7 @@ function CanvasField({
 			const taken = way === "undo" ? takeUndo(held, alive) : takeRedo(held, alive);
 			if (taken === undefined) return;
 			updateHistory(taken.history);
+			setMoved(null);
 			const entry = taken.entry;
 			if (entry.kind === "geometry") {
 				applyRects(rectsOf(entry.rects, way));
@@ -2707,6 +2732,8 @@ function CanvasField({
 			void runEntry.current?.(entry, way).then((ran) => {
 				if (ran) {
 					if (entry.kind === "gather" && way === "undo") stageEntry({ frames: [], page: entry.page });
+					// frames let go on a spot go back to where they stood, or out to that spot again
+					if (entry.kind === "move" && entry.places !== undefined) placeLanded(placesOf(entry, way));
 					return;
 				}
 				// a press that landed after this one owns the stacks now
@@ -2715,7 +2742,18 @@ function CanvasField({
 				void refetchFrames();
 			});
 		},
-		[applyRects, flushNudge, knobs, liveness, refetchFrames, stageEntry, undoTrash, updateHistory, walkHand],
+		[
+			applyRects,
+			flushNudge,
+			knobs,
+			liveness,
+			refetchFrames,
+			stageEntry,
+			undoTrash,
+			updateHistory,
+			walkHand,
+			placeLanded,
+		],
 	);
 
 	/**
@@ -3009,6 +3047,21 @@ function CanvasField({
 		},
 		[recordDeparture, switchToPage],
 	);
+	/**
+	 * The peek (spool#224): Space over a folder shows its stills, and a frame
+	 * carried over one for a beat springs its peek open. One carrier reads every
+	 * drag over the chrome, the canvas's frame drag and the rail's row drag alike.
+	 */
+	const peeking = usePagePeek({
+		activePage,
+		pageOfFrame: pageParent,
+		onLight: setSelectedPage,
+		onGo: goInsidePage,
+	});
+	const carrier = peeking.carrier;
+	/** where the frames being dragged off the field would land on the chrome */
+	const carryTo = useRef<CarryTarget | null>(null);
+
 	/** ⌘↓: into the page picked among this one's, else the first of them; false with none */
 	const pageDown = useCallback((): boolean => {
 		const state = store.get();
@@ -4101,6 +4154,8 @@ function CanvasField({
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
+		carryTo.current = null;
+		carrier.end();
 		dropResize();
 		setDropLine(null);
 		setMarks(NO_MARKS);
@@ -4120,7 +4175,7 @@ function CanvasField({
 				current.map((frame) => (frame.name === active.frame ? { ...frame, ...active.origin } : frame)),
 			);
 		}
-	}, [dropResize]);
+	}, [dropResize, carrier]);
 
 	const originsOf = (names: readonly string[]): Map<string, Point> => {
 		const origins = new Map<string, Point>();
@@ -4465,6 +4520,8 @@ function CanvasField({
 		}
 
 		if (active.kind === "move") {
+			// off the field and over a folder, the drag is a move to another page (spool#224)
+			carryTo.current = carrier.over({ kind: "frame", names: active.names }, event.clientX, event.clientY);
 			const rawX = (p.x - active.start.x) / cam.k;
 			const rawY = (p.y - active.start.y) / cam.k;
 			const movingBoxes: Box[] = [];
@@ -4588,7 +4645,22 @@ function CanvasField({
 		setMarquee(null);
 		setResizeCursor(null);
 		setResizingFrame(null);
-		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
+		if (active.kind === "move") {
+			const to = carryTo.current;
+			carryTo.current = null;
+			carrier.end();
+			if (to === null) commitGeometry(active.names, moveBefore(active.origins));
+			else {
+				// let go on a folder: the frames leave this page from where they stood, never from where the drag left them
+				setFrames((current) =>
+					current.map((frame) => {
+						const origin = active.origins.get(frame.name);
+						return origin === undefined ? frame : { ...frame, x: origin.x, y: origin.y };
+					}),
+				);
+				frameVerbs.current?.move(active.names, to);
+			}
+		}
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
 		if (active.kind === "element-drag") {
 			setDropLine(null);
@@ -5336,6 +5408,7 @@ function CanvasField({
 		!navigatorFrames.some((frame) => pageOf(frame) === activePage) &&
 		!placeholders.some((one) => (one.page ?? ROOT_PAGE) === activePage);
 	/** the path: the page's chain from the project, then a ghost of where ⌘↓ goes */
+	const carryingFrames = peeking.carrying?.kind === "frame";
 	const pathSegs = useMemo((): PathSeg[] => {
 		const chain = chainOf(activePage);
 		const up = activePage === ROOT_PAGE ? null : pageParent(activePage);
@@ -5348,11 +5421,17 @@ function CanvasField({
 					keys: page === up ? PATH_KEYS.up() : undefined,
 				}),
 			),
-			...(downTo === null
-				? []
-				: [{ page: downTo, name: pageName(downTo), kind: "ghost" as const, keys: PATH_KEYS.down() }]),
+			// a frame carried sees every folder below here it could be let go in
+			...(carryingFrames ? (pageTree.get(activePage) ?? []) : downTo === null ? [] : [downTo]).map(
+				(page): PathSeg => ({
+					page,
+					name: pageName(page),
+					kind: "ghost",
+					keys: page === downTo ? PATH_KEYS.down() : undefined,
+				}),
+			),
 		];
-	}, [activePage, downTo, project]);
+	}, [activePage, downTo, project, carryingFrames, pageTree]);
 	const pathTrail = useMemo(() => {
 		if (visits === null) return [];
 		const stands = new Set([ROOT_PAGE, ...navigatorPages]);
@@ -5584,6 +5663,10 @@ function CanvasField({
 					onMarkSeen={markRead}
 					under={elementTree.under}
 					onSharePage={projectShares?.state === "ready" && projectShares.manage ? openShare : undefined}
+					carrier={carrier}
+					dropPage={peeking.target?.at === "tree" ? peeking.target.page : null}
+					peeked={peeking.peek?.from === "tree" ? peeking.peek.page : null}
+					onPlaced={placeLanded}
 				/>
 			),
 		},
@@ -5913,6 +5996,8 @@ function CanvasField({
 								project={project}
 								rows={listRows}
 								lit={downTo}
+								aside={peeking.peek?.from === "list"}
+								dropLit={peeking.target?.at === "list" ? peeking.target.page : null}
 								onLight={setSelectedPage}
 								onGo={goInsidePage}
 							/>
@@ -6139,6 +6224,14 @@ function CanvasField({
 							/>
 						)}
 						{versions.toast}
+						{moved !== null && (
+							<MovedToast
+								// a new move is a new undo window, so its drain starts again
+								key={JSON.stringify(moved.entry)}
+								line={moved.line}
+								onUndo={() => walk("undo")}
+							/>
+						)}
 						{notice !== null ? <NoticeToast notice={notice} /> : null}
 					</NoticeStack>
 					{/* The agent rail stays available beside an empty canvas. The path also
@@ -6177,6 +6270,9 @@ function CanvasField({
 					{!projectEmpty && !listing && <CanvasTools tool={effectiveTool} onTool={chooseTool} team={team} />}
 					{loaded && !projectEmpty && (
 						<CanvasPath
+							awake={peeking.carrying !== null || peeking.peek?.from === "path"}
+							lit={peeking.target?.at === "path" ? peeking.target.page : null}
+							peeked={peeking.peek?.from === "path" ? peeking.peek.page : null}
 							segs={pathSegs}
 							way={pathWay}
 							accelDown={accelDown}
@@ -6189,6 +6285,26 @@ function CanvasField({
 							}}
 						/>
 					)}
+					<PagePeekCard
+						project={project}
+						peek={peeking.peek}
+						world={pageWorld}
+						label={(page) => (page === ROOT_PAGE ? project : page)}
+						target={peeking.target}
+						carried={
+							peeking.carrying?.kind === "frame"
+								? (navigatorFrames.find((frame) => frame.name === peeking.carrying?.names[0]) ?? null)
+								: null
+						}
+						onGo={(page) => {
+							peeking.close();
+							goInsidePage(page);
+						}}
+						onFrame={(name) => {
+							peeking.close();
+							landOnFrame(name);
+						}}
+					/>
 					{finding ? (
 						<PanePalette
 							frames={navigatorFrames}

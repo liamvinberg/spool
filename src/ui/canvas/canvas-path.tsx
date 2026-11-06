@@ -75,6 +75,9 @@ export function CanvasPath({
 	moved,
 	trail,
 	viewport,
+	awake = false,
+	lit = null,
+	peeked = null,
 	onGo,
 }: {
 	segs: readonly PathSeg[];
@@ -88,6 +91,12 @@ export function CanvasPath({
 	trail: readonly { keys: string; name: string }[];
 	/** the canvas whose pointer wakes the path */
 	viewport: RefObject<HTMLElement | null>;
+	/** something wants the path read now: a drag that could land on a name, a peek opened from one */
+	awake?: boolean;
+	/** the name a drag is aimed at */
+	lit?: string | null;
+	/** the name a peek is showing */
+	peeked?: string | null;
 	onGo: (page: string) => void;
 }) {
 	const still = useReducedMotion() === true;
@@ -124,7 +133,7 @@ export function CanvasPath({
 		depth: 0,
 		pending: false,
 	});
-	wake.current.force = held;
+	wake.current.force = held || awake;
 	const kick = useRef(() => {});
 	kick.current = () => {
 		const w = wake.current;
@@ -158,7 +167,7 @@ export function CanvasPath({
 		ask();
 	};
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a change in what holds the path awake restarts the easing
-	useEffect(() => kick.current(), [held]);
+	useEffect(() => kick.current(), [held, awake]);
 	useEffect(() => {
 		if (moved === 0) return;
 		wake.current.ping = performance.now();
@@ -225,7 +234,7 @@ export function CanvasPath({
 									<Sep />
 								</span>
 							)}
-							<PathName seg={seg} fade={fade} onGo={onGo} />
+							<PathName seg={seg} fade={fade} lit={seg.page === lit} peeked={seg.page === peeked} onGo={onGo} />
 							{seg.keys === undefined ? null : <HeldKey keys={seg.keys} held={held} fade={dur} after={at > 0} />}
 						</motion.span>
 					);
@@ -259,38 +268,63 @@ export function CanvasPath({
  * One name on the path. A name on its way out is only ink: it is no target,
  * and it says no page, so only the names that stand are a way somewhere.
  */
-function PathName({ seg, fade, onGo }: { seg: PathSeg; fade: string; onGo: (page: string) => void }) {
+function PathName({
+	seg,
+	fade,
+	lit,
+	peeked,
+	onGo,
+}: {
+	seg: PathSeg;
+	fade: string;
+	/** a drag is aimed at it: it reads in accent ink over an accent wash, awake or not */
+	lit: boolean;
+	peeked: boolean;
+	onGo: (page: string) => void;
+}) {
 	const present = useIsPresent();
 	const [t, s, ws, wp] = inks(seg.kind);
+	// every name that stands is a folder a drag can land in and Space can peek at, but the page you are on
+	const folder = present && seg.kind !== "here";
 	return (
 		<button
 			type="button"
-			// a drop target and a peek anchor to come (spool#224)
 			data-path-page={present ? seg.page : undefined}
 			data-path-kind={present ? seg.kind : undefined}
+			data-drop-page={folder ? seg.page : undefined}
+			data-drop-at={folder ? "path" : undefined}
+			data-peek-from={folder ? "path" : undefined}
+			data-drop-lit={lit ? "" : undefined}
 			aria-current={seg.kind === "here" ? "page" : undefined}
 			aria-hidden={present ? undefined : true}
 			tabIndex={present ? undefined : -1}
 			aria-label={seg.kind === "here" ? seg.name : seg.kind === "ghost" ? `Into ${seg.name}` : `Up to ${seg.name}`}
 			onClick={() => present && seg.kind !== "here" && onGo(seg.page)}
 			className={cn(
-				"relative grid h-control-sm items-center rounded-xs px-1 type-value",
+				"relative grid h-control-sm items-center rounded-xs px-1 type-value transition-colors duration-fast ease-out",
 				seg.kind === "here" || !present ? "pointer-events-none" : "cursor-pointer",
+				lit ? "bg-accent-subtle" : peeked && "bg-state-selected",
 			)}
 		>
 			{/* at rest */}
-			<span className="col-start-1 row-start-1 text-tertiary" style={{ opacity: t, transition: fade }}>
+			<span className="col-start-1 row-start-1 text-tertiary" style={{ opacity: lit ? 0 : t, transition: fade }}>
 				{seg.name}
 			</span>
-			<span className="col-start-1 row-start-1 text-secondary" style={{ opacity: s, transition: fade }}>
+			<span className="col-start-1 row-start-1 text-secondary" style={{ opacity: lit ? 0 : s, transition: fade }}>
 				{seg.name}
 			</span>
 			{/* woken: rides --wake, which moves every frame, so it carries no transition of its own */}
-			<span aria-hidden="true" className="col-start-1 row-start-1 grid" style={{ opacity: "var(--wake)" }}>
-				<span className="col-start-1 row-start-1 text-secondary" style={{ opacity: ws, transition: fade }}>
+			<span aria-hidden="true" className="col-start-1 row-start-1 grid" style={{ opacity: lit ? 1 : "var(--wake)" }}>
+				<span
+					className="col-start-1 row-start-1 text-secondary"
+					style={{ opacity: lit ? 0 : ws, transition: fade }}
+				>
 					{seg.name}
 				</span>
-				<span className="col-start-1 row-start-1 text-primary" style={{ opacity: wp, transition: fade }}>
+				<span
+					className={cn("col-start-1 row-start-1", lit ? "text-accent-strong" : "text-primary")}
+					style={{ opacity: lit ? 1 : wp, transition: fade }}
+				>
 					{seg.name}
 				</span>
 			</span>

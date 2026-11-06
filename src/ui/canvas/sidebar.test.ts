@@ -1155,6 +1155,30 @@ describe("the root page has no row", () => {
 		expect(framesListed(host)).toEqual(["home frame", "shell frame"]);
 	});
 
+	/** one line says the gap, the rows under it slide aside, and Esc puts every one of them back (spool#224) */
+	it("makes room at the gap it is aimed at, and puts the drag back on Esc with nothing written", async () => {
+		const kept: HistoryEntry[] = [];
+		const { host } = await render({ pages: [], frames: loose, onRecord: (e) => kept.push(e) });
+		const shell = () =>
+			host.querySelector('button[aria-label="home frame"]')?.closest<HTMLElement>('[role="presentation"]');
+		const rest = shell()?.style.transform;
+		const wrote = () => asked.filter((call) => call.url.endsWith("/order")).length;
+		const before = wrote();
+
+		await liftRow(host, 'button[aria-label="shell frame"]', 50, 30);
+		await dragTo(6, 30);
+		expect(host.querySelectorAll("[data-insertion-line]")).toHaveLength(1);
+		expect(shell()?.style.transform).not.toBe(rest);
+
+		await act(async () => press("Escape"));
+		expect(host.querySelector("[data-insertion-line]")).toBeNull();
+		expect(shell()?.style.transform).toBe(rest);
+		await letGo(6, 30);
+		expect(framesListed(host)).toEqual(["home frame", "shell frame"]);
+		expect(wrote()).toBe(before);
+		expect(kept).toEqual([]);
+	});
+
 	it("moves a frame out of a page and onto the root page, and puts it back", async () => {
 		const kept: HistoryEntry[] = [];
 		const run: { current: RunEntry | null } = { current: null };

@@ -193,6 +193,62 @@ describe("a page of frames", () => {
 	});
 });
 
+describe("the peek", () => {
+	const card = () => document.querySelector<HTMLElement>("[data-peek-card]");
+	const space = () => keydown({ key: " ", code: "Space" });
+
+	/** Space looks into a folder without going in: its stills, never a live frame */
+	it("opens over the lit row on Space with the folder's stills, walks with the arrows, and goes on Esc", async () => {
+		const host = await mountCanvas(KAFFE);
+		await until(() => lit(host) === "app");
+		await space();
+		await until(() => card() !== null);
+		expect(card()?.querySelector("[data-peek-map]")?.getAttribute("data-peek-map")).toBe("app");
+		expect(card()?.querySelector("img")?.getAttribute("src")).toBe("/covers/test/app%2Fmenu/m1");
+		expect(card()?.querySelector("iframe")).toBeNull();
+
+		// the next folder down, the list's lit row following it; a folder of folders shows them
+		await keydown({ key: "ArrowDown" });
+		expect(lit(host)).toBe("explore");
+		await until(() => card()?.querySelector('[data-drop-page="explore/checkout"]') != null);
+
+		await keydown({ key: "Escape" });
+		await until(() => card() === null);
+		expect(on(host)).toBe("");
+	});
+
+	it("leaves Space to the Hand on a page of frames", async () => {
+		const host = await mountCanvas(KAFFE);
+		await into(host, "app");
+		await space();
+		expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
+		expect(card()).toBeNull();
+	});
+});
+
+describe("a frame dragged off the field", () => {
+	/** the path's names are folders a frame lands in, through the rail's own move, with its undo said */
+	it("moves to the page named on the path it is let go on, and says so with an Undo", async () => {
+		const host = await mountCanvas(KAFFE);
+		await into(host, "app");
+		const root = host.querySelector<HTMLElement>('[data-path-page=""]');
+		expect(root?.dataset.dropAt).toBe("path");
+		// happy-dom lays nothing out, so the point the frame is let go at is said to be over that name
+		const original = document.elementFromPoint;
+		document.elementFromPoint = (x: number) => (x > 500 ? root : null);
+		onTestFinished(() => {
+			document.elementFromPoint = original;
+		});
+		await drag(host, screenAt(host, { x: 10, y: 10 }), { x: 600, y: 4 });
+
+		const fetched = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith("/frames/move"));
+		expect(JSON.parse(String(fetched?.[1]?.body))).toEqual({ frames: ["app/menu"], page: "" });
+		await until(() => host.textContent?.includes("Moved menu to test") === true);
+		// nothing the move took is written where the drag left it on the page it left
+		expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith("/geometry"))).toBe(false);
+	});
+});
+
 async function keydown(init: KeyboardEventInit): Promise<void> {
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init }));
