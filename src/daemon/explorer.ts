@@ -14,12 +14,6 @@ import {
 } from "../page-path";
 import { variantName } from "../variant-name";
 import { readOrder, withPageMoved, withPagesDropped, writeOrder } from "./canvas-order";
-import {
-	withPagesDropped as placesAfterDrop,
-	withPageMoved as placesAfterMove,
-	readPlaces,
-	writePlaces,
-} from "./canvas-places";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { type Moved, retargetFor, retargetLinks } from "./frame-links";
 import { type Geometry, sidecarFileIn, writeGeometry } from "./geometry";
@@ -88,10 +82,6 @@ function carryPage(root: string, from: string, to: string): void {
 	if (state !== undefined) writeCanvasState(root, state);
 	const order = withPageMoved(readOrder(root), from, to);
 	if (order !== undefined) writeOrder(root, order);
-	// where it stands on the field is its arrangement (#265): a rename keeps it,
-	// a change of parent gives it up, and the projection completes the new one
-	const places = placesAfterMove(readPlaces(root), from, to);
-	if (places !== undefined) writePlaces(root, places);
 }
 
 /**
@@ -363,8 +353,6 @@ export function forgetPages(root: string, pages: readonly string[]): void {
 	if (state !== undefined) writeCanvasState(root, state);
 	const order = withPagesDropped(readOrder(root), pages);
 	if (order !== undefined) writeOrder(root, order);
-	const places = placesAfterDrop(readPlaces(root), pages);
-	if (places !== undefined) writePlaces(root, places);
 }
 
 function describeMissingPage(page: string): string {

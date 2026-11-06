@@ -9,6 +9,7 @@ import {
 	type History,
 	type HistoryEntry,
 	type Liveness,
+	placesOf,
 	type Rects,
 	record,
 	rectsOf,
@@ -234,6 +235,26 @@ describe("move entries", () => {
 		expect(held?.entry.kind === "move" ? held.entry.frames.map((each) => each.name) : undefined).toEqual([
 			"admin/pay",
 		]);
+	});
+
+	/** a frame let go on a spot of a peek moved page and place in one gesture, so one press takes back both */
+	it("puts frames let go on a spot back where they stood, by the names the run leaves them", () => {
+		const placed: HistoryEntry = {
+			kind: "move",
+			frames: [
+				{ name: "cart", from: "" },
+				{ name: "admin/pay", from: "admin" },
+			],
+			to: "shop",
+			lists: [],
+			places: { cart: { before: rect(0), after: rect(500, 300) } },
+		};
+		const history = record(emptyHistory(), placed);
+		// pay is gone from where the move left it, so only cart goes back, and only cart's spot
+		const taken = takeUndo(history, at({ "shop/cart": "shop" }, ["shop", "admin"]));
+		const entry = taken?.entry.kind === "move" ? taken.entry : undefined;
+		expect(entry === undefined ? undefined : placesOf(entry, "undo")).toEqual({ cart: rect(0) });
+		expect(entry === undefined ? undefined : placesOf(entry, "redo")).toEqual({ "shop/cart": rect(500, 300) });
 	});
 });
 

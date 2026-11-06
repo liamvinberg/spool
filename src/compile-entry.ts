@@ -34,7 +34,7 @@
  * called until a compile is.
  */
 
-export type { CanvasOrder, CanvasPlaces, Place } from "./daemon/canvas-fields";
+export type { CanvasOrder } from "./daemon/canvas-fields";
 export { type ClassScanner, type ScannedFile, scanCandidates } from "./daemon/class-scanner";
 export {
 	type CompiledAsset,

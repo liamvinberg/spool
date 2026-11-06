@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.51.1
+
+### Patch Changes
+
+- 3f873aa: Record works on a Mac. Every recording there failed, and took spool down with it, because the browser that renders the clip can't be told when to draw on macOS. On a Mac it now takes a picture of each frame instead, so clips come out just as smooth. A second recording in a row no longer fails to read the frame's clock, and a failed recording no longer stops spool.
+
+## 0.51.0
+
+### Minor Changes
+
+- 2b96f16: Added Settings › Experimental: one switch per feature still being tried, each with what it does and its trade-off, and a search over them. Fast refresh, Frame resolution and Element tree are off until you turn them on; Knobs is in beta and on, with a switch to turn it off. A change shows after a reload, which the section offers. `spool experiments` lists them and `spool experiments on <id>` or `off <id>` switches one. The switches live under `experimental` in `~/.spool/config.json`; an `experiments` list written by hand before still turns its features on.
+- 3042dde: Pages no longer stand on the canvas as pictures of the pages under them, and the shelf is gone. A page that holds only pages, the root too when it has no frames, now shows them as a list: each row has the page's still, its name and what it holds, and a click or ⏎ goes in. The path at the top left shows where you are and, fainter, where ⌘↓ goes; it wakes as the pointer nears the top, and holding ⌘ shows the keys. ⌘↑ goes up with the page you left picked, ⌘↓ goes into the picked page, and ⌘[ and ⌘] go back and forward through the pages you visited when no frame is held. A `places` key left in `canvas.json` is ignored and kept as it is. Space over a page in the Pages tree, a list row or a path name peeks at its frames as stills without going in; ↑↓ walk to the next page and Esc closes it. A frame dragged onto a page there moves it, a frame held over one opens its peek to be let go at a spot, rows dragged between others in the tree make room under one insertion line, Esc puts a drag back, and every move says so with an Undo.
+- 0109d88: Added Record, an experiment you turn on in Settings › Experimental. Right-click a frame and pick Record, or press the dot in the player's bar, and pick 16:9, 1:1 or the frame's own shape: the frame plays at that shape while you record, so what you see is what the clip holds. Press the time or Escape to stop, and an MP4 downloads once it has rendered, ready to post. The clip is rendered at 60 fps, so it plays smoothly whatever your machine was doing, with the frame's own sound and a Mac cursor that glides and hides when the pointer rests. It follows you when you walk to another frame, and recording stops by itself at a minute. `spool record <frame>` makes a clip of a frame that plays by itself, with `--seconds`, `--aspect` and `--out`.
+- 506245b: Team projects can be renamed now, from the tab or from Rename on their card, by the team's editors and admins. The team renames it for everyone, and teammates' copies follow by themselves. New project in a team opens with its name ready to type, as it does on your own Mac. An admin can delete a team project from its card with Delete from the team. It waits in the team's trash for 30 days. On a team project, Move to Trash is now Remove from this Mac, which says the team keeps it. An untitled team project you close without using is deleted by itself, as your own untitled projects are.
+
+### Patch Changes
+
+- da7cd94: After an update, Home and the Cloud Account menu no longer show you signed out until you reload. When spool.page doesn't answer right after Spool starts, Spool asks again by itself and shows your account once it does.
+- 86d79b9: A daemon too busy to answer in time no longer loses its saved credential. Before, a slow daemon looked dead to the CLI, which deleted its record and left every command refusing until the process was killed by hand.
+- ccb7197: Match the team is now called Reset to team's version, in a team project's tab menu and on its sync notices, so it says what it does.
+- 1a1daff: In a team project, `spool check` now fails on every file in design/ that stays on your Mac, such as a screenshot left at its top, and says how to fix each one, so an agent cleans them up. Closing the "files didn't travel" notice on the canvas now keeps it closed after a reload, until another file stays behind, and the notice no longer offers Match the team, which never changed those files.
+- 76325cc: New project in a team opens in about a third of a second instead of two or more. Spool now picks a free name in one try and lets the project upload in the background. A name held by a project in the team's trash no longer stops New project; it moves on to the next free name.
+
 ## 0.50.0
 
 ### Minor Changes

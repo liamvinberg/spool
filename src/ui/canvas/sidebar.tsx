@@ -19,6 +19,7 @@ import {
 	duplicatePage,
 	type FrameCopy,
 	fetchOrder,
+	type Geometry,
 	moveFrames,
 	movePages,
 	type ProjectedFrame,
@@ -50,6 +51,7 @@ import {
 	without,
 	withPageOrder,
 } from "./order";
+import { type Carried, type Carrier, type CarryTarget, canLand, placesAt, SPRING_MS } from "./page-peek";
 import { framesOnPage, pageLabel, pageOf } from "./pages";
 import { PaneMore } from "./pane-tabs";
 import { PaneActions } from "./pane-window";
@@ -116,21 +118,10 @@ const SLOP = 5;
 /** the band at each end of the list that pulls the scroll along */
 const EDGE = 36;
 const EDGE_SPEED = 14;
-/**
- * How long a drag has to rest on a shut page before it springs open.
- *
- * A drag crosses folders on its way to somewhere else, so opening every one it
- * touches unfolds the tree under the hand that is trying to cross it — the list
- * grows, the rows move, and the gap being aimed at is somewhere else by the time
- * the pointer gets there. Resting is the difference between passing over a folder
- * and looking into one, and the arc on the chevron says the rest is being counted.
- * Mirrored by `--spring-ms` on that arc.
- */
-const SPRING_MS = 450;
+/** px the rows under a gap slide down to make room for what is carried into it */
+const ROOM = 10;
 /** how long a typed jump keeps collecting letters */
 const TYPED_MS = 700;
-/** the house curve, which every rail transition already wears */
-const CURVE = "cubic-bezier(0.23,1,0.32,1)";
 
 export interface SelectModifiers {
 	shift: boolean;
@@ -231,6 +222,12 @@ export interface FrameVerbs {
 	copy: (names: readonly string[]) => void;
 	paste: () => Promise<void>;
 	duplicate: (names: readonly string[]) => Promise<void>;
+	/**
+	 * Frames dragged off the canvas onto a folder, or onto a spot of its peek
+	 * (spool#224); `from` is where they stood before the drag, which the rail's
+	 * copy of the frames has not caught up with yet.
+	 */
+	move: (names: readonly string[], target: CarryTarget, from?: Record<string, Geometry>) => void;
 }
 
 /**
@@ -281,11 +278,17 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	onRecord,
 	run,
 	litPage = null,
+	pickedPage = null,
+	onOrder,
 	unseen = NOTHING_UNSEEN,
 	onMarkSeen,
 	under = null,
 	onSharePage,
 	verbs,
+	carrier,
+	dropPage = null,
+	peeked = null,
+	onPlaced,
 }: {
 	project: string;
 	/** Every named page's path, sorted; the root page is implied and has no row. */
@@ -327,6 +330,10 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	run?: React.RefObject<RunEntry | null>;
 	/** The page holding the finder's pick — its row lights while the palette is up. */
 	litPage?: string | null;
+	/** The page picked on the canvas, where ⌘↓ goes: its row is selected, as Finder lands on the folder left. */
+	pickedPage?: string | null;
+	/** The stored order as read and as each verb stores it, for the canvas's list of a page of pages. */
+	onOrder?: (order: CanvasOrder) => void;
 	/**
 	 * What nobody has looked at (seen.ts). A frame row wears its own mark; a page
 	 * row wears one only while it is shut, and says only that something inside it
@@ -349,6 +356,18 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	onSharePage?: ((page: string) => void) | undefined;
 	/** where the rail hands its frame verbs to the canvas */
 	verbs?: { current: FrameVerbs | null };
+	/**
+	 * The one reading of a drag over the chrome (spool#224): where a row carried
+	 * out of this list would land, on a list row, a path name or a peek, and the
+	 * peek a frame resting on a folder springs open.
+	 */
+	carrier?: Carrier | undefined;
+	/** the folder row a drag from outside the rail is aimed at, lit as this rail's own would be */
+	dropPage?: string | null;
+	/** the folder a peek opened from this tree is showing, which stands selected while it does */
+	peeked?: string | null;
+	/** frames let go on a spot of a peek have landed: the canvas, which owns the plane, writes where they stand */
+	onPlaced?: (rects: Record<string, Geometry>) => void;
 }) {
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 	const [order, setOrder] = useState<CanvasOrder>({});
@@ -378,6 +397,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	const live = useRef<DragLive | null>(null);
 	const ticking = useRef<number | null>(null);
 	const landingRef = useRef<Landing | null>(null);
+	/** where the drag would land out past the list, on the chrome the carrier reads */
+	const outsideRef = useRef<CarryTarget | null>(null);
 	/** a press that became a drag must not also read as a click on the row it left */
 	const justDragged = useRef(false);
 	const typed = useRef({ buffer: "", at: 0 });
@@ -525,6 +546,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	 * both would otherwise close over the list as it was when they were built.
 	 */
 	const now = useRef({
+		frames,
+		carrier,
 		rows,
 		order,
 		orderedPages,
@@ -538,6 +561,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	});
 	useEffect(() => {
 		now.current = {
+			frames,
+			carrier,
 			rows,
 			order,
 			orderedPages,
@@ -553,10 +578,15 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 
 	/* ── the stored order ────────────────────────────────────────────── */
 
+	const onOrderRef = useRef(onOrder);
+	onOrderRef.current = onOrder;
+
 	useEffect(() => {
 		let reading = true;
 		void fetchOrder(project).then((stored) => {
-			if (reading) setOrder(stored);
+			if (!reading) return;
+			setOrder(stored);
+			onOrderRef.current?.(stored);
 		});
 		return () => {
 			reading = false;
@@ -567,6 +597,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	const storeOrder = useCallback(
 		(next: CanvasOrder) => {
 			setOrder(next);
+			onOrderRef.current?.(next);
 			putOrder(project, next);
 		},
 		[project],
@@ -791,10 +822,18 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	 *
 	 * `minted` says the page was made by the same gesture, which is one entry
 	 * rather than two: the press that takes the frames back has to take the page
-	 * with them.
+	 * with them. `spot` is where on the page they were let go, on a peek's map
+	 * (spool#224): the same move, and where they stand after it, in one entry.
 	 */
 	const moveFramesInto = useCallback(
-		(names: readonly string[], page: string, index: number, minted = false) => {
+		(
+			names: readonly string[],
+			page: string,
+			index: number,
+			minted = false,
+			spot?: { x: number; y: number },
+			from?: Record<string, Geometry>,
+		) => {
 			const held = now.current.order;
 			// where each frame stands right now, read before the move lands: the
 			// inverse has to put every one of them back on its own page
@@ -823,11 +862,35 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 			lists.push({ of: "frames", page, before: landing, after: arrived });
 			storeOrder(next);
 			setOpen(page, true);
+			// where each frame stands now and where it is let go, by the name it has now
+			const before = new Map(
+				now.current.frames
+					.filter((frame) => moved.some((each) => each.name === frame.name))
+					.map((frame) => [frame.name, from?.[frame.name] ?? { x: frame.x, y: frame.y, w: frame.w, h: frame.h }]),
+			);
+			const after =
+				spot === undefined
+					? {}
+					: placesAt(
+							[...before].map(([name, box]) => ({ name, ...box })),
+							spot,
+						);
+			const places = Object.fromEntries(
+				Object.entries(after).flatMap(([name, rect]) => {
+					const was = before.get(name);
+					return was === undefined ? [] : [[name, { before: was, after: rect }] as const];
+				}),
+			);
 			void moveFrames(project, [...names], page).then((done) => {
 				const carried = done.kind !== "refused" && moved.length > 0;
 				if (carried) {
 					const landed = new Map(moved.map((each) => [each.name, movedOnto(page, each.name)]));
 					framesCarried((name) => landed.get(name) ?? name);
+					if (Object.keys(places).length > 0) {
+						onPlaced?.(
+							Object.fromEntries(Object.entries(after).map(([name, rect]) => [movedOnto(page, name), rect])),
+						);
+					}
 				}
 				// the page exists whatever happened to the frames, so a move that never
 				// happened leaves it with the staged delete a fresh page has always had
@@ -837,13 +900,21 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 							? { kind: "gather", page, frames: moved, lists }
 							: { kind: "mint", staged: { frames: [], page } },
 					);
-				} else if (carried) onRecord?.({ kind: "move", frames: moved, to: page, lists });
+				} else if (carried) {
+					onRecord?.({
+						kind: "move",
+						frames: moved,
+						to: page,
+						lists,
+						...(Object.keys(places).length > 0 ? { places } : {}),
+					});
+				}
 				// the move never happened: put the rail back rather than let it claim it did
 				if (done.kind === "refused") storeOrder(held);
 				onRefresh();
 			});
 		},
-		[project, leavesOn, pageHolding, storeOrder, setOpen, framesCarried, onRecord, onRefresh],
+		[project, leavesOn, pageHolding, storeOrder, setOpen, framesCarried, onRecord, onRefresh, onPlaced],
 	);
 
 	/**
@@ -1130,14 +1201,6 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 		[project, landCopies, refuted],
 	);
 
-	useEffect(() => {
-		if (verbs === undefined) return;
-		verbs.current = { copy, paste: () => paste(), duplicate: duplicateNames };
-		return () => {
-			verbs.current = null;
-		};
-	}, [verbs, copy, paste, duplicateNames]);
-
 	/* ── the one undo stack (#230) ───────────────────────────────────── */
 
 	const runEntry = useCallback<RunEntry>(
@@ -1252,22 +1315,38 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 
 			const all = now.current.rows;
 			const contentY = current.y - box.top + list.scrollTop - LIST_PAD;
+			// out past the list's own edges the drag is the chrome's: a list row, a name
+			// on the path, a peek. In it, the list's own gaps and rows, as ever
+			const inside =
+				current.x >= box.left && current.x <= box.right && current.y >= box.top && current.y <= box.bottom;
 			// the pointer's sideways travel picks the depth: no travel keeps the one
 			// the row already had, right nests, left steps back out
 			const wanted = current.depth + Math.round((current.x - current.startX) / DEPTH_BAND);
-			const found =
-				current.kind === "page" ? pageLanding(all, contentY, wanted) : frameLanding(all, contentY, wanted);
+			const found = !inside
+				? null
+				: current.kind === "page"
+					? pageLanding(all, contentY, wanted)
+					: frameLanding(all, contentY, wanted);
 			const next = allowed(current, found) ? found : null;
 			if (!sameLanding(next, landingRef.current)) {
 				landingRef.current = next;
 				setLanding(next);
 			}
+			const at = inside ? rowAt(all, contentY) : -1;
+			const over = at === -1 ? undefined : all[at];
+			// a frame resting on a folder row also springs that folder's peek beside
+			// the tree, to be let go on at a spot (spool#224); the sideways travel that
+			// picks a depth is the way across to it, so the row under the pointer is
+			// the folder, whatever depth the travel has picked
+			const carried: Carried = { kind: current.kind, names: current.names };
+			outsideRef.current = inside
+				? (now.current.carrier?.over(carried, current.x, current.y, over?.kind === "page" ? over.page : null) ??
+					null)
+				: (now.current.carrier?.over(carried, current.x, current.y) ?? null);
 
 			// spring-loaded folders: rest on a shut page and it opens itself, and shuts
 			// again behind the drag unless the drop landed inside. Crossing one at speed
 			// leaves it exactly as it was — passing over a folder is not looking into it
-			const at = rowAt(all, contentY);
-			const over = at === -1 ? undefined : all[at];
 			const candidate =
 				over?.kind === "page" && !over.open && allowed(current, { kind: "into", page: over.page })
 					? over.page
@@ -1381,20 +1460,53 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 		[moving, movePagesInto, moveFramesInto, pagesIn, namesOn],
 	);
 
+	/**
+	 * Something carried let go out on the chrome (spool#224): onto a folder named
+	 * by a list row, a path name or a peek's cell, or a frame onto a spot of a
+	 * peek. It lands at the end of that folder's list, as a drop on its tree row
+	 * does, and through the same verbs, so it is the same move with the same undo.
+	 */
+	const landOutside = useCallback(
+		(carried: Carried, target: CarryTarget, from?: Record<string, Geometry>) => {
+			const page = target.page;
+			if (!canLand(carried, page, (name) => pageHolding(name) ?? ROOT_PAGE)) return;
+			if (carried.kind === "page") {
+				if (target.kind === "into") movePagesInto(carried.names, page, pagesIn(page).length);
+				return;
+			}
+			const end = now.current.framesByPage.get(page)?.length ?? 0;
+			moveFramesInto(
+				carried.names,
+				page,
+				end,
+				false,
+				target.kind === "spot" ? { x: target.x, y: target.y } : undefined,
+				from,
+			);
+		},
+		[pageHolding, movePagesInto, pagesIn, moveFramesInto],
+	);
+
 	const stopDrag = useCallback(
 		(drop: boolean) => {
 			const current = live.current;
 			const target = landingRef.current;
+			const outside = outsideRef.current;
 			if (ticking.current !== null) cancelAnimationFrame(ticking.current);
 			ticking.current = null;
 			live.current = null;
 			landingRef.current = null;
+			outsideRef.current = null;
 			if (current?.active === true) justDragged.current = true;
 			setKit(null);
 			setLanding(null);
 			setSpringing(null);
+			now.current.carrier?.end();
 			const landed = drop && current?.active === true && target !== null ? target : null;
 			if (landed !== null && current !== null) applyDrop(current, landed);
+			else if (drop && current?.active === true && outside !== null) {
+				landOutside({ kind: current.kind, names: current.names }, outside);
+			}
 			// the pages this drag opened close behind it, all but the one the drop
 			// landed in and the ones it is inside: a row nobody can see is not where
 			// somebody just put it. A page that was open before the drag was never
@@ -1404,8 +1516,21 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 				if (!kept.has(page)) setOpen(page, false);
 			}
 		},
-		[applyDrop, setOpen],
+		[applyDrop, landOutside, setOpen],
 	);
+
+	useEffect(() => {
+		if (verbs === undefined) return;
+		verbs.current = {
+			copy,
+			paste: () => paste(),
+			duplicate: duplicateNames,
+			move: (names, target, from) => landOutside({ kind: "frame", names }, target, from),
+		};
+		return () => {
+			verbs.current = null;
+		};
+	}, [verbs, copy, paste, duplicateNames, landOutside]);
 
 	useEffect(() => {
 		const onMove = (event: PointerEvent) => {
@@ -1498,13 +1623,15 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	useEffect(() => {
 		// the rail's own scope, above the canvas and not exclusive: what it does
 		// not claim carries straight on to the canvas (#229)
+		// Esc puts a drag back mid-way (spool#224): nothing lands, the rows slide home
 		const detachMenu = attachHotkeyLayer({
 			scope: "sidebar",
-			active: () => now.current.menu !== null,
+			active: () => now.current.menu !== null || live.current?.active === true,
 			handlers: {
 				"sidebar.close-menu": (event) => {
 					event?.preventDefault();
-					setMenu(null);
+					if (live.current?.active === true) stopDrag(false);
+					else setMenu(null);
 				},
 			},
 		});
@@ -1563,7 +1690,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 			detachMenu();
 			detach();
 		};
-	}, [step, sweep, setOpen, landOn, beginRename, trash, duplicate, copy, paste]);
+	}, [step, sweep, setOpen, landOn, beginRename, trash, duplicate, copy, paste, stopDrag]);
 
 	/**
 	 * Type a name and the cursor walks to it.
@@ -1641,6 +1768,9 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 				? unseen.size
 				: chosenFrames.filter((name) => unseen.has(name)).length;
 
+	/** the gap a carried row is aimed at: every row from it down slides aside to make room */
+	const gapY = landing === null || landing.kind === "into" ? null : landing.y;
+
 	return (
 		<aside ref={asideRef} className="relative flex h-full flex-col bg-surface-window">
 			<PaneActions>
@@ -1696,7 +1826,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 								row={row}
 								activePage={activePage}
 								litPage={litPage}
-								selected={row.kind === "frame" && selected.includes(row.name)}
+								selected={row.kind === "frame" ? selected.includes(row.name) : row.page === pickedPage}
 								holding={row.kind === "frame" && row.name === holding}
 								mark={
 									row.kind === "frame" ? unseen.get(row.name) : row.open ? undefined : unseenIn.get(row.page)
@@ -1706,7 +1836,12 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 								}
 								cursored={cursor === rowKey(row)}
 								lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
-								into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
+								room={gapY !== null && row.top >= gapY ? ROOM : 0}
+								peeked={row.kind === "page" && row.page === peeked}
+								into={
+									row.kind === "page" &&
+									((landing?.kind === "into" && landing.page === row.page) || dropPage === row.page)
+								}
 								springing={row.kind === "page" && springing === row.page}
 								rename={rename}
 								onPress={rowPress}
@@ -1746,8 +1881,15 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 					{landing === null || landing.kind === "into" ? null : (
 						<div
 							aria-hidden="true"
-							className="pointer-events-none absolute z-20 h-[2px]"
-							style={{ left: landingGuideX(landing), top: landing.y - 1, right: 10 }}
+							data-insertion-line=""
+							// one line, gliding from gap to gap in the middle of the room the rows below it make
+							className="pointer-events-none absolute top-0 z-20 h-[2px] animate-chrome-in"
+							style={{
+								left: landingGuideX(landing),
+								right: 10,
+								transform: `translateY(${landing.y + ROOM / 2 - 1}px)`,
+								transition: "transform var(--transition-duration-fast) var(--ease-out)",
+							}}
 						>
 							<span className="block h-full w-full rounded-full bg-accent" />
 							<span className="-left-px -top-[1.5px] absolute h-[5px] w-[5px] rounded-full bg-accent" />
@@ -1834,16 +1976,30 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 
 /* ── one row ─────────────────────────────────────────────────────────── */
 
-/** Where every row sits: the offset the list already knows, on the house curve. */
-function RowShell({ row, lifted = false, children }: { row: RailRow; lifted?: boolean; children: React.ReactNode }) {
+/**
+ * Where every row sits: the offset the list already knows, and the room it
+ * makes below a gap a drag is aimed at, both on the snap curve, transform only.
+ */
+function RowShell({
+	row,
+	lifted = false,
+	room = 0,
+	children,
+}: {
+	row: RailRow;
+	lifted?: boolean;
+	room?: number;
+	children: React.ReactNode;
+}) {
 	return (
 		<div
 			role="presentation"
 			className="absolute inset-x-0 animate-find-in"
 			style={{
 				height: row.height,
-				transform: `translateY(${row.top}px)`,
-				transition: `transform 280ms ${CURVE}, opacity 140ms ease-out`,
+				transform: `translateY(${row.top + room}px)`,
+				transition:
+					"transform var(--transition-duration-slow) var(--ease-snap), opacity var(--transition-duration-fast) var(--ease-out)",
 				opacity: lifted ? 0.3 : 1,
 				// a page of a thousand frames is a thousand rows: the ones scrolled away
 				// are left unstyled and unlaid until they come near the list's view
@@ -1898,6 +2054,8 @@ const RailTreeRow = memo(function RailTreeRow({
 	broken,
 	cursored,
 	lifted,
+	room,
+	peeked,
 	into,
 	springing,
 	rename,
@@ -1921,6 +2079,10 @@ const RailTreeRow = memo(function RailTreeRow({
 	broken: boolean;
 	cursored: boolean;
 	lifted: boolean;
+	/** px it slides down to make room for a gap above it */
+	room: number;
+	/** a peek opened from this tree is showing this folder */
+	peeked: boolean;
 	into: boolean;
 	/** a drag is resting here: the chevron counts the rest out */
 	springing: boolean;
@@ -1942,7 +2104,7 @@ const RailTreeRow = memo(function RailTreeRow({
 	const page = row.kind === "page";
 
 	return (
-		<RowShell row={row} lifted={lifted}>
+		<RowShell row={row} lifted={lifted} room={room}>
 			{/* the row itself, which takes the whole width of drags and right-clicks;
 			    the controls inside it are what a keyboard reaches, exactly as before */}
 			<TreeRow
@@ -1970,7 +2132,7 @@ const RailTreeRow = memo(function RailTreeRow({
 						/>
 					)
 				}
-				selected={selected || cursored}
+				selected={selected || cursored || peeked}
 				current={active}
 				lit={!page && chosen}
 				unseen={mark === undefined ? undefined : mark === "new" ? true : "moved"}
@@ -1986,10 +2148,19 @@ const RailTreeRow = memo(function RailTreeRow({
 				// something outside this rail is pointing at this page: the finder's pick, or
 				// a row in the agent rail naming a frame that is not on screen (#194)
 				data-page-lit={lit ? "" : undefined}
+				// a folder is a drop target and a peek's anchor (spool#224); the cursor is
+				// what Space peeks at while the tree holds the keys
+				data-drop-page={page ? row.page : undefined}
+				data-drop-at={page ? "tree" : undefined}
+				data-peek-from={page ? "tree" : undefined}
+				data-rail-cursor={page && cursored ? "" : undefined}
+				data-drop-lit={into ? "" : undefined}
 				className={cn(
 					// held without being selected, or pointed at from outside the rail
 					((holding && !selected) || lit) && "bg-state-selected",
-					into && "-outline-offset-1 outline-1 outline-accent",
+					// a drop target wins over the row's selected and current fills
+					into &&
+						"bg-accent-subtle text-accent-strong aria-[current=page]:bg-accent-subtle aria-selected:bg-accent-subtle",
 				)}
 				decor={
 					<>

@@ -25,6 +25,7 @@ export type HotkeyScope =
 	| "help"
 	| "settings"
 	| "toast"
+	| "peek"
 	| "sidebar"
 	| "panes"
 	| "canvas"
@@ -38,7 +39,9 @@ export type HotkeyScope =
  *
  * The sidebar sits above the canvas and is not exclusive (#229): while the
  * rail has focus its own list answers ⌫, ↵ and the arrows, and every key it
- * does not claim carries on to the canvas exactly as it did before. The panes
+ * does not claim carries on to the canvas exactly as it did before. The peek
+ * sits above both (spool#224): it is up only while a folder is under the
+ * pointer or the keys, or a peek is open, and then Space and the arrows are its. The panes
  * answer only chords nothing else binds, so where they sit in the walk is moot.
  */
 export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
@@ -48,6 +51,7 @@ export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"toast",
 	"help",
 	"settings",
+	"peek",
 	"sidebar",
 	"panes",
 	"canvas",
@@ -159,19 +163,44 @@ export const HOTKEYS = [
 		id: "canvas.page-in",
 		scope: "canvas",
 		group: "Frames",
-		label: "Go inside the selected page",
+		label: "Go into the page picked",
 		keys: ["accel+arrowdown"],
 		shown: () => ["⏎", `${accelLabel()}↓`],
-		gesture: "double-click",
+		gesture: "click a row",
 		repeats: false,
 	},
 	{
 		id: "canvas.page-up",
 		scope: "canvas",
 		group: "Frames",
-		label: "Go up to the page holding this one",
+		label: "Go up a page",
 		keys: ["accel+arrowup"],
 		shown: () => ["esc", `${accelLabel()}↑`],
+	},
+	// told here, answered by the nudge: in a list of pages there is nothing to nudge
+	{
+		id: "canvas.page-pick",
+		scope: "canvas",
+		group: "Frames",
+		label: "Pick a page in the list",
+		shown: ["↑↓"],
+	},
+	// back and forward through the pages visited, the way a browser goes
+	// (spool#224). Told here, answered by the thread keys: with no frame held
+	// or entered there is no thread to walk, and ⌘[ and ⌘] are the pages'
+	{
+		id: "canvas.page-back",
+		scope: "canvas",
+		group: "Frames",
+		label: "Back a page",
+		shown: () => [formatCombo("accel+bracketleft")],
+	},
+	{
+		id: "canvas.page-forward",
+		scope: "canvas",
+		group: "Frames",
+		label: "Forward a page",
+		shown: () => [formatCombo("accel+bracketright")],
 	},
 	{
 		id: "canvas.play",
@@ -318,7 +347,7 @@ export const HOTKEYS = [
 		id: "canvas.nudge",
 		scope: "canvas",
 		group: "Selection",
-		label: "Nudge the frames 1 px, move the element held one step, or under Comment, aim a level out or in",
+		label: "Nudge the frames 1 px, move the element held one step, or under Comment aim a level out or in",
 		keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"],
 		shown: ["←↑→↓"],
 	},
@@ -596,6 +625,30 @@ export const HOTKEYS = [
 		gesture: "⌥ click a chevron",
 	},
 	{ id: "sidebar.close-menu", scope: "sidebar", group: "Pages", label: "", keys: ["escape"], listed: false },
+	// Quick Look for a folder (spool#224): Space over a tree row, a row of a list of
+	// pages or a name on the path. Up only there, so Space everywhere else is still
+	// the Hand borrowed, and a frame or a field keeps its own
+	{
+		id: "peek.open",
+		scope: "peek",
+		group: "Pages",
+		label: "Peek at a folder",
+		keys: ["space"],
+		repeats: false,
+	},
+	{
+		id: "peek.walk",
+		scope: "peek",
+		group: "Pages",
+		label: "Peek at the next folder",
+		keys: ["arrowup", "arrowdown"],
+		shown: ["↑↓"],
+	},
+	// the path's names stand in a row, so a peek opened from one walks sideways too;
+	// a tree's or a list's leaves ←→ to the rail
+	{ id: "peek.side", scope: "peek", group: "Pages", label: "", keys: ["arrowleft", "arrowright"], listed: false },
+	{ id: "peek.go", scope: "peek", group: "Pages", label: "", keys: ["enter", "accel+arrowdown"], listed: false },
+	{ id: "peek.close", scope: "peek", group: "Pages", label: "", keys: ["escape"], listed: false },
 
 	// --- Panes: the canvas window's two sides (#359) -----------------------------
 	// ⌘B is the side bar's key in most editors, and ⌥ makes it the other side.

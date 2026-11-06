@@ -2,16 +2,14 @@ import { closeSync, constants, type Dirent, lstatSync, openSync, readdirSync, re
 import { type FileHandle, lstat, open, readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
-import type { Rect } from "../page-box";
 import { isFramePath, isSafeName, pageParent, pageUnder, ROOT_PAGE } from "../page-path";
 import { flatPages, mergePageTree } from "../ui/canvas/order";
 import { type CanvasOrder, readOrder } from "./canvas-order";
-import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas-places";
 import { isWithin } from "./design-boundary";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, parseGeometry, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
 import type { MovedAway } from "./moved-away";
-import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
+import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, type Rect } from "./placement";
 import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
 import { type Unseen, unseenNow, unseenNowAwaited } from "./seen";
@@ -26,7 +24,6 @@ import {
 } from "./thumbs";
 
 export { frameFolder } from "../page-path";
-export { pageObjectBox, placePages } from "./placement";
 
 /**
  * The canvas projection of design/frames (#22), grouped to any depth (#39,
@@ -100,16 +97,6 @@ export interface Projection {
 	root: string;
 	/** Every named page's path, sorted, empty ones included; the root page is implied. */
 	pages: string[];
-	/**
-	 * Where each page stands on the field holding it (#265), keyed by page path.
-	 *
-	 * A sibling of `pages` rather than a change to it: too much code reads that
-	 * list of paths, and a page's place is an arrangement rather than part of
-	 * its identity. Every page has one by the time this is answered — a page
-	 * without a stored place is given one here, the way a frame without a
-	 * sidecar is.
-	 */
-	places: Record<string, Place>;
 	frames: ProjectedFrame[];
 	/** The frames on their way that have a place, by name: what the canvas draws as placeholders. */
 	placeholders: ProjectedPlaceholder[];
@@ -476,7 +463,7 @@ export async function listProjectFramesAwaited(root: string, options: { seen?: b
 }
 
 function emptyProjection(root: string): Projection {
-	return { root, pages: [], places: {}, frames: [], placeholders: [] };
+	return { root, pages: [], frames: [], placeholders: [] };
 }
 
 function placeFrames(root: string, discovery: Discovery, reads: FrameReads): Projection {
@@ -496,21 +483,13 @@ function placeFrames(root: string, discovery: Discovery, reads: FrameReads): Pro
 	}
 	const placeholders = placeholdersOf(discovery);
 
-	const stored = readStoredPlaces(root);
-
 	// a new frame lands beside its own page's field, on its top line, never on
-	// top of it — and never beside another page's (#39). The pages standing on
-	// that field are part of it (#265): a page is a thing on the canvas, so a
-	// frame may no more be born on top of one than on top of another frame
+	// top of it — and never beside another page's (#39)
 	for (const { frame, footprint } of unplaced) {
-		const slot = frame.page ?? ROOT_PAGE;
 		const field: Rect[] = [
 			...placed.filter((candidate) => candidate.page === frame.page),
 			...placeholders.filter((one) => one.page === frame.page),
 		];
-		for (const { at, box } of pageObjectsOn(slot, discovery.pages, placed, stored)) {
-			field.push({ ...at, ...box });
-		}
 		const geometry = { ...besideField(field), ...footprint };
 		// its birth is read once its sidecar is written, which on a filesystem
 		// keeping no birth time moves the folder's mtime it stands in for
@@ -539,28 +518,7 @@ function placeFrames(root: string, discovery: Discovery, reads: FrameReads): Pro
 		const broken = reads.broken.get(frame.name);
 		if (broken !== undefined) frame.broken = broken;
 	}
-	// a page with no place gets one and keeps it: the arrangement is committed,
-	// so it has to be the same coordinate on the next machine that pulls it
-	const { places, filled } = placePages(discovery.pages, placed, stored);
-	if (filled) {
-		try {
-			writePlaces(root, places);
-		} catch (error) {
-			if (error instanceof DesignBoundaryError) throw error;
-			// read-only checkout, or a canvas.json spool will not overwrite: the
-			// placement stays deterministic within this daemon run either way
-		}
-	}
-	return { root, pages: discovery.pages, places, frames: placed, placeholders };
-}
-
-function readStoredPlaces(root: string): CanvasPlaces {
-	try {
-		return readPlaces(root);
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) throw error;
-		return {};
-	}
+	return { root, pages: discovery.pages, frames: placed, placeholders };
 }
 
 function projected(

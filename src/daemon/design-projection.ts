@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { isSafeName, pageUnder, ROOT_PAGE } from "../page-path";
 import { flatPages, mergePageTree } from "../ui/canvas/order";
-import { type CanvasOrder, type CanvasPlaces, parseOrder, parsePlaces } from "./canvas-fields";
+import { type CanvasOrder, parseOrder } from "./canvas-fields";
 import type { DesignFiles } from "./design-files";
-import { besideField, DEFAULT_FOOTPRINT, pageObjectsOn, placePages } from "./placement";
+import { besideField, DEFAULT_FOOTPRINT } from "./placement";
 import { type Footprint, type Geometry, parseSidecar } from "./sidecar";
 
 /** One frame on the canvas: its name (its path under frames/), its page, and where it stands. */
@@ -13,11 +13,10 @@ export interface DesignFrame extends Geometry {
 	page?: string;
 }
 
-/** What the canvas draws of a design folder: its pages, where they stand, its frames and the rail's order. */
+/** What the canvas draws of a design folder: its pages, its frames and the rail's order. */
 export interface DesignProjection {
 	/** Every named page's path, sorted; the root page is implied. */
 	pages: string[];
-	places: CanvasPlaces;
 	frames: DesignFrame[];
 	order: CanvasOrder;
 }
@@ -27,9 +26,9 @@ export interface DesignProjection {
  * daemon's, on its disk): a folder holding frame.tsx is a frame, one holding
  * frame.json and no folders is a frame on its way and no page, every other
  * safe-named folder under frames/ is a page, and each frame stands where its
- * sidecar says. A frame or page nobody placed is placed as the daemon places
- * it, and nothing is written: the daemon that finds it first writes the place,
- * and its save brings the same coordinates back.
+ * sidecar says. A frame nobody placed is placed as the daemon places it, and
+ * nothing is written: the daemon that finds it first writes the place, and its
+ * save brings the same coordinates back.
  */
 export function projectDesign(designDir: string, files: DesignFiles): DesignProjection {
 	const found: { name: string; page: string | undefined; dir: string }[] = [];
@@ -65,7 +64,6 @@ export function projectDesign(designDir: string, files: DesignFiles): DesignProj
 
 	const canvas = readJson(files, join(designDir, "canvas.json"));
 	const fields = typeof canvas === "object" && canvas !== null && !Array.isArray(canvas) ? canvas : {};
-	const stored = parsePlaces((fields as Record<string, unknown>).places) ?? {};
 	const order = parseOrder((fields as Record<string, unknown>).order) ?? {};
 
 	const placed: DesignFrame[] = [];
@@ -79,13 +77,11 @@ export function projectDesign(designDir: string, files: DesignFiles): DesignProj
 		const field = [...placed, ...waiting]
 			.filter((candidate) => candidate.page === frame.page)
 			.map(({ x, y, w, h }) => ({ x, y, w, h }));
-		for (const { at, box } of pageObjectsOn(frame.page ?? ROOT_PAGE, pages, placed, stored))
-			field.push({ ...at, ...box });
 		const { x, y } = besideField(field);
 		placed.push(designFrame(frame, rounded({ x, y, ...footprint })));
 	}
 	placed.sort((a, b) => a.name.localeCompare(b.name));
-	return { pages, places: placePages(pages, placed, stored).places, frames: placed, order };
+	return { pages, frames: placed, order };
 }
 
 function designFrame(frame: { name: string; page: string | undefined }, geometry: Geometry): DesignFrame {
