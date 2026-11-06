@@ -1,5 +1,0 @@
----
-"spool.page": minor
----
-
-Pages no longer stand on the canvas as pictures of the pages under them, and the shelf is gone. A page that holds only pages, the root too when it has no frames, now shows them as a list: each row has the page's still, its name and what it holds, and a click or ⏎ goes in. The path at the top left shows where you are and, fainter, where ⌘↓ goes; it wakes as the pointer nears the top, and holding ⌘ shows the keys. ⌘↑ goes up with the page you left picked, ⌘↓ goes into the picked page, and ⌘[ and ⌘] go back and forward through the pages you visited when no frame is held. A `places` key left in `canvas.json` is ignored and kept as it is. Space over a page in the Pages tree, a list row or a path name peeks at its frames as stills without going in; ↑↓ walk to the next page and Esc closes it. A frame dragged onto a page there moves it, a frame held over one opens its peek to be let go at a spot, rows dragged between others in the tree make room under one insertion line, Esc puts a drag back, and every move says so with an Undo.
