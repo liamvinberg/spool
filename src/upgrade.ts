@@ -1,5 +1,15 @@
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+	closeSync,
+	type Dirent,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { installAutostart, launchAgentPath } from "./autostart";
@@ -97,6 +107,23 @@ export function planUpgrade(realCliPath: string, io: PlanIo = {}): InstallPlan {
 		return { ok: true, manager: "pnpm", bin, args: ["add", "-g", "spool.page@latest"], packageDir: stableDir };
 	}
 
+	// pnpm 11 keeps global packages in its store's links and each install group
+	// in a fresh <home>/global/v11/<pid>-<time> dir; the stable door is the
+	// group's hash symlink beside it, which pnpm swaps on every install
+	const linksIndex = realCliPath.indexOf("/store/v11/links/");
+	if (linksIndex !== -1) {
+		const home = realCliPath.slice(0, linksIndex);
+		const stableDir = pnpmGroupDir(join(home, "global", "v11"), isFile);
+		if (stableDir === undefined) {
+			return { ok: false, message: `cannot find pnpm's global install of ${realCliPath} — run: ${PNPM_COMMAND}` };
+		}
+		const bin = pnpmBinary(stableDir, env, isFile);
+		if (bin === undefined) {
+			return { ok: false, message: `cannot find the pnpm that owns ${realCliPath} — run: ${PNPM_COMMAND}` };
+		}
+		return { ok: true, manager: "pnpm", bin, args: ["add", "-g", "spool.page@latest"], packageDir: stableDir };
+	}
+
 	if (packageDir.endsWith("/lib/node_modules/spool.page")) {
 		// npm-global, nvm included — nvm is just a per-node-version prefix, and
 		// npm ships beside the node binary, the one absolute path always true
@@ -113,13 +140,34 @@ export function planUpgrade(realCliPath: string, io: PlanIo = {}): InstallPlan {
 	};
 }
 
+/** The hash symlink of the pnpm 11 install group holding spool, as its package dir. */
+function pnpmGroupDir(globalDir: string, isFile: (path: string) => boolean): string | undefined {
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(globalDir, { withFileTypes: true });
+	} catch {
+		return undefined;
+	}
+	for (const entry of entries) {
+		if (!entry.isSymbolicLink()) continue;
+		const dir = join(globalDir, entry.name, "node_modules", "spool.page");
+		if (isFile(join(dir, "package.json"))) return dir;
+	}
+	return undefined;
+}
+
 function pnpmBinary(
 	stableDir: string,
 	env: Record<string, string | undefined>,
 	isFile: (path: string) => boolean,
 ): string | undefined {
+	// pnpm 11 moved its executable into <home>/bin, beside the global bins
+	const inHome = (dir: string) => [join(dir, "pnpm"), join(dir, "bin", "pnpm")].find(isFile);
 	const home = env.PNPM_HOME;
-	if (home !== undefined && home !== "" && isFile(join(home, "pnpm"))) return join(home, "pnpm");
+	if (home !== undefined && home !== "") {
+		const bin = inHome(home);
+		if (bin !== undefined) return bin;
+	}
 	// no PNPM_HOME under launchd: the executable lives a few levels above the
 	// global dir (~/Library/pnpm/global/5 → ~/Library/pnpm/pnpm)
 	let dir = stableDir;
@@ -127,8 +175,8 @@ function pnpmBinary(
 		const parent = dirname(dir);
 		if (parent === dir) break;
 		dir = parent;
-		const candidate = join(dir, "pnpm");
-		if (isFile(candidate)) return candidate;
+		const bin = inHome(dir);
+		if (bin !== undefined) return bin;
 	}
 	return undefined;
 }

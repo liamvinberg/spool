@@ -1,3 +1,4 @@
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DaemonStatus } from "./daemon/lifecycle";
@@ -52,6 +53,30 @@ describe("planUpgrade", () => {
 
 		expect(plan.ok).toBe(true);
 		if (plan.ok) expect(plan.bin).toBe("/Users/liam/Library/pnpm/pnpm");
+	});
+
+	it("classifies pnpm 11's store links and repoints at the install group's hash symlink", () => {
+		// the layout `pnpm add -g spool.page` leaves on pnpm 11 (#226)
+		const home = join(makeTempDir(), "pnpm");
+		const stored = join(home, "store/v11/links/@/spool.page/0.49.0/b6c1e8/node_modules/spool.page");
+		mkdirSync(join(stored, "dist"), { recursive: true });
+		writeFileSync(join(stored, "dist/cli.js"), "");
+		writeFileSync(join(stored, "package.json"), '{"version":"0.49.0"}');
+		const group = join(home, "global/v11/12ce7a-1a1b1cfd4bf");
+		mkdirSync(join(group, "node_modules"), { recursive: true });
+		symlinkSync(stored, join(group, "node_modules/spool.page"));
+		symlinkSync("12ce7a-1a1b1cfd4bf", join(home, "global/v11/b4a601ac88c9"));
+		mkdirSync(join(home, "bin"));
+		writeFileSync(join(home, "bin/pnpm"), "");
+
+		const real = realpathSync(join(home, "bin/../global/v11/12ce7a-1a1b1cfd4bf/node_modules/spool.page/dist/cli.js"));
+		expect(planUpgrade(real, { env: {} })).toEqual({
+			ok: true,
+			manager: "pnpm",
+			bin: join(home, "bin/pnpm"),
+			args: ["add", "-g", "spool.page@latest"],
+			packageDir: join(home, "global/v11/b4a601ac88c9/node_modules/spool.page"),
+		});
 	});
 
 	it("refuses the checkout, naming the path and the fix", () => {
