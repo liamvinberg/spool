@@ -91,7 +91,9 @@ it("records from the canvas's Record: the shape picked first, the frame played a
 	expect(download.suggestedFilename()).toBe("beeper.mp4");
 	const path = await download.path();
 	const clip = new Input({ source: new BufferSource(readFileSync(path)), formats: ALL_FORMATS });
-	expect((await clip.getPrimaryVideoTrack())?.displayWidth).toBe(1080);
+	const video = await clip.getPrimaryVideoTrack();
+	expect(video?.displayWidth).toBe(video?.displayHeight);
+	expect(video?.displayWidth).toBeGreaterThan(1080);
 	// the click was noted and played back: the clip has the sound it made
 	expect((await clip.getPrimaryAudioTrack())?.codec).toBe("aac");
 	await expect.poll(() => played.getByRole("status").textContent()).toBe("Savedbeeper.mp4");
