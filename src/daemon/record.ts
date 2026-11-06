@@ -4,6 +4,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
 import {
+	fetchHeadlessShell,
 	HeadlessShellCannotRunError,
 	headlessShellArgs,
 	MissingHeadlessShellError,
@@ -136,7 +137,7 @@ export async function renderClip(request: ClipRequest, deps: RecorderDeps = {}):
 	const { start, end } = clipWindow(request.inputs, request.duration);
 	const layout = clipLayout(request.viewport, request.aspect);
 	const deadlineMs = deps.deadlineMs ?? LOAD_MS + 20 * (end + 2000);
-	const launch = deps.launch ?? launchRecorder;
+	const launch = deps.launch ?? launchFetching;
 	const contexts: BrowserContext[] = [];
 	const closeAll = () => Promise.all(contexts.map((context) => context.close().catch(() => {})));
 	let timer: NodeJS.Timeout | undefined;
@@ -157,6 +158,23 @@ export async function renderClip(request: ClipRequest, deps: RecorderDeps = {}):
 		clearTimeout(timer);
 		await closeAll();
 	}
+}
+
+/** The one fetch of the shell under way, shared by the parts that all found it missing. */
+let fetching: Promise<void> | undefined;
+
+/** The shell for one clip, fetched first on a machine that has not got the pinned build yet. */
+async function launchFetching(scale: number): Promise<BrowserContext> {
+	try {
+		return await launchRecorder(scale);
+	} catch (error) {
+		if (!(error instanceof MissingHeadlessShellError)) throw error;
+	}
+	fetching ??= fetchHeadlessShell().finally(() => {
+		fetching = undefined;
+	});
+	await fetching;
+	return await launchRecorder(scale);
 }
 
 /**
