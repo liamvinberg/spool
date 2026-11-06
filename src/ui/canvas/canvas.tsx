@@ -3090,7 +3090,8 @@ function CanvasField({
 	const stepPages = useCallback(
 		(by: -1 | 1): boolean => {
 			const was = visitsRef.current;
-			if (was === null || store.get().entered !== null) return false;
+			// a held frame is what ⌘[ and ⌘] walk threads from, so the pages stay put under it
+			if (was === null || store.get().entered !== null || store.get().selected.length > 0) return false;
 			const stands = new Set([ROOT_PAGE, ...navigatorPagesOf(store.get())]);
 			const step = stepVisits(was, by, (page) => stands.has(page));
 			if (step === undefined) return false;

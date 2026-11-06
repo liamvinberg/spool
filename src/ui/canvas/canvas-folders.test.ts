@@ -141,6 +141,12 @@ describe("the keys between pages", () => {
 		const host = await mountCanvas(KAFFE);
 		await into(host, "explore");
 		await into(host, "explore/loyalty");
+		// a held frame keeps the page: ⌘[ and ⌘] are the frame's then
+		await press(host, screenAt(host, { x: 10, y: 10 }));
+		await keydown({ key: "[", code: "BracketLeft", ...ACCEL });
+		await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+		expect(on(host)).toBe("explore/loyalty");
+		await keydown({ key: "Escape" });
 		await keydown({ key: "[", code: "BracketLeft", ...ACCEL });
 		await until(() => on(host) === "explore");
 		await keydown({ key: "[", code: "BracketLeft", ...ACCEL });
