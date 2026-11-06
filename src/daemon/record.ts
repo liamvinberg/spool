@@ -343,8 +343,11 @@ async function renderPart(
 	}
 	// The frames drawn meanwhile keep one reading too, counted from the
 	// document's time origin, so every animation it starts on them starts at the
-	// same moment. That origin is read off one frame drawn while the document is
-	// still empty.
+	// same moment. That origin is read off the first frame that runs the
+	// document's animation callbacks while it is still empty. A document that
+	// has only just committed may let a BeginFrame or two pass without running
+	// them, and a BeginFrame no later than the last is ignored, so each try is a
+	// frame on.
 	const step = async () => {
 		const expired = once(cdp, "Emulation.virtualTimeBudgetExpired");
 		await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pauseIfNetworkFetchesPending", budget: STEP_MS });
@@ -352,10 +355,15 @@ async function renderPart(
 	};
 	await evaluate(cdp, `requestAnimationFrame((at) => { window.${CLOCK_KEY} = at; })`);
 	ticks = monotonicMs();
-	await step();
-	await frame(false);
-	const read = await evaluate<number | undefined>(cdp, `window.${CLOCK_KEY}`);
-	if (read === undefined || read <= 0) throw new Error("the frame's clock could not be read for its recording");
+	let read: number | undefined;
+	for (;;) {
+		await step();
+		await frame(false);
+		read = await evaluate<number | undefined>(cdp, `window.${CLOCK_KEY}`);
+		if (read !== undefined && read > 0) break;
+		if (Date.now() > loading) throw new Error("the frame's clock could not be read for its recording");
+		ticks += STEP_MS;
+	}
 	ticks = ticks - read + Math.max(LOADED_AT_MS, read + STEP_MS);
 	for (;;) {
 		await step();
