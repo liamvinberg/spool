@@ -1,8 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
 import {
+	fetchHeadlessShell,
 	HeadlessShellCannotRunError,
 	headlessShellArgs,
 	MissingHeadlessShellError,
@@ -111,6 +113,16 @@ export function clipLayout(viewport: { w: number; h: number }, aspect: ClipAspec
 	};
 }
 
+/**
+ * Whether the shell takes its BeginFrames from the recorder. Chromium has never
+ * done so on a Mac ("BeginFrameControl is not supported on MacOS yet"), so
+ * there every picture is a screenshot instead: in deterministic mode each one
+ * draws exactly one frame, a frame's interval on from the one before, which
+ * is the same clock without its control. A frame there is drawn only when a
+ * picture is asked for, so a clip on a Mac is one part, photographed through.
+ */
+const BEGIN_FRAMES = process.platform !== "darwin";
+
 /** The deterministic shell: drawn on request, on the compositor's own thread order. */
 const DETERMINISTIC_ARGS = [
 	"--deterministic-mode",
@@ -135,7 +147,7 @@ export async function renderClip(request: ClipRequest, deps: RecorderDeps = {}):
 	const { start, end } = clipWindow(request.inputs, request.duration);
 	const layout = clipLayout(request.viewport, request.aspect);
 	const deadlineMs = deps.deadlineMs ?? LOAD_MS + 20 * (end + 2000);
-	const launch = deps.launch ?? launchRecorder;
+	const launch = deps.launch ?? launchFetching;
 	const contexts: BrowserContext[] = [];
 	const closeAll = () => Promise.all(contexts.map((context) => context.close().catch(() => {})));
 	let timer: NodeJS.Timeout | undefined;
@@ -158,6 +170,23 @@ export async function renderClip(request: ClipRequest, deps: RecorderDeps = {}):
 	}
 }
 
+/** The one fetch of the shell under way, shared by the parts that all found it missing. */
+let fetching: Promise<void> | undefined;
+
+/** The shell for one clip, fetched first on a machine that has not got the pinned build yet. */
+async function launchFetching(scale: number): Promise<BrowserContext> {
+	try {
+		return await launchRecorder(scale);
+	} catch (error) {
+		if (!(error instanceof MissingHeadlessShellError)) throw error;
+	}
+	fetching ??= fetchHeadlessShell().finally(() => {
+		fetching = undefined;
+	});
+	await fetching;
+	return await launchRecorder(scale);
+}
+
 /**
  * The shell for one clip. The frame draws at the clip's scale from the start,
  * by the browser's own device scale: a BeginFrame's picture is taken at the
@@ -173,7 +202,8 @@ async function launchRecorder(scale: number): Promise<BrowserContext> {
 			viewport: null,
 			args: [...headlessShellArgs(), ...DETERMINISTIC_ARGS, `--force-device-scale-factor=${scale}`],
 		});
-		context.once("close", () => rmSync(profile, { recursive: true, force: true }));
+		// the shell's last writes into its profile can land while it is removed: tried again, never thrown
+		context.once("close", () => void rm(profile, { recursive: true, force: true, maxRetries: 5 }).catch(() => {}));
 		return context;
 	} catch (error) {
 		rmSync(profile, { recursive: true, force: true });
@@ -211,7 +241,7 @@ async function render(
 	const first = Math.floor(start / STEP_MS);
 	const last = Math.ceil(end / STEP_MS);
 	const bitrate = Math.min(MAX_BITRATE, Math.floor((CLIP_BYTES * 8) / Math.max(1, (end - start) / 1000)));
-	const parts = clipParts(first, last + 1, RECORD_WORKERS);
+	const parts = clipParts(first, last + 1, BEGIN_FRAMES ? RECORD_WORKERS : 1);
 	// the work is every part's replay up to its start and its pictures after, weighed as clipParts weighs them
 	const work = parts.reduce((sum, part) => sum + part.from * REPLAY_COST + (part.to - part.from), 0);
 	let done = 0;
@@ -315,9 +345,10 @@ async function renderPart(
 	const { page, cdp } = await openFrameTab(context, encoder, request);
 	let ticks = 0;
 	let held = true;
-	const frame = (screenshot: boolean) => {
+	const frame = async (screenshot: boolean): Promise<{ screenshotData?: string }> => {
+		if (!BEGIN_FRAMES) return { screenshotData: (await cdp.send("Page.captureScreenshot", SHOT)).data };
 		if (!held) ticks += STEP_MS;
-		return cdp.send("HeadlessExperimental.beginFrame", {
+		return await cdp.send("HeadlessExperimental.beginFrame", {
 			frameTimeTicks: ticks,
 			// as long as a frame may take: a frame drawn past its deadline leaves the page's own work behind
 			interval: FRAME_PATIENCE_MS,
@@ -330,7 +361,8 @@ async function renderPart(
 	// busy the machine, it has loaded at the same reading of its clock in every
 	// part, and every part's replay begins in the same state.
 	await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" });
-	void cdp.send("Page.navigate", { url: request.url });
+	// a navigation that fails shows as no commit below
+	cdp.send("Page.navigate", { url: request.url }).catch(() => {});
 	const loading = Date.now() + LOAD_MS;
 	let committed = false;
 	while (!committed) {
@@ -340,20 +372,30 @@ async function renderPart(
 	}
 	// The frames drawn meanwhile keep one reading too, counted from the
 	// document's time origin, so every animation it starts on them starts at the
-	// same moment. That origin is read off one frame drawn while the document is
-	// still empty.
+	// same moment. That origin is read off the first frame that runs the
+	// document's animation callbacks while it is still empty. A document that
+	// has only just committed may let a BeginFrame or two pass without running
+	// them, and a BeginFrame no later than the last is ignored, so each try is a
+	// frame on.
 	const step = async () => {
 		const expired = once(cdp, "Emulation.virtualTimeBudgetExpired");
 		await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pauseIfNetworkFetchesPending", budget: STEP_MS });
 		await expired;
 	};
-	await evaluate(cdp, `requestAnimationFrame((at) => { window.${CLOCK_KEY} = at; })`);
-	ticks = monotonicMs();
-	await step();
-	await frame(false);
-	const read = await evaluate<number | undefined>(cdp, `window.${CLOCK_KEY}`);
-	if (read === undefined || read <= 0) throw new Error("the frame's clock could not be read for its recording");
-	ticks = ticks - read + Math.max(LOADED_AT_MS, read + STEP_MS);
+	if (BEGIN_FRAMES) {
+		await evaluate(cdp, `requestAnimationFrame((at) => { window.${CLOCK_KEY} = at; })`);
+		ticks = monotonicMs();
+		let read: number | undefined;
+		for (;;) {
+			await step();
+			await frame(false);
+			read = await evaluate<number | undefined>(cdp, `window.${CLOCK_KEY}`);
+			if (read !== undefined && read > 0) break;
+			if (Date.now() > loading) throw new Error("the frame's clock could not be read for its recording");
+			ticks += STEP_MS;
+		}
+		ticks = ticks - read + Math.max(LOADED_AT_MS, read + STEP_MS);
+	}
 	for (;;) {
 		await step();
 		await frame(false);
@@ -397,7 +439,10 @@ async function renderPart(
 				? await evaluate<boolean>(cdp, `${POINTS_AT}(${pointer.x}, ${pointer.y})`)
 				: false;
 		const cursor = place === null || place.opacity === 0 ? null : { ...place, hand };
-		pushing.push(evaluate(drawer, clipCall("push", still, cursor, at, index === part.from), true));
+		const pushed = evaluate(drawer, clipCall("push", still, cursor, at, index === part.from), true);
+		// awaited below; a part that fails before then leaves it to fail unheard
+		pushed.catch(() => {});
+		pushing.push(pushed);
 		if (pushing.length > PUSH_AHEAD) await pushing.shift();
 	}
 	await Promise.all(pushing);
@@ -421,14 +466,15 @@ async function openFrameTab(
 	request: ClipRequest,
 ): Promise<{ page: Page; cdp: CDPSession }> {
 	const session = await context.newCDPSession(opener);
-	const arriving = context.waitForEvent("page");
-	await session.send("Target.createTarget", {
-		url: "about:blank",
-		width: request.viewport.w,
-		height: request.viewport.h,
-		enableBeginFrameControl: true,
-	});
-	const page = await arriving;
+	const [page] = await Promise.all([
+		context.waitForEvent("page"),
+		session.send("Target.createTarget", {
+			url: "about:blank",
+			width: request.viewport.w,
+			height: request.viewport.h,
+			enableBeginFrameControl: BEGIN_FRAMES,
+		}),
+	]);
 	const cdp = await context.newCDPSession(page);
 	await cdp.send("Page.enable");
 	await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: RANDOM_SOURCE });
