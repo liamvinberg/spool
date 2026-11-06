@@ -5996,7 +5996,7 @@ function CanvasField({
 								project={project}
 								rows={listRows}
 								lit={downTo}
-								aside={peeking.peek?.from === "list"}
+								aside={peeking.peek?.from === "list" ? peeking.peek.aside : 0}
 								dropLit={peeking.target?.at === "list" ? peeking.target.page : null}
 								onLight={setSelectedPage}
 								onGo={goInsidePage}

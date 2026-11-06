@@ -38,6 +38,8 @@ export interface Peek {
 	/** where the card stands, in the window's own pixels */
 	readonly left: number;
 	readonly top: number;
+	/** how far a list of pages it was opened from steps aside for it, in px */
+	readonly aside: number;
 	/** which way the last arrow went, so the next folder's stills come from that side */
 	readonly dir: number;
 }
@@ -48,8 +50,10 @@ export const PEEK_FOOT = 12;
 export const PEEK_CARD_W = PEEK_MAP.w + 24;
 const GAP = 8;
 const LIST_GAP = 16;
-/** how far a list of pages steps aside so it and a peek opened from it stand centred together */
-export const LIST_ASIDE = (PEEK_CARD_W + LIST_GAP) / 2;
+/** how far a list of pages steps aside so it and a peek opened from it stand centred together, room allowing */
+const LIST_ASIDE = (PEEK_CARD_W + LIST_GAP) / 2;
+/** what a list and a peek keep from the edges of the pane they stand in */
+const PANE_EDGE = 12;
 /** how far the pointer can drift from where a key opened the peek before leaving puts it away */
 const DRIFT = 24;
 const CLOSE_MS = 180;
@@ -73,11 +77,19 @@ function readFit(map: HTMLElement): MapFit | undefined {
 	return { s, ox, oy };
 }
 
-/** where a card stands beside what opened it: right of the tree or the list, under a name on the path */
-function anchorOf(el: HTMLElement, from: PeekFrom, h: number): { left: number; top: number } {
+/**
+ * Where a card stands beside what opened it: right of the tree or the list,
+ * under a name on the path. A list steps aside to stand centred with it, as far
+ * as its pane has room on the left, and a card that still finds no room on the
+ * right stands over the list's far end rather than off the pane.
+ */
+function anchorOf(el: HTMLElement, from: PeekFrom, h: number): { left: number; top: number; aside: number } {
 	const r = el.getBoundingClientRect();
 	let left: number;
 	let top = r.top + r.height / 2 - PEEK_HEAD / 2 - 6;
+	let aside = 0;
+	let min = 8;
+	let max = (window.innerWidth || 0) - PEEK_CARD_W - 8;
 	if (from === "path") {
 		left = r.left - 4;
 		top = r.bottom + 8;
@@ -87,18 +99,23 @@ function anchorOf(el: HTMLElement, from: PeekFrom, h: number): { left: number; t
 		// read from the list's own layout, which a step aside does not move, so a
 		// second row peeked at stands where the first one did
 		const list = el.closest<HTMLElement>("[data-page-list-rows]");
+		const pane = el.closest<HTMLElement>("[data-page-list]")?.getBoundingClientRect();
 		const holder = list?.offsetParent?.getBoundingClientRect();
-		const right =
-			list === null || list === undefined || holder === undefined
-				? r.right
-				: holder.left + list.offsetLeft + list.offsetWidth;
-		left = right - LIST_ASIDE + LIST_GAP;
+		if (list === null || list === undefined || holder === undefined || pane === undefined) left = r.right + LIST_GAP;
+		else {
+			const listLeft = holder.left + list.offsetLeft;
+			const listRight = listLeft + list.offsetWidth;
+			const wanted = Math.max(LIST_ASIDE, listRight + LIST_GAP + PEEK_CARD_W - (pane.right - PANE_EDGE));
+			aside = Math.max(0, Math.min(wanted, listLeft - pane.left - PANE_EDGE));
+			left = listRight - aside + LIST_GAP;
+			min = pane.left + PANE_EDGE;
+			max = pane.right - PEEK_CARD_W - PANE_EDGE;
+		}
 	}
-	const width = window.innerWidth || 0;
-	const height = window.innerHeight || 0;
 	return {
-		left: Math.max(8, Math.min(width - PEEK_CARD_W - 8, left)),
-		top: Math.max(8, Math.min(height - h - 8, top)),
+		left: Math.max(min, Math.min(max, left)),
+		top: Math.max(8, Math.min((window.innerHeight || 0) - h - 8, top)),
+		aside,
 	};
 }
 

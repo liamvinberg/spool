@@ -4,7 +4,6 @@ import { cn } from "../cn";
 import { ChevronIcon } from "../icons";
 import { Thumbnail } from "../primitives/display";
 import { holdsLine, type PageListRow } from "./page-list";
-import { LIST_ASIDE } from "./use-page-peek";
 
 /**
  * A page of pages, drawn as the list of them (spool#224): centred rows, each
@@ -20,7 +19,7 @@ export function PageListView({
 	project,
 	rows,
 	lit,
-	aside = false,
+	aside = 0,
 	dropLit = null,
 	onLight,
 	onGo,
@@ -28,8 +27,8 @@ export function PageListView({
 	project: string;
 	rows: readonly PageListRow[];
 	lit: string | null;
-	/** a peek stands beside a row: the list steps aside to make room for it */
-	aside?: boolean;
+	/** px the list steps aside by while a peek stands beside a row */
+	aside?: number;
 	/** the row a drag is aimed at */
 	dropLit?: string | null;
 	onLight: (page: string) => void;
@@ -55,7 +54,7 @@ export function PageListView({
 				data-page-list-rows=""
 				className="mx-auto mt-20 mb-16 flex w-[min(560px,calc(100%-48px))] flex-col"
 				style={{
-					transform: aside ? `translateX(${-LIST_ASIDE}px)` : "none",
+					transform: aside > 0 ? `translateX(${-aside}px)` : "none",
 					transition: "transform var(--transition-duration-slow) var(--ease-snap)",
 				}}
 			>
