@@ -128,6 +128,12 @@ export interface RecorderDeps {
 	deadlineMs?: number;
 	/** Told how far the clip has got, 0 to 1, as its frames are drawn. */
 	progress?(done: number): void;
+	/**
+	 * How many tabs share the frames, each replaying the inputs up to its part. One
+	 * when the page writes what the inputs do somewhere the others read, as spool's
+	 * own window does to its project.
+	 */
+	workers?: number;
 }
 
 /** Render one recording to an MP4's bytes. */
@@ -151,7 +157,10 @@ export async function renderClip(request: ClipRequest, deps: RecorderDeps = {}):
 		return context;
 	};
 	try {
-		return await Promise.race([render(opened, request, layout, start, end, deps.progress), deadline]);
+		return await Promise.race([
+			render(opened, request, layout, start, end, deps.progress, deps.workers ?? RECORD_WORKERS),
+			deadline,
+		]);
 	} finally {
 		clearTimeout(timer);
 		await closeAll();
@@ -207,11 +216,12 @@ async function render(
 	start: number,
 	end: number,
 	progress: (done: number) => void = () => {},
+	workers = RECORD_WORKERS,
 ): Promise<Uint8Array<ArrayBuffer>> {
 	const first = Math.floor(start / STEP_MS);
 	const last = Math.ceil(end / STEP_MS);
 	const bitrate = Math.min(MAX_BITRATE, Math.floor((CLIP_BYTES * 8) / Math.max(1, (end - start) / 1000)));
-	const parts = clipParts(first, last + 1, RECORD_WORKERS);
+	const parts = clipParts(first, last + 1, workers);
 	// the work is every part's replay up to its start and its pictures after, weighed as clipParts weighs them
 	const work = parts.reduce((sum, part) => sum + part.from * REPLAY_COST + (part.to - part.from), 0);
 	let done = 0;
