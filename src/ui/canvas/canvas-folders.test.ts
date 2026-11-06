@@ -253,6 +253,24 @@ describe("a frame dragged off the field", () => {
 		// nothing the move took is written where the drag left it on the page it left
 		expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith("/geometry"))).toBe(false);
 	});
+
+	/** the toast's Undo is the next ⌘Z, so a later change takes it away rather than leaving it to undo that */
+	it("takes the move's toast away once another change is the one an undo would take", async () => {
+		const host = await mountCanvas({ ...KAFFE, frames: [...KAFFE.frames, frame("app/cart", { x: 300 })] });
+		await into(host, "app");
+		const root = host.querySelector<HTMLElement>('[data-path-page=""]');
+		const original = document.elementFromPoint;
+		document.elementFromPoint = (x: number) => (x > 500 ? root : null);
+		onTestFinished(() => {
+			document.elementFromPoint = original;
+		});
+		await drag(host, screenAt(host, { x: 10, y: 10 }), { x: 600, y: 4 });
+		await until(() => host.textContent?.includes("Moved menu to test") === true);
+
+		const cart = screenAt(host, { x: 310, y: 10 });
+		await drag(host, cart, { x: cart.x + 40, y: cart.y + 40 });
+		await until(() => host.textContent?.includes("Moved menu to test") === false);
+	});
 });
 
 async function keydown(init: KeyboardEventInit): Promise<void> {

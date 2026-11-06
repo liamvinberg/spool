@@ -950,8 +950,12 @@ function CanvasField({
 	// the one undo/redo stack: per window, in memory, hands' writes only — the
 	// canvas's geometry and the rail's file operations on the same ⌘Z (#230)
 	const history = useRef(emptyHistory());
+	/** the last move a drag made, said with its Undo until the next change or the drain (spool#224) */
+	const [moved, setMoved] = useState<{ readonly entry: HistoryEntry; readonly line: string } | null>(null);
 	const updateHistory = useCallback((next: History) => {
 		history.current = next;
+		// the toast's Undo is ⌘Z, so it goes the moment something else is what ⌘Z would take
+		setMoved((shown) => (shown !== null && next.undo.at(-1) !== shown.entry ? null : shown));
 	}, []);
 	// the rail's runner, put here by the rail itself: it owns the stored order
 	// and the explorer calls, so an explorer entry has to be run from there
@@ -2046,8 +2050,6 @@ function CanvasField({
 		[store],
 	);
 
-	/** the last move a drag made, said with its Undo until the next change or the drain (spool#224) */
-	const [moved, setMoved] = useState<{ readonly entry: HistoryEntry; readonly line: string } | null>(null);
 	const recordEntry = useCallback(
 		(entry: HistoryEntry) => {
 			updateHistory(record(history.current, entry));
