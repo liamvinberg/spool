@@ -22,16 +22,21 @@ export type ClipAspect = (typeof CLIP_ASPECTS)[number];
 const SHAPED_MARGIN = 32;
 
 /**
- * The box a frame is played in while it records at a post's shape: the
- * largest of that shape that fits the room with a margin round it. The frame
- * lays itself out at that size, so the clip is the frame edge to edge rather
- * than a wide page with bands above and below. The frame's own shape is
- * whatever the window gives it, so it has no box of its own.
+ * The box a frame is played in while it records: at a post's shape, the
+ * largest of that shape that fits the room with a margin round it, so the clip
+ * is the frame edge to edge rather than a wide page with bands above and
+ * below. At the frame's own shape, the size it has on the canvas, or the
+ * largest of its shape that fits when the room is smaller. The frame lays
+ * itself out at that size.
  */
-export function shapedBox(aspect: ClipAspect, room: { w: number; h: number }): { w: number; h: number } | null {
-	if (aspect === "frame") return null;
-	const ratio = aspect === "1:1" ? 1 : 16 / 9;
-	const w = Math.max(1, Math.min(room.w - 2 * SHAPED_MARGIN, (room.h - 2 * SHAPED_MARGIN) * ratio));
+export function shapedBox(
+	aspect: ClipAspect,
+	room: { w: number; h: number },
+	authored: { w: number; h: number },
+): { w: number; h: number } {
+	const ratio = aspect === "1:1" ? 1 : aspect === "16:9" ? 16 / 9 : authored.w / authored.h;
+	const fits = Math.min(room.w - 2 * SHAPED_MARGIN, (room.h - 2 * SHAPED_MARGIN) * ratio);
+	const w = Math.max(1, aspect === "frame" ? Math.min(authored.w, fits) : fits);
 	return { w: Math.floor(w), h: Math.max(1, Math.floor(w / ratio)) };
 }
 

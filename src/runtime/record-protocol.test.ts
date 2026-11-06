@@ -27,8 +27,14 @@ describe("clipWindow", () => {
 
 describe("shapedBox", () => {
 	it("plays the frame at the post's shape, as large as fits with a margin", () => {
-		expect(shapedBox("16:9", { w: 1440, h: 870 })).toEqual({ w: 1376, h: 774 });
-		expect(shapedBox("1:1", { w: 1440, h: 870 })).toEqual({ w: 806, h: 806 });
-		expect(shapedBox("frame", { w: 1440, h: 870 })).toBeNull();
+		const authored = { w: 1280, h: 800 };
+		expect(shapedBox("16:9", { w: 1440, h: 870 }, authored)).toEqual({ w: 1376, h: 774 });
+		expect(shapedBox("1:1", { w: 1440, h: 870 }, authored)).toEqual({ w: 806, h: 806 });
+	});
+
+	it("plays the frame at its canvas size, shrunk to its own shape only when the window is smaller", () => {
+		const authored = { w: 1280, h: 800 };
+		expect(shapedBox("frame", { w: 1440, h: 870 }, authored)).toEqual(authored);
+		expect(shapedBox("frame", { w: 1000, h: 870 }, authored)).toEqual({ w: 936, h: 585 });
 	});
 });
