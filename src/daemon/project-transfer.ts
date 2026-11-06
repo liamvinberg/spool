@@ -61,6 +61,8 @@ function canvas(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 			format,
 			history: false,
 			order: parseOrder(fields.order),
+			// retired, and left alone wherever it was stored: an export carries it as it found it
+			...(fields.places === undefined ? {} : { places: fields.places }),
 		}),
 	);
 }

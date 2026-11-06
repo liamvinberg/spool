@@ -76,6 +76,7 @@ it("round-trips authored bytes and organization, excludes local state, and alway
 		format: FORMAT_VERSION,
 		history: false,
 		order: { pages: { "": ["page"] }, frames: { page: ["one"] } },
+		places: { page: { x: 123, y: 456 } },
 	});
 	expect(readRegistry(f.spool).projects).toHaveLength(3);
 	expect(readdirSync(f.location)).toHaveLength(2);
