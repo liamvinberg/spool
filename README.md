@@ -2,7 +2,7 @@
 
 [Website and live demo](https://spool.page) · [Download for Mac](https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg) · [Contributing](CONTRIBUTING.md)
 
-spool is a local-first prototyping canvas for websites, apps and presentations. Your agent writes live TSX frames into your repo, and you play the flows between them like a real app.
+spool is a local-first prototyping canvas for coding agents. Your agent writes live TSX frames into your repo, and you play the flows between them like a real app.
 
 Free on your Mac, with the source on GitHub. [Spool Cloud](https://spool.page/#cloud) for teams, from $16 a seat. Pre-1.0, actively developed and used every day.
 
