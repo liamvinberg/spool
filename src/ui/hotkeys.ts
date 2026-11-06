@@ -25,6 +25,7 @@ export type HotkeyScope =
 	| "help"
 	| "settings"
 	| "toast"
+	| "peek"
 	| "sidebar"
 	| "panes"
 	| "canvas"
@@ -38,7 +39,9 @@ export type HotkeyScope =
  *
  * The sidebar sits above the canvas and is not exclusive (#229): while the
  * rail has focus its own list answers ⌫, ↵ and the arrows, and every key it
- * does not claim carries on to the canvas exactly as it did before. The panes
+ * does not claim carries on to the canvas exactly as it did before. The peek
+ * sits above both (spool#224): it is up only while a folder is under the
+ * pointer or the keys, or a peek is open, and then Space and the arrows are its. The panes
  * answer only chords nothing else binds, so where they sit in the walk is moot.
  */
 export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
@@ -48,6 +51,7 @@ export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"toast",
 	"help",
 	"settings",
+	"peek",
 	"sidebar",
 	"panes",
 	"canvas",
@@ -621,6 +625,27 @@ export const HOTKEYS = [
 		gesture: "⌥ click a chevron",
 	},
 	{ id: "sidebar.close-menu", scope: "sidebar", group: "Pages", label: "", keys: ["escape"], listed: false },
+	// Quick Look for a folder (spool#224): Space over a tree row, a row of a list of
+	// pages or a name on the path. Up only there, so Space everywhere else is still
+	// the Hand borrowed, and a frame or a field keeps its own
+	{
+		id: "peek.open",
+		scope: "peek",
+		group: "Pages",
+		label: "Peek at a folder's frames, over its row or name",
+		keys: ["space"],
+		repeats: false,
+	},
+	{
+		id: "peek.walk",
+		scope: "peek",
+		group: "Pages",
+		label: "Peek at the next folder",
+		keys: ["arrowup", "arrowdown", "arrowleft", "arrowright"],
+		shown: ["↑↓"],
+	},
+	{ id: "peek.go", scope: "peek", group: "Pages", label: "", keys: ["enter", "accel+arrowdown"], listed: false },
+	{ id: "peek.close", scope: "peek", group: "Pages", label: "", keys: ["escape"], listed: false },
 
 	// --- Panes: the canvas window's two sides (#359) -----------------------------
 	// ⌘B is the side bar's key in most editors, and ⌥ makes it the other side.
