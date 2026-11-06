@@ -223,6 +223,27 @@ describe("the peek", () => {
 		expect(on(host)).toBe("");
 	});
 
+	/** a long list scrolls under the wheel, and a peek open on it moves to the row the pointer rests on */
+	it("lets the wheel scroll the list, and follows the pointer to the row it rests on", async () => {
+		const host = await mountCanvas(KAFFE);
+		await until(() => lit(host) === "app");
+		const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
+		await act(async () => {
+			host.querySelector('[data-page-row="explore"]')?.dispatchEvent(wheel);
+		});
+		expect(wheel.defaultPrevented).toBe(false);
+
+		await space();
+		await until(() => card()?.querySelector('[data-peek-map="app"]') != null);
+		await act(async () => {
+			host
+				.querySelector('[data-page-row="onboarding"]')
+				?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 200, clientY: 200 }));
+		});
+		await until(() => card()?.querySelector('[data-peek-map="onboarding"]') != null);
+		expect(lit(host)).toBe("onboarding");
+	});
+
 	/** a tree's peek walks up and down only, so ← and → are still the tree's to fold and unfold with */
 	it("leaves ← and → to the tree while a peek opened over one of its rows is up", async () => {
 		const host = await mountCanvas(KAFFE);

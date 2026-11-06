@@ -44,7 +44,8 @@ export function PageListView({
 		// biome-ignore lint/a11y/noStaticElementInteractions: it only keeps a press from the canvas under it; its rows are buttons
 		<div
 			data-page-list=""
-			className="absolute inset-0 overflow-y-auto"
+			// rows scrolled up fade out under the path rather than run through it
+			className="absolute inset-0 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent_2.5rem,black_5rem)]"
 			// the canvas under it has nothing to marquee or pan here: a press is the list's
 			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}

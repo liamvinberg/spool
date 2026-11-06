@@ -57,6 +57,8 @@ const PANE_EDGE = 12;
 /** how far the pointer can drift from where a key opened the peek before leaving puts it away */
 const DRIFT = 24;
 const CLOSE_MS = 180;
+/** how long the pointer rests on another folder before a peek a key opened moves to it, so a pass on the way to the card does not */
+const FOLLOW_MS = 90;
 /** a peek a drag sprang waits this long off every folder, so the gap to it can be crossed */
 const LET_GO_MS = 240;
 
@@ -150,7 +152,7 @@ export function usePagePeek({
 	const hover = useRef<HTMLElement | null>(null);
 	const openedAt = useRef({ x: 0, y: 0 });
 	const pointer = useRef({ x: 0, y: 0 });
-	const timers = useRef({ close: 0, dwell: 0, dwellOn: "" });
+	const timers = useRef({ close: 0, dwell: 0, dwellOn: "", follow: 0, followOn: "" });
 
 	const api = useMemo(() => {
 		const setPeek = (next: Peek | null) => {
@@ -196,6 +198,8 @@ export function usePagePeek({
 		const close = () => {
 			window.clearTimeout(timers.current.close);
 			timers.current.close = 0;
+			window.clearTimeout(timers.current.follow);
+			timers.current.followOn = "";
 			if (peekRef.current !== null) setPeek(null);
 		};
 		/** the folders an arrow walks through, in the order they stand; the page you are on has nothing to show */
@@ -212,6 +216,24 @@ export function usePagePeek({
 			if (next === undefined || next === was.page) return;
 			if (was.from === "list") live.current.onLight(next);
 			open(next, was.from, "key", by);
+		};
+		/** a peek a key opened moves to the folder the pointer comes to rest on, from the side it stands on */
+		const follow = (page: string, from: PeekFrom) => {
+			const was = peekRef.current;
+			if (was === null || was.why !== "key") return;
+			if (was.page === page && was.from === from) return;
+			const list = walkOf(from);
+			const dir = from === was.from ? Math.sign(list.indexOf(page) - list.indexOf(was.page)) : 0;
+			open(page, from, "key", dir);
+		};
+		/** the source scrolled under the card: it stands beside its folder again */
+		const reanchor = () => {
+			const was = peekRef.current;
+			if (was === null) return;
+			const el = sourceEl(was.page, was.from);
+			if (el === null) return;
+			const at = anchorOf(el, was.from, cardHeight(was.why === "drop"));
+			if (at.left !== was.left || at.top !== was.top || at.aside !== was.aside) setPeek({ ...was, ...at });
 		};
 		/** what Space would peek at now: the folder under the pointer, under the keys, or the list's lit row */
 		const sourceNow = (): { page: string; from: PeekFrom } | null => {
@@ -304,7 +326,7 @@ export function usePagePeek({
 			},
 		};
 
-		return { open, close, walk, sourceNow, carrier };
+		return { open, close, walk, follow, reanchor, sourceNow, carrier };
 	}, []);
 
 	// the pointer over the chrome, read when Space comes
@@ -332,10 +354,23 @@ export function usePagePeek({
 			const t = timers.current;
 			const hit = event.target instanceof Element ? event.target : null;
 			const src = hit?.closest<HTMLElement>("[data-peek-from]");
-			const onSource = src?.dataset.dropPage === keyPeek.page && src.dataset.peekFrom === keyPeek.from;
+			const page = src?.dataset.dropPage;
+			const from = src?.dataset.peekFrom as PeekFrom | undefined;
+			const onSource = page === keyPeek.page && from === keyPeek.from;
 			const onCard = hit?.closest("[data-peek-card]") != null;
 			const drifted = Math.hypot(event.clientX - openedAt.current.x, event.clientY - openedAt.current.y) > DRIFT;
-			if (onSource || onCard || !drifted) {
+			// over another folder the peek follows once the pointer rests there, as Quick Look follows the selection
+			const other =
+				!onSource && !onCard && page !== undefined && from !== undefined && page !== live.current.activePage
+					? `${from}:${page}`
+					: "";
+			if (other !== t.followOn) {
+				window.clearTimeout(t.follow);
+				t.followOn = other;
+				if (other !== "" && page !== undefined && from !== undefined)
+					t.follow = window.setTimeout(() => api.follow(page, from), FOLLOW_MS);
+			}
+			if (onSource || onCard || other !== "" || !drifted) {
 				window.clearTimeout(t.close);
 				t.close = 0;
 				return;
@@ -345,6 +380,15 @@ export function usePagePeek({
 		window.addEventListener("pointermove", move);
 		return () => window.removeEventListener("pointermove", move);
 	}, [keyPeek, api]);
+
+	// a list or tree scrolled under an open peek: the card keeps to its folder
+	const shown = peek !== null;
+	useEffect(() => {
+		if (!shown) return;
+		const scrolled = () => api.reanchor();
+		document.addEventListener("scroll", scrolled, { capture: true, passive: true });
+		return () => document.removeEventListener("scroll", scrolled, { capture: true });
+	}, [shown, api]);
 
 	// going somewhere puts a peek away: what it showed is where you are now, or behind you
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the page changing is the event
