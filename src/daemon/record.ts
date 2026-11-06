@@ -75,8 +75,12 @@ const MAX_BITRATE = 16_000_000;
 const MAX_SCALE = 3;
 /** How long a frame may take to arrive before the recording gives up on it. */
 const LOAD_MS = 30_000;
-/** H.264 High at level 4.2: up to 1920x1080 at 60 fps, which every clip shape stays inside. */
-const H264 = "avc1.64002a";
+/** H.264 High at level 5.2: up to 3840x2160 at 60 fps, which every clip shape stays inside. */
+const H264 = "avc1.640034";
+/** How many pixels a Mac's screen draws to a CSS pixel: a clip is never softer than the frame looked. */
+const DENSITY = 2;
+/** The most a clip grows past a post's 1080p, on each side: 4K. */
+const MAX_GROWTH = 2;
 
 /** Where the frame sits in the clip: the clip's size, and the frame's scale and offset inside it. */
 export interface ClipLayout {
@@ -90,9 +94,27 @@ export interface ClipLayout {
 /**
  * A post's shape holds the frame centred and as large as fits, on the frame's
  * own background. The frame's own shape is the frame alone, as large as a
- * 1080p clip's pixel count allows. H.264 wants even sides.
+ * 1080p clip's pixel count allows. Then the clip grows, up to 4K, until the
+ * frame is drawn as sharp as a Mac's screen showed it. H.264 wants even sides.
  */
 export function clipLayout(viewport: { w: number; h: number }, aspect: ClipAspect): ClipLayout {
+	const post = postLayout(viewport, aspect);
+	const growth = Math.min(MAX_GROWTH, Math.max(1, DENSITY / post.scale));
+	if (growth === 1) return post;
+	const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+	const width = even(post.width * growth);
+	const height = even(post.height * growth);
+	const scale = Math.min(width / viewport.w, height / viewport.h, MAX_SCALE);
+	return {
+		width,
+		height,
+		scale,
+		x: Math.round((width - viewport.w * scale) / 2),
+		y: Math.round((height - viewport.h * scale) / 2),
+	};
+}
+
+function postLayout(viewport: { w: number; h: number }, aspect: ClipAspect): ClipLayout {
 	const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 	const { w, h } = viewport;
 	let width: number;

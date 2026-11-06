@@ -432,7 +432,7 @@ function RecordControl({ recorder }: { recorder: PlayerRecorder }) {
 const SHAPE_SAYS: Record<ClipAspect, string> = {
 	"16:9": "The frame plays at 16:9 while it records, so the clip is the frame edge to edge.",
 	"1:1": "The frame plays square while it records, so the clip is the frame edge to edge.",
-	frame: "The frame as the window plays it.",
+	frame: "The frame at its size on the canvas, so the clip is what the canvas shows.",
 };
 
 /** Record's panel, under the dot: the clip's shape, then Start. Escape or Cancel puts it away. */
