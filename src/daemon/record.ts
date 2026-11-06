@@ -113,6 +113,16 @@ export function clipLayout(viewport: { w: number; h: number }, aspect: ClipAspec
 	};
 }
 
+/**
+ * Whether the shell takes its BeginFrames from the recorder. Chromium has never
+ * done so on a Mac ("BeginFrameControl is not supported on MacOS yet"), so
+ * there every picture is a screenshot instead: in deterministic mode each one
+ * draws exactly one frame, a frame's interval on from the one before, which
+ * is the same clock without its control. A frame there is drawn only when a
+ * picture is asked for, so a clip on a Mac is one part, photographed through.
+ */
+const BEGIN_FRAMES = process.platform !== "darwin";
+
 /** The deterministic shell: drawn on request, on the compositor's own thread order. */
 const DETERMINISTIC_ARGS = [
 	"--deterministic-mode",
@@ -231,7 +241,7 @@ async function render(
 	const first = Math.floor(start / STEP_MS);
 	const last = Math.ceil(end / STEP_MS);
 	const bitrate = Math.min(MAX_BITRATE, Math.floor((CLIP_BYTES * 8) / Math.max(1, (end - start) / 1000)));
-	const parts = clipParts(first, last + 1, RECORD_WORKERS);
+	const parts = clipParts(first, last + 1, BEGIN_FRAMES ? RECORD_WORKERS : 1);
 	// the work is every part's replay up to its start and its pictures after, weighed as clipParts weighs them
 	const work = parts.reduce((sum, part) => sum + part.from * REPLAY_COST + (part.to - part.from), 0);
 	let done = 0;
@@ -335,9 +345,10 @@ async function renderPart(
 	const { page, cdp } = await openFrameTab(context, encoder, request);
 	let ticks = 0;
 	let held = true;
-	const frame = (screenshot: boolean) => {
+	const frame = async (screenshot: boolean): Promise<{ screenshotData?: string }> => {
+		if (!BEGIN_FRAMES) return { screenshotData: (await cdp.send("Page.captureScreenshot", SHOT)).data };
 		if (!held) ticks += STEP_MS;
-		return cdp.send("HeadlessExperimental.beginFrame", {
+		return await cdp.send("HeadlessExperimental.beginFrame", {
 			frameTimeTicks: ticks,
 			// as long as a frame may take: a frame drawn past its deadline leaves the page's own work behind
 			interval: FRAME_PATIENCE_MS,
@@ -371,18 +382,20 @@ async function renderPart(
 		await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pauseIfNetworkFetchesPending", budget: STEP_MS });
 		await expired;
 	};
-	await evaluate(cdp, `requestAnimationFrame((at) => { window.${CLOCK_KEY} = at; })`);
-	ticks = monotonicMs();
-	let read: number | undefined;
-	for (;;) {
-		await step();
-		await frame(false);
-		read = await evaluate<number | undefined>(cdp, `window.${CLOCK_KEY}`);
-		if (read !== undefined && read > 0) break;
-		if (Date.now() > loading) throw new Error("the frame's clock could not be read for its recording");
-		ticks += STEP_MS;
+	if (BEGIN_FRAMES) {
+		await evaluate(cdp, `requestAnimationFrame((at) => { window.${CLOCK_KEY} = at; })`);
+		ticks = monotonicMs();
+		let read: number | undefined;
+		for (;;) {
+			await step();
+			await frame(false);
+			read = await evaluate<number | undefined>(cdp, `window.${CLOCK_KEY}`);
+			if (read !== undefined && read > 0) break;
+			if (Date.now() > loading) throw new Error("the frame's clock could not be read for its recording");
+			ticks += STEP_MS;
+		}
+		ticks = ticks - read + Math.max(LOADED_AT_MS, read + STEP_MS);
 	}
-	ticks = ticks - read + Math.max(LOADED_AT_MS, read + STEP_MS);
 	for (;;) {
 		await step();
 		await frame(false);
@@ -459,7 +472,7 @@ async function openFrameTab(
 			url: "about:blank",
 			width: request.viewport.w,
 			height: request.viewport.h,
-			enableBeginFrameControl: true,
+			enableBeginFrameControl: BEGIN_FRAMES,
 		}),
 	]);
 	const cdp = await context.newCDPSession(page);
