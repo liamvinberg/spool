@@ -1,6 +1,10 @@
 {
-	"through": "0.50.0",
+	"through": "0.51.1",
 	"headlines": {
+		"2b96f16": "Experimental settings",
+		"3042dde": "Pages as lists",
+		"0109d88": "Record",
+		"506245b": "Rename team projects",
 		"1523885": "Get it finds your clone",
 		"4072864": "Shares that end on their own",
 		"7405324": "Moving a project out keeps it",
