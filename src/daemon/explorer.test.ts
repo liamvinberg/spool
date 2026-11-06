@@ -690,10 +690,11 @@ describe("trashing a page", () => {
 describe("the order store", () => {
 	it("round-trips through canvas.json, keeping the format stamp and every other field", async () => {
 		const { spoolDir, root, name } = explorerProject();
+		// pages once stood on the field at stored places: nothing reads them now, and nothing rewrites them (spool#224)
 		writeDesignFile(
 			root,
 			"canvas.json",
-			`${JSON.stringify({ format: FORMAT_VERSION, somethingElse: { kept: true } })}\n`,
+			`${JSON.stringify({ format: FORMAT_VERSION, places: { shop: { x: 3000, y: 0 } } })}\n`,
 		);
 		writeFrame(root, "home", label("home"));
 		const app = makeApp(spoolDir);
@@ -706,7 +707,7 @@ describe("the order store", () => {
 		expect(put.status).toBe(204);
 		expect(readJson(designFile(root, "canvas.json"))).toEqual({
 			format: FORMAT_VERSION,
-			somethingElse: { kept: true },
+			places: { shop: { x: 3000, y: 0 } },
 			order,
 		});
 		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual(order);

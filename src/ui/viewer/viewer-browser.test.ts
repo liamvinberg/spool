@@ -27,7 +27,6 @@ const project: ViewerProject = {
 	account: "vic@devosurf.com",
 	canvas: {
 		pages: ["shop"],
-		places: { shop: { x: 3000, y: 0 } },
 		order: {},
 		frames: [
 			{ name: "home", x: 0, y: 0, w: 800, h: 600 },
@@ -58,7 +57,6 @@ const outsider = (): ViewerProject => ({
 	account: "kim@client.com",
 	canvas: {
 		pages: ["shop"],
-		places: { shop: { x: 3000, y: 0 } },
 		order: {},
 		frames: [{ name: "shop/cart", page: "shop", x: 0, y: 0, w: 390, h: 844 }],
 	},

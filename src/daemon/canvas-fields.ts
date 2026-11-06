@@ -1,9 +1,8 @@
-import { isPagePath, isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
+import { isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
 
 /**
- * The arrangements design/canvas.json keeps beside its format stamp, as values:
- * the rail's order (canvas-order.ts) and where each page stands (canvas-places.ts).
- * Reading them needs no disk, so the cloud reads its copy of the file the same way.
+ * The arrangement design/canvas.json keeps beside its format stamp, as a value:
+ * the rail's order (canvas-order.ts). Reading it needs no disk, so the cloud reads its copy of the file the same way.
  */
 
 export interface CanvasOrder {
@@ -15,35 +14,6 @@ export interface CanvasOrder {
 	pages?: Record<string, string[]>;
 	/** Each page's frames in rail order, keyed by the page's path, `""` for the root page. */
 	frames?: Record<string, string[]>;
-}
-
-export interface Place {
-	x: number;
-	y: number;
-}
-
-/** Every page that has a place, keyed by page path; a page path is never `""`. */
-export type CanvasPlaces = Record<string, Place>;
-
-/** Strict on the way in (PUT bodies), lenient on the way out — the state file's rule. */
-export function parsePlaces(value: unknown): CanvasPlaces | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const places: CanvasPlaces = {};
-	for (const [page, place] of Object.entries(value as Record<string, unknown>)) {
-		// the root page is the field itself and stands nowhere, so it is never keyed
-		if (!isPagePath(page)) return undefined;
-		const point = asPlace(place);
-		if (point === undefined) return undefined;
-		places[page] = point;
-	}
-	return places;
-}
-
-function asPlace(value: unknown): Place | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const { x, y } = value as { x?: unknown; y?: unknown };
-	if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return undefined;
-	return { x: Math.round(x), y: Math.round(y) };
 }
 
 /** Strict on the way in (PUT bodies), lenient on the way out — the state file's rule. */

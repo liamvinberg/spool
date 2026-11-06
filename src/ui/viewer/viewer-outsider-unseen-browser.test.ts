@@ -39,7 +39,7 @@ function shared(frames: DesignFrame[], share?: string): ViewerProject {
 		team: { address: "kaffe", name: "kaffe", logo: null },
 		project: "checkout",
 		account: "jonas",
-		canvas: { pages, places: {}, order: {}, frames },
+		canvas: { pages, order: {}, frames },
 		frames: FRAMES,
 		shared: { by: "bo", pages: ["", ...pages], updated: null, whole: true },
 		...(share === undefined

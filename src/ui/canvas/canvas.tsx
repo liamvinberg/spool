@@ -28,7 +28,6 @@ import type {
 	FrameCopy,
 	Geometry,
 	HistoryScope,
-	Place,
 	ProjectedFrame,
 	SelectionEntry,
 	SelectionPut,
@@ -43,6 +42,7 @@ import {
 	fetchCanvasState,
 	fetchCloudAccount,
 	fetchFlows,
+	fetchOrder,
 	fetchProjection,
 	postSeen,
 	postTrash,
@@ -50,7 +50,6 @@ import {
 	putCanvasState,
 	putCanvasView,
 	putGeometry,
-	putPlaces,
 	putPresence,
 	putSelection,
 	readRungs,
@@ -109,12 +108,13 @@ import {
 	zoomFloor,
 } from "./camera";
 import { type CameraStore, createCameraStore, createViewChanges, useCameraFollow } from "./camera-store";
+import { CanvasPath, PATH_KEYS, type PathSeg, type PathWay } from "./canvas-path";
 import {
 	type CanvasContextMenu,
 	createCanvasStore,
 	navigatorFramesOf,
 	navigatorPagesOf,
-	pageObjectsOf,
+	pageWorldOf,
 	shareContextOf,
 	toolOf,
 	unseenOf,
@@ -138,7 +138,7 @@ import {
 	commentWorld,
 	MAC_OFFLINE,
 } from "./comments-layer";
-import { counts as commentCounts, pageCount } from "./comments-model";
+import { counts as commentCounts } from "./comments-model";
 import { CommentsPane } from "./comments-pane";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { placeCopies } from "./copy-placement";
@@ -167,8 +167,6 @@ import {
 	type History,
 	type HistoryEntry,
 	type Liveness,
-	placeEntryOf,
-	placesOf,
 	record,
 	rectsOf,
 	type Staging,
@@ -204,8 +202,8 @@ import {
 	sourcePathOf,
 } from "./overlays";
 import { OverviewCatcher, OverviewLayer } from "./overview-layer";
-import { PageObjectLabel, PageObjectView } from "./page-object";
-import { pageIsBare, pageObjectAt } from "./page-objects";
+import { chainOf, downOf, listsPages, pageListRows, pageTreeOf } from "./page-list";
+import { PageListView } from "./page-list-view";
 import {
 	camerasFromState,
 	frameFolderRel,
@@ -254,6 +252,7 @@ import { HOLD_PAINT_MS, PICK_REPLY_MS, useHandEdit } from "./use-hand-edit";
 import { type KnobLane, useKnobLane } from "./use-knobs";
 import { useLiveMoves } from "./use-live-moves";
 import { useFollow, usePointerHidden, usePresenceSender } from "./use-presence";
+import { stepVisits, type Visits, visit, visitsAround, visitsFrom } from "./visits";
 import { WalkLayer, walksOf } from "./walk-layer";
 
 /**
@@ -312,10 +311,6 @@ type Gesture =
 			/** where letting go would put it */
 			drop?: Drop;
 	  }
-	// a page object's own press and drag (#265). One page rather than a set: a
-	// page is picked on its own, and nothing moves with it but itself
-	| { kind: "page-pending"; page: string; origin: Point; start: Point }
-	| { kind: "page-move"; page: string; origin: Point; start: Point }
 	| { kind: "marquee"; start: Point; base: readonly string[] }
 	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box };
 
@@ -638,22 +633,27 @@ function CanvasField({
 		shares: commentShares,
 	};
 	/**
-	 * Where each page stands on the field holding it (#265).
-	 *
-	 * The whole project's, not this page's: an object is drawn on its parent's
-	 * field, so switching page changes which of these are on screen and none of
-	 * what they say. The projection arrives with one for every page.
-	 */
-	const setPlaces = useCanvasSetter(store, "places");
-	/**
-	 * The page object the hand is holding, if any.
-	 *
-	 * A page is selected on its own: picking one clears the frame selection and
-	 * the selection never holds both. One page rather than a list — multi-select
-	 * across pages and frames is not in this.
+	 * The page picked among this page's own: the list's lit row and the path's
+	 * ghost, where ⌘↓ goes. Going up lands with the page just left picked.
 	 */
 	const [selectedPage, setSelectedPage] = useCanvasField(store, "selectedPage");
-	const [hoveredPage, setHoveredPage] = useState<string | null>(null);
+	const setOrder = useCanvasSetter(store, "order");
+	// the rail keeps the order and tells each change; read here too, for a canvas whose rail is shut
+	useEffect(() => {
+		let reading = true;
+		void fetchOrder(project).then((stored) => {
+			if (reading) setOrder(stored);
+		});
+		return () => {
+			reading = false;
+		};
+	}, [project]);
+	/** which way the last page switch went, which way the page and the path's names slide */
+	const [pathWay, setPathWay] = useState<PathWay>("side");
+	/** the way the next switch goes when it is not read from where it goes: back and forward */
+	const wayAhead = useRef<PathWay | null>(null);
+	/** counts the moves a key made, each of which lights the path for a moment */
+	const [keyMoves, setKeyMoves] = useState(0);
 
 	// the active page is the canvas: only its frames mount — and frames staged
 	// for the Trash vanish instantly; the disk move waits on the toast
@@ -682,18 +682,11 @@ function CanvasField({
 	const [pictureClaims] = useState(() => new PictureClaims());
 	const navigatorFrames = useCanvasState(store, navigatorFramesOf);
 	const navigatorPages = useCanvasState(store, navigatorPagesOf);
-	/** the pages standing on the field (#265) */
-	const pageObjects = useCanvasState(store, pageObjectsOf);
-	/**
-	 * Everything standing on this field, as boxes: the frames and the pages
-	 * (#265). What a fit has to take in, because a page of pages is nothing but
-	 * objects and a camera that only knew frames landed on an empty view.
-	 */
+	/** Everything standing on this field, as boxes: what a fit has to take in. */
 	const fieldBoxes = useCallback((): Box[] => {
 		const state = store.get();
 		return [
 			...visibleFramesOf(state).map(({ x, y, w, h }) => ({ x, y, w, h })),
-			...pageObjectsOf(state).map(({ x, y, w, h }) => ({ x, y, w, h })),
 			...visiblePlaceholdersOf(state).map(({ x, y, w, h }) => ({ x, y, w, h })),
 		];
 	}, [store]);
@@ -842,7 +835,6 @@ function CanvasField({
 		setHovered((current) =>
 			current === null || !current.visible ? current : { frame: current.frame, visible: false },
 		);
-		setHoveredPage(null);
 	}, []);
 	useEffect(() => {
 		if (pointerTool) return;
@@ -1330,10 +1322,6 @@ function CanvasField({
 		setFrames(projected);
 		setPlaceholders(projection.placeholders ?? []);
 		setPages(projection.pages);
-		// lenient on the way in, like every other read of a durable: a projection
-		// with nothing to say about places leaves the field with no pages on it
-		// rather than with nothing on it
-		setPlaces(projection.places ?? {});
 		setLoaded(true);
 	}, [frameReads, project]);
 
@@ -1610,8 +1598,7 @@ function CanvasField({
 	 * later task. Placed from here, the camera moves in the commit that swaps the
 	 * field, and the frame that draws it draws both. A landing that goes on to a
 	 * frame flies there from here too, so its first frame is already on the page
-	 * it arrived on. Declared before the shelf's fit, which has to have the last
-	 * word on a shelf.
+	 * it arrived on.
 	 */
 	const arrival = useRef<{ page: string; camera: Camera | null; then?: Camera } | null>(null);
 	useLayoutEffect(() => {
@@ -1621,23 +1608,6 @@ function CanvasField({
 		placeCamera(landing.camera);
 		if (landing.then !== undefined) camera.fly(landing.then);
 	}, [activePage, placeCamera, camera]);
-
-	/**
-	 * A shelf is fitted on every arrival, stored camera or not. A page with no
-	 * frames of its own has nothing on it a hand arranged: the daemon lays its
-	 * pages, and lays them again as pages come and go, so a camera kept from
-	 * last time was aimed at a field that may no longer be there. Once, per
-	 * arrival; what the hand does with the camera after that is its own.
-	 */
-	const arrivedOn = useRef<string | null>(null);
-	useLayoutEffect(() => {
-		if (!loaded || arrivedOn.current === activePage) return;
-		arrivedOn.current = activePage;
-		if (visibleFramesOf(store.get()).length > 0 || pageObjectsOf(store.get()).length === 0) return;
-		const viewport = viewportRef.current;
-		if (viewport === null) return;
-		placeCamera(fitCamera(boundsOf(fieldBoxes()), viewport.clientWidth, viewport.clientHeight));
-	}, [loaded, activePage, fieldBoxes, placeCamera, store]);
 
 	// --- camera ---------------------------------------------------------------
 
@@ -1927,26 +1897,6 @@ function CanvasField({
 			});
 		},
 		[project, refetchFrames, updateHistory, store],
-	);
-
-	/**
-	 * A page's place, written to the durable the whole project shares (#265).
-	 *
-	 * The whole map goes over the wire because that is what the key holds and
-	 * this side has all of it: the projection completes a place for every page,
-	 * so writing what is in hand can never be how one gets dropped. A write that
-	 * never landed reads the projection back rather than leaving the field lying
-	 * about where a page stands, exactly as a geometry write does.
-	 */
-	const applyPlaces = useCallback(
-		(moved: Readonly<Record<string, Place>>) => {
-			const next = { ...store.get().places, ...moved };
-			setPlaces(next);
-			void putPlaces(project, next).then((ok) => {
-				if (!ok) void refetchFrames();
-			});
-		},
-		[project, refetchFrames, store],
 	);
 
 	const flushNudge = useCallback(() => {
@@ -2734,10 +2684,6 @@ function CanvasField({
 				applyRects(rectsOf(entry.rects, way));
 				return;
 			}
-			if (entry.kind === "place") {
-				applyPlaces(placesOf(entry.places, way));
-				return;
-			}
 			if (entry.kind === "mint") {
 				if (way === "undo") stageEntry(entry.staged);
 				else undoTrash();
@@ -2769,18 +2715,7 @@ function CanvasField({
 				void refetchFrames();
 			});
 		},
-		[
-			applyPlaces,
-			applyRects,
-			flushNudge,
-			knobs,
-			liveness,
-			refetchFrames,
-			stageEntry,
-			undoTrash,
-			updateHistory,
-			walkHand,
-		],
+		[applyRects, flushNudge, knobs, liveness, refetchFrames, stageEntry, undoTrash, updateHistory, walkHand],
 	);
 
 	/**
@@ -2994,7 +2929,8 @@ function CanvasField({
 	 */
 	const switchToPage = useCallback(
 		(target: string, arriveAt?: Camera, then?: Camera) => {
-			if (store.get().activePage === target) return;
+			const from = store.get().activePage;
+			if (from === target) return;
 			flushNudge();
 			commitTrash();
 			clearCanvasSelection();
@@ -3002,9 +2938,14 @@ function CanvasField({
 			setMenu(null);
 			setExternalLink(null);
 			camera.stop();
-			const next = switchPage(cameras.current, store.get().activePage, camera.get(), target, arriveAt);
+			const next = switchPage(cameras.current, from, camera.get(), target, arriveAt);
 			cameras.current = next.cameras;
+			// the page slides in from the side the path moves toward: deeper from the right (spool#224)
+			setPathWay(wayAhead.current ?? (pageWithin(from, target) ? "in" : pageWithin(target, from) ? "up" : "side"));
+			wayAhead.current = null;
 			setActivePage(target);
+			// lifting to a page above lands with the page you came out of picked, so ⌘↓ is the way back
+			if (pageWithin(target, from)) setSelectedPage(chainOf(from)[chainOf(target).length] ?? null);
 			// placed by the commit that swaps the field, so both are drawn by one frame
 			arrival.current = { page: target, camera: next.camera, ...(then === undefined ? {} : { then }) };
 		},
@@ -3023,7 +2964,7 @@ function CanvasField({
 		},
 		[clearCanvasSelection, recordDeparture, switchToPage, store],
 	);
-	/** ⏎, ⌘↓ and the double-click: inside a page object, as into a frame (#265) */
+	/** ⏎, ⌘↓ and a click on a row of the list: inside a page, as into a frame (#265) */
 	const goInsidePage = useCallback(
 		(page: string) => {
 			setSelectedPage(null);
@@ -3033,17 +2974,82 @@ function CanvasField({
 	);
 	/**
 	 * Esc's last layer and ⌘↑: up to the page holding this one, landing with
-	 * the page object just left selected, the way Finder lands on the folder.
-	 * False on the root page, where there is nowhere up to go.
+	 * the page just left picked, the way Finder lands on the folder. False on
+	 * the root page, where there is nowhere up to go.
 	 */
 	const goUpPage = useCallback((): boolean => {
 		const here = store.get().activePage;
 		if (here === ROOT_PAGE) return false;
 		recordDeparture();
 		switchToPage(pageParent(here));
-		setSelectedPage(here);
 		return true;
 	}, [recordDeparture, switchToPage, store]);
+
+	/**
+	 * The pages visited, for ⌘[ and ⌘] (visits.ts). Every arrival is a visit but
+	 * the one a step through them made, which only moves where in them you are.
+	 */
+	const [visits, setVisits] = useState<Visits | null>(null);
+	const visitsRef = useRef(visits);
+	visitsRef.current = visits;
+	const stepping = useRef<string | null>(null);
+	useEffect(() => {
+		if (!loaded) return;
+		if (stepping.current === activePage) {
+			stepping.current = null;
+			return;
+		}
+		setVisits((was) => (was === null ? visitsFrom(activePage) : visit(was, activePage)));
+	}, [loaded, activePage]);
+	/** a name on the path above this page: up to it, landing with the page you came out of picked */
+	const goUpTo = useCallback(
+		(page: string) => {
+			recordDeparture();
+			switchToPage(page);
+		},
+		[recordDeparture, switchToPage],
+	);
+	/** ⌘↓: into the page picked among this one's, else the first of them; false with none */
+	const pageDown = useCallback((): boolean => {
+		const state = store.get();
+		const to = downOf(state.activePage, state.selectedPage, pageTreeOf(pageWorldOf(state)));
+		if (to === null) return false;
+		goInsidePage(to);
+		setKeyMoves((n) => n + 1);
+		return true;
+	}, [goInsidePage, store]);
+	/** ↑ and ↓ in a list of pages: the lit row one step that way, held at the ends */
+	const walkList = useCallback(
+		(by: -1 | 1) => {
+			const state = store.get();
+			const own = pageTreeOf(pageWorldOf(state)).get(state.activePage) ?? [];
+			const lit = downOf(state.activePage, state.selectedPage, pageTreeOf(pageWorldOf(state)));
+			const at = lit === null ? 0 : own.indexOf(lit);
+			const next = own[Math.max(0, Math.min(own.length - 1, at + by))];
+			if (next === undefined) return;
+			if (next !== lit) setPathWay(by > 0 ? "forward" : "back");
+			setSelectedPage(next);
+			setKeyMoves((n) => n + 1);
+		},
+		[store],
+	);
+	/** ⌘[ back (-1) and ⌘] forward (1) through the pages visited; false with nowhere that way */
+	const stepPages = useCallback(
+		(by: -1 | 1): boolean => {
+			const was = visitsRef.current;
+			if (was === null || store.get().entered !== null) return false;
+			const stands = new Set([ROOT_PAGE, ...navigatorPagesOf(store.get())]);
+			const step = stepVisits(was, by, (page) => stands.has(page));
+			if (step === undefined) return false;
+			stepping.current = step.page;
+			setVisits(step.visits);
+			recordDeparture();
+			wayAhead.current = by < 0 ? "back" : "forward";
+			switchToPage(step.page);
+			return true;
+		},
+		[recordDeparture, switchToPage, store],
+	);
 
 	// a page deleted on disk cannot stay active, and neither can one staged for
 	// the Trash: either way the canvas has nowhere to be, so it snaps back to
@@ -3115,7 +3121,6 @@ function CanvasField({
 			gesture.current.kind === "idle" &&
 			store.get().editing === null &&
 			toolOf(store.get()) === "select" &&
-			store.get().selectedPage === null &&
 			store.get().picked.length === 0,
 	});
 	const liveRef = useRef(live);
@@ -4202,11 +4207,7 @@ function CanvasField({
 
 		// the Comment tool places a pin where it is pressed, and nothing else (spool#169)
 		if (toolOf(store.get()) === "comment") {
-			placeComment(
-				toWorld(p, cam),
-				datasetHit(event.target, "page-object"),
-				datasetHit(event.target, "frame-label"),
-			);
+			placeComment(toWorld(p, cam), datasetHit(event.target, "frame-label"));
 			return;
 		}
 
@@ -4239,23 +4240,6 @@ function CanvasField({
 		const hit = label ?? frameAtWorld(world);
 
 		if (hit === null) {
-			// a page standing on this field (#265). Frames own their own pixels, so
-			// this is asked where none of them answered; a page is picked on its
-			// own, and taking one puts the frame selection down
-			const page = datasetHit(event.target, "page-object") ?? pageObjectAt(pageObjectsOf(store.get()), world)?.page;
-			if (page !== undefined && page !== null && toolOf(store.get()) !== "hand") {
-				setSelected([]);
-				setPicked([]);
-				setSelectedPage(page);
-				// a page on a field with no frames of its own stands on a shelf the
-				// daemon lays, so there is nothing for a drag to arrange it against
-				const at = store.get().places[page];
-				if (at !== undefined && visibleFramesOf(store.get()).length > 0) {
-					gesture.current = { kind: "page-pending", page, origin: at, start: p };
-				}
-				return;
-			}
-			setSelectedPage(null);
 			if (toolOf(store.get()) === "hand") {
 				setSelected([]);
 				setPicked([]);
@@ -4271,8 +4255,6 @@ function CanvasField({
 			return;
 		}
 
-		// the selection never holds a page and a frame at once
-		setSelectedPage(null);
 		// the other way a mark clears: pressing a frame is going to it
 		markRead([hit]);
 
@@ -4337,15 +4319,14 @@ function CanvasField({
 
 	/**
 	 * A press under the Comment tool (spool#169): a pin at that point, in the frame's own pixels where a frame is,
-	 * or at the world point on the page's empty field, and the composer open at it. A page standing on the field is
-	 * still gone inside. Placing hands back the pointer; what was under the pin is asked of the frame meanwhile.
+	 * or at the world point on the page's empty field, and the composer open at it. Placing hands back the pointer; what was under the pin is asked of the frame meanwhile.
 	 */
 	/** A pin placed while C is held: letting go hands back the tool C took over from, however short the hold. */
 	const placedUnderHold = () => {
 		const held = commentHold.current;
 		if (held !== null) commentHold.current = { ...held, placed: true };
 	};
-	const placeComment = (world: Point, pressedPage: string | null, pressedLabel: string | null) => {
+	const placeComment = (world: Point, pressedLabel: string | null) => {
 		const page = store.get().activePage;
 		const aim = commentAim.current;
 		commentAim.current = null;
@@ -4366,11 +4347,6 @@ function CanvasField({
 		}
 		const frame = frameAtWorld(world);
 		if (frame === null) {
-			const object = pressedPage ?? pageObjectAt(pageObjectsOf(store.get()), world)?.page ?? null;
-			if (object !== null) {
-				goInsidePage(object);
-				return;
-			}
 			store.set({ commentDraft: { page, frame: null, at: world, element: null }, commentOpen: null });
 			setTool("select");
 			placedUnderHold();
@@ -4424,9 +4400,6 @@ function CanvasField({
 						? current
 						: { frame, visible: true },
 			);
-			// a page lights the way a frame does, and only where no frame answered
-			const overPage = frame === null ? (pageObjectAt(pageObjectsOf(store.get()), world)?.page ?? null) : null;
-			setHoveredPage((current) => (current === overPage ? current : overPage));
 			// The rings and the element preview belong to the pointing tools, and
 			// every reader of `hovered` out here gates on that. The frame under the
 			// pointer is nobody's tool: it is what keeps a live frame awake (#172),
@@ -4519,28 +4492,6 @@ function CanvasField({
 			return;
 		}
 
-		if (active.kind === "page-pending") {
-			if (Math.hypot(p.x - active.start.x, p.y - active.start.y) < DRAG_THRESHOLD_PX) return;
-			gesture.current = { ...active, kind: "page-move" };
-			onPointerMove(event);
-			return;
-		}
-
-		// a page moves alone and snaps to nothing: it is not a frame, and the
-		// guides are the frames' own arrangement
-		if (active.kind === "page-move") {
-			const at = {
-				x: Math.round(active.origin.x + (p.x - active.start.x) / cam.k),
-				y: Math.round(active.origin.y + (p.y - active.start.y) / cam.k),
-			};
-			setPlaces((current) =>
-				current[active.page]?.x === at.x && current[active.page]?.y === at.y
-					? current
-					: { ...current, [active.page]: at },
-			);
-			return;
-		}
-
 		if (active.kind === "marquee") {
 			const rect = normalizedRect(active.start, p);
 			setMarquee(rect);
@@ -4626,22 +4577,6 @@ function CanvasField({
 		}
 	};
 
-	/**
-	 * Where a page drag left it: one gesture, one entry on the one stack (#265).
-	 *
-	 * The field has been drawing the page at its new place all through the drag,
-	 * so this is only what makes it durable and undoable — the same shape a
-	 * frame move's commit has, against the durable a page's place lives in.
-	 */
-	const commitPlace = (page: string, origin: Place) => {
-		const at = store.get().places[page];
-		if (at === undefined) return;
-		const entry = placeEntryOf({ [page]: origin }, { [page]: at });
-		if (entry === undefined) return;
-		updateHistory(record(history.current, entry));
-		applyPlaces({ [page]: at });
-	};
-
 	const onPointerUp = () => {
 		const active = gesture.current;
 		// settled while the drag still counts as in flight, so the footprint the
@@ -4654,7 +4589,6 @@ function CanvasField({
 		setResizeCursor(null);
 		setResizingFrame(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
-		if (active.kind === "page-move") commitPlace(active.page, active.origin);
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
 		if (active.kind === "element-drag") {
 			setDropLine(null);
@@ -4704,17 +4638,7 @@ function CanvasField({
 		const label = datasetHit(event.target, "frame-label");
 		const world = toWorld(localPoint(event), cam);
 		const hit = label ?? frameAtWorld(world);
-		if (hit === null) {
-			// double-click goes inside a page the same way it goes inside a frame
-			// (#265). The camera does not fly: a page is its own coordinate space,
-			// and pretending otherwise would be a lie about what just happened
-			const page = pageObjectAt(pageObjectsOf(store.get()), world);
-			if (page !== null) {
-				cancelGesture();
-				goInsidePage(page.page);
-			}
-			return;
-		}
+		if (hit === null) return;
 		if (hit === store.get().entered) return;
 		cancelGesture();
 		if (toolOf(store.get()) === "select" && !accelPressed(event)) {
@@ -4923,6 +4847,17 @@ function CanvasField({
 				if (moveStep(earlier ? -1 : 1)) event.preventDefault();
 				return;
 			}
+			// in a list of pages, ↑ and ↓ walk the lit row, and the path's ghost follows it
+			if (
+				store.get().entered === null &&
+				vertical &&
+				step === 1 &&
+				listsPages(store.get().activePage, pageWorldOf(store.get()))
+			) {
+				event.preventDefault();
+				walkList(event.key === "ArrowUp" ? -1 : 1);
+				return;
+			}
 			if (store.get().entered !== null || store.get().selected.length === 0) return;
 			event.preventDefault();
 			const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
@@ -5005,17 +4940,17 @@ function CanvasField({
 				event?.preventDefault();
 				exitEntered(true);
 			},
-			// ⌘↓ / ⌘↑, Finder's own keys for into and out of a folder
+			// ⌘↓ / ⌘↑, Finder's own keys for into and out of a folder: down into
+			// the page picked, or the one the path's ghost names
 			"canvas.page-in": (event) => {
 				if (store.get().entered !== null || store.get().editing !== null) return;
-				const page = store.get().selectedPage;
-				if (page === null) return;
-				event?.preventDefault();
-				goInsidePage(page);
+				if (pageDown()) event?.preventDefault();
 			},
 			"canvas.page-up": (event) => {
 				if (store.get().entered !== null || store.get().editing !== null) return;
-				if (goUpPage()) event?.preventDefault();
+				if (!goUpPage()) return;
+				event?.preventDefault();
+				setKeyMoves((n) => n + 1);
 			},
 			"canvas.fit-all": () => zoomFit(),
 			"canvas.fit-selection": () => {
@@ -5121,8 +5056,17 @@ function CanvasField({
 				stepSelection(event);
 			},
 			"canvas.overview": () => liveRef.current.holdDown(),
-			"canvas.thread-next": (event) => liveRef.current.walkOn(event),
-			"canvas.thread-back": (event) => liveRef.current.walkBack(event),
+			// with no frame to walk from, ⌘] and ⌘[ go through the pages visited (spool#224)
+			"canvas.thread-next": (event) => {
+				if (liveRef.current.walkOn(event) || !stepPages(1)) return;
+				event?.preventDefault();
+				setKeyMoves((n) => n + 1);
+			},
+			"canvas.thread-back": (event) => {
+				if (liveRef.current.walkBack(event) || !stepPages(-1)) return;
+				event?.preventDefault();
+				setKeyMoves((n) => n + 1);
+			},
 			// F2: the words of the one element held, and nothing else (#323)
 			"canvas.words": () => openWords(),
 			// ⏎ is Edit's before it is Select's (#339): with an element held, or
@@ -5130,11 +5074,12 @@ function CanvasField({
 			// held in Select goes inside
 			"canvas.enter": (event) => {
 				if (store.get().editing !== null) return;
-				// a page object held goes inside, as its double-click does
-				const page = store.get().selectedPage;
-				if (store.get().entered === null && page !== null) {
+				// in a list of pages, or with a page picked and nothing else held, ⏎ goes into it as ⌘↓ does
+				const state = store.get();
+				const nothingHeld = state.selected.length === 0 && state.picked.length === 0;
+				const listing = listsPages(state.activePage, pageWorldOf(state));
+				if (state.entered === null && nothingHeld && (listing || state.selectedPage !== null) && pageDown()) {
 					event?.preventDefault();
-					goInsidePage(page);
 					return;
 				}
 				if (store.get().picked.length > 0 || toolOf(store.get()) === "edit") {
@@ -5194,11 +5139,10 @@ function CanvasField({
 				if (!gestureStill()) cancelGesture();
 				else if (store.get().menu !== null) setMenu(null);
 				else if (store.get().entered !== null) exitEntered(true);
-				// Esc leaves first, then climbs to the parent the way ⇧⏎ does, then
-				// puts a page object down, and last goes up a page
+				// Esc leaves first, then climbs to the parent the way ⇧⏎ does, and
+				// last goes up a page
 				else if (selectParent()) return;
-				else if (store.get().selectedPage !== null) setSelectedPage(null);
-				else goUpPage();
+				else if (goUpPage()) setKeyMoves((n) => n + 1);
 			},
 		} satisfies Record<HotkeyIdFor<"canvas">, HotkeyHandler>;
 		const detachDialog = attachHotkeyLayer({
@@ -5302,8 +5246,10 @@ function CanvasField({
 		walkSibling,
 		openWords,
 		endEdit,
-		goInsidePage,
 		goUpPage,
+		pageDown,
+		walkList,
+		stepPages,
 		showCommentAim,
 		camera,
 		store,
@@ -5371,11 +5317,73 @@ function CanvasField({
 	 * has written into used to wear the same picture, which was nothing at all.
 	 * Page objects answered the first of those, and this answers the second.
 	 */
+	const pageWorld = useCanvasState(store, pageWorldOf);
+	const pageTree = useMemo(() => pageTreeOf(pageWorld), [pageWorld]);
+	/** a page holding only pages, the root too, draws them as a list rather than a field (spool#224) */
+	const listing = loaded && listsPages(activePage, pageWorld);
+	const listRows = useMemo(
+		() => (listing ? pageListRows(activePage, pageWorld) : []),
+		[listing, activePage, pageWorld],
+	);
+	/** where ⌘↓ goes: the list's lit row, the path's ghost */
+	const downTo = downOf(activePage, selectedPage, pageTree);
 	const pageEmpty =
 		loaded &&
 		!projectEmpty &&
 		activePage !== ROOT_PAGE &&
-		pageIsBare(activePage, navigatorPages, navigatorFrames, placeholders);
+		!listing &&
+		(pageTree.get(activePage) ?? []).length === 0 &&
+		!navigatorFrames.some((frame) => pageOf(frame) === activePage) &&
+		!placeholders.some((one) => (one.page ?? ROOT_PAGE) === activePage);
+	/** the path: the page's chain from the project, then a ghost of where ⌘↓ goes */
+	const pathSegs = useMemo((): PathSeg[] => {
+		const chain = chainOf(activePage);
+		const up = activePage === ROOT_PAGE ? null : pageParent(activePage);
+		return [
+			...chain.map(
+				(page, at): PathSeg => ({
+					page,
+					name: page === ROOT_PAGE ? project : pageName(page),
+					kind: at === chain.length - 1 ? "here" : "crumb",
+					keys: page === up ? PATH_KEYS.up() : undefined,
+				}),
+			),
+			...(downTo === null
+				? []
+				: [{ page: downTo, name: pageName(downTo), kind: "ghost" as const, keys: PATH_KEYS.down() }]),
+		];
+	}, [activePage, downTo, project]);
+	const pathTrail = useMemo(() => {
+		if (visits === null) return [];
+		const stands = new Set([ROOT_PAGE, ...navigatorPages]);
+		const around = visitsAround(visits, (page) => stands.has(page));
+		const label = (page: string) => (page === ROOT_PAGE ? project : pageName(page));
+		return [
+			...(around.back === undefined ? [] : [{ keys: PATH_KEYS.back(), name: label(around.back) }]),
+			...(around.forward === undefined ? [] : [{ keys: PATH_KEYS.forward(), name: label(around.forward) }]),
+		];
+	}, [visits, navigatorPages, project]);
+	/** the field and the list, which slide in from the side the path moved toward */
+	const fieldRef = useRef<HTMLDivElement | null>(null);
+	const slidFrom = useRef<string | null>(null);
+	useLayoutEffect(() => {
+		const el = fieldRef.current;
+		if (el === null) return;
+		const was = slidFrom.current;
+		slidFrom.current = activePage;
+		if (was === null || was === activePage) return;
+		const slide =
+			pathWay === "in" || pathWay === "forward"
+				? "animate-page-in"
+				: pathWay === "up" || pathWay === "back"
+					? "animate-page-up"
+					: "animate-place-in";
+		el.classList.remove("animate-page-in", "animate-page-up", "animate-place-in");
+		// read the box between, so the animation starts again rather than carrying on
+		void el.offsetWidth;
+		el.classList.add(slide);
+		el.addEventListener("animationend", () => el.classList.remove(slide), { once: true });
+	}, [activePage, pathWay]);
 	/**
 	 * Which rail the right column is standing in (#256).
 	 *
@@ -5386,9 +5394,6 @@ function CanvasField({
 	 */
 	/** what the rail is looking at: one element, one frame, or how many of either */
 	const railHeld = ((): Held | null => {
-		// a page is held on its own, and the selection never holds both (#265)
-		const page = pageObjects.find((object) => object.page === selectedPage);
-		if (page !== undefined) return { kind: "page", page: page.page, name: page.name, count: page.count };
 		/** a frame's own box, which is what the rail shows for it and for what is in it */
 		const geometryOf = (name: string): Geometry | null => {
 			const found = frames.find((frame) => frame.name === name);
@@ -5548,6 +5553,8 @@ function CanvasField({
 			focus: (body) => body.querySelector<HTMLElement>('[role="tree"]')?.focus({ preventScroll: true }),
 			render: () => (
 				<CanvasSidebar
+					pickedPage={selectedPage}
+					onOrder={setOrder}
 					project={project}
 					pages={navigatorPages}
 					activePage={activePage}
@@ -5718,208 +5725,199 @@ function CanvasField({
 					onDoubleClick={onDoubleClick}
 					onContextMenu={onContextMenu}
 				>
-					{framed && (
-						<CameraField camera={camera} layer="under">
-							{/* the threads live under the frames: the map, never a hit target */}
-							{arrowsOn && (
-								<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={camera} />
-							)}
-							{/* the pages standing on this field (#265). Under the frames,
-						    because a frame is a live document and a page is a picture of
-						    some: the press that reaches a page is the press no frame
-						    answered. */}
-							{pageObjects.map((object) => (
-								<PageObjectView
-									key={object.page}
-									project={project}
-									object={object}
-									camera={camera}
-									selected={selectedPage === object.page}
-									hovered={pointerTool && hoveredPage === object.page}
-								/>
-							))}
-							{/* designers' placeholder frames (#369), dashed where their frames will land,
-						    with what each designer is doing inside its own */}
-							{visiblePlaceholders.map((one) => {
-								// a teammate's designer's, drawn in their colour (#378)
-								const by = team ? teammateOf(one, you) : undefined;
-								return by === undefined ? (
-									<PlaceholderFrame
-										key={one.name}
-										placeholder={one}
-										camera={camera}
-										agents={agentsAt.get(one.name)}
-										pointed={pointed === one.name}
-									/>
-								) : (
-									<TeammatePlaceholder
-										key={one.name}
-										room={presenceRoom}
-										placeholder={one}
-										by={by}
-										camera={camera}
-										pointed={pointed === one.name}
-										agents={agentsAt.get(one.name)}
-									/>
-								);
-							})}
-						</CameraField>
-					)}
-					{/* every frame standing as its picture, on the GPU (#81): over the
-				    arrows and pages, under every shell, label and tag */}
-					<Pictures
-						camera={camera}
-						frames={pictureFrames}
-						claims={pictureClaims}
-						lifecycle={frameLife}
-						documents={visibleFrames}
-					/>
-					{framed && (
-						<CameraField camera={camera}>
-							{visibleFrames.map((frame) => (
-								// each shell renders as its own frame's lifecycle changes, never
-								// with the canvas around it (DEV-303)
-								<FrameLife key={frame.name} store={frameLife} name={frame.name}>
-									{({ state, ready, settled }) => {
-										const isEntered = entered === frame.name;
-										// a picture with a still is the picture layer's to draw; a shell
-										// is for a document, or for a frame with nothing to draw but its
-										// placeholder
-										if (
-											state === "picture" &&
-											!isEntered &&
-											frame.cover !== undefined &&
-											externalLink?.frame !== frame.name
-										) {
-											return null;
-										}
-										return (
-											<FrameSlot name={frame.name} frame={frame} claims={pictureClaims}>
-												<ShellClip camera={camera} near={near} frame={frame}>
-													<FrameShell
-														project={project}
-														name={frame.name}
-														state={state}
-														ready={ready}
-														settled={settled}
-														entered={isEntered}
-														active={selectionTargets.has(frame.name)}
-														// ⌘ borrows an entered frame's pointer to reach an element under it
-														// an open in-place edit gives the frame its pointer back, so
-														// the words can be typed into the element itself (#255) —
-														// once it is open: for one double-click interval the canvas
-														// still hears the second half of the click that opened it.
-														// ⌘ borrows an entered frame's pointer to reach an element
-														// under it; an open edit is already inside one
-														interactive={
-															editing?.frame === frame.name && editing.phase === "open"
-																? true
-																: isEntered && !accelDown
-														}
-														pointerOnly={editing?.frame === frame.name ? editedBox : null}
-														docNonce={docNonces[frame.name] ?? 0}
-														hotFrom={boots.current.from[frame.name]}
-														holdNonce={heldPaint[frame.name] ?? null}
-														cover={frame.cover}
-														walkArrival={walkArrivals.has(frame.name)}
-														onIframe={onIframe}
-													/>
-													{externalLink?.frame === frame.name && (
-														<ExternalLinkDialog
-															href={externalLink.href}
-															onStay={() => setExternalLink(null)}
-															onOpen={() => setExternalLink(null)}
+					{/* the page you are on and nothing else (spool#224): its own frames on the field, or the
+				    list of its pages when it holds only pages */}
+					<div ref={fieldRef} data-page-field={activePage} className="absolute inset-0">
+						{framed && (
+							<CameraField camera={camera} layer="under">
+								{/* the threads live under the frames: the map, never a hit target */}
+								{arrowsOn && (
+									<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={camera} />
+								)}
+								{/* designers' placeholder frames (#369), dashed where their frames will land,
+							    with what each designer is doing inside its own */}
+								{visiblePlaceholders.map((one) => {
+									// a teammate's designer's, drawn in their colour (#378)
+									const by = team ? teammateOf(one, you) : undefined;
+									return by === undefined ? (
+										<PlaceholderFrame
+											key={one.name}
+											placeholder={one}
+											camera={camera}
+											agents={agentsAt.get(one.name)}
+											pointed={pointed === one.name}
+										/>
+									) : (
+										<TeammatePlaceholder
+											key={one.name}
+											room={presenceRoom}
+											placeholder={one}
+											by={by}
+											camera={camera}
+											pointed={pointed === one.name}
+											agents={agentsAt.get(one.name)}
+										/>
+									);
+								})}
+							</CameraField>
+						)}
+						{/* every frame standing as its picture, on the GPU (#81): over the
+					    arrows and pages, under every shell, label and tag */}
+						<Pictures
+							camera={camera}
+							frames={pictureFrames}
+							claims={pictureClaims}
+							lifecycle={frameLife}
+							documents={visibleFrames}
+						/>
+						{framed && (
+							<CameraField camera={camera}>
+								{visibleFrames.map((frame) => (
+									// each shell renders as its own frame's lifecycle changes, never
+									// with the canvas around it (DEV-303)
+									<FrameLife key={frame.name} store={frameLife} name={frame.name}>
+										{({ state, ready, settled }) => {
+											const isEntered = entered === frame.name;
+											// a picture with a still is the picture layer's to draw; a shell
+											// is for a document, or for a frame with nothing to draw but its
+											// placeholder
+											if (
+												state === "picture" &&
+												!isEntered &&
+												frame.cover !== undefined &&
+												externalLink?.frame !== frame.name
+											) {
+												return null;
+											}
+											return (
+												<FrameSlot name={frame.name} frame={frame} claims={pictureClaims}>
+													<ShellClip camera={camera} near={near} frame={frame}>
+														<FrameShell
+															project={project}
+															name={frame.name}
+															state={state}
+															ready={ready}
+															settled={settled}
+															entered={isEntered}
+															active={selectionTargets.has(frame.name)}
+															// ⌘ borrows an entered frame's pointer to reach an element under it
+															// an open in-place edit gives the frame its pointer back, so
+															// the words can be typed into the element itself (#255) —
+															// once it is open: for one double-click interval the canvas
+															// still hears the second half of the click that opened it.
+															// ⌘ borrows an entered frame's pointer to reach an element
+															// under it; an open edit is already inside one
+															interactive={
+																editing?.frame === frame.name && editing.phase === "open"
+																	? true
+																	: isEntered && !accelDown
+															}
+															pointerOnly={editing?.frame === frame.name ? editedBox : null}
+															docNonce={docNonces[frame.name] ?? 0}
+															hotFrom={boots.current.from[frame.name]}
+															holdNonce={heldPaint[frame.name] ?? null}
+															cover={frame.cover}
+															walkArrival={walkArrivals.has(frame.name)}
+															onIframe={onIframe}
 														/>
-													)}
-												</ShellClip>
-											</FrameSlot>
-										);
-									}}
-								</FrameLife>
-							))}
-							{/* over its shell, whatever the shell shows: a broken frame's picture is of a
-						    version that no longer exists, and its document is the error (#390) */}
-							{visibleFrames.map((frame) =>
-								frame.broken === undefined ? null : (
-									<BrokenFrame
-										key={`${frame.name}:broken`}
-										name={frame.name}
-										frame={frame}
-										broken={frame.broken}
-										camera={camera}
-										near={near}
-										act={fixLabel}
-										onAct={fixBroken}
-									/>
-								),
-							)}
-						</CameraField>
-					)}
-					{/* Labels share one layer above every frame. A transformed frame is
-				    its own stacking context, so keeping its label inside would let a
-				    later neighboring frame paint over the label regardless of the
-				    label's own z-index. */}
-					{framed && (
-						<LabelField camera={camera}>
-							{visibleFrames.map((frame) => {
-								const isEntered = entered === frame.name;
-								const isSelected = selected.includes(frame.name);
-								const isHovered = pointerTool && hovered?.visible === true && hovered.frame === frame.name;
-								return (
-									// Mono, muted; thread when selected. Entered swaps it for the
-									// state chip (#28).
-									<FrameLabel
-										key={`${frame.name}:label`}
-										name={frame.name}
-										frame={frame}
-										near={near}
-										view={viewChanges}
-										camera={camera}
-										entered={isEntered}
-										selected={isSelected}
-										hovered={isHovered}
-										unseen={unseen.get(frame.name)}
-										broken={frame.broken !== undefined}
-										onPlay={playFrame}
-										live={
-											isEntered && live.chip?.frame === frame.name
-												? { ...live.chip, faded: live.overview !== null }
-												: isEntered && live.overview !== null
-													? { at: 0, came: null, note: null, faded: true }
-													: null
-										}
-										clickEnters={
-											entered !== null && !isEntered && isHovered && effectiveTool === "select" && !accelDown
-										}
-										overview={overviewRoles?.(frame.name) ?? null}
-										overviewHint={overviewHint}
-										agents={agentsAt.get(frame.name)}
-									/>
-								);
-							})}
-						</LabelField>
-					)}
-					{framed && (
-						<CameraField camera={camera} layer="over">
-							{pageObjects.map((object) => (
-								<PageObjectLabel
-									key={`${object.page}:label`}
-									object={object}
-									camera={camera}
-									selected={selectedPage === object.page}
-									hovered={pointerTool && hoveredPage === object.page}
-									comments={
-										team && !pinsHidden ? pageCount(comments.comments, object.page, commentReader) : undefined
-									}
-								/>
-							))}
-							{/* the tags ride over the frames, because pressing one travels —
-						    the leaders under them are the map and take no pointer */}
-							{arrowsOn && (
-								<WalkLayer walks={walks} frames={visibleFrames} camera={camera} onOpen={landOnFrame} />
-							)}
-						</CameraField>
-					)}
+														{externalLink?.frame === frame.name && (
+															<ExternalLinkDialog
+																href={externalLink.href}
+																onStay={() => setExternalLink(null)}
+																onOpen={() => setExternalLink(null)}
+															/>
+														)}
+													</ShellClip>
+												</FrameSlot>
+											);
+										}}
+									</FrameLife>
+								))}
+								{/* over its shell, whatever the shell shows: a broken frame's picture is of a
+							    version that no longer exists, and its document is the error (#390) */}
+								{visibleFrames.map((frame) =>
+									frame.broken === undefined ? null : (
+										<BrokenFrame
+											key={`${frame.name}:broken`}
+											name={frame.name}
+											frame={frame}
+											broken={frame.broken}
+											camera={camera}
+											near={near}
+											act={fixLabel}
+											onAct={fixBroken}
+										/>
+									),
+								)}
+							</CameraField>
+						)}
+						{/* Labels share one layer above every frame. A transformed frame is
+					    its own stacking context, so keeping its label inside would let a
+					    later neighboring frame paint over the label regardless of the
+					    label's own z-index. */}
+						{framed && (
+							<LabelField camera={camera}>
+								{visibleFrames.map((frame) => {
+									const isEntered = entered === frame.name;
+									const isSelected = selected.includes(frame.name);
+									const isHovered = pointerTool && hovered?.visible === true && hovered.frame === frame.name;
+									return (
+										// Mono, muted; thread when selected. Entered swaps it for the
+										// state chip (#28).
+										<FrameLabel
+											key={`${frame.name}:label`}
+											name={frame.name}
+											frame={frame}
+											near={near}
+											view={viewChanges}
+											camera={camera}
+											entered={isEntered}
+											selected={isSelected}
+											hovered={isHovered}
+											unseen={unseen.get(frame.name)}
+											broken={frame.broken !== undefined}
+											onPlay={playFrame}
+											live={
+												isEntered && live.chip?.frame === frame.name
+													? { ...live.chip, faded: live.overview !== null }
+													: isEntered && live.overview !== null
+														? { at: 0, came: null, note: null, faded: true }
+														: null
+											}
+											clickEnters={
+												entered !== null &&
+												!isEntered &&
+												isHovered &&
+												effectiveTool === "select" &&
+												!accelDown
+											}
+											overview={overviewRoles?.(frame.name) ?? null}
+											overviewHint={overviewHint}
+											agents={agentsAt.get(frame.name)}
+										/>
+									);
+								})}
+							</LabelField>
+						)}
+						{framed && (
+							<CameraField camera={camera} layer="over">
+								{/* the tags ride over the frames, because pressing one travels —
+							    the leaders under them are the map and take no pointer */}
+								{arrowsOn && (
+									<WalkLayer walks={walks} frames={visibleFrames} camera={camera} onOpen={landOnFrame} />
+								)}
+							</CameraField>
+						)}
+						{listing && (
+							<PageListView
+								project={project}
+								rows={listRows}
+								lit={downTo}
+								onLight={setSelectedPage}
+								onGo={goInsidePage}
+							/>
+						)}
+					</div>
 
 					{framed && (
 						<>
@@ -6174,8 +6172,23 @@ function CanvasField({
 							</p>
 						</div>
 					)}
-					{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}
-					{!projectEmpty && <CanvasTools tool={effectiveTool} onTool={chooseTool} team={team} />}
+					{/* nothing to arrange, nothing to walk: the tools arrive with the first frame, and a
+				    list of pages has nothing to use them on */}
+					{!projectEmpty && !listing && <CanvasTools tool={effectiveTool} onTool={chooseTool} team={team} />}
+					{loaded && !projectEmpty && (
+						<CanvasPath
+							segs={pathSegs}
+							way={pathWay}
+							accelDown={accelDown}
+							moved={keyMoves}
+							trail={pathTrail}
+							viewport={viewportRef}
+							onGo={(page) => {
+								if (pageWithin(page, activePage) || page === ROOT_PAGE) goUpTo(page);
+								else goInsidePage(page);
+							}}
+						/>
+					)}
 					{finding ? (
 						<PanePalette
 							frames={navigatorFrames}

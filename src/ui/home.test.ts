@@ -388,7 +388,7 @@ it("starts one untitled project at once from Home or the tab strip, saying a ref
 			if (path === "/api/session") return Response.json({ open: [] });
 			if (path === "/api/settings") return Response.json({ project: null, entries: [] });
 			if (path === "/api/p/untitled/frames")
-				return Response.json({ root: "/Users/test/spool/untitled", pages: [], places: {}, frames: [] });
+				return Response.json({ root: "/Users/test/spool/untitled", pages: [], frames: [] });
 			return new Response(null, { status: 404 });
 		}),
 	);

@@ -9,7 +9,6 @@ import { Zip, type ZipInputFile } from "fflate";
 import { readRegistry, registerProject } from "../registry";
 import { FORMAT_VERSION } from "../templates";
 import { parseOrder } from "./canvas-order";
-import { parsePlaces } from "./canvas-places";
 import { realDesignDir } from "./design-path";
 import { FOLDER_NAMES_FORMAT } from "./migrate-frame-names";
 
@@ -62,7 +61,6 @@ function canvas(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 			format,
 			history: false,
 			order: parseOrder(fields.order),
-			places: parsePlaces(fields.places),
 		}),
 	);
 }

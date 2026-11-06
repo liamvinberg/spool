@@ -159,19 +159,36 @@ export const HOTKEYS = [
 		id: "canvas.page-in",
 		scope: "canvas",
 		group: "Frames",
-		label: "Go inside the selected page",
+		label: "Go inside the page picked in the list, or the page the path's ghost names",
 		keys: ["accel+arrowdown"],
 		shown: () => ["⏎", `${accelLabel()}↓`],
-		gesture: "double-click",
+		gesture: "click a row in the list",
 		repeats: false,
 	},
 	{
 		id: "canvas.page-up",
 		scope: "canvas",
 		group: "Frames",
-		label: "Go up to the page holding this one",
+		label: "Go up to the page holding this one, with this one picked",
 		keys: ["accel+arrowup"],
 		shown: () => ["esc", `${accelLabel()}↑`],
+	},
+	// back and forward through the pages visited, the way a browser goes
+	// (spool#224). Told here, answered by the thread keys: with no frame held
+	// or entered there is no thread to walk, and ⌘[ and ⌘] are the pages'
+	{
+		id: "canvas.page-back",
+		scope: "canvas",
+		group: "Frames",
+		label: "Back to the page you were on, with no frame held",
+		shown: () => [formatCombo("accel+bracketleft")],
+	},
+	{
+		id: "canvas.page-forward",
+		scope: "canvas",
+		group: "Frames",
+		label: "Forward again through the pages you visited",
+		shown: () => [formatCombo("accel+bracketright")],
 	},
 	{
 		id: "canvas.play",
@@ -318,7 +335,7 @@ export const HOTKEYS = [
 		id: "canvas.nudge",
 		scope: "canvas",
 		group: "Selection",
-		label: "Nudge the frames 1 px, move the element held one step, or under Comment, aim a level out or in",
+		label: "Nudge the frames 1 px, move the element held one step, under Comment aim a level out or in, or in a list of pages move the lit row",
 		keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"],
 		shown: ["←↑→↓"],
 	},

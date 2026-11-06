@@ -55,7 +55,7 @@ async function launch(host_: "app" | "old app" | "browser" = "app") {
 			if (pathname === "/api/projects") return Response.json({ projects });
 			if (pathname === "/api/settings") return Response.json({ project: null, entries: [] });
 			const canvas = pathname.match(/^\/api\/p\/([^/]+)\/frames$/);
-			if (canvas !== null) return Response.json({ root: `/w/${canvas[1]}`, pages: [], places: {}, frames: [] });
+			if (canvas !== null) return Response.json({ root: `/w/${canvas[1]}`, pages: [], frames: [] });
 			return new Response(null, { status: 404 });
 		}),
 	);

@@ -281,6 +281,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	onRecord,
 	run,
 	litPage = null,
+	pickedPage = null,
+	onOrder,
 	unseen = NOTHING_UNSEEN,
 	onMarkSeen,
 	under = null,
@@ -327,6 +329,10 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	run?: React.RefObject<RunEntry | null>;
 	/** The page holding the finder's pick — its row lights while the palette is up. */
 	litPage?: string | null;
+	/** The page picked on the canvas, where ⌘↓ goes: its row is selected, as Finder lands on the folder left. */
+	pickedPage?: string | null;
+	/** The stored order as read and as each verb stores it, for the canvas's list of a page of pages. */
+	onOrder?: (order: CanvasOrder) => void;
 	/**
 	 * What nobody has looked at (seen.ts). A frame row wears its own mark; a page
 	 * row wears one only while it is shut, and says only that something inside it
@@ -553,10 +559,15 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 
 	/* ── the stored order ────────────────────────────────────────────── */
 
+	const onOrderRef = useRef(onOrder);
+	onOrderRef.current = onOrder;
+
 	useEffect(() => {
 		let reading = true;
 		void fetchOrder(project).then((stored) => {
-			if (reading) setOrder(stored);
+			if (!reading) return;
+			setOrder(stored);
+			onOrderRef.current?.(stored);
 		});
 		return () => {
 			reading = false;
@@ -567,6 +578,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	const storeOrder = useCallback(
 		(next: CanvasOrder) => {
 			setOrder(next);
+			onOrderRef.current?.(next);
 			putOrder(project, next);
 		},
 		[project],
@@ -1696,7 +1708,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 								row={row}
 								activePage={activePage}
 								litPage={litPage}
-								selected={row.kind === "frame" && selected.includes(row.name)}
+								selected={row.kind === "frame" ? selected.includes(row.name) : row.page === pickedPage}
 								holding={row.kind === "frame" && row.name === holding}
 								mark={
 									row.kind === "frame" ? unseen.get(row.name) : row.open ? undefined : unseenIn.get(row.page)

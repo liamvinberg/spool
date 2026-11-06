@@ -1284,7 +1284,6 @@ function railEntry(entry: HistoryEntry | undefined): RailEntry {
 	if (
 		entry === undefined ||
 		entry.kind === "geometry" ||
-		entry.kind === "place" ||
 		entry.kind === "mint" ||
 		entry.kind === "hand" ||
 		entry.kind === "knob"

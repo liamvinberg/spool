@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
-import type { Rect } from "../page-box";
 import { isFramePath, pageName, pageParent, pageUnder, ROOT_PAGE } from "../page-path";
 import type { AgentEvent, AgentFrame, AgentSpot } from "./agent-events";
 import type { AgentTurn } from "./agent-turn";
@@ -9,7 +8,7 @@ import { createEventFeed } from "./agent-turn-shell";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import type { ChangeEvent } from "./events";
 import { readSidecar, writeGeometry } from "./geometry";
-import { besideField, DEFAULT_FOOTPRINT, overlaps, pageObjectsOn } from "./placement";
+import { besideField, DEFAULT_FOOTPRINT, overlaps, type Rect } from "./placement";
 import { discoverFrames, isPageFolder, listProjectFrames, type Projection } from "./projection";
 import { type PlaceholderAuthor, type PlaceholderNote, parseSidecar } from "./sidecar";
 
@@ -431,17 +430,17 @@ export function witnessFrames(
 
 	/**
 	 * What stands on a page apart from `frame` and the placeholder `held`, as rects: its
-	 * frames, its placeholders and the pages on it.
+	 * frames and its placeholders.
 	 */
 	function pageField(projection: Projection, page: string, frame?: string, held?: string): Rect[] {
 		const on = (one: { page?: string; name: string }) =>
 			(one.page ?? ROOT_PAGE) === page && one.name !== frame && one.name !== held;
-		const field: Rect[] = [...projection.frames.filter(on), ...projection.placeholders.filter(on)].map(
-			({ x, y, w, h }) => ({ x, y, w, h }),
-		);
-		for (const { at, box } of pageObjectsOn(page, projection.pages, projection.frames, projection.places))
-			field.push({ ...at, ...box });
-		return field;
+		return [...projection.frames.filter(on), ...projection.placeholders.filter(on)].map(({ x, y, w, h }) => ({
+			x,
+			y,
+			w,
+			h,
+		}));
 	}
 
 	/**

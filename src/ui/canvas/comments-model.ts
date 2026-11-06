@@ -133,14 +133,6 @@ export function groupsOf(comments: readonly Comment[], groupBy: GroupBy): Group[
 	return groups;
 }
 
-/** The open comments on a page and the pages inside it, as its page object's count says them. */
-export function pageCount(comments: readonly Comment[], page: string, reader: Reader) {
-	const under = comments.filter(
-		(comment) => !isClosed(comment) && (comment.page === page || comment.page.startsWith(`${page}/`)),
-	);
-	return { open: under.length, unread: under.some((comment) => isUnread(comment, reader)) };
-}
-
 /**
  * Pins in groups whose tips stand within `CLUSTER` screen pixels of another in the group, one link at a time: a
  * group of one is a pin, more is a count.

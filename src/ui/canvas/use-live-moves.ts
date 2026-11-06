@@ -294,26 +294,29 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		[hold, cancel, open, setOverview, flyOverview, frameNamed, landLive],
 	);
 
-	/** ⌘]: on along the thread, entered, or the selection along it out on the canvas. */
+	/**
+	 * ⌘]: on along the thread, entered, or the selection along it out on the canvas.
+	 * False when there is no frame to walk from, and the key is the page history's.
+	 */
 	const walkOn = useCallback(
-		(event?: KeyboardEvent) => {
+		(event?: KeyboardEvent): boolean => {
 			const { store, walkTo, select, camera } = depsRef.current;
 			const entered = store.get().entered;
 			const selected = store.get().selected;
 			const at = entered ?? (selected.length === 1 ? (selected[0] ?? null) : null);
-			if (at === null) return;
+			if (at === null) return false;
 			event?.preventDefault();
 			const move = threadNext(at, store.get().edges, fork.current);
 			if (move.kind === "none") {
 				if (entered !== null) say(entered, move.note);
-				return;
+				return true;
 			}
 			fork.current = move.fork;
 			if (entered === null) {
 				// a thread that runs onto another page goes there, as the finder does
 				if (frameNamed(move.to) === undefined) {
 					depsRef.current.landOn(move.to);
-					return;
+					return true;
 				}
 				const target = frameNamed(move.to);
 				const cam = camera.get();
@@ -321,7 +324,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 				select(move.to, null);
 				if (target !== undefined && cam !== null && size !== null)
 					camera.fly(revealCamera(cam, target, size.w, size.h));
-				return;
+				return true;
 			}
 			const origin = move.replace && move.fork !== null ? move.fork.from : at;
 			taken.current = [
@@ -334,22 +337,23 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			walkTo(move.to);
 			const note = move.fork === null ? null : forkNote(move.fork, formatCombo("bracketright"));
 			landed(at, move.to, was !== undefined && to !== undefined ? sideOf(was, to) : null, note);
+			return true;
 		},
 		[say, frameNamed, viewSize, landed],
 	);
 
-	/** ⌘[: back the way you came while live. */
+	/** ⌘[: back the way you came while live. False out on the canvas, where the key is the page history's. */
 	const walkBack = useCallback(
-		(event?: KeyboardEvent) => {
+		(event?: KeyboardEvent): boolean => {
 			const { store, walkTo } = depsRef.current;
 			const entered = store.get().entered;
-			if (entered === null) return;
+			if (entered === null) return false;
 			event?.preventDefault();
 			fork.current = null;
 			const move = threadBack(entered, taken.current, store.get().edges);
 			if (move.kind === "none") {
 				say(entered, move.note);
-				return;
+				return true;
 			}
 			taken.current = move.taken;
 			const all = depsRef.current.store.get().frames;
@@ -357,6 +361,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			const to = all.find((frame) => frame.name === move.to);
 			walkTo(move.to);
 			landed(entered, move.to, was !== undefined && to !== undefined ? sideOf(was, to) : null, null);
+			return true;
 		},
 		[say, landed],
 	);
