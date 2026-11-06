@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import type { HistoryEntry } from "./history";
-import { CanvasSidebar, type FrameSpan, type RailEntry, type RunEntry } from "./sidebar";
+import { CanvasSidebar, type FrameSpan, type FrameVerbs, type RailEntry, type RunEntry } from "./sidebar";
 
 /** The toggle modifier as this environment binds it — ctrl under happy-dom, ⌘ on a Mac. */
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
@@ -373,6 +373,32 @@ describe("a drag through the tree", () => {
 		await dragTo(6, 23);
 		expect(host.querySelector(".animate-spring-load")).toBeNull();
 		await letGo(6, 23);
+	});
+});
+
+/**
+ * A frame carried off the canvas and let go on a spot of a page's peek moves
+ * there and stands at that spot (spool#224): one entry, so one undo takes it
+ * back to the page and the place it stood before the drag, which the canvas
+ * says because the rail's own copy of the frames still has the drag in it.
+ */
+describe("a frame let go on a spot of a peek", () => {
+	it("moves it there, places it centred on the spot, and records where it stood before the drag", async () => {
+		const kept: HistoryEntry[] = [];
+		const onPlaced = vi.fn();
+		const verbs: { current: FrameVerbs | null } = { current: null };
+		await render({ verbs, onPlaced, onRecord: (entry) => kept.push(entry) });
+		const stood = { x: 40, y: 60, w: 390, h: 844 };
+		await act(async () => {
+			verbs.current?.move(["home"], { kind: "spot", page: "shop", x: 1000, y: 500 }, { home: stood });
+		});
+
+		expect(asked.find((call) => call.url.endsWith("/frames/move"))?.body).toEqual({ frames: ["home"], page: "shop" });
+		const placed = { x: 805, y: 78, w: 390, h: 844 };
+		expect(onPlaced).toHaveBeenCalledWith({ "shop/home": placed });
+		expect(kept).toEqual([
+			expect.objectContaining({ kind: "move", to: "shop", places: { home: { before: stood, after: placed } } }),
+		]);
 	});
 });
 

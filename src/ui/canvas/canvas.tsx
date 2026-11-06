@@ -4658,7 +4658,7 @@ function CanvasField({
 						return origin === undefined ? frame : { ...frame, x: origin.x, y: origin.y };
 					}),
 				);
-				frameVerbs.current?.move(active.names, to);
+				frameVerbs.current?.move(active.names, to, moveBefore(active.origins));
 			}
 		}
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });

@@ -222,8 +222,12 @@ export interface FrameVerbs {
 	copy: (names: readonly string[]) => void;
 	paste: () => Promise<void>;
 	duplicate: (names: readonly string[]) => Promise<void>;
-	/** frames dragged off the canvas onto a folder, or onto a spot of its peek (spool#224) */
-	move: (names: readonly string[], target: CarryTarget) => void;
+	/**
+	 * Frames dragged off the canvas onto a folder, or onto a spot of its peek
+	 * (spool#224); `from` is where they stood before the drag, which the rail's
+	 * copy of the frames has not caught up with yet.
+	 */
+	move: (names: readonly string[], target: CarryTarget, from?: Record<string, Geometry>) => void;
 }
 
 /**
@@ -822,7 +826,14 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	 * (spool#224): the same move, and where they stand after it, in one entry.
 	 */
 	const moveFramesInto = useCallback(
-		(names: readonly string[], page: string, index: number, minted = false, spot?: { x: number; y: number }) => {
+		(
+			names: readonly string[],
+			page: string,
+			index: number,
+			minted = false,
+			spot?: { x: number; y: number },
+			from?: Record<string, Geometry>,
+		) => {
 			const held = now.current.order;
 			// where each frame stands right now, read before the move lands: the
 			// inverse has to put every one of them back on its own page
@@ -855,7 +866,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 			const before = new Map(
 				now.current.frames
 					.filter((frame) => moved.some((each) => each.name === frame.name))
-					.map((frame) => [frame.name, { x: frame.x, y: frame.y, w: frame.w, h: frame.h }]),
+					.map((frame) => [frame.name, from?.[frame.name] ?? { x: frame.x, y: frame.y, w: frame.w, h: frame.h }]),
 			);
 			const after =
 				spot === undefined
@@ -1456,7 +1467,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	 * does, and through the same verbs, so it is the same move with the same undo.
 	 */
 	const landOutside = useCallback(
-		(carried: Carried, target: CarryTarget) => {
+		(carried: Carried, target: CarryTarget, from?: Record<string, Geometry>) => {
 			const page = target.page;
 			if (!canLand(carried, page, (name) => pageHolding(name) ?? ROOT_PAGE)) return;
 			if (carried.kind === "page") {
@@ -1470,6 +1481,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 				end,
 				false,
 				target.kind === "spot" ? { x: target.x, y: target.y } : undefined,
+				from,
 			);
 		},
 		[pageHolding, movePagesInto, pagesIn, moveFramesInto],
@@ -1513,7 +1525,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 			copy,
 			paste: () => paste(),
 			duplicate: duplicateNames,
-			move: (names, target) => landOutside({ kind: "frame", names }, target),
+			move: (names, target, from) => landOutside({ kind: "frame", names }, target, from),
 		};
 		return () => {
 			verbs.current = null;
