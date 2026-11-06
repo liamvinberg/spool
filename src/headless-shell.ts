@@ -32,45 +32,49 @@ export function headlessShellArgs(platform: NodeJS.Platform = process.platform):
  *
  * Chrome's default in a headless shell is SwiftShader: WebGL and raster on the
  * CPU. It draws a `backdrop-filter` backdrop mirrored on a Mac and under-draws
- * WebGL fields, and on a Linux server five agents' edits held its GPU process
- * at nearly three cores (#225). Each platform's ANGLE backend is the one that
- * draws without a display: Metal on a Mac, D3D11 on Windows, and on Linux GLES
- * over EGL on a render node, which on an Intel iGPU drew a canvas of a few
- * hundred gradients at 60 frames a second where Vulkan drew 15 and SwiftShader
- * under one. Whether a GPU really drew is `launchHeadlessShell`'s to check.
+ * WebGL fields (on a Linux box it drew none at all), and on a Linux server
+ * five agents' edits held its GPU process at nearly three cores (#225). Each
+ * platform's ANGLE backend is one that draws without a display: Metal on a
+ * Mac, D3D11 on Windows, and on Linux one through a render node. With one node
+ * that is GLES over EGL: on an Intel iGPU it drew a canvas of a few hundred
+ * gradients at 60 frames a second, where Vulkan drew 15 and SwiftShader under
+ * one. With more, EGL took the first it found, which on a desktop with a
+ * Radeon card and the Ryzen's own graphics was the CPU's (9 a second), and
+ * Vulkan takes the discrete card (60). Whether a GPU really drew is
+ * `launchHeadlessShell`'s to check.
  */
 export function gpuShellArgs(
 	platform: NodeJS.Platform = process.platform,
 	env: NodeJS.ProcessEnv = process.env,
-	renderNode: () => boolean = hasRenderNode,
+	renderNodes: () => number = usableRenderNodes,
 ): string[] | undefined {
 	if (env.SPOOL_BOOTH_GPU === "0") return undefined;
-	const backend =
-		platform === "darwin"
-			? "metal"
-			: platform === "win32"
-				? "d3d11"
-				: platform === "linux" && renderNode()
-					? "gles-egl"
-					: undefined;
+	const backend = gpuBackend(platform, renderNodes);
 	return backend === undefined ? undefined : ["--enable-gpu", `--use-angle=${backend}`, "--ignore-gpu-blocklist"];
 }
 
-/** A DRM render node this user may open, which is what GLES over EGL draws through. */
-function hasRenderNode(): boolean {
+function gpuBackend(platform: NodeJS.Platform, renderNodes: () => number): string | undefined {
+	if (platform === "darwin") return "metal";
+	if (platform === "win32") return "d3d11";
+	if (platform !== "linux") return undefined;
+	const nodes = renderNodes();
+	return nodes === 0 ? undefined : nodes === 1 ? "gles-egl" : "vulkan";
+}
+
+/** The DRM render nodes this user may open, which is what a GPU draws through without a display. */
+function usableRenderNodes(): number {
 	try {
-		return readdirSync("/dev/dri")
-			.filter((name) => name.startsWith("renderD"))
-			.some((name) => {
-				try {
-					accessSync(join("/dev/dri", name), constants.R_OK | constants.W_OK);
-					return true;
-				} catch {
-					return false;
-				}
-			});
+		return readdirSync("/dev/dri").filter((name) => {
+			if (!name.startsWith("renderD")) return false;
+			try {
+				accessSync(join("/dev/dri", name), constants.R_OK | constants.W_OK);
+				return true;
+			} catch {
+				return false;
+			}
+		}).length;
 	} catch {
-		return false;
+		return 0;
 	}
 }
 

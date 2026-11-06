@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { drawsInSoftware, gpuShellArgs } from "./headless-shell";
 
 describe("the booth's GPU", () => {
-	it("is each platform's ANGLE backend, on Linux only with a render node, and never when software is asked for", () => {
-		const backend = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv = {}, renderNode = true) =>
-			gpuShellArgs(platform, env, () => renderNode)?.find((flag) => flag.startsWith("--use-angle="));
+	it("is each platform's ANGLE backend, on Linux by its render nodes, and never when software is asked for", () => {
+		const backend = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv = {}, renderNodes = 1) =>
+			gpuShellArgs(platform, env, () => renderNodes)?.find((flag) => flag.startsWith("--use-angle="));
 		expect(backend("darwin")).toBe("--use-angle=metal");
 		expect(backend("win32")).toBe("--use-angle=d3d11");
 		expect(backend("linux")).toBe("--use-angle=gles-egl");
-		expect(backend("linux", {}, false)).toBeUndefined();
+		expect(backend("linux", {}, 2)).toBe("--use-angle=vulkan");
+		expect(backend("linux", {}, 0)).toBeUndefined();
 		expect(backend("freebsd")).toBeUndefined();
 		expect(backend("darwin", { SPOOL_BOOTH_GPU: "0" })).toBeUndefined();
 	});
