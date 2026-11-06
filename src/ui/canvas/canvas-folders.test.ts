@@ -223,6 +223,29 @@ describe("the peek", () => {
 		expect(on(host)).toBe("");
 	});
 
+	/** a tree's peek walks up and down only, so ← and → are still the tree's to fold and unfold with */
+	it("leaves ← and → to the tree while a peek opened over one of its rows is up", async () => {
+		const host = await mountCanvas(KAFFE);
+		const tree = host.querySelector<HTMLElement>('[aria-label="Pages tree"]');
+		await act(async () => tree?.focus());
+		await keydown({ key: "ArrowDown" });
+		await until(() => on(host) === "app");
+		// arriving gives the canvas the keys; the tree takes them back
+		await act(async () => tree?.focus());
+		await keydown({ key: "ArrowRight" });
+		await until(() => host.querySelector('button[aria-label="Collapse app"]') !== null);
+		await act(async () => {
+			host
+				.querySelector('[role="tree"] [data-drop-page="explore"]')
+				?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+		});
+		await space();
+		await until(() => card() !== null);
+
+		await keydown({ key: "ArrowLeft" });
+		expect(host.querySelector('button[aria-label="Expand app"]')).not.toBeNull();
+	});
+
 	it("leaves Space to the Hand on a page of frames, the tree's cursor on a folder or not", async () => {
 		const host = await mountCanvas(KAFFE);
 		await into(host, "app");

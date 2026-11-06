@@ -353,18 +353,16 @@ export function usePagePeek({
 	}, [activePage, api]);
 
 	useEffect(() => {
+		const walk = (event: KeyboardEvent | undefined) => {
+			event?.preventDefault();
+			api.walk(event?.key === "ArrowUp" || event?.key === "ArrowLeft" ? -1 : 1);
+		};
 		const openKeys = {
 			"peek.open": (event) => {
 				event?.preventDefault();
 				api.close();
 			},
-			"peek.walk": (event) => {
-				event?.preventDefault();
-				const sideways = event?.key === "ArrowLeft" || event?.key === "ArrowRight";
-				// the path walks sideways and up and down alike; a tree and a list only up and down
-				if (sideways && peekRef.current?.from !== "path") return;
-				api.walk(event?.key === "ArrowUp" || event?.key === "ArrowLeft" ? -1 : 1);
-			},
+			"peek.walk": walk,
 			"peek.go": (event) => {
 				event?.preventDefault();
 				const page = peekRef.current?.page;
@@ -375,11 +373,13 @@ export function usePagePeek({
 				event?.preventDefault();
 				api.close();
 			},
-		} satisfies Record<HotkeyIdFor<"peek">, HotkeyHandler>;
-		const detachOpen = attachHotkeyLayer({
+		} satisfies Partial<Record<HotkeyIdFor<"peek">, HotkeyHandler>>;
+		const keyOpen = () => peekRef.current?.why === "key";
+		const detachOpen = attachHotkeyLayer({ scope: "peek", active: keyOpen, handlers: openKeys });
+		const detachSide = attachHotkeyLayer({
 			scope: "peek",
-			active: () => peekRef.current?.why === "key",
-			handlers: openKeys,
+			active: () => keyOpen() && peekRef.current?.from === "path",
+			handlers: { "peek.side": walk },
 		});
 		// nothing open: only Space, and only with a folder under the pointer or the keys
 		const detachCan = attachHotkeyLayer({
@@ -395,6 +395,7 @@ export function usePagePeek({
 		});
 		return () => {
 			detachOpen();
+			detachSide();
 			detachCan();
 		};
 	}, [api]);

@@ -641,9 +641,12 @@ export const HOTKEYS = [
 		scope: "peek",
 		group: "Pages",
 		label: "Peek at the next folder",
-		keys: ["arrowup", "arrowdown", "arrowleft", "arrowright"],
+		keys: ["arrowup", "arrowdown"],
 		shown: ["↑↓"],
 	},
+	// the path's names stand in a row, so a peek opened from one walks sideways too;
+	// a tree's or a list's leaves ←→ to the rail
+	{ id: "peek.side", scope: "peek", group: "Pages", label: "", keys: ["arrowleft", "arrowright"], listed: false },
 	{ id: "peek.go", scope: "peek", group: "Pages", label: "", keys: ["enter", "accel+arrowdown"], listed: false },
 	{ id: "peek.close", scope: "peek", group: "Pages", label: "", keys: ["escape"], listed: false },
 
