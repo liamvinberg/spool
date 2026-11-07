@@ -96,6 +96,7 @@ describe("checkout development entry", () => {
 
 function copyCheckout(checkout: string): string {
 	cpSync(join(repoRoot, "src"), join(checkout, "src"), { recursive: true });
+	cpSync(join(repoRoot, "skill"), join(checkout, "skill"), { recursive: true });
 	// the entry mirrors the captures into the canvas before it serves, so a
 	// checkout without them is not one
 	cpSync(join(repoRoot, "fixtures"), join(checkout, "fixtures"), { recursive: true });
