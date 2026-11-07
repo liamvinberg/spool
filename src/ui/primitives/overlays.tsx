@@ -7,7 +7,17 @@
 // `data-state="hover|active|focus"`; app states are `aria-checked`,
 // `disabled` and `aria-expanded`.
 
-import { type ComponentProps, createElement, type HTMLAttributes, type ReactNode } from "react";
+import {
+	type ComponentProps,
+	createElement,
+	type HTMLAttributes,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";
 import { Kbd } from "./display";
@@ -126,6 +136,147 @@ export function MenuItem({
 /** A rule between groups of verbs, in the strong line, inset to the rows' text. */
 export function MenuSeparator({ className, ...rest }: ComponentProps<"hr">) {
 	return <hr className={cn("mx-2 my-1 h-px shrink-0 border-0 bg-line-strong", className)} {...rest} />;
+}
+
+/* --------------------------------------------------------------- StepMenu -- */
+
+/** how near the edge of its room the box may come */
+const EDGE = 8;
+
+/** a step of the motion scale, in ms as the page has it: 0 under stillness or with no theme */
+function scaleMs(step: "quick" | "base"): number {
+	const raw = getComputedStyle(document.documentElement).getPropertyValue(`--transition-duration-${step}`).trim();
+	const value = Number.parseFloat(raw);
+	if (!Number.isFinite(value)) return 0;
+	return raw.endsWith("ms") ? value : value * 1000;
+}
+
+export interface StepMenuProps extends ComponentProps<"div"> {
+	/** where it opened, in its positioned parent: its top left corner, unless that would leave the parent */
+	at: { x: number; y: number };
+	/** the step standing in it: a new one cross-fades the inside */
+	step: string;
+	/** the step's width, a CSS length: the menu's own unless the step needs more */
+	width?: string | undefined;
+	/** Esc inside it */
+	onClose?: (() => void) | undefined;
+}
+
+/**
+ * A menu that goes on into a step: one floating box at the pointer that
+ * becomes what the step has to say, and never a second box somewhere else.
+ * Its width and height ease to what stands in it, the old step fades out over
+ * the new one rising into place, and it moves in only as far as it must to
+ * stay inside its parent. It takes the focus while it is up, so Esc closes it
+ * and the keys reach it; the focus goes back where it was when it goes.
+ */
+export function StepMenu({
+	at,
+	step,
+	width = "var(--spacing-menu)",
+	onClose,
+	onKeyDown,
+	className,
+	style,
+	children,
+	...rest
+}: StepMenuProps) {
+	const box = useRef<HTMLDivElement>(null);
+	const inner = useRef<HTMLDivElement>(null);
+	const ghosts = useRef<HTMLDivElement>(null);
+	const [fit, setFit] = useState<{ left: number; top: number; height: number } | null>(null);
+	// the first fit lands without motion: only a change after it eases
+	const [eased, setEased] = useState(false);
+
+	useLayoutEffect(() => {
+		const outer = box.current;
+		const content = inner.current;
+		if (outer === null || content === null) return;
+		const measure = () => {
+			const parent = outer.offsetParent;
+			const room = parent instanceof HTMLElement && parent.clientWidth > 0 ? parent : null;
+			// the box draws its edge outside the content, a pixel each side
+			const w = content.offsetWidth + 2;
+			const h = content.offsetHeight;
+			const left = room === null ? at.x : Math.max(EDGE, Math.min(at.x, room.clientWidth - w - EDGE));
+			const top = room === null ? at.y : Math.max(EDGE, Math.min(at.y, room.clientHeight - h - 2 - EDGE));
+			setFit((was) =>
+				was !== null && was.left === left && was.top === top && was.height === h ? was : { left, top, height: h },
+			);
+		};
+		measure();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(measure);
+		observer.observe(content);
+		return () => observer.disconnect();
+	}, [at.x, at.y]);
+
+	useEffect(() => {
+		if (fit === null || eased) return;
+		const frame = requestAnimationFrame(() => setEased(true));
+		return () => cancelAnimationFrame(frame);
+	}, [fit, eased]);
+
+	useEffect(() => {
+		const before = document.activeElement;
+		box.current?.focus({ preventScroll: true });
+		return () => {
+			const now = document.activeElement;
+			if (before instanceof HTMLElement && before.isConnected && (now === null || now === document.body))
+				before.focus({ preventScroll: true });
+		};
+	}, []);
+
+	const stepIn = useCallback((node: HTMLDivElement | null) => {
+		if (node === null) return;
+		// a step that took the focused row away hands the focus back to the box, so its keys still land
+		const now = document.activeElement;
+		if (now === null || now === document.body) box.current?.focus({ preventScroll: true });
+		// the step that leaves is drawn once more, a copy no pointer or reader reaches, fading over the new one
+		return () => {
+			const layer = ghosts.current;
+			const ms = scaleMs("quick");
+			if (layer === null || ms <= 0) return;
+			const ghost = node.cloneNode(true) as HTMLDivElement;
+			ghost.inert = true;
+			ghost.style.width = `${node.offsetWidth}px`;
+			ghost.classList.remove("animate-step-in");
+			ghost.classList.add("animate-step-out");
+			layer.append(ghost);
+			window.setTimeout(() => ghost.remove(), ms);
+		};
+	}, []);
+
+	return (
+		<div
+			ref={box}
+			role="menu"
+			tabIndex={-1}
+			className={cn(
+				"absolute z-30 box-content animate-menu-in overflow-hidden rounded-md outline-none",
+				FLOATING,
+				eased && "transition-[left,top,width,height] duration-base ease-snap motion-reduce:transition-none",
+				className,
+			)}
+			style={{ left: fit?.left ?? at.x, top: fit?.top ?? at.y, width, height: fit?.height, ...style }}
+			onKeyDown={(event) => {
+				onKeyDown?.(event);
+				if (event.defaultPrevented || event.key !== "Escape" || onClose === undefined) return;
+				// the page's own Esc must not also run: it would go on to leave or climb
+				event.preventDefault();
+				event.stopPropagation();
+				onClose();
+			}}
+			{...rest}
+		>
+			<div ref={inner} style={{ width }}>
+				<div key={step} ref={stepIn} data-step={step} className="flex animate-step-in flex-col p-1">
+					{children}
+				</div>
+			</div>
+			<div ref={ghosts} aria-hidden="true" className="pointer-events-none absolute top-0 left-0" />
+		</div>
+	);
 }
 
 /* ---------------------------------------------------------------- Popover -- */

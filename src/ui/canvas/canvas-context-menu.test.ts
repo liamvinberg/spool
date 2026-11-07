@@ -36,7 +36,7 @@ describe("canvas context menu", () => {
 		await openFrameMenu(canvas);
 
 		const menu = host.querySelector('[role="menu"]');
-		expect(menu?.textContent).toContain("Export as PNG");
+		expect(menu?.textContent).toContain("Export…");
 		expect(menu?.className).toContain("z-30");
 		expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ spool: "pick" }), "*");
 	});
@@ -105,7 +105,7 @@ describe("canvas context menu", () => {
 		await clickMenuItem(host, "Reload frame");
 		await openFrameMenu(canvas);
 
-		expect(host.querySelector('[role="menu"]')?.textContent).toContain("Export as PNG");
+		expect(host.querySelector('[role="menu"]')?.textContent).toContain("Export…");
 	});
 
 	it("sets a frame with a still as the project's thumbnail, after Reload frame", async () => {
