@@ -23,16 +23,21 @@ export interface PageListRow {
 /** Something standing on a page: a frame, or a placeholder for one on its way. */
 type OnPage = { readonly page?: string };
 
-/** One place's reading of the project: its pages arranged, its frames, what is on its way. */
-export interface PageWorld {
+/** One place's reading of the project, as much as a list needs: the read-only canvas's too, whose frames have no cover of their own. */
+export interface ListWorld {
 	readonly pages: readonly string[];
-	readonly frames: readonly ProjectedFrame[];
+	readonly frames: readonly Pick<ProjectedFrame, "name" | "page" | "cover">[];
 	readonly waiting: readonly OnPage[];
 	readonly order: CanvasOrder;
 }
 
+/** One place's reading of the project: its pages arranged, its frames, what is on its way. */
+export interface PageWorld extends ListWorld {
+	readonly frames: readonly ProjectedFrame[];
+}
+
 /** Each page's own pages in rail order, keyed by the page holding them. */
-export function pageTreeOf(world: Pick<PageWorld, "pages" | "order">): Map<string, string[]> {
+export function pageTreeOf(world: Pick<ListWorld, "pages" | "order">): Map<string, string[]> {
 	return mergePageTree(world.order.pages, world.pages);
 }
 
@@ -40,16 +45,16 @@ export function pageTreeOf(world: Pick<PageWorld, "pages" | "order">): Map<strin
  * Whether a page draws as a list: it holds pages and nothing of its own, not a
  * frame and not a placeholder. The root page is one too, once it has no frames.
  */
-export function listsPages(page: string, world: PageWorld): boolean {
+export function listsPages(page: string, world: ListWorld): boolean {
 	if (world.frames.some((frame) => pageSlot(frame) === page)) return false;
 	if (world.waiting.some((one) => pageSlot(one) === page)) return false;
 	return (pageTreeOf(world).get(page) ?? []).length > 0;
 }
 
 /** The rows of a page of pages, in rail order. */
-export function pageListRows(page: string, world: PageWorld): PageListRow[] {
+export function pageListRows(page: string, world: ListWorld): PageListRow[] {
 	const tree = pageTreeOf(world);
-	const own = (at: string): ProjectedFrame[] => {
+	const own = (at: string): ListWorld["frames"][number][] => {
 		const here = world.frames.filter((frame) => pageSlot(frame) === at);
 		const leaves = mergeOrder(
 			world.order.frames?.[at],
@@ -57,7 +62,7 @@ export function pageListRows(page: string, world: PageWorld): PageListRow[] {
 		);
 		return leaves.flatMap((leaf) => here.filter((frame) => frame.name === pageUnder(at, leaf)));
 	};
-	const first = (at: string): ProjectedFrame | undefined =>
+	const first = (at: string): ListWorld["frames"][number] | undefined =>
 		own(at)[0] ?? (tree.get(at) ?? []).map(first).find((frame) => frame !== undefined);
 	const count = (at: string): number =>
 		world.frames.filter((frame) => pageSlot(frame) === at).length +

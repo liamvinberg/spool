@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { coverUrl } from "../api";
 import { cn } from "../cn";
 import { ChevronIcon } from "../icons";
 import { Thumbnail } from "../primitives/display";
@@ -16,7 +15,7 @@ import { holdsLine, type PageListRow } from "./page-list";
  * it peeks at it, the list stepping aside so the two stand centred together.
  */
 export function PageListView({
-	project,
+	stillOf,
 	rows,
 	lit,
 	aside = 0,
@@ -24,7 +23,8 @@ export function PageListView({
 	onLight,
 	onGo,
 }: {
-	project: string;
+	/** where a row's still is read: the daemon's covers on the Mac, spool.page's in a browser */
+	stillOf: (row: PageListRow) => string | undefined;
 	rows: readonly PageListRow[];
 	lit: string | null;
 	/** px the list steps aside by while a peek stands beside a row */
@@ -79,12 +79,7 @@ export function PageListView({
 							row.page === dropLit ? "bg-accent-subtle" : row.page === lit && "bg-state-hover",
 						)}
 					>
-						<Thumbnail
-							className="h-11 w-15"
-							src={
-								row.still?.hash === undefined ? undefined : coverUrl(project, row.still.frame, row.still.hash)
-							}
-						/>
+						<Thumbnail className="h-11 w-15" src={stillOf(row)} />
 						<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 							<span
 								className={cn(

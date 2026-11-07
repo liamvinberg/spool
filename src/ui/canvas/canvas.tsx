@@ -6002,7 +6002,11 @@ function CanvasField({
 						)}
 						{listing && (
 							<PageListView
-								project={project}
+								stillOf={(row) =>
+									row.still?.hash === undefined
+										? undefined
+										: coverUrl(project, row.still.frame, row.still.hash)
+								}
 								rows={listRows}
 								lit={downTo}
 								aside={peeking.peek?.from === "list" ? peeking.peek.aside : 0}
