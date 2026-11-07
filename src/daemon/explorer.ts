@@ -1,5 +1,6 @@
 import { cpSync, type Dirent, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { writeAtomic } from "../atomic-write";
 import {
 	isFramePath,
 	isPagePath,
@@ -17,11 +18,19 @@ import { readOrder, withPageMoved, withPagesDropped, writeOrder } from "./canvas
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { type Moved, retargetFor, retargetLinks } from "./frame-links";
 import { type Geometry, sidecarFileIn, writeGeometry } from "./geometry";
-import { reaimEscapingImports } from "./import-aim";
+import { importersReaimed, reaimEscapingImports } from "./import-aim";
 import { GUTTER, overlaps } from "./placement";
 import { pageMovedInState, pagesDroppedFromState, readCanvasState, writeCanvasState } from "./project-state";
-import { describeMissingFrame, hasFrameEntry, listProjectFrames, lookupFrame, pagePaths } from "./projection";
-import { carrySeen } from "./seen";
+import {
+	describeMissingFrame,
+	frameDirectories,
+	frameFolder,
+	hasFrameEntry,
+	listProjectFrames,
+	lookupFrame,
+	pagePaths,
+} from "./projection";
+import { carrySeen, unnoticed } from "./seen";
 import { carryCover } from "./thumbs";
 
 /**
@@ -34,9 +43,11 @@ import { carryCover } from "./thumbs";
  * every walk into a frame says, so a gesture that changes one keeps two kinds
  * of bookkeeping true afterwards, and authors nothing else: a `../` import whose
  * target stayed put while the folder's depth changed is re-aimed (#273,
- * `import-aim.ts`), and every walk target naming a frame that moved is written
- * at its new name (`frame-links.ts`). A copy changes no name, so it re-aims
- * imports and leaves every walk where it pointed.
+ * `import-aim.ts`), so is every import into a moved folder from outside it,
+ * which is what keeps a mirror showing its original (spool#232), and every walk
+ * target naming a frame that moved is written at its new name
+ * (`frame-links.ts`). A copy changes no name, so it re-aims its own imports and
+ * leaves every walk and every mirror where it pointed.
  *
  * Every path resolves before the first write, the way the geometry handler
  * resolves every sidecar before it writes one: a rename that would escape
@@ -85,6 +96,22 @@ function carryPage(root: string, from: string, to: string): void {
 }
 
 /**
+ * A folder that moved, from the outside: every file reaching into it is aimed
+ * at where it went (spool#232). Like a walk rewritten, it is spool's
+ * bookkeeping rather than news, so a mirror somebody had seen stays seen.
+ */
+function reaimImporters(root: string, designDir: string, fromDir: string, toDir: string): void {
+	const writes = importersReaimed(designDir, fromDir, toDir);
+	if (writes.length === 0) return;
+	const touched = [...frameDirectories(root)].flatMap(([name, dir]) =>
+		writes.some((write) => write.path.startsWith(`${frameFolder(name)}/`)) ? [{ name, dir }] : [],
+	);
+	unnoticed(root, touched, () => {
+		for (const write of writes) writeAtomic(write.file, write.source);
+	});
+}
+
+/**
  * What every rename and move ends with, once the folders stand where they were
  * asked to: the covers and the seen mark of every frame that changed name
  * follow it, and every walk into one is written at its new name. What moved,
@@ -123,7 +150,9 @@ export function renameFrame(root: string, from: string, to: string): Refusal | {
 	if (found.kind === "missing") return refuse(404, describeMissingFrame(from));
 	const target = folderOf(designDir, to);
 	if (existsSync(target)) return refuse(409, describeTaken(pageParent(to), pageName(to)));
-	renameSync(resolveDesignPath(designDir, found.dir), target);
+	const dir = resolveDesignPath(designDir, found.dir);
+	renameSync(dir, target);
+	reaimImporters(root, designDir, dir, target);
 	return { kind: "renamed", moved: renamed(root, designDir, { frames: [{ from, to }] }) };
 }
 
@@ -143,7 +172,9 @@ export function renamePage(root: string, from: string, to: string): Refusal | { 
 	if (!pagePaths(root).has(from)) return refuse(404, describeMissingPage(from));
 	const target = folderOf(designDir, to);
 	if (existsSync(target)) return refuse(409, describeTaken(pageParent(to), pageName(to)));
-	renameSync(folderOf(designDir, from), target);
+	const dir = folderOf(designDir, from);
+	renameSync(dir, target);
+	reaimImporters(root, designDir, dir, target);
 	// the page's own bookkeeping follows the folder: the page the canvas is on,
 	// every camera inside it, and its place and contents in the rail's order
 	carryPage(root, from, to);
@@ -191,6 +222,7 @@ export function movePages(
 		renameSync(move.dir, move.target);
 		// every frame the page carries changed depth with it (#273)
 		reaimEscapingImports(designDir, move.dir, move.target);
+		reaimImporters(root, designDir, move.dir, move.target);
 		carryPage(root, move.from, move.to);
 	}
 	return { kind: "moved", moved: renamed(root, designDir, { pages: moves.map(({ from, to }) => ({ from, to })) }) };
@@ -220,10 +252,12 @@ export function moveFrames(
 		moves.push({ from: name, to, dir: resolveDesignPath(designDir, found.dir), target });
 	}
 	// the folder carries geometry and source; a `../` import inside it is
-	// re-aimed (#273) because its target stayed put while the depth changed
+	// re-aimed (#273) because its target stayed put while the depth changed, and
+	// one reaching into it from outside follows it (spool#232)
 	for (const move of moves) {
 		renameSync(move.dir, move.target);
 		reaimEscapingImports(designDir, move.dir, move.target);
+		reaimImporters(root, designDir, move.dir, move.target);
 	}
 	return { kind: "moved", moved: renamed(root, designDir, { frames: moves.map(({ from, to }) => ({ from, to })) }) };
 }

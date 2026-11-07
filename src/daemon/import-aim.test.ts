@@ -1,9 +1,9 @@
-import { mkdirSync, readFileSync, renameSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { realDesignDir } from "./design-path";
-import { reaimEscapingImports } from "./import-aim";
+import { importersReaimed, reaimEscapingImports } from "./import-aim";
 
 /**
  * The move-time healing of `../` imports (#273). Each test moves a folder the
@@ -145,5 +145,54 @@ describe("re-aiming escaping imports on a move", () => {
 		const { to } = moveFolder(designDir, join("frames", "dashboard"), join("frames", "dashboard-copy"));
 
 		expect(read(to, "frame.tsx")).toBe(source);
+	});
+});
+
+describe("re-aiming the imports into a moved folder (spool#232)", () => {
+	function moveOriginal(designDir: string, from: string, to: string): void {
+		const dirs = moveFolder(designDir, from, to);
+		for (const write of importersReaimed(designDir, dirs.from, dirs.to)) writeFileSync(write.file, write.source);
+	}
+
+	it("keeps a mirror, a file above the folder and a stylesheet aimed at it, and nothing else", () => {
+		const { root, designDir } = project();
+		writeDesignFile(root, join("frames", "app", "checkout", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(root, join("frames", "app", "checkout", "card.css"), "p {}\n");
+		writeDesignFile(root, join("frames", "app", "cart", "frame.tsx"), "export default () => null;\n");
+		const mirror = 'export { default } from "../../app/checkout/frame";\n';
+		writeDesignFile(root, join("frames", "scania", "checkout", "frame.tsx"), mirror);
+		writeDesignFile(
+			root,
+			join("frames", "app", "index.ts"),
+			'export { default as Checkout } from "./checkout/frame";\nexport { default as Cart } from "./cart/frame";\n',
+		);
+		writeDesignFile(root, join("shared", "print.css"), '@import "../frames/app/checkout/card.css";\n');
+		mkdirSync(join(designDir, "frames", "app", "flows"), { recursive: true });
+
+		moveOriginal(designDir, join("frames", "app", "checkout"), join("frames", "app", "flows", "pay"));
+
+		expect(read(designDir, join("frames", "scania", "checkout", "frame.tsx"))).toBe(
+			'export { default } from "../../app/flows/pay/frame";\n',
+		);
+		expect(read(designDir, join("frames", "app", "index.ts"))).toBe(
+			'export { default as Checkout } from "./flows/pay/frame";\nexport { default as Cart } from "./cart/frame";\n',
+		);
+		expect(read(designDir, join("shared", "print.css"))).toBe('@import "../frames/app/flows/pay/card.css";\n');
+	});
+
+	it("re-aims a rename beside the original too, which keeps the folder's own counts", () => {
+		const { root, designDir } = project();
+		writeDesignFile(root, join("frames", "checkout", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(
+			root,
+			join("frames", "checkout-wide", "frame.tsx"),
+			'export { default } from "../checkout/frame";\n',
+		);
+
+		moveOriginal(designDir, join("frames", "checkout"), join("frames", "basket"));
+
+		expect(read(designDir, join("frames", "checkout-wide", "frame.tsx"))).toBe(
+			'export { default } from "../basket/frame";\n',
+		);
 	});
 });
