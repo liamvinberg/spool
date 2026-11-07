@@ -112,6 +112,8 @@ export interface ViewerShared {
 	updated: number | null;
 	/** A whole-project share (spool#182), said by the project's name. */
 	whole?: true;
+	/** The folders it follows (spool#230), said once each rather than by every page under them. */
+	folders?: string[];
 }
 
 /** Whether a role edits: holds the folders, so has a spool to hand the project over to. */

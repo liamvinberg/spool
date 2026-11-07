@@ -387,6 +387,31 @@ describe("the read-only canvas", () => {
 		expect(await list.count()).toBe(0);
 	});
 
+	it("sets several items shared with an outsider side by side as their top, a clash told by its parent", {
+		timeout: 60_000,
+	}, async () => {
+		const shared: ViewerProject = {
+			...outsider(),
+			canvas: {
+				pages: ["acme/checkout", "volvo/checkout"],
+				order: {},
+				frames: [
+					{ name: "acme/checkout/pay", page: "acme/checkout", x: 0, y: 0, w: 390, h: 844 },
+					{ name: "volvo/checkout/pay", page: "volvo/checkout", x: 0, y: 0, w: 390, h: 844 },
+				],
+			},
+			shared: { by: "ana", pages: ["acme/checkout", "volvo/checkout"], updated: null },
+		};
+		const { page } = await open(PATH, { as: shared });
+		const list = page.locator("[data-page-list]");
+		await expect
+			.poll(() => list.getByRole("button").evaluateAll((rows) => rows.map((row) => row.textContent)))
+			.toEqual(["checkoutacme1 frame", "checkoutvolvo1 frame"]);
+		const rail = page.getByRole("navigation", { name: "Pages" });
+		await rail.getByRole("button", { name: "checkout", exact: true }).first().waitFor();
+		expect(await page.getByText("Shared with you", { exact: true }).count()).toBe(1);
+	});
+
 	it("shows a teammate's save in place, with the changed mark and a short toast", { timeout: 60_000 }, async () => {
 		const { page, live, serve, requests } = await open();
 		const menu = page.frameLocator('iframe[title="menu"]');
@@ -551,9 +576,12 @@ describe("the read-only canvas", () => {
 			.poll(() => page.frameLocator('iframe[title="shop/cart"]').locator("h1").textContent())
 			.toBe("shop/cart");
 		await page.getByText("Shared by ana · 2 min ago").waitFor();
+		// the one page shared is their top, called by its own name: no page above it, no project name (spool#230)
 		const rail = page.getByRole("navigation", { name: "Pages" });
-		expect(await rail.getByRole("button", { name: "shop", exact: true }).count()).toBe(1);
-		for (const other of ["home", "menu"]) expect(await page.getByText(other, { exact: true }).count(), other).toBe(0);
+		expect(await rail.getByRole("button", { name: "cart frame" }).count()).toBe(1);
+		expect(await page.getByText("shop", { exact: true }).count()).toBe(1);
+		for (const other of ["home", "menu", "checkout"])
+			expect(await page.getByText(other, { exact: true }).count(), other).toBe(0);
 		expect(await page.getByText("view only").count()).toBe(0);
 		for (const name of [/open in spool/i, /^shared/i])
 			expect(await page.getByRole("button", { name }).count()).toBe(0);
@@ -561,6 +589,8 @@ describe("the read-only canvas", () => {
 		// a walk off the shared pages goes where it leads, and that screen says it isn't shared
 		await page.locator('[data-viewer-frame="shop/cart"]').click();
 		const player = page.locator("[data-viewer-player]");
+		// the player's bar names the frame alone, never by its path
+		await expect.poll(() => player.locator(".spool-bar-title").textContent()).toBe("cart");
 		await player.frameLocator('iframe[title="shop/cart"]').getByRole("button", { name: "Go to home" }).click();
 		await expect.poll(() => new URL(page.url()).searchParams.get("frame")).toBe("home");
 		expect(await player.locator('iframe[title="home"]').getAttribute("src")).toBe(`${FRAMES}home?play`);

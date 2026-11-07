@@ -18,7 +18,7 @@
  * beside them, and a flat project draws as its frames and nothing else.
  */
 
-import { pageDepth, pageParent, pageSegments, pageWithin, ROOT_PAGE } from "../../page-path";
+import { pageSegments, pageWithin, ROOT_PAGE } from "../../page-path";
 
 /** The rail's metrics: every row is a TreeRow, row tall, and the list's py-2. */
 export const PAGE_ROW = 28;
@@ -160,14 +160,18 @@ export function railRows(
 	below: RailBelow | null = null,
 	/** how many frames are on their way to each page: its placeholders, which have no rows */
 	waiting: ReadonlyMap<string, number> = new Map(),
+	/** the page the list is the contents of: the root page, or where a shared canvas starts (spool#230) */
+	from: string = ROOT_PAGE,
 ): RailRow[] {
 	const rows: RailRow[] = [];
 	let top = 0;
-	/** One page's own, in the order every page draws them: its frames, then its pages. */
-	function contents(page: string): void {
+	/**
+	 * One page's own, in the order every page draws them: its frames, then its pages, `depth` in: the page rows
+	 * standing above them, which is the segments of the page's path when the list starts at the root page.
+	 */
+	function contents(page: string, depth: number): void {
 		const frames = framesByPage.get(page) ?? [];
 		const held = pages.get(page) ?? [];
-		const depth = depthIn(page);
 		frames.forEach((frame, at) => {
 			const under = below !== null && below.frame === frame.name ? below.height : 0;
 			rows.push({
@@ -188,7 +192,7 @@ export function railRows(
 			});
 			top += FRAME_ROW + under;
 		});
-		for (const [at, child] of held.entries()) block(child, at, held.length, at === held.length - 1);
+		for (const [at, child] of held.entries()) block(child, page, depth, at, held.length, at === held.length - 1);
 		if (born !== page) return;
 		rows.push({
 			kind: "born",
@@ -211,13 +215,13 @@ export function railRows(
 			held.reduce((total, child) => total + within(child), 0)
 		);
 	}
-	function block(page: string, index: number, siblings: number, tail: boolean): void {
+	function block(page: string, parent: string, depth: number, index: number, siblings: number, tail: boolean): void {
 		const open = expanded.has(page);
 		rows.push({
 			kind: "page",
 			page,
-			parent: pageParent(page),
-			depth: pageDepth(page),
+			parent,
+			depth,
 			index,
 			siblings,
 			tail,
@@ -227,11 +231,11 @@ export function railRows(
 			height: PAGE_ROW,
 		});
 		top += PAGE_ROW;
-		if (open) contents(page);
+		if (open) contents(page, depth + 1);
 	}
 	// the root page has no row of its own: the list is its contents, so nothing
 	// here opens it and nothing shuts it
-	contents(ROOT_PAGE);
+	contents(from, 0);
 	return rows;
 }
 

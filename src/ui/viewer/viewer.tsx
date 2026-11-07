@@ -1,8 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DesignFrame } from "../../daemon/design-projection";
 import type { Unseen } from "../../daemon/seen";
-import { isFramePath, pageChain, pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
-import { saidAgo, saidList, sharedPageName } from "../../share-view";
+import { isFramePath, pageChain, pageHolds, pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
+import { saidAgo, saidList, sharedItems, sharedPageName } from "../../share-view";
 import type { Camera } from "../api";
 import {
 	type Box,
@@ -46,6 +46,7 @@ import { Navigator, type NavigatorToast } from "./navigator";
 import { markSeen, openShare, seenKey } from "./outsider-seen";
 import { onPhone } from "./phone";
 import { SharedLink } from "./shared-link";
+import { type CanvasTop, canvasTop, frameSaid, topTitle } from "./shared-top";
 import {
 	address,
 	edits,
@@ -344,23 +345,33 @@ function ViewerCanvas({
 	const known = useMemo(() => new Set(canvas.pages), [canvas.pages]);
 	const [where, setWhere] = useState(() => locate(config, new URL(window.location.href)));
 	const outsider = project.shared !== undefined;
-	// an outsider opens on the first page shared with them: the root page's frames only when it is one of them
-	const opening = outsider
-		? (project.shared?.pages.find((each) => each === ROOT_PAGE || known.has(each)) ?? ROOT_PAGE)
-		: ROOT_PAGE;
+	const rooted = sharedRooted(project);
+	const top = useMemo(() => canvasTop(canvas, canvas.order, rooted), [canvas, rooted]);
+	// an outsider on a whole-project share opens on its first page: the root page's frames only when it has some;
+	// one on a share of some of it, on what was shared (spool#230)
+	const opening = rooted
+		? top.top
+		: outsider
+			? (project.shared?.pages.find((each) => each === ROOT_PAGE || known.has(each)) ?? ROOT_PAGE)
+			: ROOT_PAGE;
 	// a link naming only a frame (spool.page/<team>/<project>?frame=shop/cart) opens on that frame's own page
 	const linked =
 		where.page === ROOT_PAGE && where.frame !== null
 			? canvas.frames.find((frame) => frame.name === where.frame)?.page
 			: undefined;
 	const named = linked ?? where.page;
-	const page = known.has(named) ? named : opening;
+	// nothing above a share's top is on its canvas: going there goes to the top
+	const page = known.has(named) && pageHolds(top.top, named) ? named : opening;
 	const frames = useMemo(() => canvas.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page), [canvas, page]);
 	/** a page holding only pages, the root too, draws them as a list rather than a field, as on the Mac (spool#224) */
 	const listRows = useMemo(() => {
 		const world: ListWorld = { pages: canvas.pages, frames: canvas.frames, waiting: [], order: canvas.order };
-		return listsPages(page, world) ? pageListRows(page, world) : [];
-	}, [canvas, page]);
+		if (!listsPages(page, world, top.tree)) return [];
+		return pageListRows(page, world, top.tree).map((row) => {
+			const place = top.places.get(row.page);
+			return place === undefined ? row : { ...row, place };
+		});
+	}, [canvas, page, top]);
 	const listing = listRows.length > 0;
 	/** the row the pointer last lit, the first until it lights one */
 	const [lit, setLit] = useState<string | null>(null);
@@ -825,7 +836,7 @@ function ViewerCanvas({
 		viewportRef: viewport,
 		page,
 		goToPage: (next) => {
-			if (next !== ROOT_PAGE && !known.has(next)) return false;
+			if (next === ROOT_PAGE ? top.top !== ROOT_PAGE : !known.has(next) || !pageHolds(top.top, next)) return false;
 			if (next !== page) go({ page: next, frame: null });
 			return true;
 		},
@@ -838,6 +849,7 @@ function ViewerCanvas({
 		<div className="flex h-dvh select-none overflow-clip bg-surface-window text-primary contain-paint">
 			<PagesRail
 				project={project}
+				top={rooted ? top : null}
 				page={page}
 				marks={marks}
 				pageMarks={pageMarks}
@@ -1052,6 +1064,7 @@ function ViewerCanvas({
 			{played !== null && (
 				<ViewerPlayer
 					project={project.project}
+					{...(rooted ? { said: (frame: string) => frameSaid(top, frame) } : {})}
 					frames={canvas.frames}
 					documentOf={(name) => `${project.frames}${encodeURIComponent(name)}?play`}
 					walksAnywhere={outsider}
@@ -1146,7 +1159,7 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
  */
 /** Who shared and when, kept short: the pages rail already names the pages, and the whole sentence is its title. */
 function SharedLine({ shared, project }: { shared: ViewerShared; project: string }) {
-	const what = shared.whole === true ? project : saidList(shared.pages.map(sharedPageName));
+	const what = shared.whole === true ? project : saidList(sharedItems(shared).map(sharedPageName));
 	const ago = shared.updated === null ? "" : ` · ${saidAgo(shared.updated)}`;
 	return (
 		<span
@@ -1175,9 +1188,18 @@ function holdingPages(page: string): string[] {
 	return page === ROOT_PAGE ? [] : pageChain(page);
 }
 
+/**
+ * Whether an outsider's canvas starts at what was shared with them (spool#230): a share of some of the project, whose
+ * pages above it aren't theirs to see. A whole-project share starts at the project's root page, as a member's does.
+ */
+function sharedRooted(project: ViewerProject): boolean {
+	return project.shared !== undefined && project.shared.whole !== true;
+}
+
 /** The pages rail, as it ships, with nothing on it that changes anything. */
 function PagesRail({
 	project,
+	top,
 	page,
 	marks,
 	pageMarks,
@@ -1187,6 +1209,8 @@ function PagesRail({
 	foot,
 }: {
 	project: ViewerProject;
+	/** Where an outsider's canvas starts, when it starts at what was shared rather than the project's root page. */
+	top: CanvasTop | null;
 	page: string;
 	marks: ReadonlyMap<string, Unseen>;
 	pageMarks: ReadonlySet<string>;
@@ -1197,7 +1221,8 @@ function PagesRail({
 	foot?: ReactNode;
 }) {
 	const { canvas } = project;
-	const tree = useMemo(() => mergePageTree(canvas.order.pages, canvas.pages), [canvas]);
+	const tree = useMemo(() => top?.tree ?? mergePageTree(canvas.order.pages, canvas.pages), [canvas, top]);
+	const from = top?.top ?? ROOT_PAGE;
 	const framesByPage = useMemo(() => {
 		const byPage = new Map<string, { name: string }[]>();
 		for (const each of [ROOT_PAGE, ...flatPages(tree)]) {
@@ -1226,12 +1251,15 @@ function PagesRail({
 				else next.delete(each);
 			return next;
 		});
-	const rows = useMemo(() => railRows(tree, framesByPage, expanded), [tree, framesByPage, expanded]);
+	const rows = useMemo(
+		() => railRows(tree, framesByPage, expanded, null, null, new Map(), from),
+		[tree, framesByPage, expanded, from],
+	);
 	return (
 		<Panel side="start" width="rail">
 			<Bar
 				icon={project.team === null ? undefined : <TeamMark team={project.team} size={18} />}
-				title={project.project}
+				title={top === null ? project.project : topTitle(top)}
 				actions={
 					!edits(project.role) && project.shared === undefined ? (
 						<span className="pr-2 text-secondary type-detail">view only</span>
@@ -1260,7 +1288,14 @@ function PagesRail({
 								/>
 							}
 							icon={FolderIcon}
-							label={pageName(row.page)}
+							label={
+								<>
+									{pageName(row.page)}
+									{top?.places.has(row.page) === true && (
+										<span className="ml-2 text-tertiary">{top.places.get(row.page)}</span>
+									)}
+								</>
+							}
 							mono
 							meta={row.open ? undefined : row.count}
 							unseen={pageMarks.has(row.page)}
@@ -1269,7 +1304,7 @@ function PagesRail({
 						<TreeRow
 							key={`frame:${row.name}`}
 							depth={row.depth}
-							{...(row.page === ROOT_PAGE ? {} : { guide: row.last ? "last" : "mid" })}
+							{...(row.page === from ? {} : { guide: row.last ? "last" : "mid" })}
 							// a list of places to go rather than a tree to walk
 							role="none"
 							icon={FrameIcon}
