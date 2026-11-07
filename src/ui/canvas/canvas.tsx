@@ -238,6 +238,7 @@ import { setAsideAsk, useSetAside } from "./set-aside";
 import { CanvasSidebar, type FrameSpan, type FrameVerbs, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { type SpatialTrail, stepSpatially } from "./spatial-navigation";
+import { useStillness } from "./stillness";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
 import { TeammatePlaceholder, teammateOf } from "./teammate-agents";
 import { type Notice, NoticeToast } from "./toast";
@@ -5377,12 +5378,35 @@ function CanvasField({
 	}, [visits, navigatorPages, project]);
 	/** references the Chrome extension sent while this canvas was open, which arrive the way a placed thing does */
 	const arrivingRef = useRef(new Set<string>());
+	const still = useStillness();
 	// biome-ignore lint/correctness/useExhaustiveDependencies: frames arriving are the trigger — what arrives is read through the ref
 	useLayoutEffect(() => {
 		for (const name of arrivingRef.current) {
+			const frame = frames.find((candidate) => candidate.name === name);
+			if (frame === undefined) continue;
+			arrivingRef.current.delete(name);
+			// a canvas on another page hears of it from the extension's tab, and Open in spool brings it here
+			if (pageOf(frame) !== store.get().activePage) continue;
+			const cam = camera.get();
+			const viewport = viewportRef.current;
+			if (cam !== null && viewport !== null) {
+				// the view had no room for it, so it stands beside the rest: the camera goes to it
+				const seen = {
+					x: -cam.x / cam.k,
+					y: -cam.y / cam.k,
+					w: viewport.clientWidth / cam.k,
+					h: viewport.clientHeight / cam.k,
+				};
+				const inView =
+					frame.x >= seen.x && frame.y >= seen.y && frame.x < seen.x + seen.w && frame.y < seen.y + seen.h;
+				if (!inView) {
+					const centred = centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight);
+					if (still) camera.set(centred);
+					else camera.fly(centred);
+				}
+			}
 			const el = document.querySelector<HTMLElement>(`[data-frame-shell="${CSS.escape(name)}"]`);
 			if (el === null) continue;
-			arrivingRef.current.delete(name);
 			el.classList.add("animate-place-in");
 			el.addEventListener("animationend", () => el.classList.remove("animate-place-in"), { once: true });
 		}
