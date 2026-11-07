@@ -232,7 +232,7 @@ function FileName({ file }: { file: string }) {
 	if (dot === -1) return <>{file}</>;
 	const extension = file.slice(dot);
 	return (
-		<span className="inline-flex">
+		<span className="inline-flex whitespace-pre">
 			{file.slice(0, dot)}
 			<span key={extension} className="animate-step-in">
 				{extension}
