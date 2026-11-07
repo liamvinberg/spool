@@ -188,7 +188,7 @@ export const HOTKEYS = [
 		id: "canvas.export",
 		scope: "canvas",
 		group: "Frames",
-		label: "Export the selection as PNG",
+		label: "Export the selection",
 		gesture: "right-click a frame",
 	},
 	{
