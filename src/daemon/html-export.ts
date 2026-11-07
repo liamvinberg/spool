@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { build, type Plugin } from "esbuild";
 import { PLAYER_SCREEN_RULES } from "../runtime/player-chrome-css";
-import { ASSET_MEDIA_TYPES } from "./assets";
+import { ASSET_KINDS, ASSET_MEDIA_TYPES } from "./assets";
 import { daemonCompileHost } from "./compile-host";
 import { type CompileHost, describeCompileError, parseImportMap } from "./design-compile";
 import { realDesignDir } from "./design-path";
@@ -326,7 +326,7 @@ async function oneModule(bundle: PlayerBundle): Promise<string> {
 	return js;
 }
 
-const ASSET_URL = /\/asset\/([0-9a-f]{64})(\.(?:gif|jpe?g|png|svg|webp))/gi;
+const ASSET_URL = new RegExp(`/asset/([0-9a-f]{64})(\\.(?:${ASSET_KINDS}))`, "gi");
 const WEBFONT_URL = new RegExp(`${WEBFONT_PATH.replaceAll("/", "\\/")}([A-Za-z0-9_-]+)`, "g");
 const CHROME_FONT_URL = /\/vendor\/fonts\/([A-Za-z0-9._-]+\.woff2)/g;
 

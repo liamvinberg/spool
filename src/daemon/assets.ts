@@ -1,32 +1,46 @@
 /**
  * What a project asset is (#101, #216): which kinds a frame can import and the
- * URL each is served at. The whole answer lives here, because the six image
- * kinds are read by independent readers — the compiler's loader, the offline
+ * URL each is served at. The whole answer lives here, because the image and
+ * font kinds are read by independent readers — the compiler's loader, the offline
  * checker's module resolution, the daemon's asset route, and both copies of the
  * capture allowlist — and a kind added to only some of them is a frame that
  * renders and a cover that does not.
  */
 
-/** The asset kinds a frame can import, and the media type each rides as. */
+/**
+ * The asset kinds a frame can import, and the media type each rides as. Fonts
+ * came with references (spool#241), whose @font-face rules point at the files
+ * a site served them as.
+ */
 export const ASSET_MEDIA_TYPES: Record<string, string> = {
+	".avif": "image/avif",
 	".gif": "image/gif",
 	".jpeg": "image/jpeg",
 	".jpg": "image/jpeg",
 	".png": "image/png",
 	".svg": "image/svg+xml",
 	".webp": "image/webp",
+	".woff2": "font/woff2",
+	".woff": "font/woff",
+	".ttf": "font/ttf",
+	".otf": "font/otf",
 };
 
 export const ASSET_EXTENSIONS: ReadonlySet<string> = new Set(Object.keys(ASSET_MEDIA_TYPES));
 
+/** The extensions above, as one regex alternation. */
+export const ASSET_KINDS = "avif|gif|jpe?g|png|svg|webp|woff2?|ttf|otf";
+
 /** Esbuild's plugin filter, and the checker's own read of the same list. */
-export const ASSET_FILTER = /\.(?:gif|jpe?g|png|svg|webp)$/i;
+export const ASSET_FILTER = new RegExp(`\\.(?:${ASSET_KINDS})$`, "i");
 
 /** Text assets arrive as source strings in the compiler and offline checker. */
 export const TEXT_LOADERS = {
 	".txt": "text",
 	".glsl": "text",
 	".wgsl": "text",
+	// a reference's page (spool#241): the site's markup and styles, which its frame hands an iframe
+	".html": "text",
 } as const;
 export const TEXT_EXTENSIONS: ReadonlySet<string> = new Set(Object.keys(TEXT_LOADERS));
 
@@ -47,7 +61,7 @@ export function assetUrl(hash: string, file: string): string {
 }
 
 /** An asset URL's path, its hash and extension captured. */
-export const ASSET_PATH = /^\/asset\/([0-9a-f]{64})(\.(?:gif|jpe?g|png|svg|webp))$/;
+export const ASSET_PATH = new RegExp(`^/asset/([0-9a-f]{64})(\\.(?:${ASSET_KINDS}))$`);
 
 /** Whether a URL, resolved against a document at `base`, is one of that document's own host's asset URLs. */
 export function isAssetUrl(value: string, base: string): boolean {
