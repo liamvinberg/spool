@@ -73,6 +73,11 @@ export interface PlayerConfig {
 	shell?: true;
 	/** The document a recording is played back into (spool#221): the screen alone, walking itself. */
 	recording?: true;
+	/**
+	 * An exported file (spool#239): the screen alone on the page, opened from
+	 * disk with no daemon behind it, so the scenario rides in it.
+	 */
+	exported?: { state: Record<string, unknown> };
 }
 
 declare global {
@@ -664,7 +669,7 @@ async function start(): Promise<void> {
 		// the player seeds fresh every load: the URL names the scenario, and
 		// reload is just restart spelled by the browser
 		scenarioName = play.scenario;
-		const scenario = await loadScenario(scenarioName);
+		const scenario = play.exported ?? (await loadScenario(scenarioName));
 		seedState(scenario.state);
 		return;
 	}
@@ -907,6 +912,8 @@ function bindExternalLinks(): void {
 		}
 		if (url.protocol !== "http:" && url.protocol !== "https:") return;
 		if (play === undefined && !embedded) return;
+		// an exported file is a page of the web like any other: its links leave as links do
+		if (play?.exported !== undefined) return;
 		url.username = "";
 		url.password = "";
 		event.preventDefault();
@@ -1773,9 +1780,11 @@ function mountPlayer(config: PlayerConfig): void {
 		return;
 	}
 	createRoot(root).render(
-		config.recording === true
-			? createElement(PlayerDocument)
-			: createElement(Player, { project: config.project, frames: screens, controller: playerController }),
+		config.exported !== undefined
+			? createElement(ExportedDocument)
+			: config.recording === true
+				? createElement(PlayerDocument)
+				: createElement(Player, { project: config.project, frames: screens, controller: playerController }),
 	);
 	requestAnimationFrame(() => warmScreens(Object.keys(config.frames)));
 }
@@ -1789,6 +1798,21 @@ function PlayerDocument() {
 	useSyncExternalStore(subscribePlay, () => playVersion);
 	const Screen = screens[mountedFrame];
 	return Screen === undefined ? null : createElement(Screen, { key: arrival });
+}
+
+/** An exported file (spool#239): the player's screen on its page, capped at the frame's authored width, and nothing else. */
+function ExportedDocument() {
+	useSyncExternalStore(subscribePlay, () => playVersion);
+	const Screen = screens[mountedFrame];
+	return createElement(
+		"div",
+		{ className: "spool-page" },
+		createElement(
+			"div",
+			{ className: "spool-screen", style: { width: "100%", maxWidth: playerController.geometry(mountedFrame).w } },
+			Screen === undefined ? null : createElement(Screen, { key: arrival }),
+		),
+	);
 }
 
 // --- knobs (#220) ------------------------------------------------------------

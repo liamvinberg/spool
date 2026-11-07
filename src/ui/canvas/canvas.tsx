@@ -110,7 +110,6 @@ import {
 import { type CameraStore, createCameraStore, createViewChanges, useCameraFollow } from "./camera-store";
 import { CanvasPath, PATH_KEYS, type PathSeg, type PathWay } from "./canvas-path";
 import {
-	type CanvasContextMenu,
 	createCanvasStore,
 	navigatorFramesOf,
 	navigatorPagesOf,
@@ -140,22 +139,14 @@ import {
 } from "./comments-layer";
 import { counts as commentCounts } from "./comments-model";
 import { CommentsPane } from "./comments-pane";
-import { ContextMenu, contextMenuSize } from "./context-menu";
+import { ContextMenu } from "./context-menu";
 import { placeCopies } from "./copy-placement";
 import { type Drop, dropAt } from "./element-move";
 import { deepest, parentOf } from "./element-selection";
-import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, createSiteBoxStore, FlowArrows } from "./flow-arrows";
 import { useFrameAgents } from "./frame-agents";
-import {
-	buildFramePdf,
-	type CapturedFrame,
-	downloadBytes,
-	framesInCanvasOrder,
-	pngBytesFromImageBlob,
-	pngFileName,
-} from "./frame-export";
+import { type CapturedFrame, framesInCanvasOrder, pngBytesFromImageBlob } from "./frame-export";
 import { FrameLabel, LabelField, type OverviewRole } from "./frame-label";
 import { createFrameReads } from "./frame-reads";
 import { FrameShell, FrameSlot, ShellClip } from "./frame-shell";
@@ -527,10 +518,6 @@ function CanvasField({
 	const [marks, setMarks] = useState<SnapMarks>(NO_MARKS);
 	const [marquee, setMarquee] = useState<Box | null>(null);
 	const [menu, setMenu] = useCanvasField(store, "menu");
-	const [exportDialog, setExportDialog] = useCanvasField(store, "exportDialog");
-	const [exportReturnMenu, setExportReturnMenu] = useState<CanvasContextMenu | null>(null);
-	const [exporting, setExporting] = useCanvasField(store, "exporting");
-	const [exportError, setExportError] = useState<string | undefined>(undefined);
 	const [notice, setNotice] = useState<Notice | null>(null);
 	// the frame finder (/): a palette over the viewport, and the page its pick lights
 	const [finding, setFinding] = useCanvasField(store, "finding");
@@ -798,16 +785,6 @@ function CanvasField({
 	});
 	/** the chip or box the pointer is over, which lights the other one (#116) */
 	const [lit, setLit] = useState<string | null>(null);
-	const exportFrames = useMemo(
-		() => (exportDialog === null ? [] : framesInCanvasOrder(visibleFrames, exportDialog)),
-		[visibleFrames, exportDialog],
-	);
-	useEffect(() => {
-		if (exportDialog === null || exportFrames.length > 0) return;
-		setExportDialog(null);
-		setExportReturnMenu(null);
-		setExportError(undefined);
-	}, [exportDialog, exportFrames.length]);
 	const gesture = useRef<Gesture>({ kind: "idle" });
 	// a press on another frame while one was live, which its release enters
 	const clickSwitch = useRef<{ from: string; to: string } | null>(null);
@@ -1239,81 +1216,18 @@ function CanvasField({
 		lifecycleRef.current.onIframe(name, el);
 	}, []);
 
-	const capturePng = useCallback(async (frame: ProjectedFrame): Promise<CapturedFrame> => {
-		const sheet = await lifecycleRef.current.captureExport(frame.name);
-		if (sheet === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
-		const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
-		return { name: frame.name, width: frame.w, height: frame.h, png };
-	}, []);
-
-	const runExport = useCallback(
-		async (names: readonly string[], format: ExportFormat) => {
-			const ordered = framesInCanvasOrder(visibleFramesOf(store.get()), names);
-			const first = ordered[0];
-			if (first === undefined) return;
-			setExporting(true);
-			setExportError(undefined);
-			if (ordered.length === 1) setNotice({ kind: "progress", message: `Exporting ${first.name}…` });
-			try {
-				const captured: CapturedFrame[] = [];
-				for (const frame of ordered) {
-					const image = await capturePng(frame);
-					if (format === "png") downloadBytes(image.png, "image/png", pngFileName(image.name));
-					else captured.push(image);
-				}
-
-				if (format === "pdf") {
-					downloadBytes(await buildFramePdf(captured), "application/pdf", `${project}.pdf`);
-				}
-
-				setExportDialog(null);
-				setExportReturnMenu(null);
-				setNotice({
-					kind: "success",
-					message:
-						format === "pdf"
-							? `Exported ${project}.pdf`
-							: ordered.length === 1
-								? `Exported ${pngFileName(first.name)}`
-								: `Exported ${ordered.length} PNG images`,
-				});
-			} catch (error) {
-				const message = error instanceof Error ? error.message : "Export failed. Try again.";
-				if (ordered.length === 1) setNotice({ kind: "error", message });
-				else setExportError(message);
-			} finally {
-				setExporting(false);
-			}
+	/** one frame's picture as the canvas draws it, for a PNG or a PDF page (#7) */
+	const captureFrame = useCallback(
+		async (name: string): Promise<CapturedFrame> => {
+			const frame = visibleFramesOf(store.get()).find((one) => one.name === name);
+			if (frame === undefined) throw new Error(`${name} is no longer on the canvas.`);
+			const sheet = await lifecycleRef.current.captureExport(frame.name);
+			if (sheet === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
+			const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
+			return { name: frame.name, width: frame.w, height: frame.h, png };
 		},
-		[capturePng, project, store],
+		[store],
 	);
-
-	/**
-	 * The export door (#7), whether the menu or the bare key opened it: one
-	 * frame downloads as PNG, several open the format choice. `returnMenu` is
-	 * the menu to reopen if the choice is cancelled — the key has none.
-	 */
-	const openExport = useCallback(
-		(names: readonly string[], returnMenu: CanvasContextMenu | null) => {
-			if (names.length === 0) return;
-			setExportError(undefined);
-			if (names.length === 1) {
-				setExportReturnMenu(null);
-				void runExport(names, "png");
-				return;
-			}
-			setExportReturnMenu(returnMenu);
-			setExportDialog(framesInCanvasOrder(visibleFramesOf(store.get()), names).map((frame) => frame.name));
-		},
-		[runExport, store],
-	);
-
-	const cancelExportDialog = useCallback(() => {
-		setExportDialog(null);
-		setExportError(undefined);
-		setMenu(exportReturnMenu);
-		setExportReturnMenu(null);
-	}, [exportReturnMenu]);
 
 	useEffect(() => {
 		if (notice === null || notice.kind === "progress") return;
@@ -4205,7 +4119,7 @@ function CanvasField({
 	};
 
 	const onPointerDown = (event: React.PointerEvent) => {
-		if (store.get().finding || store.get().exportDialog !== null) return;
+		if (store.get().finding) return;
 		// a press ends a ⌥ hold that has not opened: ⌥ drag and ⌥ click are
 		// gestures of their own (DEV-295)
 		clickSwitch.current = null;
@@ -4712,7 +4626,6 @@ function CanvasField({
 	 * must never hand the page the pointer by accident.
 	 */
 	const onDoubleClick = (event: React.MouseEvent) => {
-		if (store.get().exportDialog !== null) return;
 		if (toolOf(store.get()) === "hand") return;
 		const cam = camera.get();
 		if (cam === null) return;
@@ -4733,7 +4646,6 @@ function CanvasField({
 
 	const onContextMenu = (event: React.MouseEvent) => {
 		event.preventDefault();
-		if (store.get().exportDialog !== null) return;
 		const cam = camera.get();
 		if (cam === null) return;
 		const p = localPoint(event);
@@ -4754,11 +4666,14 @@ function CanvasField({
 		// A context click acts on the existing frame selection. Element picking
 		// belongs to Select's click, double-click and ⌘-click gestures.
 		cancelPicks();
-		const menuSize = contextMenuSize(!elementSelection, team, experimentOn("record"));
-		const viewport = viewportRef.current;
-		const x = viewport === null ? p.x : Math.min(p.x, viewport.clientWidth - menuSize.w - 8);
-		const y = viewport === null ? p.y : Math.min(p.y, viewport.clientHeight - menuSize.h - 8);
-		setMenu({ x, y, frame: hit, selection: elementSelection ? "element" : "frames" });
+		// the menu keeps itself inside the window, whatever it grows into
+		setMenu({
+			x: p.x,
+			y: p.y,
+			frame: hit,
+			selection: elementSelection ? "element" : "frames",
+			opened: (store.get().menu?.opened ?? 0) + 1,
+		});
 	};
 
 	/**
@@ -5226,17 +5141,6 @@ function CanvasField({
 				else if (goUpPage()) setKeyMoves((n) => n + 1);
 			},
 		} satisfies Record<HotkeyIdFor<"canvas">, HotkeyHandler>;
-		const detachDialog = attachHotkeyLayer({
-			scope: "dialog",
-			active: () => store.get().exportDialog !== null,
-			handlers: {
-				"dialog.close": (event) => {
-					if (store.get().exporting) return;
-					event?.preventDefault();
-					cancelExportDialog();
-				},
-			} satisfies Record<HotkeyIdFor<"dialog">, HotkeyHandler>,
-		});
 		// the finder owns the keys while it is up, exactly as the export dialog does
 		const detachFinder = attachHotkeyLayer({
 			scope: "finder",
@@ -5291,7 +5195,6 @@ function CanvasField({
 		window.addEventListener("keyup", onKeyUp);
 		window.addEventListener("blur", clearModifiers);
 		return () => {
-			detachDialog();
 			detachFinder();
 			detachCanvas();
 			window.removeEventListener("keydown", onKeyDownFirst, true);
@@ -5317,7 +5220,6 @@ function CanvasField({
 		cancelPicks,
 		chooseTool,
 		toggleArrows,
-		cancelExportDialog,
 		playFrame,
 		jumpBack,
 		jumpForward,
@@ -6139,26 +6041,23 @@ function CanvasField({
 
 					{menu !== null && (
 						<ContextMenu
+							key={menu.opened}
 							at={menu}
+							project={project}
+							capture={captureFrame}
+							onClose={() => setMenu(null)}
 							tidyLabel={selected.length > 1 ? `Tidy ${selected.length} frames` : "Tidy page"}
 							onTidy={() => {
 								setMenu(null);
 								arrangeFrames();
 							}}
-							exportAction={
+							exportable={
 								menu.selection === "element"
 									? null
-									: {
-											selectionCount: selected.includes(menu.frame) ? selected.length : 1,
-											onSelect: () => {
-												const names = store.get().selected.includes(menu.frame)
-													? [...store.get().selected]
-													: [menu.frame];
-												const returnMenu = menu;
-												setMenu(null);
-												openExport(names, returnMenu);
-											},
-										}
+									: framesInCanvasOrder(
+											visibleFrames,
+											selected.includes(menu.frame) ? selected : [menu.frame],
+										).map((frame) => frame.name)
 							}
 							onPlay={() => {
 								const frame = menu.frame;
@@ -6336,20 +6235,6 @@ function CanvasField({
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}
-			{exportDialog !== null && exportFrames.length > 0 ? (
-				<ExportDialog
-					exporting={exporting}
-					frames={exportFrames.map((frame) => ({
-						name: frame.name,
-						...(frame.cover === undefined
-							? {}
-							: { thumbnail: { project, frame: frame.name, cover: frame.cover } }),
-					}))}
-					{...(exportError === undefined ? {} : { error: exportError })}
-					onCancel={cancelExportDialog}
-					onExport={(format) => void runExport(exportDialog, format)}
-				/>
-			) : null}
 		</div>
 	);
 }

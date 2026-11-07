@@ -72,6 +72,7 @@ import {
 } from "./document";
 import { createChangeHub } from "./events";
 import { explorerRoutes } from "./explorer-routes";
+import { exportRoutes } from "./export-routes";
 import { createFlowGraph } from "./flows";
 import { servedFrameCsp } from "./frame-csp";
 import { frameRevisionOnDisk } from "./frame-revision";
@@ -81,6 +82,7 @@ import { handRoutes } from "./hand-routes";
 import { createHistory, type HistoryClock } from "./history";
 import { historyCache } from "./history-cache";
 import { homeRoutes } from "./home-routes";
+import { createHtmlExport } from "./html-export";
 import { oversizedImages } from "./image-size";
 import { isLoopbackHost } from "./loopback";
 import { machineRoutes } from "./machine-routes";
@@ -531,6 +533,13 @@ export function createDaemonApp({
 		void playerCompiler.forget(root);
 	}
 	const flowGraph = createFlowGraph();
+	const htmlExport = createHtmlExport({
+		version,
+		webfonts,
+		flows: (root) => flowGraph.flows(root),
+		sources: (root) => flowGraph.sources(root),
+		readAsset: (hash, ext) => assetStore.read(hash, ext),
+	});
 	// a shared/ edit wakes the frames whose graph reaches it, not every document
 	/** the placeholder frames running turns hold for their designers, and the ones a last run left go (#369) */
 	const placeholders = createPlaceholderLedger(join(spoolDir, "placeholders.json"));
@@ -1392,6 +1401,7 @@ export function createDaemonApp({
 				selections,
 			}),
 		)
+		.route("/api/p", exportRoutes({ resolve: resolveProject, htmlExport }))
 		.get("/covers/:project/:frame/:hash", async (c) => {
 			const name = c.req.param("project");
 			return withProject(c, resolveProject, async (root) => {

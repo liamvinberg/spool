@@ -385,6 +385,29 @@ export async function setProjectThumbnail(project: string, frame: string): Promi
 	return ((await res.json()) as { thumbnail: ProjectThumbnail }).thumbnail;
 }
 
+/** What exporting a frame as HTML takes with it: the frames its links reach, and which of them need the internet. */
+export interface ExportPlan {
+	reach: string[];
+	online: string[];
+}
+
+export async function fetchExportPlan(project: string, frame: string): Promise<ExportPlan> {
+	const res = await controlFetch(
+		`/api/p/${encodeURIComponent(project)}/export/plan?frame=${encodeURIComponent(frame)}`,
+	);
+	if (!res.ok) throw new Error(await errorText(res));
+	return (await res.json()) as ExportPlan;
+}
+
+/** The frame as one HTML file that opens offline: with every frame its links reach, or alone. */
+export async function fetchExportHtml(project: string, frame: string, scope: "flow" | "one"): Promise<Uint8Array> {
+	const res = await controlFetch(
+		`/api/p/${encodeURIComponent(project)}/export/html?frame=${encodeURIComponent(frame)}&scope=${scope}`,
+	);
+	if (!res.ok) throw new Error(await errorText(res));
+	return new Uint8Array(await res.arrayBuffer());
+}
+
 /** "Remove thumbnail": design/shared/thumbnail.* goes, and the card shows its top-left frame again. */
 export async function removeProjectThumbnail(root: string): Promise<void> {
 	const res = await client.api.projects.thumbnail.remove.$post({ json: { root } });

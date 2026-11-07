@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { framesInCanvasOrder, pngBytesFromImageBlob, pngFileName } from "./frame-export";
+import { exportFileName, framesInCanvasOrder, pngBytesFromImageBlob } from "./frame-export";
 
 import { buildFramePdf } from "./frame-pdf";
 
@@ -46,10 +46,10 @@ describe("frame export artifacts", () => {
 	});
 });
 
-describe("pngFileName", () => {
-	it("keeps the page in front of the name, since a file name cannot hold a slash", () => {
-		expect(pngFileName("home")).toBe("home.png");
-		expect(pngFileName("shop/checkout")).toBe("shop-checkout.png");
-		expect(pngFileName("explorations/chat/intro")).toBe("explorations-chat-intro.png");
+describe("exportFileName", () => {
+	it("names the project, then the frame with its page in front, since a file name cannot hold a slash", () => {
+		expect(exportFileName("kaffe", "home", "png")).toBe("kaffe-home.png");
+		expect(exportFileName("kaffe", "shop/checkout", "html")).toBe("kaffe-shop-checkout.html");
+		expect(exportFileName("kaffe", "explorations/chat/intro", "pdf")).toBe("kaffe-explorations-chat-intro.pdf");
 	});
 });
