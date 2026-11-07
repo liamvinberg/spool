@@ -68,6 +68,8 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 		ipcRenderer.on("spool:export-download", handler);
 		return () => ipcRenderer.removeListener("spool:export-download", handler);
 	},
+	// shows a file this app saved in Finder; false for any other path
+	revealDownload: (path: string): Promise<boolean> => ipcRenderer.invoke("spool:reveal-download", path),
 	onCommand: (listener: (command: CanvasCommand) => void): (() => void) => {
 		const handler = (_event: unknown, command: CanvasCommand) => listener(command);
 		ipcRenderer.on("spool:canvas-command", handler);
