@@ -123,7 +123,9 @@ type Completed = Extract<ExportDownload, { status: "completed" }>;
 
 /**
  * The Mac app's word on where each file landed, heard before any is handed
- * over so none is missed; null in a plain browser, which says nothing.
+ * over so none is missed; null in a plain browser, which says nothing. An app
+ * that stays silent never holds the box on Building: after 15 s it settles
+ * with the reports it has, and a file without one has no Finder path.
  */
 function landed(requested: readonly string[]): Promise<Completed[]> | null {
 	const bridge = desktopWindow();
@@ -132,17 +134,23 @@ function landed(requested: readonly string[]): Promise<Completed[]> | null {
 	return new Promise((resolve, reject) => {
 		const waiting = [...requested];
 		const reports: Completed[] = [];
+		const quiet = setTimeout(() => {
+			stop();
+			resolve(reports);
+		}, 15_000);
 		const stop = listen((report) => {
 			const at = waiting.indexOf(report.requested);
 			if (at === -1) return;
 			waiting.splice(at, 1);
 			if (report.status === "failed") {
+				clearTimeout(quiet);
 				stop();
 				reject(new Error(report.message));
 				return;
 			}
 			reports.push(report);
 			if (waiting.length > 0) return;
+			clearTimeout(quiet);
 			stop();
 			resolve(reports);
 		});
