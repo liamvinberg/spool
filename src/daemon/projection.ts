@@ -8,6 +8,7 @@ import { type CanvasOrder, readOrder } from "./canvas-order";
 import { isWithin } from "./design-boundary";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, parseGeometry, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
+import { readMirrors } from "./mirror";
 import type { MovedAway } from "./moved-away";
 import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, type Rect } from "./placement";
 import type { ProjectIcon } from "./project-icon";
@@ -79,6 +80,11 @@ export interface ProjectedFrame {
 	 * record for a person who is not looking at anything.
 	 */
 	unseen?: Unseen;
+	/**
+	 * The frame this one mirrors, by name: its whole source re-exports that
+	 * frame's entry (spool#232, `mirror.ts`). Only the canvas asks, for its rail.
+	 */
+	mirrorOf?: string;
 }
 
 /** A frame on its way (a folder with frame.json and no frame.tsx yet), where its sidecar places it. */
@@ -404,6 +410,8 @@ interface FrameReads {
 	born: (frame: DiscoveredFrame) => number | undefined;
 	/** Present when the caller asked for seen-state. */
 	unseen?: () => Map<string, Unseen>;
+	/** Present when the caller asked which frames are mirrors. */
+	mirrors?: Map<string, string>;
 }
 
 /**
@@ -438,10 +446,13 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
  * sidecars and cover store in one turn held every other request behind it. A
  * frame with no place yet is still placed and written in one turn, as there.
  */
-export async function listProjectFramesAwaited(root: string, options: { seen?: boolean } = {}): Promise<Projection> {
+export async function listProjectFramesAwaited(
+	root: string,
+	options: { seen?: boolean; mirrors?: boolean } = {},
+): Promise<Projection> {
 	const discovery = await discoverAwaited(root);
 	if (discovery === undefined) return emptyProjection(root);
-	const [covers, broken, sidecars, borns, unseen] = await Promise.all([
+	const [covers, broken, sidecars, borns, unseen, mirrors] = await Promise.all([
 		readCoversAwaited(root),
 		readBrokenAwaited(root),
 		Promise.all(
@@ -451,6 +462,7 @@ export async function listProjectFramesAwaited(root: string, options: { seen?: b
 		),
 		Promise.all(discovery.frames.map(async (frame) => [frame.name, await folderBornAwaited(frame.dir)] as const)),
 		options.seen === true ? unseenNowAwaited(root, discovery.frames) : undefined,
+		options.mirrors === true ? readMirrors(discovery.frames) : undefined,
 	]);
 	const born = new Map(borns);
 	return placeFrames(root, discovery, {
@@ -459,6 +471,7 @@ export async function listProjectFramesAwaited(root: string, options: { seen?: b
 		sidecars: new Map(sidecars),
 		born: (frame) => born.get(frame.name),
 		...(unseen === undefined ? {} : { unseen: () => unseen }),
+		...(mirrors === undefined ? {} : { mirrors }),
 	});
 }
 
@@ -517,6 +530,8 @@ function placeFrames(root: string, discovery: Discovery, reads: FrameReads): Pro
 	for (const frame of placed) {
 		const broken = reads.broken.get(frame.name);
 		if (broken !== undefined) frame.broken = broken;
+		const original = reads.mirrors?.get(frame.name);
+		if (original !== undefined) frame.mirrorOf = original;
 	}
 	return { root, pages: discovery.pages, frames: placed, placeholders };
 }

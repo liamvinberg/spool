@@ -35,7 +35,7 @@ export function canvasRoutes(deps: {
 				const name = c.req.param("project");
 				return withProject(c, deps.resolve, async (root) => {
 					try {
-						const projection = await listProjectFramesAwaited(root, { seen: true });
+						const projection = await listProjectFramesAwaited(root, { seen: true, mirrors: true });
 						return c.json({
 							...projection,
 							frames: projection.frames.map((frame) => {
