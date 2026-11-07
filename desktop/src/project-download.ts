@@ -1,4 +1,4 @@
-import { linkSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import type { DownloadItem, Session, WebContents } from "electron";
 
@@ -19,18 +19,30 @@ function downloadKind(filename: string): "project" | "export" | undefined {
 	return undefined;
 }
 
-/** Publish a finished download without overwriting a file, even under concurrent exports. */
+/**
+ * Publish a finished download without overwriting a file, even under concurrent exports: the name is
+ * claimed by an exclusive create, then the download is renamed over that empty claim. A hard link
+ * would do it in one step, but macOS refused it in Downloads (EPERM) from the running app.
+ */
 function publish(source: string, directory: string, filename: string): string {
 	const extension = extname(filename);
 	const stem = filename.slice(0, filename.length - extension.length);
 	for (let suffix = 0; ; suffix++) {
 		const candidate = suffix === 0 ? filename : `${stem} (${suffix})${extension}`;
+		const target = join(directory, candidate);
 		try {
-			linkSync(source, join(directory, candidate));
-			return candidate;
+			closeSync(openSync(target, "wx"));
 		} catch (error) {
-			if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+			if (error instanceof Error && "code" in error && error.code === "EEXIST") continue;
+			throw error;
 		}
+		try {
+			renameSync(source, target);
+		} catch (error) {
+			rmSync(target, { force: true });
+			throw error;
+		}
+		return candidate;
 	}
 }
 
