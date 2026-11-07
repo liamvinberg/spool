@@ -30,6 +30,7 @@ afterEach(() => {
 	unmount?.();
 	unmount = undefined;
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 });
 
 const press = (node: Element | null | undefined) => act(() => (node as HTMLElement | null)?.click());
@@ -102,6 +103,18 @@ it("a step menu goes on into its next step in the same box, takes the focus, and
 	expect(document.activeElement).toBe(before);
 	host.remove();
 	before.remove();
+});
+
+it("a fixed step menu stays inside the window", () => {
+	const page = document.documentElement;
+	vi.spyOn(page, "clientWidth", "get").mockReturnValue(800);
+	vi.spyOn(page, "clientHeight", "get").mockReturnValue(600);
+	const host = render(
+		createElement(StepMenu, { at: { x: 5000, y: 5000 }, step: "menu", style: { position: "fixed" } }),
+	);
+	const box = host.querySelector<HTMLElement>('[role="menu"]');
+	// the box's edge and the 8px it keeps from the window's
+	expect([box?.style.left, box?.style.top]).toEqual(["790px", "590px"]);
 });
 
 it("a scrim with a label is a door out no key lands on, and one without is hidden", () => {
