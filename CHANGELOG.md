@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.52.0
+
+### Minor Changes
+
+- 2f99ad1: **Mirrors stay in step.** A frame whose whole source is one line, `export { default } from "../../app/checkout/frame"`, shows that frame at its own size, for a client's folder or another width. The Pages list marks it "mirror of app/checkout", and renaming or moving the original on the canvas re-aims every mirror of it, so none of them break.
+
+### Patch Changes
+
+- ae342ad: Frame covers on Linux and Windows are drawn on the machine's GPU instead of the CPU, so they come faster, cost the machine far less, and show WebGL and blurred backdrops as a browser window does. Where no GPU can draw, spool check no longer calls a frame slow from a timing taken in software. Set `SPOOL_BOOTH_GPU=0` to keep covers on the CPU.
+- 0853683: A page of pages scrolls with the wheel or trackpad when its list runs past the window, its rows fading out under the path. A peek opened with Space moves to the folder the pointer rests on, and keeps beside its row as the list scrolls.
+- 6084305: `spool upgrade` now upgrades a Spool installed with pnpm 11, which it used to refuse.
+- ee1b649: A page of pages on spool.page, the project's top level too, now lists its pages as the Mac does, each with its still, its name and what it holds, instead of saying there is nothing on it. A click goes in.
+
 ## 0.51.2
 
 ### Patch Changes
