@@ -18,7 +18,6 @@ import { slugOf, unique } from "./slug";
  */
 export const figma: ImportAdapter = {
 	source: "Figma",
-	takes: (fileName) => /\.fig$/iu.test(fileName),
 	read: (bytes, fallbackName) => readFigma(figDocumentOf(bytes), fallbackName),
 };
 

@@ -5,6 +5,10 @@ import { SpoolError } from "../../errors";
 import { initProject } from "../../init";
 import { readRegistry } from "../../registry";
 import { figma } from "./figma";
+import { type ImportSource, importSourceOf } from "./kinds";
+
+export type { ImportSource };
+
 import { slugOf, unique } from "./slug";
 
 /**
@@ -15,14 +19,9 @@ import { slugOf, unique } from "./slug";
  * The agent learns the one shape once (`spool skill import`), whichever tool it came from.
  */
 
-/** The tools spool reads, by the name a person knows them by. */
-export type ImportSource = "Figma";
-
 /** One tool's reader. */
 export interface ImportAdapter {
 	readonly source: ImportSource;
-	/** whether a dropped file is this tool's, by its name */
-	readonly takes: (fileName: string) => boolean;
 	/** read it, or throw a SpoolError that says what to do instead; `fallbackName` names a file that names nothing */
 	readonly read: (bytes: Uint8Array, fallbackName: string) => ImportRead;
 }
@@ -31,7 +30,8 @@ export const ADAPTERS: readonly ImportAdapter[] = [figma];
 
 /** The adapter for a dropped file, by its name. */
 export function adapterFor(fileName: string): ImportAdapter | undefined {
-	return ADAPTERS.find((adapter) => adapter.takes(fileName));
+	const source = importSourceOf(fileName);
+	return ADAPTERS.find((adapter) => adapter.source === source);
 }
 
 export const IMPORTS = "imports";

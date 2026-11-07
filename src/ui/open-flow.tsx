@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { importSourceOf } from "../daemon/import/kinds";
 import {
 	cancelProjectTransfer,
 	cloneRepo,
@@ -6,13 +7,15 @@ import {
 	fetchCloneProgress,
 	findOpenable,
 	getTeamProjectAt,
+	importDesign,
+	importDesignFrom,
 	importProject,
 	importProjectFrom,
 	initProjectAt,
 	openProjectAt,
 } from "./api";
 import { type Notice, Toast as NoticeToast } from "./canvas/toast";
-import { type Answer, answerOf, isLink, sizeOf } from "./open-answer";
+import { type Answer, answerOf, importAsk, isLink, sizeOf } from "./open-answer";
 import { type Dropped, DropTarget, useOpenDrop } from "./open-drop";
 import { type Ask, OpenSheet, type SheetBody } from "./open-sheet";
 import { tilde } from "./paths";
@@ -104,6 +107,12 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 		const found = answerOf(finding);
 		if (found.kind === "nothing") return nothing(given, found.says);
 		if (found.kind === "ask") return askFirst(found.ask, (showing) => make(found.finding, showing));
+		if (found.kind === "import") {
+			setSheet({ kind: "ask", ask: found.ask, work: { line: `reading ${found.ask.name}` } });
+			const done = await run(given, (signal) => importDesignFrom(found.path, signal));
+			if (done !== undefined) finish(done);
+			return;
+		}
 		if (found.kind === "open") {
 			const done = await run(given, async () => {
 				const outcome = await openProjectAt(found.root);
@@ -220,9 +229,20 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 		);
 	};
 
+	/** A browser's drop of another tool's file: imported by its bytes, without asking, as a path would be. */
+	const importDesignBytes = async (file: File) => {
+		stop();
+		setChoosing(false);
+		const ask = importAsk(file.name, importSourceOf(file.name) ?? "design");
+		setSheet({ kind: "ask", ask, work: { line: `reading ${file.name}` } });
+		const done = await run(file, (signal) => importDesign(file, signal));
+		if (done !== undefined) finish(done);
+	};
+
 	const drop = (dropped: Dropped) => {
 		if (dropped.kind === "given") void take(dropped.given);
 		else if (dropped.kind === "bytes") importBytes(dropped.file);
+		else if (dropped.kind === "design") void importDesignBytes(dropped.file);
 		else setNotice({ kind: "error", message: dropped.says });
 	};
 	const held = useOpenDrop(home, drop);

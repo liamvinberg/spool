@@ -7,6 +7,8 @@ export type Answer =
 	| { kind: "open"; root: string }
 	| { kind: "get"; team: string; project: string; checkout: string | null }
 	| { kind: "ask"; ask: Ask; finding: Extract<Finding, { kind: "folder" | "file" | "repo" }> }
+	/** another tool's file: letting go of it already said what to do, so it is imported without asking (spool#242) */
+	| { kind: "import"; path: string; ask: Ask }
 	| { kind: "nothing"; says: string };
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -59,6 +61,8 @@ export function answerOf(finding: Finding): Answer {
 					act: "Import",
 				},
 			};
+		case "import":
+			return { kind: "import", path: finding.path, ask: importAsk(finding.name, finding.source) };
 		case "repo":
 			return {
 				kind: "ask",
@@ -75,6 +79,17 @@ export function answerOf(finding: Finding): Answer {
 				},
 			};
 	}
+}
+
+/** What the sheet says while another tool's file becomes a project: nothing to answer, only what is happening. */
+export function importAsk(name: string, source: string): Ask {
+	return {
+		face: "file",
+		name,
+		says: `A new project, and your agent rebuilds the ${source} frames in it.`,
+		detail: [`${source} file`, ""],
+		act: "Import",
+	};
 }
 
 /** A link has to be asked about on the network, so its sheet says it is looking; a path answers at once. */
