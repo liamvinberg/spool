@@ -152,7 +152,7 @@ function scaleMs(step: "quick" | "base"): number {
 }
 
 export interface StepMenuProps extends ComponentProps<"div"> {
-	/** where it opened, in its positioned parent: its top left corner, unless that would leave the parent */
+	/** where it opened, in its positioned parent (the window, when it is fixed): its top left corner, unless that would leave it */
 	at: { x: number; y: number };
 	/** the step standing in it: a new one cross-fades the inside */
 	step: string;
@@ -167,10 +167,11 @@ export interface StepMenuProps extends ComponentProps<"div"> {
  * becomes what the step has to say, and never a second box somewhere else.
  * Its width and height ease to what stands in it, the old step fades out over
  * the new one rising into place, and it moves in only as far as it must to
- * stay inside its parent. It takes the focus while it is up, so Esc closes it
+ * stay inside its parent, or the window when it is fixed. It takes the focus while it is up, so Esc closes it
  * and the keys reach it; the focus goes back where it was when it goes.
  */
 export function StepMenu({
+	ref,
 	at,
 	step,
 	width = "var(--spacing-menu)",
@@ -181,7 +182,15 @@ export function StepMenu({
 	children,
 	...rest
 }: StepMenuProps) {
-	const box = useRef<HTMLDivElement>(null);
+	const box = useRef<HTMLDivElement | null>(null);
+	const boxed = useCallback(
+		(node: HTMLDivElement | null) => {
+			box.current = node;
+			if (typeof ref === "function") ref(node);
+			else if (ref) ref.current = node;
+		},
+		[ref],
+	);
 	const inner = useRef<HTMLDivElement>(null);
 	const ghosts = useRef<HTMLDivElement>(null);
 	const [fit, setFit] = useState<{ left: number; top: number; height: number } | null>(null);
@@ -193,7 +202,7 @@ export function StepMenu({
 		const content = inner.current;
 		if (outer === null || content === null) return;
 		const measure = () => {
-			const parent = outer.offsetParent;
+			const parent = getComputedStyle(outer).position === "fixed" ? document.documentElement : outer.offsetParent;
 			const room = parent instanceof HTMLElement && parent.clientWidth > 0 ? parent : null;
 			// the box draws its edge outside the content, a pixel each side
 			const w = content.offsetWidth + 2;
@@ -249,7 +258,7 @@ export function StepMenu({
 
 	return (
 		<div
-			ref={box}
+			ref={boxed}
 			role="menu"
 			tabIndex={-1}
 			className={cn(

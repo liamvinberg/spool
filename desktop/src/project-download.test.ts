@@ -89,10 +89,12 @@ test("an export that does not finish is reported by the name the canvas asked fo
 	deepEqual(readdirSync(c.downloads), []);
 });
 
-test("a project keeps its own report, and other downloads are left to Electron", (t) => {
+test("a project keeps its own report, saying where for Finder, and other downloads are left to Electron", (t) => {
 	const c = canvas(t);
 	c.download(new Item("Example.spool")).finish();
-	deepEqual(c.sent, [["spool:project-download", { status: "completed", filename: "Example.spool" }]]);
+	const path = join(c.downloads, "Example.spool");
+	deepEqual(c.sent, [["spool:project-download", { status: "completed", filename: "Example.spool", path }]]);
+	equal(c.saved.saved(path), true);
 	equal(c.download(new Item("notes.txt")).savePath, undefined);
 	equal(c.download(new Item("frame.html"), { isDestroyed: () => false }).savePath, undefined);
 });

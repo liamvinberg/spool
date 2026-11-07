@@ -2,7 +2,10 @@ import { closeSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync } from 
 import { basename, extname, join, resolve } from "node:path";
 import type { DownloadItem, Session, WebContents } from "electron";
 
-export type ProjectDownloadResult = { status: "completed"; filename: string } | { status: "failed"; message: string };
+/** A project (.spool) download: where it was saved, for Finder to show, or why it was not. */
+export type ProjectDownloadResult =
+	| { status: "completed"; filename: string; path: string }
+	| { status: "failed"; message: string };
 
 /** A frame export the canvas asked for, by the file name it asked for. */
 export type ExportDownloadResult =
@@ -106,13 +109,7 @@ export function installCanvasDownloads(
 		saveDownload(item, downloads(), kind, (result) => {
 			if (result.status === "completed") saved.add(resolve(result.path));
 			if (contents.isDestroyed()) return;
-			if (kind === "project")
-				contents.send(
-					"spool:project-download",
-					result.status === "completed"
-						? { status: "completed", filename: result.filename }
-						: { status: "failed", message: result.message },
-				);
+			if (kind === "project") contents.send("spool:project-download", result satisfies ProjectDownloadResult);
 			else contents.send("spool:export-download", { ...result, requested } satisfies ExportDownloadResult);
 		});
 	});
