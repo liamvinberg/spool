@@ -1,4 +1,4 @@
-[![spool. A canvas for working things out. A weather app prototype playing live on the canvas.](https://raw.githubusercontent.com/liamvinberg/spool/main/docs/assets/spool.jpg)](https://spool.page)
+[![spool. Feel it before you build it. spool’s window up close on Rally, a padel app’s flow from tonight’s games to a court.](https://raw.githubusercontent.com/liamvinberg/spool/main/docs/assets/spool.jpg)](https://spool.page)
 
 [Website and live demo](https://spool.page) · [Download for Mac](https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg) · [Contributing](CONTRIBUTING.md)
 
