@@ -42,7 +42,7 @@ import {
 	type WorkArea,
 	writeRect,
 } from "./play-window";
-import { installProjectDownloads } from "./project-download";
+import { installCanvasDownloads } from "./project-download";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import { UpdateCover } from "./update-cover";
 import {
@@ -1944,7 +1944,7 @@ export function boot(): void {
 			);
 		await offerApplicationsFolder();
 		installPermissions();
-		installProjectDownloads(
+		installCanvasDownloads(
 			session.defaultSession,
 			() => app.getPath("downloads"),
 			(contents, url) =>
