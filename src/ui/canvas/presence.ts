@@ -1,18 +1,29 @@
-import { PRESENCE_IDLE_MS, type Presence, type PresencePerson, type PresenceState } from "../../team-sync-protocol";
+import { ROOT_PAGE } from "../../page-path";
+import {
+	PRESENCE_AWAY_MS,
+	PRESENCE_GONE_MS,
+	PRESENCE_UNFOCUSED_MS,
+	type Presence,
+	type PresenceFocus,
+	type PresencePerson,
+	type PresenceState,
+} from "../../team-sync-protocol";
 
 /**
  * Who else is on a team canvas, as this canvas has heard it (DEV-196).
  *
  * The daemon tells the canvas each person's latest state as it changes; everything the canvas draws about
- * them is derived here from that and the clock, on this side: moving, still, idle and gone. Nothing is
- * written anywhere. One person is one account, which the sync object has already settled across their
- * local copies.
+ * them is derived here from that and the clock, on this side: moving, still, how present they are, and gone.
+ * Nothing is written anywhere. One person is one account, which the sync object has already settled across
+ * their local copies.
  */
 
 /** How long a name stays said after its person stops moving or pressing. */
 export const PILL_HOLD_MS = 1_400;
-/** How long a person has to change nothing to be idle. */
-export const IDLE_MS = PRESENCE_IDLE_MS;
+/** How long a person changes nothing of their own before they read as unfocused, away, then gone. */
+export const UNFOCUSED_MS = PRESENCE_UNFOCUSED_MS;
+export const AWAY_MS = PRESENCE_AWAY_MS;
+export const GONE_MS = PRESENCE_GONE_MS;
 /** How long someone takes to fade out once they've left. */
 export const LEAVE_MS = 400;
 
@@ -94,12 +105,13 @@ export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom
 				was.state.pressed !== state.pressed ||
 				was.state.pointer?.x !== state.pointer?.x ||
 				was.state.pointer?.y !== state.pointer?.y;
-			// their agent at work is not them at work: only their own moves keep them from going idle (#378)
-			const agentOnly = !gone && agentAlone(was.state, state);
+			// their agent at work is not them at work (#378), nor is their window's focus: only their own changes keep
+			// them here
+			const notTheirs = !gone && notTheirChange(was.state, state);
 			people.set(person.accountId, {
 				person,
 				state,
-				active: agentOnly ? was.active : at,
+				active: notTheirs ? was.active : at,
 				moved: moved ? at : was.moved,
 				entered: !gone && was.state.inside === state.inside ? was.entered : at,
 				left: null,
@@ -130,11 +142,16 @@ export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom
 	};
 }
 
-/** the one thing that changed between two states is what their agent is doing */
-function agentAlone(was: PresenceState, now: PresenceState): boolean {
-	const { agent: before, ...one } = was;
-	const { agent: after, ...other } = now;
-	return JSON.stringify(before) !== JSON.stringify(after) && JSON.stringify(one) === JSON.stringify(other);
+/**
+ * Something changed between two states, and it is only what their agent is doing or their window's focus. The same
+ * state said again is theirs: the team says an outline again as the beat of someone busy on another page.
+ */
+function notTheirChange(was: PresenceState, now: PresenceState): boolean {
+	const { agent: agentWas, focus: focusWas, ...one } = was;
+	const { agent: agentNow, focus: focusNow, ...other } = now;
+	const aside =
+		JSON.stringify([agentWas, focusWas ?? "focused"]) !== JSON.stringify([agentNow, focusNow ?? "focused"]);
+	return aside && JSON.stringify(one) === JSON.stringify(other);
 }
 
 /** Their name is said: they're moving or pressing, or stopped less than `PILL_HOLD_MS` ago. */
@@ -142,20 +159,48 @@ export function speaking(mate: Teammate, now: number): boolean {
 	return mate.state.pressed || now - mate.moved < PILL_HOLD_MS;
 }
 
-export function idle(mate: Teammate, now: number): boolean {
-	return now - mate.active >= IDLE_MS;
+/**
+ * How present someone is. Active: their spool window has focus and they changed something in the last 2 minutes.
+ * Unfocused: spool is on screen behind another window, or 2 minutes without a change. Away: their canvas is hidden,
+ * or 5 minutes without a change. Gone: 30 minutes without a change; a canvas closed is gone at once, as `left` says.
+ * Only active and unfocused count as here.
+ */
+export type Look = "active" | "unfocused" | "away" | "gone";
+
+/** The look of someone who last changed anything `quiet` milliseconds ago, their window as `focus` says. */
+export function lookFor(quiet: number, focus: PresenceFocus | undefined): Look {
+	if (quiet >= GONE_MS) return "gone";
+	if (focus === "hidden" || quiet >= AWAY_MS) return "away";
+	if (focus === "blurred" || quiet >= UNFOCUSED_MS) return "unfocused";
+	return "active";
+}
+
+/** A teammate's look now, by what was last heard of them and the clock. */
+export function look(mate: Teammate, now: number): Look {
+	return lookFor(now - mate.active, mate.state.focus);
+}
+
+/** Active or unfocused: counted, listed and drawn as here. */
+export function here(look: Look): boolean {
+	return look === "active" || look === "unfocused";
+}
+
+/** When `look`'s answer next changes by the clock alone for someone last active at `active`, or undefined for never. */
+export function nextLook(active: number, now: number): number | undefined {
+	for (const at of [active + UNFOCUSED_MS, active + AWAY_MS, active + GONE_MS]) if (at > now) return at;
+	return undefined;
 }
 
 /** The next moment something derived about anyone changes by the clock alone, or undefined for never. */
 export function nextChange(mates: readonly Teammate[], now: number): number | undefined {
 	let next: number | undefined;
-	const consider = (at: number) => {
-		if (at > now && (next === undefined || at < next)) next = at;
+	const consider = (at: number | undefined) => {
+		if (at !== undefined && at > now && (next === undefined || at < next)) next = at;
 	};
 	for (const mate of mates) {
 		if (mate.left !== null) continue;
 		consider(mate.moved + PILL_HOLD_MS);
-		consider(mate.active + IDLE_MS);
+		consider(nextLook(mate.active, now));
 	}
 	return next;
 }
@@ -168,11 +213,39 @@ export function agentSays(mate: Teammate): string | null {
 	return agent.status ?? "agent working";
 }
 
-/** "idle · 4m": how long someone has been idle, said the way the who's-here list says it. */
-export function idleFor(mate: Teammate, now: number): string {
+/** "away 25m": how long since someone away last changed anything, the way the who's-here list says it. */
+export function awayFor(mate: Teammate, now: number): string {
 	const minutes = Math.floor((now - mate.active) / 60_000);
-	if (minutes < 60) return `idle · ${Math.max(1, minutes)}m`;
-	return `idle · ${Math.floor(minutes / 60)}h`;
+	if (minutes < 60) return `away ${Math.max(1, minutes)}m`;
+	return `away ${Math.floor(minutes / 60)}h`;
+}
+
+/** The most a place says before it keeps only its last name, then cuts that in the middle. */
+const PLACE_MAX = 20;
+
+/**
+ * Where someone is, as the who's-here list says it, and in full for its title: on this page, the frame they're
+ * inside or the page's last name; elsewhere, the page's path, or past `PLACE_MAX` its last name, cut in the middle
+ * past that. The root page is the project's name. `null` is this canvas's own person.
+ */
+export function placeOf(mate: Teammate | null, page: string, project: string): { said: string; full: string } {
+	const theirs = mate === null ? page : mate.state.page;
+	const path = theirs === ROOT_PAGE ? project : theirs;
+	if (theirs !== page) return { said: path.length <= PLACE_MAX ? path : cut(lastName(path)), full: path };
+	const inside = mate?.state.inside ?? null;
+	return {
+		said: cut(inside === null ? (theirs === ROOT_PAGE ? project : lastName(theirs)) : lastName(inside)),
+		full: inside ?? path,
+	};
+}
+
+const lastName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+/** A name past `PLACE_MAX`, cut in the middle so both its ends still read. */
+function cut(name: string): string {
+	if (name.length <= PLACE_MAX) return name;
+	const keep = Math.floor((PLACE_MAX - 1) / 2);
+	return `${name.slice(0, keep)}…${name.slice(-keep)}`;
 }
 
 /** The world point their canvas centres, and the zoom that shows their whole view in a viewport this size. */

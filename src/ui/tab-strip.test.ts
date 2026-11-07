@@ -376,8 +376,13 @@ describe("heldRoom", () => {
 });
 
 it("dots a tab not focused with who else is in its project, three at most, and never the focused one", async () => {
-	const mate = (name: string, idle = false) => ({ accountId: name, name, color: "#7aa7ff", idle });
-	const here = [mate("ana"), mate("ben"), mate("cleo"), mate("dag", true)];
+	const mate = (name: string, look: "active" | "unfocused" = "active") => ({
+		accountId: name,
+		name,
+		color: "#7aa7ff",
+		look,
+	});
+	const here = [mate("ana"), mate("ben"), mate("cleo"), mate("dag", "unfocused")];
 	const { host, rerender } = await render({
 		tabs: [
 			{ root: "/w/alpha", name: "alpha", here },
@@ -402,7 +407,7 @@ it("dots a tab not focused with who else is in its project, three at most, and n
 });
 
 it("swells a tab's dots into everyone's name pills while the pointer is on them", async () => {
-	const mate = (name: string) => ({ accountId: name, name, color: "#7aa7ff", idle: false });
+	const mate = (name: string) => ({ accountId: name, name, color: "#7aa7ff", look: "active" as const });
 	const { host } = await render({
 		tabs: [
 			{ root: "/w/alpha", name: "alpha" },

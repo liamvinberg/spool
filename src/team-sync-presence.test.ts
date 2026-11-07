@@ -47,4 +47,11 @@ describe("presence a tick at a time", () => {
 		expect(readPresenceState({ ...here, following: 7 })).toEqual(here);
 		expect(readPresenceState({ ...here, following: "x".repeat(500) })).toEqual(here);
 	});
+
+	it("keeps whether a person's window has focus, and drops a focus it doesn't know without losing the rest", () => {
+		for (const focus of ["focused", "blurred", "hidden"] as const)
+			expect(readPresenceState({ ...here, focus })).toEqual({ ...here, focus });
+		expect(readPresenceState({ ...here, focus: "asleep" })).toEqual(here);
+		expect(readPresenceState({ ...here, focus: 1 })).toEqual(here);
+	});
 });

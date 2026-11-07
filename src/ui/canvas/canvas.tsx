@@ -5379,6 +5379,16 @@ function CanvasField({
 		goToPage: followPage,
 	});
 	const followed = following === null ? undefined : presenceRoom.get(following);
+	// who else is here, after the path at the canvas's top left rather than in the window's bar (task 503)
+	const presenceFaces = team ? (
+		<PresenceFaces
+			room={presenceRoom}
+			page={activePage}
+			project={project}
+			following={following}
+			onFollow={setFollowing}
+		/>
+	) : null;
 	// read from the frame protocol's handler, which is bound before the sender is
 	const insideFrameRef = useRef(insideFrame);
 	insideFrameRef.current = insideFrame;
@@ -6091,7 +6101,14 @@ function CanvasField({
 							})()}
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
-								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />
+								<PresenceLayer
+									room={presenceRoom}
+									camera={camera}
+									frames={visibleFrames}
+									page={activePage}
+									following={following}
+									onFollow={(accountId) => setFollowing((was) => (was === accountId ? null : accountId))}
+								/>
 							)}
 							{/* comments on a team canvas (spool#169): pins over the field, and the card a pin opens */}
 							{team && (
@@ -6125,16 +6142,9 @@ function CanvasField({
 						</>
 					)}
 					{followed !== undefined && <FollowMark mate={followed} />}
-					{/* who else is here, at the canvas's top right rather than in the window's bar, so the tabs never move for it */}
-					{team && (
-						<div className="absolute top-3 right-3 z-30">
-							<PresenceFaces
-								room={presenceRoom}
-								page={activePage}
-								following={following}
-								onFollow={setFollowing}
-							/>
-						</div>
+					{/* who else is here stands after the path; with no path drawn, where it would start */}
+					{presenceFaces !== null && !(loaded && !projectEmpty) && (
+						<div className="absolute top-3 left-3 z-20">{presenceFaces}</div>
 					)}
 
 					{menu !== null && (
@@ -6296,6 +6306,7 @@ function CanvasField({
 								if (pageWithin(page, activePage) || page === ROOT_PAGE) goUpTo(page);
 								else goInsidePage(page);
 							}}
+							after={presenceFaces}
 						/>
 					)}
 					<PagePeekCard
