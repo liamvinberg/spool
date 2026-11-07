@@ -353,6 +353,40 @@ describe("the read-only canvas", () => {
 		expect(new URL(linked.page.url()).pathname).toBe(`${PATH}/shop`);
 	});
 
+	it("lists a page of pages, each with its first frame's cover, and goes in on a click", {
+		timeout: 60_000,
+	}, async () => {
+		const folders: ViewerProject = {
+			...project,
+			canvas: {
+				pages: ["app", "app/shop", "app/settings", "clients"],
+				order: {},
+				frames: [
+					{ name: "app/shop/cart", page: "app/shop", x: 0, y: 0, w: 390, h: 844 },
+					{ name: "app/settings/plan", page: "app/settings", x: 0, y: 0, w: 390, h: 844 },
+					{ name: "clients/pitch", page: "clients", x: 0, y: 0, w: 800, h: 600 },
+				],
+			},
+			covers: { "app/settings/plan": "/covers/plan" },
+		};
+		const { page } = await open(PATH, { as: folders });
+		const list = page.locator("[data-page-list]");
+		await expect
+			.poll(() => list.getByRole("button").evaluateAll((rows) => rows.map((row) => row.getAttribute("aria-label"))))
+			.toEqual(["app, 2 frames · settings, shop", "clients, 1 frame"]);
+		expect(await page.getByText("nothing on this page yet").count()).toBe(0);
+		// a list has nothing to comment on or zoom
+		expect(await page.locator('[aria-label="canvas tools"]:visible, [data-viewer-zoom]:visible').count()).toBe(0);
+		expect(await list.locator('[data-page-row="app"] img').getAttribute("src")).toBe("/covers/plan");
+
+		await list.getByRole("button", { name: /^app,/ }).click();
+		await expect.poll(() => new URL(page.url()).pathname).toBe(`${PATH}/app`);
+		await list.getByRole("button", { name: /^shop,/ }).click();
+		await expect.poll(() => new URL(page.url()).pathname).toBe(`${PATH}/app/shop`);
+		await page.frameLocator('iframe[title="app/shop/cart"]').locator("h1").waitFor();
+		expect(await list.count()).toBe(0);
+	});
+
 	it("shows a teammate's save in place, with the changed mark and a short toast", { timeout: 60_000 }, async () => {
 		const { page, live, serve, requests } = await open();
 		const menu = page.frameLocator('iframe[title="menu"]');

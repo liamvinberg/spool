@@ -25,6 +25,8 @@ import { CommentsLayer, clickAway, commentWorld } from "../canvas/comments-layer
 import { FrameLabel, LabelField } from "../canvas/frame-label";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
 import { type ElementPreview, PreviewIn } from "../canvas/overlays";
+import { type ListWorld, listsPages, pageListRows } from "../canvas/page-list";
+import { PageListView } from "../canvas/page-list-view";
 import { PictureClaims } from "../canvas/picture-canvas";
 import type { PictureFrame } from "../canvas/picture-layer";
 import { createPresenceRoom } from "../canvas/presence";
@@ -354,6 +356,15 @@ function ViewerCanvas({
 	const named = linked ?? where.page;
 	const page = known.has(named) ? named : opening;
 	const frames = useMemo(() => canvas.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page), [canvas, page]);
+	/** a page holding only pages, the root too, draws them as a list rather than a field, as on the Mac (spool#224) */
+	const listRows = useMemo(() => {
+		const world: ListWorld = { pages: canvas.pages, frames: canvas.frames, waiting: [], order: canvas.order };
+		return listsPages(page, world) ? pageListRows(page, world) : [];
+	}, [canvas, page]);
+	const listing = listRows.length > 0;
+	/** the row the pointer last lit, the first until it lights one */
+	const [lit, setLit] = useState<string | null>(null);
+	const litRow = listRows.some((row) => row.page === lit) ? lit : (listRows[0]?.page ?? null);
 	useEffect(() => {
 		if (pageMarks.has(page)) onPageSeen(page);
 	}, [page, pageMarks, onPageSeen]);
@@ -917,7 +928,7 @@ function ViewerCanvas({
 							))}
 						</LabelField>
 					</div>
-					{frames.length === 0 && (
+					{frames.length === 0 && !listing && (
 						<div className="absolute inset-0 flex items-center justify-center text-secondary type-detail">
 							nothing on this page yet
 						</div>
@@ -939,6 +950,16 @@ function ViewerCanvas({
 						/>
 					)}
 				</div>
+				{/* over the field, so its wheel scrolls the list rather than the camera */}
+				{listing && (
+					<PageListView
+						stillOf={(row) => (row.still === undefined ? undefined : project.covers?.[row.still.frame])}
+						rows={listRows}
+						lit={litRow}
+						onLight={setLit}
+						onGo={(next) => go({ page: next, frame: null })}
+					/>
+				)}
 				{followed !== undefined && <FollowMark mate={followed} />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
 					{project.shared !== undefined && <SharedLine shared={project.shared} project={project.project} />}
@@ -957,7 +978,7 @@ function ViewerCanvas({
 						<PresenceFaces room={room} page={page} following={following} onFollow={setFollowing} />
 					)}
 				</div>
-				{comments?.writes === true ? (
+				{listing ? null : comments?.writes === true ? (
 					<ViewerTools tool={comments.tool} onTool={comments.setTool} />
 				) : signIn !== undefined ? (
 					<ViewerTools
@@ -987,7 +1008,10 @@ function ViewerCanvas({
 						<Toast message={toast} />
 					</div>
 				)}
-				<div className="absolute right-3 bottom-3 flex h-8 items-center gap-1 rounded-sm border border-line-default bg-surface-window px-1">
+				<div
+					hidden={listing}
+					className="absolute right-3 bottom-3 flex h-8 items-center gap-1 rounded-sm border border-line-default bg-surface-window px-1"
+				>
 					<button
 						type="button"
 						aria-label="Zoom out"
