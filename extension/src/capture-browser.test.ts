@@ -41,6 +41,7 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 			<textarea id="note"></textarea>
 			<x-card></x-card>
 			<div class="spinner"></div>
+			<canvas id="drawn" width="8" height="8"></canvas><canvas id="empty" width="8" height="8"></canvas>
 		</section>
 	</main>
 </body>
@@ -80,6 +81,8 @@ async function captured(whole: boolean): Promise<ReferenceCapture> {
 				easing: "ease-in-out",
 				direction: "alternate",
 			});
+		const pen = (document.querySelector("#drawn") as HTMLCanvasElement).getContext("2d");
+		if (pen !== null) pen.fillRect(3, 3, 1, 1);
 		await document.fonts.ready;
 		const capture = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture.capture;
 		const el = whole ? document.body : (document.querySelector("#pick") as Element);
@@ -125,6 +128,13 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	expect(c.html).toContain(
 		'<x-card><template shadowrootmode="open"><style>:host { display: block; padding: 4px; }</style><style>b { color: blue }</style><b part="price">$12</b><slot></slot></template></x-card>',
 	);
+
+	// a canvas as the picture it shows; one that reads back empty (as WebGL does once drawn) left out, with a note
+	expect(c.html).toMatch(
+		/<canvas id="drawn" width="8" height="8" style="background: url\(&quot;data:image\/png;base64,/,
+	);
+	expect(c.html).toContain('<canvas id="empty" width="8" height="8"></canvas>');
+	expect(c.notes).toEqual(["A canvas read back empty (WebGL keeps no copy of what it drew), so it is left out."]);
 
 	// the page's context
 	expect(c.htmlAttrs).toEqual({ class: "dark", "data-theme": "night", lang: "en" });

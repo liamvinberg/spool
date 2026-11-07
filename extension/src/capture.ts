@@ -61,6 +61,7 @@ const NOTE = {
 	iframe: "Embedded pages (iframes) are left out.",
 	stream: "Video streams are left out; their posters came.",
 	canvas: "A canvas drawn from another site could not be read.",
+	blank: "A canvas read back empty (WebGL keeps no copy of what it drew), so it is left out.",
 	blob: "Images made in the page (blob: URLs) could not come.",
 	closed: "Closed shadow roots are left out.",
 } as const;
@@ -239,16 +240,8 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 			break;
 		}
 		case "canvas": {
-			const canvas = el as HTMLCanvasElement;
-			let url: string | null = null;
-			try {
-				url = canvas.width > 0 && canvas.height > 0 ? canvas.toDataURL() : null;
-			} catch {
-				ctx.notes.add(NOTE.canvas);
-			}
-			if (url !== null) {
-				addStyle(a, `background: url("${url}") 0 0 / 100% 100% no-repeat`);
-			}
+			const url = drawing(el as HTMLCanvasElement, ctx);
+			if (url !== null) addStyle(a, `background: url("${url}") 0 0 / 100% 100% no-repeat`);
 			break;
 		}
 		case "video": {
@@ -274,6 +267,36 @@ function addStyle(a: Record<string, string>, decl: string): void {
 
 function stream(video: HTMLVideoElement): boolean {
 	return video.srcObject !== null || /^(blob|mediastream):/.test(video.currentSrc || video.src);
+}
+
+/**
+ * What a canvas shows, as an image. A WebGL canvas that does not keep its drawing (most) reads back empty once the
+ * frame is on screen, so an empty read is left out with a note rather than sent as a clear picture.
+ */
+function drawing(canvas: HTMLCanvasElement, ctx: Context): string | null {
+	if (canvas.width === 0 || canvas.height === 0) return null;
+	try {
+		// read small, averaged down so a thin stroke still counts
+		const w = Math.min(canvas.width, 128);
+		const h = Math.min(canvas.height, 128);
+		const probe = canvas.ownerDocument.createElement("canvas");
+		probe.width = w;
+		probe.height = h;
+		const pen = probe.getContext("2d", { willReadFrequently: true });
+		if (pen !== null) pen.imageSmoothingQuality = "high";
+		pen?.drawImage(canvas, 0, 0, w, h);
+		const pixels = pen?.getImageData(0, 0, w, h).data;
+		let seen = false;
+		for (let i = 3; pixels !== undefined && i < pixels.length && !seen; i += 4) seen = pixels[i] !== 0;
+		if (!seen) {
+			ctx.notes.add(NOTE.blank);
+			return null;
+		}
+		return canvas.toDataURL();
+	} catch {
+		ctx.notes.add(NOTE.canvas);
+		return null;
+	}
 }
 
 function draw(img: HTMLImageElement, w: number, h: number): string | null {
