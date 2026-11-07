@@ -75,19 +75,16 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	const page = await browser.newPage({ viewport: { width: 1360, height: 900 }, reducedMotion: "reduce" });
 	await page.goto(project.url);
 	await page.getByRole("button", { name: `Manage ${project.name}`, exact: true }).click();
-	await page.getByText("Export project…", { exact: true }).click();
-	const dialog = page.getByRole("dialog", { name: /^Export / });
-	await dialog.waitFor();
-	expect(await dialog.innerText()).toContain(project.name);
 	const downloadEvent = page.waitForEvent("download");
-	await dialog.getByRole("button", { name: /^Export/ }).click();
+	await page.getByText("Export project…", { exact: true }).click();
 	const download = await downloadEvent;
 	expect(download.suggestedFilename()).toBe(`${project.name}.spool`);
 	const downloadedPath = await download.path();
 	if (downloadedPath === null) throw new Error("project archive download failed");
 	const bytes = readFileSync(downloadedPath);
 	expect(bytes.subarray(0, 2).toString()).toBe("PK");
-	expect(await page.getByRole("dialog").count()).toBe(0);
+	await page.getByRole("menu").getByText("Downloaded", { exact: true }).waitFor();
+	await page.keyboard.press("Escape");
 
 	// Open… takes a .spool file from where it lies, and asks before it imports
 	const archive = join(realpathSync(makeTempDir()), `${project.name}.spool`);
@@ -129,11 +126,11 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	const inactive = page.locator(`[data-tab="${imported.root}"]`);
 	await inactive.click({ button: "right" });
 	expect(page.url()).toBe(activeUrl);
-	await page.getByRole("menuitem", { name: /^Export / }).click();
-	expect(await dialog.innerText()).toContain(basename(imported.root));
 	const secondDownload = page.waitForEvent("download");
-	await dialog.getByRole("button", { name: /^Export/ }).click();
+	await page.getByRole("menuitem", { name: /^Export / }).click();
 	expect((await secondDownload).suggestedFilename()).toBe(`${basename(imported.root)}.spool`);
+	await page.getByRole("menu").getByText("Downloaded", { exact: true }).waitFor();
+	await page.keyboard.press("Escape");
 	expect(page.url()).toBe(activeUrl);
 	await inactive.locator(".project-tab-label").focus();
 	await page.keyboard.press("Shift+F10");

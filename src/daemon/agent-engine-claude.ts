@@ -7,6 +7,7 @@ import { askAgentOffer, askFrom } from "./agent-offer";
 import { agentInstalled, askAgentLogin } from "./agent-preflight";
 import { AGENT_COMMAND, agentPromptContent } from "./agent-spawn";
 import { startAgentTurn } from "./agent-turn";
+import { experimentsOnHere } from "./settings";
 
 /**
  * Claude keeps its process per turn, user settings, authentication and translator.
@@ -63,7 +64,8 @@ export function createClaudeEngine({ executor, spoolDir, look }: EngineDeps): Ag
 				continuing: recovery === "claude-continue",
 				ask,
 				permissions,
-				designer: mountDesigner(spoolDir, "claude", ask.effort),
+				designer: mountDesigner(spoolDir, "claude"),
+				experiments: experimentsOnHere(spoolDir),
 				env: agentEnv(spoolDir),
 			}),
 	};

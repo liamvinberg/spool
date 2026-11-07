@@ -1,4 +1,4 @@
-import { skillText } from "../skill";
+import { type ExperimentsOn, skillText } from "../skill";
 
 /**
  * What spool appends to every engine's system prompt (#138): a few lines saying what the
@@ -22,6 +22,8 @@ export interface FramingOptions {
 	 * engine whose spawn keeps the project's settings, and its memory with them, out.
 	 */
 	readonly memory: boolean;
+	/** the experiments this machine has on, which decide the skill index's topics */
+	readonly experiments?: ExperimentsOn;
 }
 
 /**
@@ -49,13 +51,13 @@ not load it for you.`;
  * The framing plus the skill overview, which is a call into the same function
  * `spool skill` answers with rather than a second copy to keep in sync.
  *
- * Only the overview goes in, not the seven topics: 860 tokens against 6,170, and
- * a thread that renames one frame would pay for topics it never opens. The
- * overview's last section is the topic index, so the agent fetches exactly the
- * one it wants. Identical bytes on every spawn, so it caches.
+ * Only the overview goes in, not the topics: a thread that renames one frame would
+ * pay for topics it never opens. The overview's last section is the topic index, so
+ * the agent fetches exactly the one it wants. Identical bytes on every spawn while
+ * the experiments stay put, so it caches.
  */
-export function framing({ asks, designer, bypass, memory }: FramingOptions): string {
+export function framing({ asks, designer, bypass, memory, experiments }: FramingOptions): string {
 	const lines = [INTRO, ...(memory ? [MEMORY] : []), asks, designer].join("\n\n");
-	const framed = `${lines}\n\n---\n\n${skillText()}`;
+	const framed = `${lines}\n\n---\n\n${skillText([], experiments)}`;
 	return bypass ? `${BYPASS_FRAMING}\n\n${framed}` : framed;
 }

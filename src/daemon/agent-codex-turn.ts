@@ -1,4 +1,5 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
+import type { ExperimentsOn } from "../skill";
 import { createBackgroundHold } from "./agent-background";
 import { type CodexAdapter, type CodexItem, callsOf, createCodexAdapter } from "./agent-codex";
 import { type CodexRequestId, type CodexRpc, createCodexRpc } from "./agent-codex-rpc";
@@ -51,6 +52,8 @@ export interface CodexTurnOptions {
 	readonly version: string;
 	/** spool's designer role layer, in spool's state (#367) */
 	readonly designer?: string;
+	/** the experiments this machine has on, for the skill index in the framing */
+	readonly experiments?: ExperimentsOn;
 	/**
 	 * What the person allowed for this thread with "Allow for this chat", by `approvalScopes`.
 	 * Codex's own session accept dies with the turn's process, so spool keeps it for the
@@ -367,7 +370,11 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		const own = config?.config?.developer_instructions;
 		const mode = CODEX_MODES[permissions];
 		const settings = {
-			developerInstructions: codexInstructions(typeof own === "string" ? own : undefined, permissions),
+			developerInstructions: codexInstructions(
+				typeof own === "string" ? own : undefined,
+				permissions,
+				options.experiments,
+			),
 			approvalPolicy: mode.approvalPolicy,
 			sandbox: mode.sandbox,
 			...(ask.value === undefined ? {} : { model: ask.value }),

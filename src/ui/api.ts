@@ -2128,8 +2128,8 @@ export async function matchTeam(project: string): Promise<{ marked: number } | {
 const MATCH_REFUSED = "Resetting to the team's version needs a connection to spool.page. Nothing was changed.";
 
 /** Project transfer uses the same control token as every project lifecycle write. */
-export async function exportProject(root: string, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {
-	const response = await client.api.projects.export.$post({ json: { root } }, { init: { signal } });
+export async function exportProject(root: string): Promise<{ blob: Blob; filename: string }> {
+	const response = await client.api.projects.export.$post({ json: { root } });
 	if (!response.ok) throw new Error(await errorText(response));
 	const disposition = response.headers.get("Content-Disposition") ?? "";
 	const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];

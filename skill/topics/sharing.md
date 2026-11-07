@@ -1,0 +1,7 @@
+---
+summary: sharing pages with people outside the project, and signing in
+---
+
+Pages are shared from the canvas: right-click a page in the Pages panel and choose Share…. A share shows its pages to people outside the project, either named people, each signing in with one of the addresses named, or anyone with its link. It shows the pages as they settle, so later saves reach it. Anyone who can edit the project changes or stops its shares in the same sheet, and stopping one ends everyone's access at once. What a share shows is its frames' compiled code and the project's scenarios: keep secrets out of both. A walk that leaves the shared pages is pointed out in the sheet, never refused; whoever follows it is told that screen isn't shared with them.
+
+Sharing needs this machine signed in. Run `spool login` to sign it in to its spool.page account in a browser (Google, an email code or a passkey). Over SSH, or anywhere with no browser of its own, it prints the sign-in link instead: sign in on any device, then paste the address that browser ends on (a 127.0.0.1 page that won't load) back into the terminal. The machine's session lives in macOS Keychain on a Mac and in a file only its owner can read under spool's state folder elsewhere, and renews while it is used. `spool logout` signs the machine out: it removes that credential and attempts remote revocation. Local authoring works without signing in.

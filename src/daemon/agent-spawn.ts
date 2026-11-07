@@ -1,3 +1,4 @@
+import type { ExperimentsOn } from "../skill";
 import type { AgentPermissions } from "./agent-defaults";
 import { DESIGNER_FRAMING } from "./agent-designer";
 import { type AgentMessage, saidText } from "./agent-engine";
@@ -173,8 +174,14 @@ about to do before the ask lands, and make changes outside design/ with the file
 tools rather than the shell, so the ask actually happens.`;
 
 /** Claude's framing (`framing`), led by the bypass line when the project bypasses permissions. */
-export function agentFraming(bypass = false): string {
-	return framing({ asks: ASKS, designer: DESIGNER_FRAMING, bypass, memory: true });
+export function agentFraming(bypass = false, experiments?: ExperimentsOn): string {
+	return framing({
+		asks: ASKS,
+		designer: DESIGNER_FRAMING,
+		bypass,
+		memory: true,
+		...(experiments ? { experiments } : {}),
+	});
 }
 
 /** Everything the child process is: what to run, where, and with what. */
@@ -246,6 +253,8 @@ export function planAgentSpawn(
 	 * it as it sees fit.
 	 */
 	designer?: string,
+	/** the experiments this machine has on, for the skill index in the framing */
+	experiments?: ExperimentsOn,
 ): AgentSpawn {
 	return {
 		command: AGENT_COMMAND,
@@ -278,7 +287,7 @@ export function planAgentSpawn(
 			...(ask.effort === undefined ? [] : ["--effort", ask.effort]),
 			...(designer === undefined ? [] : ["--agents", designer]),
 			"--append-system-prompt",
-			agentFraming(permissions === "bypass"),
+			agentFraming(permissions === "bypass", experiments),
 		],
 		cwd: root,
 		env: { ...env },
