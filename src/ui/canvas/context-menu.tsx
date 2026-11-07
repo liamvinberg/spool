@@ -134,7 +134,7 @@ export function ContextMenu({
 		setLast(format);
 		setStep({
 			kind: "building",
-			file: exportTarget(project, frames, format),
+			file: frames.length > 1 && format !== "pdf" ? `${frames.length} files` : exportTarget(project, frames, format),
 			progress: { done: 0, total: frames.length },
 		});
 		exportFrames({ project, frames, format, scope }, capture, (progress) =>
