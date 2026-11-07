@@ -11,3 +11,6 @@ design/
 # Maintainer-local agent context. Never ships.
 .claude/settings.local.json
 .codex/
+
+# spool's Chrome extension: the unpacked build and the Web Store zip (pnpm extension:build, extension:pack)
+extension/*.zip
