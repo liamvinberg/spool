@@ -2,6 +2,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 
 export const CONTROL_HEADER = "x-spool-control";
 export const PROJECT_HEADER = "x-spool-project";
+/** Said by the Mac app's own follower of `/api/events`, which can bring its window forward. */
+export const DESKTOP_HEADER = "x-spool-window";
 export const CAPTURE_HOST = "capture-spool.localhost";
 export const RENDER_HOST = "run.spool.localhost";
 

@@ -17,7 +17,7 @@ import { placeOf } from "../home-places";
 import { mutateMachineState } from "../machine-state";
 import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
-import { isFramePath, isPageSlot, isSafeName } from "../page-path";
+import { isFramePath, isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "../runtime/record-protocol";
 import { experimentsOn } from "../settings/experiments";
@@ -94,6 +94,7 @@ import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChr
 import { type ProjectJson, readScenario } from "./project-files";
 import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
 import { withProject } from "./project-route";
+import { readCanvasState } from "./project-state";
 import { createThumbnailWatch, readProjectThumbnail } from "./project-thumbnail";
 import {
 	FRAME_BIRTH,
@@ -105,6 +106,8 @@ import {
 	readFrameGeometry,
 } from "./projection";
 import { renderClip } from "./record";
+import { publicReferenceFetch, type ReferenceFetch, type ReferenceLimits } from "./reference-page";
+import { chooseReferenceProject, REFERENCE_PATHS, referenceOrigin, referenceRoutes } from "./reference-routes";
 import { createRenamer } from "./renamer";
 import { createResolvePass } from "./resolve-pass";
 import {
@@ -112,6 +115,7 @@ import {
 	CONTROL_HEADER,
 	captureOriginFor,
 	createCapability,
+	DESKTOP_HEADER,
 	matchesCapability,
 	normalizeHostname,
 	PROJECT_HEADER,
@@ -242,6 +246,10 @@ export interface DaemonOptions {
 	webfonts?: Webfonts;
 	/** How much of the team history this Mac keeps read for Compare with now (spool#189): 128 MB unless a test says. */
 	historyCacheBytes?: number;
+	/** Where a reference's stylesheets, images and fonts come from (spool#241): the public web, unless a test serves them. */
+	referenceFetch?: ReferenceFetch;
+	/** A reference's fetch caps, as a test sets them. */
+	referenceLimits?: Partial<ReferenceLimits>;
 }
 
 /** spool.page as the daemon reaches it: where it is, the session vault, the fetch, and the sync socket. */
@@ -277,7 +285,26 @@ const canvasView = z.strictObject({
 	page: z.string().refine(isPageSlot, { message: "not a page" }),
 	frames: z.array(z.string().refine(isFramePath, { message: "not a frame name" })).max(100_000),
 	scheme: z.enum(["light", "dark"]),
+	/** where its camera rests and how big its viewport is: where a reference sent to it lands in view (spool#241) */
+	camera: z
+		.strictObject({ x: z.number().finite(), y: z.number().finite(), k: z.number().finite().positive() })
+		.optional(),
+	size: z.strictObject({ w: z.number().finite().positive(), h: z.number().finite().positive() }).optional(),
 });
+
+/** One open canvas, by its event stream: the project, what it last said it showed, and when it last said anything. */
+interface OpenView {
+	root: string;
+	scheme: ColorScheme | undefined;
+	heard: number;
+	page?: string;
+	look?: { camera: { x: number; y: number; k: number }; size: { w: number; h: number } };
+}
+
+/** The world a camera shows on a viewport of this size. */
+function worldSeen(camera: { x: number; y: number; k: number }, size: { w: number; h: number }) {
+	return { x: -camera.x / camera.k, y: -camera.y / camera.k, w: size.w / camera.k, h: size.h / camera.k };
+}
 
 /** One boot an agent asked for (#25): the viewport the CLI settled on, and how it should wait. */
 const bootRequest = z.strictObject({
@@ -397,6 +424,8 @@ export function createDaemonApp({
 	booth: boothSeams,
 	webfonts: providedWebfonts,
 	historyCacheBytes,
+	referenceFetch = publicReferenceFetch(),
+	referenceLimits,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -858,7 +887,31 @@ export function createDaemonApp({
 	 * lives exactly as long as that stream: a canvas that closed, crashed or lost
 	 * its connection stops counting the moment the stream does.
 	 */
-	const views = new Map<string, { root: string; scheme: ColorScheme | undefined }>();
+	const views = new Map<string, OpenView>();
+	/** How many Mac app windows follow `/api/events`: whether bringing a canvas forward has a window to do it. */
+	let desktopFollowers = 0;
+	/**
+	 * The part of one page of a project its canvas shows: the open canvas's own camera when it is on that page, else
+	 * the camera the page last settled at, on the open canvas's viewport. Nothing when nobody has looked at the page.
+	 */
+	function referenceView(root: string, page: string): { x: number; y: number; w: number; h: number } | undefined {
+		let latest: OpenView | undefined;
+		for (const view of views.values()) {
+			if (view.root === root && view.look !== undefined && (latest === undefined || view.heard > latest.heard)) {
+				latest = view;
+			}
+		}
+		if (latest?.look !== undefined && latest.page === page) return worldSeen(latest.look.camera, latest.look.size);
+		let state: ReturnType<typeof readCanvasState>;
+		try {
+			state = readCanvasState(root);
+		} catch {
+			return undefined;
+		}
+		const camera = page === ROOT_PAGE ? state.camera : state.pageCameras?.[page];
+		return camera === undefined ? undefined : worldSeen(camera, latest?.look?.size ?? { w: 1440, h: 900 });
+	}
+
 	function boothKeeping(roots: readonly string[]): void {
 		if (selfOrigin === undefined) return;
 		for (const [root, stop] of boothWatches) {
@@ -1266,6 +1319,24 @@ export function createDaemonApp({
 				await next();
 				return;
 			}
+			// spool's Chrome extension, by the origin only it can carry, and no control token (spool#241)
+			if (REFERENCE_PATHS.has(path)) {
+				c.header("vary", "origin");
+				const origin = referenceOrigin(c.req.header("origin"));
+				if (origin === undefined) return c.text("forbidden", 403);
+				c.header("access-control-allow-origin", origin);
+				if (c.req.method === "OPTIONS") {
+					c.header("access-control-allow-methods", "POST");
+					c.header("access-control-allow-headers", "content-type");
+					c.header("access-control-max-age", "600");
+					if (c.req.header("access-control-request-private-network") === "true") {
+						c.header("access-control-allow-private-network", "true");
+					}
+					return c.body(null, 204);
+				}
+				await next();
+				return;
+			}
 			if (c.req.method === "OPTIONS") return c.text("forbidden", 403);
 			if (!matchesCapability(controlToken, c.req.header(CONTROL_HEADER))) {
 				return c.text("unauthenticated", 401);
@@ -1311,6 +1382,39 @@ export function createDaemonApp({
 				historyChanged: () => history.keeping(registeredRoots()),
 			}),
 		)
+		.route(
+			"/api",
+			referenceRoutes({
+				choose: () => {
+					const live = new Map<string, number>();
+					for (const view of views.values()) live.set(view.root, Math.max(live.get(view.root) ?? 0, view.heard));
+					const projects = readRegistry(spoolDir).projects.filter((project) => {
+						try {
+							realDesignDir(project.root);
+							return true;
+						} catch {
+							return false;
+						}
+					});
+					const root = chooseReferenceProject(projects, live);
+					return root === undefined ? undefined : { root, name: basename(root) };
+				},
+				view: (root, page) => referenceView(root, page),
+				fetch: referenceFetch,
+				...(referenceLimits === undefined ? {} : { limits: referenceLimits }),
+				arrived: (root, frame) => hub.publish(root, { kind: "reference", frame }),
+				reveal: (root, frame) => {
+					emitAppEvent({ kind: "reveal", root, frame });
+					return desktopFollowers > 0;
+				},
+				project: (name) => {
+					const lookup = lookupProjectByName(spoolDir, name);
+					return lookup.kind === "found" ? lookup.root : undefined;
+				},
+				canvasUrl: (name, frame) =>
+					`${controlOrigin}/p/${encodeURIComponent(name)}?${new URLSearchParams({ frame })}`,
+			}),
+		)
 		.get("/api/events", (c) => {
 			return streamSSE(c, async (stream) => {
 				let id = 0;
@@ -1320,8 +1424,12 @@ export function createDaemonApp({
 					void stream.writeSSE({ event: "app", data: JSON.stringify(event), id: String(id++) }).catch(() => {});
 				};
 				appListeners.add(listener);
+				// the Mac app's own follower, which raises its window when a canvas is asked forward
+				const desktop = c.req.header(DESKTOP_HEADER) === "1";
+				if (desktop) desktopFollowers += 1;
 				stream.onAbort(() => {
 					appListeners.delete(listener);
+					if (desktop) desktopFollowers -= 1;
 				});
 				beatWhileOpen(stream);
 				// hello carries the daemon's version — the reconnect after an upgrade
@@ -1447,9 +1555,12 @@ export function createDaemonApp({
 			}),
 			(c) =>
 				withProject(c, resolveProject, (root) => {
-					const { view, page, frames, scheme } = c.req.valid("json");
+					const { view, page, frames, scheme, camera, size } = c.req.valid("json");
 					const open = views.get(view);
 					if (open?.root !== root) return c.body(null, 204);
+					open.heard = Date.now();
+					open.page = page;
+					if (camera !== undefined && size !== undefined) open.look = { camera, size };
 					sittings.view(view, { root: root, page, frames });
 					// Only a canvas whose own scheme changed moves the booth, so two
 					// canvases in different schemes do not trade it back and forth on
@@ -1809,7 +1920,7 @@ export function createDaemonApp({
 				beatWhileOpen(stream);
 				// the name this canvas tells the booth what it shows under
 				const view = randomUUID();
-				views.set(view, { root: project.root, scheme: undefined });
+				views.set(view, { root: project.root, scheme: undefined, heard: Date.now() });
 				keepPlayerWarm(project.root);
 				stream.onAbort(() => {
 					views.delete(view);

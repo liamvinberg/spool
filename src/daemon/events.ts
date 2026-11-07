@@ -59,7 +59,9 @@ export type ChangeEvent =
 	| { kind: "comments" }
 	// team sync has something to say about this local copy: a file that didn't
 	// travel, a pause on a limit, or the team project ending on this machine
-	| { kind: "sync"; message: string };
+	| { kind: "sync"; message: string }
+	// spool's Chrome extension sent a reference here (spool#241): a canvas on its page shows it arriving
+	| { kind: "reference"; frame: string };
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {
