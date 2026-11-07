@@ -63,7 +63,7 @@ export function createClaudeEngine({ executor, spoolDir, look }: EngineDeps): Ag
 				continuing: recovery === "claude-continue",
 				ask,
 				permissions,
-				designer: mountDesigner(spoolDir, "claude"),
+				designer: mountDesigner(spoolDir, "claude", ask.effort),
 				env: agentEnv(spoolDir),
 			}),
 	};

@@ -97,23 +97,49 @@ describe("the designer's files", () => {
 		};
 
 		expect(mount).toEqual({
-			claude: join(designerDir(spoolDir), "claude-agents.json"),
-			codex: join(designerDir(spoolDir), "codex-designer.toml"),
+			claude: join(designerDir(spoolDir), "claude-agents-medium.json"),
+			codex: join(designerDir(spoolDir), "codex-designer-medium.toml"),
 			pi: join(designerDir(spoolDir), "pi-designer.ts"),
 		});
 		const agents = JSON.parse(readFileSync(mount.claude, "utf8")) as Record<string, { prompt: string }>;
 		expect(Object.keys(agents)).toEqual(["designer"]);
 		expect(agents.designer?.prompt).toBe(DESIGNER_PROMPT);
-		expect(readFileSync(mount.codex, "utf8")).toBe(`developer_instructions = ${JSON.stringify(DESIGNER_PROMPT)}\n`);
+		expect(readFileSync(mount.codex, "utf8")).toBe(
+			`model_reasoning_effort = "medium"\ndeveloper_instructions = ${JSON.stringify(DESIGNER_PROMPT)}\n`,
+		);
 		const extension = readFileSync(mount.pi, "utf8");
 		expect(extension).toContain('name: "designer"');
 		expect(extension).toContain(JSON.stringify(DESIGNER_PROMPT));
 	});
 
+	it("hold a designer to medium effort, below it only where the thread already is", () => {
+		const spoolDir = makeTempDir();
+		const effort = (file: string) =>
+			(JSON.parse(readFileSync(file, "utf8")) as Record<string, { effort?: string }>).designer?.effort;
+
+		expect(effort(mountDesigner(spoolDir, "claude", "max"))).toBe("medium");
+		expect(effort(mountDesigner(spoolDir, "claude", "xhigh"))).toBe("medium");
+		expect(effort(mountDesigner(spoolDir, "claude"))).toBe("medium");
+		expect(effort(mountDesigner(spoolDir, "claude", "low"))).toBe("low");
+		expect(readFileSync(mountDesigner(spoolDir, "codex", "xhigh"), "utf8")).toContain(
+			'model_reasoning_effort = "medium"',
+		);
+		expect(readFileSync(mountDesigner(spoolDir, "codex", "minimal"), "utf8")).toContain(
+			'model_reasoning_effort = "minimal"',
+		);
+		// two threads on two levels never write the same file
+		expect(readdirSync(designerDir(spoolDir)).sort()).toEqual([
+			"claude-agents-low.json",
+			"claude-agents-medium.json",
+			"codex-designer-medium.toml",
+			"codex-designer-minimal.toml",
+		]);
+	});
+
 	it("mount only the engine's own file", () => {
 		const spoolDir = makeTempDir();
 		mountDesigner(spoolDir, "codex");
-		expect(readdirSync(designerDir(spoolDir))).toEqual(["codex-designer.toml"]);
+		expect(readdirSync(designerDir(spoolDir))).toEqual(["codex-designer-medium.toml"]);
 	});
 
 	it("are written again only when spool's designer changed", () => {

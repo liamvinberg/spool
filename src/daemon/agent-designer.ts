@@ -44,6 +44,23 @@ export const DESIGNER_DESCRIPTION =
 export const DESIGNER_FRAMING =
 	"When someone asks for options or several directions, give each direction to its own designer with a brief. Before it starts, choose each designer's own frame and name it in the brief as design/frames/<page>/<name>/frame.tsx, one new frame per designer: spool puts a placeholder there the moment the designer starts, and the designer draws into it. Make single edits yourself.";
 
+/**
+ * The most a designer thinks. Every engine's sub-agent takes the parent's effort unless
+ * told otherwise, so a thread on xhigh fanned out to three designers ran all three on
+ * xhigh. A direction is drawn and then checked against its shot, which medium does as
+ * well for a fraction of the tokens; the model stays the thread's own, which is where the
+ * taste is.
+ */
+export const DESIGNER_EFFORT = "medium";
+
+/** the levels, in every engine's vocabulary, that already sit at or under the cap */
+const UNDER_CAP: readonly string[] = ["off", "none", "minimal", "low", DESIGNER_EFFORT];
+
+/** a designer's effort: the thread's own where it is at or under the cap, else the cap */
+export function designerEffort(thread: string | undefined): string {
+	return thread !== undefined && UNDER_CAP.includes(thread) ? thread : DESIGNER_EFFORT;
+}
+
 export function designerDir(spoolDir: string): string {
 	return join(spoolDir, "designer");
 }
@@ -51,16 +68,17 @@ export function designerDir(spoolDir: string): string {
 /** a TOML basic string: JSON's escapes are a subset TOML reads the same way */
 const toml = (value: string): string => JSON.stringify(value);
 
-function claudeDesignerFile(): string {
+function claudeDesignerFile(effort: string): string {
 	return `${JSON.stringify(
-		{ [DESIGNER_NAME]: { description: DESIGNER_DESCRIPTION, prompt: DESIGNER_PROMPT } },
+		{ [DESIGNER_NAME]: { description: DESIGNER_DESCRIPTION, prompt: DESIGNER_PROMPT, effort } },
 		null,
 		"\t",
 	)}\n`;
 }
 
-function codexDesignerFile(): string {
-	return `developer_instructions = ${toml(DESIGNER_PROMPT)}\n`;
+/** a role file's own effort outranks what the spawn asks for, so the cap holds */
+function codexDesignerFile(effort: string): string {
+	return `model_reasoning_effort = ${toml(effort)}\ndeveloper_instructions = ${toml(DESIGNER_PROMPT)}\n`;
 }
 
 /**
@@ -68,7 +86,7 @@ function codexDesignerFile(): string {
  *
  * One `designer` tool. Its call runs the same pi that loaded it (the running script, the
  * way pi's own sub-agent example does), in JSON mode with no session, on the parent's
- * model and thinking level, with the designer prompt appended. The child is the person's
+ * model and on its thinking level held to the cap, with the designer prompt appended. The child is the person's
  * own pi with their login and settings and without this extension, so a designer brings
  * in no designers of its own. Tool calls from one message run in parallel, so a fan-out
  * is one call per direction. Each tool the child starts comes back as the tool's partial
@@ -82,6 +100,7 @@ import { existsSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
 
 const PROMPT = ${JSON.stringify(DESIGNER_PROMPT)};
+const UNDER_CAP = ${JSON.stringify(UNDER_CAP)};
 
 function invocation(args) {
 	const script = process.argv[1];
@@ -114,7 +133,7 @@ export default function (pi) {
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const args = ["--mode", "json", "-p", "--no-session"];
 			if (ctx?.model) args.push("--model", ctx.model.provider + "/" + ctx.model.id);
-			if (ctx?.thinkingLevel) args.push("--thinking", ctx.thinkingLevel);
+			args.push("--thinking", UNDER_CAP.includes(ctx?.thinkingLevel) ? ctx.thinkingLevel : ${JSON.stringify(DESIGNER_EFFORT)});
 			args.push("--append-system-prompt", PROMPT, params.prompt);
 			const run = invocation(args);
 			const child = spawn(run.command, run.args, { cwd: ctx?.cwd ?? process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
@@ -176,22 +195,28 @@ function writeIfChanged(file: string, text: string): void {
 /**
  * Where the designer lives in spool's state, one file per engine in its own vocabulary:
  * Claude Code's `--agents` file, Codex's role layer for `agents.designer.config_file`, and
- * pi's extension for `-e`.
+ * pi's extension for `-e`. Claude's and Codex's carry the designer's effort, so there is
+ * one per level, and two threads on two levels never write the same file; pi's extension
+ * reads the level when it runs.
  */
-const DESIGNER_FILES: Readonly<Record<AgentEngineId, { readonly name: string; readonly text: () => string }>> = {
-	claude: { name: "claude-agents.json", text: claudeDesignerFile },
-	codex: { name: "codex-designer.toml", text: codexDesignerFile },
-	pi: { name: "pi-designer.ts", text: piDesignerFile },
+const DESIGNER_FILES: Readonly<
+	Record<AgentEngineId, { readonly name: (effort: string) => string; readonly text: (effort: string) => string }>
+> = {
+	claude: { name: (effort) => `claude-agents-${effort}.json`, text: claudeDesignerFile },
+	codex: { name: (effort) => `codex-designer-${effort}.toml`, text: codexDesignerFile },
+	pi: { name: () => "pi-designer.ts", text: piDesignerFile },
 };
 
 /**
- * One engine's designer file, written into spool's state if it is missing or stale, and
- * where it is. Called on every turn's spawn, so a spool upgrade that changes the
- * prompt reaches the next turn; a file that already says the same thing is left alone.
+ * One engine's designer file for a thread on `effort`, written into spool's state if it
+ * is missing or stale, and where it is. Called on every turn's spawn, so a spool upgrade
+ * that changes the prompt reaches the next turn; a file that already says the same thing
+ * is left alone.
  */
-export function mountDesigner(spoolDir: string, engine: AgentEngineId): string {
+export function mountDesigner(spoolDir: string, engine: AgentEngineId, effort?: string): string {
 	const { name, text } = DESIGNER_FILES[engine];
-	const file = join(designerDir(spoolDir), name);
-	writeIfChanged(file, text());
+	const level = designerEffort(effort);
+	const file = join(designerDir(spoolDir), name(level));
+	writeIfChanged(file, text(level));
 	return file;
 }
