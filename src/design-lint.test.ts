@@ -17,6 +17,7 @@ describe("design lint", () => {
 	it("finds a raw colour or a picked timing in the chrome's code, not in its comments", () => {
 		const source = `// #205 over 150ms\nconst a = "#1c1c1c"; const b = "rgba(0,0,0,0.5)";\n<div className="duration-150 ease-[cubic-bezier(0,0,1,1)] [transition:opacity_1s]" />`;
 		expect(scan("src/ui/x.tsx", source)).toEqual({ "raw-colour": 2, "ad-hoc-motion": 3 });
+		expect(scan("extension/src/picker/x.tsx", source)).toEqual({ "raw-colour": 2, "ad-hoc-motion": 3 });
 		expect(scan("src/ui/x.test.tsx", source)).toEqual({});
 		expect(scan("src/ui/x.tsx", `"duration-fast ease-out animate-menu-in"`)).toEqual({});
 	});
