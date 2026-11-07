@@ -1,6 +1,7 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { Readable } from "node:stream";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { validator } from "hono/validator";
 import { z } from "zod";
 import { CloudSignedOut, originOf } from "../cloud-auth";
@@ -9,6 +10,7 @@ import { SpoolError } from "../errors";
 import { type CloneProgress, cloneInto } from "../git-clone";
 import { expandHome } from "../paths";
 import type { DaemonCloud } from "./app";
+import { importIntoNewProject } from "./import/imports";
 import { findOpenable, type TeamStanding } from "./open-finding";
 import { importArchive } from "./project-transfer";
 
@@ -45,63 +47,99 @@ export function openRoutes(deps: {
 			team: standing,
 			...(deps.remote === undefined ? {} : { remote: deps.remote }),
 		});
+	const into = () => ({ location: expandHome(deps.location()), spoolDir: deps.spoolDir });
 	/** Each clone under way, by the id its sheet asks after. */
 	const clones = new Map<string, CloneProgress>();
-	return new Hono()
-		.get("/find", async (c) => {
-			const given = c.req.query("given");
-			if (given === undefined) return c.json({ error: "expected ?given=<path or link>" }, 400);
-			try {
-				return c.json(await find(given));
-			} catch (error) {
-				if (!(error instanceof SpoolError)) throw error;
-				return c.json({ kind: "nothing", says: error.message });
-			}
-		})
-		.post(
-			"/clone",
-			validator("json", (value, c) => {
-				const parsed = z
-					.object({ url: z.string().min(1), transfer: z.string().regex(/^[\w-]{1,100}$/u) })
-					.safeParse(value);
-				return parsed.success ? parsed.data : c.json({ error: 'expected { "url", "transfer" }' }, 400);
-			}),
-			async (c) => {
-				const { url, transfer } = c.req.valid("json");
-				const found = await find(url);
-				if (found.kind !== "repo") return c.json(found);
-				clones.set(transfer, { line: `cloning into ${found.into}`, done: 0 });
+	return (
+		new Hono()
+			.get("/find", async (c) => {
+				const given = c.req.query("given");
+				if (given === undefined) return c.json({ error: "expected ?given=<path or link>" }, 400);
 				try {
-					await cloneInto(found.url, found.into, {
-						signal: c.req.raw.signal,
-						progress: (progress) => clones.set(transfer, progress),
-					});
+					return c.json(await find(given));
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;
-					return c.json({ error: error.message }, 409);
-				} finally {
-					clones.delete(transfer);
+					return c.json({ kind: "nothing", says: error.message });
 				}
-				// cloned: read again, as if the folder had been handed over
-				return c.json(await find(found.into));
-			},
-		)
-		.get("/clone/progress", (c) => c.json(clones.get(c.req.query("transfer") ?? "") ?? null))
-		.post(
-			"/import/path",
-			validator("json", (value, c) => {
-				const parsed = z.object({ path: z.string().min(1) }).safeParse(value);
-				return parsed.success ? parsed.data : c.json({ error: 'expected { "path" }' }, 400);
-			}),
-			async (c) => {
-				const found = await find(c.req.valid("json").path);
-				if (found.kind !== "file") return c.json({ error: "Choose a .spool project file." }, 400);
-				try {
-					const file = Readable.toWeb(createReadStream(found.path)) as ReadableStream<Uint8Array>;
-					return c.json(await importArchive(file, deps.location(), deps.spoolDir, c.req.raw.signal));
-				} catch (error) {
-					return c.json({ error: error instanceof Error ? error.message : "Import failed." }, 400);
-				}
-			},
-		);
+			})
+			.post(
+				"/clone",
+				validator("json", (value, c) => {
+					const parsed = z
+						.object({ url: z.string().min(1), transfer: z.string().regex(/^[\w-]{1,100}$/u) })
+						.safeParse(value);
+					return parsed.success ? parsed.data : c.json({ error: 'expected { "url", "transfer" }' }, 400);
+				}),
+				async (c) => {
+					const { url, transfer } = c.req.valid("json");
+					const found = await find(url);
+					if (found.kind !== "repo") return c.json(found);
+					clones.set(transfer, { line: `cloning into ${found.into}`, done: 0 });
+					try {
+						await cloneInto(found.url, found.into, {
+							signal: c.req.raw.signal,
+							progress: (progress) => clones.set(transfer, progress),
+						});
+					} catch (error) {
+						if (!(error instanceof SpoolError)) throw error;
+						return c.json({ error: error.message }, 409);
+					} finally {
+						clones.delete(transfer);
+					}
+					// cloned: read again, as if the folder had been handed over
+					return c.json(await find(found.into));
+				},
+			)
+			.get("/clone/progress", (c) => c.json(clones.get(c.req.query("transfer") ?? "") ?? null))
+			/*
+			 * Another design tool's file, by its path (the Mac app, a paste) or by its bytes (a browser's drop): a project of
+			 * its own named after the file, the import beside its design/ for the agent (spool#242). Nothing is asked first:
+			 * letting go of the file already said what to do with it.
+			 */
+			.post(
+				"/import/design/path",
+				validator("json", (value, c) => {
+					const parsed = z.object({ path: z.string().min(1) }).safeParse(value);
+					return parsed.success ? parsed.data : c.json({ error: 'expected { "path" }' }, 400);
+				}),
+				async (c) => {
+					const found = await find(c.req.valid("json").path);
+					if (found.kind !== "import") return c.json({ error: "spool can't read this kind of file yet." }, 400);
+					return designImport(c, () => readFileSync(found.path), found.name, into());
+				},
+			)
+			.post("/import/design", async (c) => {
+				const name = c.req.query("name") ?? "";
+				const bytes = new Uint8Array(await c.req.arrayBuffer());
+				return designImport(c, () => bytes, name, into());
+			})
+			.post(
+				"/import/path",
+				validator("json", (value, c) => {
+					const parsed = z.object({ path: z.string().min(1) }).safeParse(value);
+					return parsed.success ? parsed.data : c.json({ error: 'expected { "path" }' }, 400);
+				}),
+				async (c) => {
+					const found = await find(c.req.valid("json").path);
+					if (found.kind !== "file") return c.json({ error: "Choose a .spool project file." }, 400);
+					try {
+						const file = Readable.toWeb(createReadStream(found.path)) as ReadableStream<Uint8Array>;
+						return c.json(await importArchive(file, deps.location(), deps.spoolDir, c.req.raw.signal));
+					} catch (error) {
+						return c.json({ error: error instanceof Error ? error.message : "Import failed." }, 400);
+					}
+				},
+			)
+	);
+}
+
+/** One import, answered as Open… answers: the project made, or what went wrong in words a person can act on. */
+function designImport(c: Context, bytes: () => Uint8Array, name: string, into: { location: string; spoolDir: string }) {
+	try {
+		const made = importIntoNewProject(bytes(), basename(name), into.location, into.spoolDir);
+		return c.json({ root: made.root, name: made.name });
+	} catch (error) {
+		if (!(error instanceof SpoolError)) throw error;
+		return c.json({ error: error.message }, 400);
+	}
 }

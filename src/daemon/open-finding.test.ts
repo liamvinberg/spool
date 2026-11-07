@@ -72,7 +72,7 @@ it("offers to design in a folder: at the top of its checkout beside the code, or
 	expect(await find(home)).toMatchObject({ kind: "nothing" });
 });
 
-it("imports a .spool file into the projects location, and says plainly when nothing is at a path", async () => {
+it("imports a .spool file into the projects location, takes another tool's file as an import, and says plainly when nothing is at a path", async () => {
 	const { home, find } = world();
 	writeFileSync(join(home, "kaffe-menu.spool"), "zip");
 	expect(await find(join(home, "kaffe-menu.spool"))).toEqual({
@@ -81,6 +81,15 @@ it("imports a .spool file into the projects location, and says plainly when noth
 		name: "kaffe-menu.spool",
 		bytes: 3,
 		into: join(home, "spool"),
+	});
+	// another tool's file is an import, named by the tool it came from (spool#242)
+	writeFileSync(join(home, "Tidemark app v3.fig"), "fig");
+	expect(await find(join(home, "Tidemark app v3.fig"))).toEqual({
+		kind: "import",
+		path: join(home, "Tidemark app v3.fig"),
+		name: "Tidemark app v3.fig",
+		source: "Figma",
+		bytes: 3,
 	});
 	expect(await find(join(home, "gone.spool"))).toEqual({ kind: "nothing", says: "There is no file at this path." });
 	expect(await find("~/nowhere")).toEqual({ kind: "nothing", says: "There is no folder at this path." });
