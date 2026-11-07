@@ -123,7 +123,7 @@ import {
 	renderOriginFor,
 } from "./security";
 import { createSelectionStore } from "./selection";
-import { type AppEvent, type MachineStateWatchAdapter, watchMachineState } from "./session";
+import { type AppEvent, type MachineStateWatchAdapter, updateSession, watchMachineState } from "./session";
 import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
@@ -1404,6 +1404,8 @@ export function createDaemonApp({
 				...(referenceLimits === undefined ? {} : { limits: referenceLimits }),
 				arrived: (root, frame) => hub.publish(root, { kind: "reference", frame }),
 				reveal: (root, frame) => {
+					// its tab opens, so the address handed back lands on it too
+					updateSession(spoolDir, root, true);
 					emitAppEvent({ kind: "reveal", root, frame });
 					return desktopFollowers > 0;
 				},

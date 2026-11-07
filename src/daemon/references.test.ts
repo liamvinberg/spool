@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import type { ReferenceCapture } from "../reference-wire";
-import { COVER_PNG, makeApp, makeProject, makeTempDir } from "../test-helpers";
+import { COVER_PNG, makeApp, makeProject, makeTempDir, sseReader } from "../test-helpers";
 import { pinViewportHeights } from "./reference-css";
 import { placeReference } from "./reference-frame";
 import type { ReferenceFetch } from "./reference-page";
@@ -116,6 +116,24 @@ describe("a reference", () => {
 			"https://cdn.example.com/img/bg.png": { body: Buffer.from(COVER_PNG) },
 		});
 		const app = makeApp(spoolDir, { referenceFetch: fetch });
+		// its canvas is open on references/, looking at 2000,1000 to 5200,2800 of it
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await app.request(`/api/p/${name}/events`, { signal: controller.signal }));
+		const { view } = (await events.next()).data as { view: string };
+		const told = await app.request(`/api/p/${name}/view`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				view,
+				page: "references",
+				frames: [],
+				scheme: "light",
+				camera: { x: -1000, y: -500, k: 0.5 },
+				size: { w: 1600, h: 900 },
+			}),
+		});
+		expect(told.status).toBe(204);
 
 		const sent = await app.fetch("/api/references", {
 			method: "POST",
@@ -147,7 +165,17 @@ describe("a reference", () => {
 		expect(page).not.toContain("onclick");
 		const tsx = readFileSync(join(folder, "frame.tsx"), "utf8");
 		expect(tsx).toContain("Left out: a cross-origin iframe; 1 file the site would not give.");
-		expect(JSON.parse(readFileSync(join(folder, "frame.json"), "utf8"))).toMatchObject({ w: 600, h: 300 });
+		// in view, and the canvas is told it arrived
+		expect(JSON.parse(readFileSync(join(folder, "frame.json"), "utf8"))).toEqual({
+			x: 2080,
+			y: 1080,
+			w: 600,
+			h: 300,
+		});
+		let arrived = await events.next();
+		while (arrived.event !== "change" || (arrived.data as { kind: string }).kind !== "reference")
+			arrived = await events.next();
+		expect(arrived.data).toEqual({ kind: "reference", frame: "references/example-com-section-pricing" });
 
 		const doc = await app.request(
 			`/p/${name}/frames/${encodeURIComponent("references/example-com-section-pricing")}`,
