@@ -832,6 +832,8 @@ export interface AgentSent {
 	readonly selection?: readonly SelectionEntry[] | undefined;
 	/** comments sent to the agent (spool#172), by id: the daemon renders each as it holds it at the send */
 	readonly comments?: readonly string[] | undefined;
+	/** work brought in from another tool (spool#242), by its folder under imports/: the daemon points the agent at it */
+	readonly imports?: readonly string[] | undefined;
 }
 
 /**

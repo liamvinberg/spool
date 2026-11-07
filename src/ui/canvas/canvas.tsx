@@ -28,6 +28,7 @@ import type {
 	FrameCopy,
 	Geometry,
 	HistoryScope,
+	PendingImport,
 	ProjectedFrame,
 	SelectionEntry,
 	SelectionPut,
@@ -43,6 +44,7 @@ import {
 	fetchCloudAccount,
 	fetchFlows,
 	fetchOrder,
+	fetchPendingImports,
 	fetchProjection,
 	postSeen,
 	postTrash,
@@ -318,6 +320,8 @@ interface ResizePaint {
 }
 
 const SETTLE_PERSIST_MS = 600;
+/** What a person says, in effect, by dropping another tool's file on Home (spool#242). */
+const IMPORT_ASK = "Rebuild these as frames, with the prototype links as walks.";
 /**
  * How long a Fast Refresh update (the fast-refresh experiment) may take before
  * the frame is reloaded as if it had refused: about what a reload takes, so
@@ -729,6 +733,44 @@ function CanvasField({
 		() => ({ label: fixLabel, run: (marks: readonly ShownSetAside[]) => askToFix(setAsideAsk(marks)) }),
 		[fixLabel, askToFix],
 	);
+	/**
+	 * A project made from another tool's file starts its agent on it as it opens (spool#242): the pane opens on the
+	 * open thread and the import goes out under its chip's words. Where nothing can take it (no agent on this Mac, a
+	 * turn already running) the words wait in the composer instead, naming the import's folder, for the person to send.
+	 */
+	const [imported, setImported] = useState<readonly PendingImport[]>([]);
+	useEffect(() => {
+		let gone = false;
+		void fetchPendingImports(project).then((waiting) => {
+			if (!gone) setImported(waiting);
+		});
+		return () => {
+			gone = true;
+		};
+	}, [project]);
+	useEffect(() => {
+		const first = imported[0];
+		if (first === undefined || deckEngine === undefined || deckOpen === "" || install.looked !== true) return;
+		setImported([]);
+		const turn = deck.get().turn;
+		const took =
+			!install.missing &&
+			!turn.running() &&
+			turn.send(IMPORT_ASK, { context: first.label, imports: imported.map((one) => one.slug) });
+		setAgentRequest({
+			id: crypto.randomUUID(),
+			thread: deckOpen,
+			...(took
+				? {}
+				: {
+						prepared: {
+							intent: "import",
+							text: `${IMPORT_ASK} The ${first.source} file is in imports/${first.slug}/: read its README.md and run \`spool skill import\` first.`,
+							selection: [],
+						},
+					}),
+		});
+	}, [imported, deckEngine, deckOpen, install.looked, install.missing, deck]);
 	const fixBroken = useCallback(
 		(frame: string, broken: BrokenFrameRecord) => askToFix(brokenAsk(frame, broken)),
 		[askToFix],
