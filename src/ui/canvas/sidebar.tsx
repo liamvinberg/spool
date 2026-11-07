@@ -426,6 +426,11 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	 * everything below it, as with unseen, and broken outranks unseen on a row:
 	 * a frame that cannot show is the louder thing to know.
 	 */
+	/** Each mirror's original (spool#232), which its row says quietly after its name. */
+	const mirrors = useMemo(
+		() => new Map(frames.flatMap((frame) => (frame.mirrorOf === undefined ? [] : [[frame.name, frame.mirrorOf]]))),
+		[frames],
+	);
 	const brokenIn = useMemo(() => {
 		const broken = new Set<string>();
 		for (const frame of frames) {
@@ -1834,6 +1839,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 								broken={
 									row.kind === "frame" ? brokenIn.has(row.name) : !row.open && brokenIn.has(`${row.page}/`)
 								}
+								mirrorOf={row.kind === "frame" ? mirrors.get(row.name) : undefined}
 								cursored={cursor === rowKey(row)}
 								lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
 								room={gapY !== null && row.top >= gapY ? ROOM : 0}
@@ -2052,6 +2058,7 @@ const RailTreeRow = memo(function RailTreeRow({
 	holding,
 	mark,
 	broken,
+	mirrorOf,
 	cursored,
 	lifted,
 	room,
@@ -2077,6 +2084,8 @@ const RailTreeRow = memo(function RailTreeRow({
 	mark: Unseen | undefined;
 	/** it, or a frame under its shut page, does not compile or throws as it starts */
 	broken: boolean;
+	/** the frame this one mirrors (spool#232): one line re-exporting it, so the row says whose it is */
+	mirrorOf: string | undefined;
 	cursored: boolean;
 	lifted: boolean;
 	/** px it slides down to make room for a gap above it */
@@ -2122,7 +2131,14 @@ const RailTreeRow = memo(function RailTreeRow({
 				mono
 				label={
 					rename === null ? (
-						label
+						mirrorOf === undefined ? (
+							label
+						) : (
+							<>
+								{label}
+								<span className="ml-2 text-tertiary">mirror of {mirrorOf}</span>
+							</>
+						)
 					) : (
 						<RenameField
 							state={rename.state}
