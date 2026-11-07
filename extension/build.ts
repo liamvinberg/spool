@@ -33,18 +33,36 @@ const ENTRIES = [
 	["background", "src/background.ts"],
 ] as const;
 
-export async function buildExtension({ test = false } = {}): Promise<Manifest> {
-	rmSync(dist, { recursive: true, force: true });
-	mkdirSync(dist, { recursive: true });
+export async function buildExtension({ test = false, out = dist } = {}): Promise<Manifest> {
+	rmSync(out, { recursive: true, force: true });
+	mkdirSync(out, { recursive: true });
+	// the JSX runtime follows NODE_ENV, which a test run sets to "test": what ships is the production build
+	const env = process.env.NODE_ENV;
+	process.env.NODE_ENV = "production";
+	try {
+		await bundle(out);
+	} finally {
+		if (env === undefined) delete process.env.NODE_ENV;
+		else process.env.NODE_ENV = env;
+	}
+	const m = manifest();
+	if (test) m.host_permissions = ["<all_urls>"];
+	writeFileSync(join(out, "manifest.json"), `${JSON.stringify(m, null, "\t")}\n`);
+	cpSync(join(here, "icons"), join(out, "icons"), { recursive: true });
+	return m;
+}
+
+async function bundle(out: string): Promise<void> {
 	for (const [name, entry] of ENTRIES) {
 		await build({
 			configFile: false,
+			mode: "production",
 			root: here,
 			logLevel: "warn",
 			plugins: [react(), tailwindcss()],
 			define: { "process.env.NODE_ENV": JSON.stringify("production") },
 			build: {
-				outDir: dist,
+				outDir: out,
 				emptyOutDir: false,
 				copyPublicDir: false,
 				target: "chrome114",
@@ -52,11 +70,6 @@ export async function buildExtension({ test = false } = {}): Promise<Manifest> {
 			},
 		});
 	}
-	const m = manifest();
-	if (test) m.host_permissions = ["<all_urls>"];
-	writeFileSync(join(dist, "manifest.json"), `${JSON.stringify(m, null, "\t")}\n`);
-	cpSync(join(here, "icons"), join(dist, "icons"), { recursive: true });
-	return m;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
