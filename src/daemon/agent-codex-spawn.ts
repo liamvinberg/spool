@@ -1,6 +1,6 @@
 import type { CodexRpc } from "./agent-codex-rpc";
 import type { AgentPermissions } from "./agent-defaults";
-import { DESIGNER_DESCRIPTION, DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
+import { DESIGNER_DESCRIPTION, DESIGNER_EFFORT, DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
 import { framing } from "./agent-framing";
 import type { AgentSpawn } from "./agent-spawn";
 
@@ -138,7 +138,9 @@ function toml(value: string): string {
  *
  * A turn's spawn also carries spool's designer (#367) as an agent role: its config layer
  * is the file in spool's state, and its description is the hint the spawn tool shows.
- * Both ride as `-c` flags, so Codex's own config never learns of it.
+ * The designer's effort rides as the default for spawned agents rather than in the role
+ * file, whose own would outrank the one a spawn asks for. All ride as `-c` flags, so
+ * Codex's own config never learns of them.
  */
 export function planCodexSpawn(
 	root: string,
@@ -158,6 +160,8 @@ export function planCodexSpawn(
 						`agents.${DESIGNER_NAME}.config_file=${toml(turn.designer)}`,
 						"-c",
 						`agents.${DESIGNER_NAME}.description=${toml(CODEX_DESIGNER_DESCRIPTION)}`,
+						"-c",
+						`agents.default_subagent_reasoning_effort=${toml(DESIGNER_EFFORT)}`,
 					]),
 		],
 		cwd: root,

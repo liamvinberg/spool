@@ -38,28 +38,19 @@ Once the frame renders, look at it with \`spool shot\` and hold it against the b
 
 /** when to use it, which is what each engine shows the main agent beside the name */
 export const DESIGNER_DESCRIPTION =
-	"Draws one design direction as frames on the spool canvas. Use one designer per direction when someone asks for options or several directions. The brief is all it sees, so give it the product, its own frame to write as design/frames/<page>/<name>/frame.tsx, and what sets this direction apart.";
-
-/** the framing's one line about designers, the same in every engine */
-export const DESIGNER_FRAMING =
-	"When someone asks for options or several directions, give each direction to its own designer with a brief. Before it starts, choose each designer's own frame and name it in the brief as design/frames/<page>/<name>/frame.tsx, one new frame per designer: spool puts a placeholder there the moment the designer starts, and the designer draws into it. Make single edits yourself.";
+	"Draws one design direction as frames on the spool canvas, at medium effort unless you ask for more. Good for options or several directions, one designer each. The brief is all it sees, so give it the product, its own frame to write as design/frames/<page>/<name>/frame.tsx, and what sets this direction apart.";
 
 /**
- * The most a designer thinks. Every engine's sub-agent takes the parent's effort unless
- * told otherwise, so a thread on xhigh fanned out to three designers ran all three on
- * xhigh. A direction is drawn and then checked against its shot, which medium does as
- * well for a fraction of the tokens; the model stays the thread's own, which is where the
- * taste is.
+ * The effort a designer works at unless the main agent asks for another. Every engine's
+ * sub-agent otherwise takes the parent's, so a thread on xhigh fanned out to three
+ * designers ran all three on xhigh. A direction is drawn and then checked against its
+ * shot, which medium does well for a fraction of the tokens; the model stays the thread's
+ * own, which is where the taste is. The main agent can still raise it for one designer.
  */
 export const DESIGNER_EFFORT = "medium";
 
-/** the levels, in every engine's vocabulary, that already sit at or under the cap */
-const UNDER_CAP: readonly string[] = ["off", "none", "minimal", "low", DESIGNER_EFFORT];
-
-/** a designer's effort: the thread's own where it is at or under the cap, else the cap */
-export function designerEffort(thread: string | undefined): string {
-	return thread !== undefined && UNDER_CAP.includes(thread) ? thread : DESIGNER_EFFORT;
-}
+/** the framing's line about designers, the same in every engine */
+export const DESIGNER_FRAMING = `Designers are there when someone asks for options or several directions: each draws one direction from a brief, in parallel, while your own context stays small. Use them when that helps, and make single edits yourself. Before a designer starts, choose its own frame and name it in the brief as design/frames/<page>/<name>/frame.tsx, one new frame per designer: spool puts a placeholder there the moment the designer starts, and the designer draws into it. A designer works at ${DESIGNER_EFFORT} effort; ask for a higher one only for a direction that is hard to get right.`;
 
 export function designerDir(spoolDir: string): string {
 	return join(spoolDir, "designer");
@@ -68,17 +59,21 @@ export function designerDir(spoolDir: string): string {
 /** a TOML basic string: JSON's escapes are a subset TOML reads the same way */
 const toml = (value: string): string => JSON.stringify(value);
 
-function claudeDesignerFile(effort: string): string {
+/** the definition's effort is a default: the Agent tool's own `effort` on a call outranks it */
+function claudeDesignerFile(): string {
 	return `${JSON.stringify(
-		{ [DESIGNER_NAME]: { description: DESIGNER_DESCRIPTION, prompt: DESIGNER_PROMPT, effort } },
+		{ [DESIGNER_NAME]: { description: DESIGNER_DESCRIPTION, prompt: DESIGNER_PROMPT, effort: DESIGNER_EFFORT } },
 		null,
 		"\t",
 	)}\n`;
 }
 
-/** a role file's own effort outranks what the spawn asks for, so the cap holds */
-function codexDesignerFile(effort: string): string {
-	return `model_reasoning_effort = ${toml(effort)}\ndeveloper_instructions = ${toml(DESIGNER_PROMPT)}\n`;
+/**
+ * No effort here: a role file's own outranks what a spawn asks for, so the designer's
+ * default rides the spawn instead (`planCodexSpawn`), where an explicit one beats it.
+ */
+function codexDesignerFile(): string {
+	return `developer_instructions = ${toml(DESIGNER_PROMPT)}\n`;
 }
 
 /**
@@ -86,7 +81,8 @@ function codexDesignerFile(effort: string): string {
  *
  * One `designer` tool. Its call runs the same pi that loaded it (the running script, the
  * way pi's own sub-agent example does), in JSON mode with no session, on the parent's
- * model and on its thinking level held to the cap, with the designer prompt appended. The child is the person's
+ * model, at the effort the call asks for or else the designer's own, with the designer prompt
+ * appended. The child is the person's
  * own pi with their login and settings and without this extension, so a designer brings
  * in no designers of its own. Tool calls from one message run in parallel, so a fan-out
  * is one call per direction. Each tool the child starts comes back as the tool's partial
@@ -100,7 +96,6 @@ import { existsSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
 
 const PROMPT = ${JSON.stringify(DESIGNER_PROMPT)};
-const UNDER_CAP = ${JSON.stringify(UNDER_CAP)};
 
 function invocation(args) {
 	const script = process.argv[1];
@@ -129,11 +124,14 @@ export default function (pi) {
 		parameters: Type.Object({
 			description: Type.String({ description: "A few words naming this direction" }),
 			prompt: Type.String({ description: "The whole brief for this direction" }),
+			effort: Type.Optional(
+				Type.String({ description: "A thinking level for a direction that is hard to get right; ${DESIGNER_EFFORT} without one" }),
+			),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const args = ["--mode", "json", "-p", "--no-session"];
 			if (ctx?.model) args.push("--model", ctx.model.provider + "/" + ctx.model.id);
-			args.push("--thinking", UNDER_CAP.includes(ctx?.thinkingLevel) ? ctx.thinkingLevel : ${JSON.stringify(DESIGNER_EFFORT)});
+			args.push("--thinking", params.effort || ${JSON.stringify(DESIGNER_EFFORT)});
 			args.push("--append-system-prompt", PROMPT, params.prompt);
 			const run = invocation(args);
 			const child = spawn(run.command, run.args, { cwd: ctx?.cwd ?? process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
@@ -195,28 +193,22 @@ function writeIfChanged(file: string, text: string): void {
 /**
  * Where the designer lives in spool's state, one file per engine in its own vocabulary:
  * Claude Code's `--agents` file, Codex's role layer for `agents.designer.config_file`, and
- * pi's extension for `-e`. Claude's and Codex's carry the designer's effort, so there is
- * one per level, and two threads on two levels never write the same file; pi's extension
- * reads the level when it runs.
+ * pi's extension for `-e`.
  */
-const DESIGNER_FILES: Readonly<
-	Record<AgentEngineId, { readonly name: (effort: string) => string; readonly text: (effort: string) => string }>
-> = {
-	claude: { name: (effort) => `claude-agents-${effort}.json`, text: claudeDesignerFile },
-	codex: { name: (effort) => `codex-designer-${effort}.toml`, text: codexDesignerFile },
-	pi: { name: () => "pi-designer.ts", text: piDesignerFile },
+const DESIGNER_FILES: Readonly<Record<AgentEngineId, { readonly name: string; readonly text: () => string }>> = {
+	claude: { name: "claude-agents.json", text: claudeDesignerFile },
+	codex: { name: "codex-designer.toml", text: codexDesignerFile },
+	pi: { name: "pi-designer.ts", text: piDesignerFile },
 };
 
 /**
- * One engine's designer file for a thread on `effort`, written into spool's state if it
- * is missing or stale, and where it is. Called on every turn's spawn, so a spool upgrade
- * that changes the prompt reaches the next turn; a file that already says the same thing
- * is left alone.
+ * One engine's designer file, written into spool's state if it is missing or stale, and
+ * where it is. Called on every turn's spawn, so a spool upgrade that changes the
+ * prompt reaches the next turn; a file that already says the same thing is left alone.
  */
-export function mountDesigner(spoolDir: string, engine: AgentEngineId, effort?: string): string {
+export function mountDesigner(spoolDir: string, engine: AgentEngineId): string {
 	const { name, text } = DESIGNER_FILES[engine];
-	const level = designerEffort(effort);
-	const file = join(designerDir(spoolDir), name(level));
-	writeIfChanged(file, text(level));
+	const file = join(designerDir(spoolDir), name);
+	writeIfChanged(file, text());
 	return file;
 }

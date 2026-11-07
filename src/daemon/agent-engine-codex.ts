@@ -301,7 +301,7 @@ export function createCodexEngine({
 				session: sessions.read(session.id) ?? null,
 				onSession: (thread) => sessions.write(session.id, thread),
 				version,
-				designer: mountDesigner(spoolDir, "codex", ask.effort),
+				designer: mountDesigner(spoolDir, "codex"),
 				allowed: allowedIn(session.id),
 			}),
 	};
