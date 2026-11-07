@@ -24,7 +24,8 @@ const { key: _key, ...store } = m;
 const entries: Record<string, Uint8Array> = {};
 for (const path of files(dist)) {
 	const name = relative(dist, path).split("\\").join("/");
-	entries[name] = name === "manifest.json" ? Buffer.from(`${JSON.stringify(store, null, "\t")}\n`) : readFileSync(path);
+	entries[name] =
+		name === "manifest.json" ? Buffer.from(`${JSON.stringify(store, null, "\t")}\n`) : readFileSync(path);
 }
 const out = join(here, `spool-${m.version}.zip`);
 writeFileSync(out, zipSync(entries, { level: 9 }));
