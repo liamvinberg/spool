@@ -25,6 +25,7 @@ import { Checkbox } from "./primitives/selection";
 import { ListRow, ScrollArea, TreeRow } from "./primitives/structure";
 import { QrCode } from "./qr-code";
 import {
+	followedFolders,
 	foundAt,
 	foundRows,
 	leavingLinks,
@@ -322,7 +323,7 @@ function NewShare({
 		setError(null);
 		const answer = await source.create({
 			kind,
-			...(whole ? { whole: true } : { pages: [...chosen].sort() }),
+			...(whole ? { whole: true } : { pages: [...chosen].sort(), ...followsOf(followedFolders(chosen, rows)) }),
 			...(kind === "people" ? { people: addresses, notify } : {}),
 			...(start !== null && starting ? { start } : {}),
 			// never is spool.page's own default, so an older spool.page is asked nothing new
@@ -471,6 +472,11 @@ const ENDS: readonly { ends: ShareEnds; label: string }[] = [
 ];
 
 /** When a new share ends, chosen quietly in the foot beside Share: never, or in 30 or 7 days, each by its date. */
+/** The folders a share follows, asked only when it follows some, so an older spool.page is asked nothing new. */
+function followsOf(folders: string[]): { folders?: string[] } {
+	return folders.length === 0 ? {} : { folders };
+}
+
 function EndsChoice({ ends, onEnds }: { ends: ShareEnds; onEnds: (ends: ShareEnds) => void }) {
 	const [open, setOpen] = useState(false);
 	const held = useDismissed(open, () => setOpen(false));

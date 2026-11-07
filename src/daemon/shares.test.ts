@@ -67,6 +67,7 @@ function fakeCloud(limit = Number.POSITIVE_INFINITY) {
 				kind: "people" | "link";
 				pages?: string[];
 				whole?: true;
+				folders?: string[];
 				people?: string[];
 				ends?: string;
 			};
@@ -76,6 +77,7 @@ function fakeCloud(limit = Number.POSITIVE_INFINITY) {
 				kind: body.kind,
 				pages: body.pages ?? [],
 				...(body.whole ? { whole: true as const } : {}),
+				...(body.folders === undefined ? {} : { folders: body.folders }),
 				people: body.people ?? [],
 				by: "sam@example.test",
 				at: 1,
@@ -339,7 +341,7 @@ describe("a solo project's share", () => {
 	});
 });
 
-describe("a solo project's whole-project share (spool#185)", () => {
+describe("a solo project's share that takes in pages added later (spool#185, spool#230)", () => {
 	const share = (shares: ReturnType<typeof createProjectShares>, name: string, body: object) =>
 		shares.routes.request(`/${name}/shares`, {
 			method: "POST",
@@ -386,7 +388,11 @@ describe("a solo project's whole-project share (spool#185)", () => {
 		shares.close();
 	});
 
-	it("takes a page added later up after a quiet spell", async () => {
+	it.each([
+		{ kind: "link", whole: true },
+		// a share following a folder takes up a page added under it, and nothing outside it (spool#230)
+		{ kind: "link", pages: ["checkout"], folders: ["checkout"] },
+	])("takes a page added later up after a quiet spell: %o", async (body) => {
 		const cloud = fakeCloud();
 		const spoolDir = makeTempDir();
 		const { root, name } = makeProject(spoolDir);
@@ -404,7 +410,8 @@ describe("a solo project's whole-project share (spool#185)", () => {
 		});
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		try {
-			expect((await share(shares, name, { kind: "link", whole: true })).status).toBe(200);
+			expect((await share(shares, name, body)).status).toBe(200);
+			writePageFrame(root, "checkout/tips", "list", frame("Tip the staff"));
 			writePageFrame(root, "menu", "list", frame("Tonight's menu"));
 			saved();
 			vi.advanceTimersByTime(SOLO_QUIET_MS);
@@ -412,7 +419,8 @@ describe("a solo project's whole-project share (spool#185)", () => {
 		} finally {
 			vi.useRealTimers();
 		}
-		expect(cloud.copy()["frames/menu/list/frame.tsx"]).toContain("Tonight's menu");
+		expect(cloud.copy()["frames/checkout/tips/list/frame.tsx"]).toContain("Tip the staff");
+		expect(Object.hasOwn(cloud.copy(), "frames/menu/list/frame.tsx")).toBe(body.whole === true);
 		shares.close();
 	});
 
