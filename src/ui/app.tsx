@@ -42,7 +42,6 @@ import type { HotkeyId, HotkeyIdFor } from "./hotkeys";
 import { useOpen } from "./open-flow";
 import { ProjectTeams } from "./project-icon";
 import { useIconChange } from "./project-icon-change";
-import { useProjectExport } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
@@ -771,7 +770,6 @@ export function App() {
 	}, [appWindow, openSettings, closeOnTop, startNew, choose, closeOpen]);
 
 	const icons = useIconChange(setIcon, setThumbnail);
-	const transfer = useProjectExport();
 	const teamHome = useTeamHome(
 		account,
 		openExternally,
@@ -792,7 +790,6 @@ export function App() {
 						onTrashProject={setTrashRequest}
 						onDeleteFromTeam={setDeleteRequest}
 						onRenameProject={(project) => void requestRename(project)}
-						onExportProject={transfer.exportProject}
 						onChangeIcon={icons.change}
 						onRemoveIcon={icons.remove}
 						onRemoveThumbnail={icons.removeThumbnail}
@@ -920,7 +917,6 @@ export function App() {
 		trashRequest === null &&
 		deleteRequest === null &&
 		moving === null &&
-		!transfer.confirming &&
 		!opener.up;
 	useEffect(() => {
 		appWindow?.setMenuKeys?.(menuAccelerators());
@@ -942,7 +938,6 @@ export function App() {
 							onFocus={focusProject}
 							onClose={closeTab}
 							onReorder={reorderTabs}
-							onExport={transfer.exportProject}
 							onChangeIcon={icons.change}
 							onRemoveIcon={icons.remove}
 							onMatchTeam={(tab) => {
@@ -999,7 +994,6 @@ export function App() {
 								loading={!projectsLoaded}
 								onStart={() => startNew()}
 								onOpen={choose}
-								onExportProject={transfer.exportProject}
 								onChangeIcon={icons.change}
 								onRemoveIcon={icons.remove}
 								onRemoveThumbnail={icons.removeThumbnail}
@@ -1102,7 +1096,6 @@ export function App() {
 					<RefusedToast key={renameRefused} message={renameRefused} onDismiss={() => setRenameRefused(null)} />
 				)}
 				{abandon.toast}
-				{transfer.surface}
 				{opener.surface}
 				{icons.surface}
 				{focusedTab === undefined && teamHome.toast}

@@ -4,10 +4,13 @@
  * the flow to take), then the line that says the file is being built, then
  * the line that says where it landed. What a step draws lives here; the menu
  * that morphs between them is the StepMenu primitive, worked by the context menu.
+ * Export project… (spool#240) takes the same steps past the choice, in the tab's
+ * and the cover's menus.
  */
 
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { type ExportPlan, fetchExportHtml } from "../api";
-import { desktopWindow, type ExportDownload } from "../desktop-window";
+import { desktopWindow } from "../desktop-window";
 import { CheckIcon } from "../icons";
 import { SpinRing } from "../primitives/display";
 import { Drain, Progress } from "../primitives/feedback";
@@ -110,7 +113,11 @@ export async function exportFrames(
 	}
 	progress({ done: total, total });
 
-	const saved = landed(files.map((file) => file.name));
+	const bridge = desktopWindow();
+	const saved = landed(
+		files.map((file) => file.name),
+		bridge?.onExportDownload?.bind(bridge),
+	);
 	for (const file of files) downloadBytes(file.bytes, file.type, file.name);
 	const reports = await saved;
 	const bytes = files.reduce((sum, file) => sum + file.bytes.length, 0);
@@ -119,7 +126,12 @@ export async function exportFrames(
 	return { file: first?.filename ?? files[0]?.name ?? "", bytes, path: first?.path };
 }
 
-type Completed = Extract<ExportDownload, { status: "completed" }>;
+/** the Mac app's report on one download, by the name the page asked for */
+export type Landed =
+	| { status: "completed"; requested: string; filename: string; path?: string | undefined }
+	| { status: "failed"; requested: string; message: string };
+
+type Completed = Extract<Landed, { status: "completed" }>;
 
 /**
  * The Mac app's word on where each file landed, heard before any is handed
@@ -127,10 +139,11 @@ type Completed = Extract<ExportDownload, { status: "completed" }>;
  * that stays silent never holds the box on Building: after 15 s it settles
  * with the reports it has, and a file without one has no Finder path.
  */
-function landed(requested: readonly string[]): Promise<Completed[]> | null {
-	const bridge = desktopWindow();
-	if (bridge?.onExportDownload === undefined) return null;
-	const listen = bridge.onExportDownload.bind(bridge);
+export function landed(
+	requested: readonly string[],
+	listen: ((heard: (report: Landed) => void) => () => void) | undefined,
+): Promise<Completed[]> | null {
+	if (listen === undefined) return null;
 	return new Promise((resolve, reject) => {
 		const waiting = [...requested];
 		const reports: Completed[] = [];
@@ -158,6 +171,80 @@ function landed(requested: readonly string[]): Promise<Completed[]> | null {
 }
 
 /* ------------------------------------------------------------------ steps -- */
+
+/** the steps past the choice: the file being built, then where it landed or why it did not */
+export type ExportStep =
+	| { kind: "building"; file: string; progress: ExportProgress }
+	| { kind: "saved"; exported: Exported }
+	| { kind: "failed"; message: string };
+
+type ExportWork = (progress: (at: ExportProgress) => void) => Promise<Exported>;
+
+/**
+ * A menu's export once it is under way: `run` puts it on Building and on to
+ * Saved or Failed, `enter` is what ↵ does in the step standing, `view` draws
+ * it, and `reset` puts the menu back, dropping a run still going. `finder`
+ * says the Mac app saves the file and may show it.
+ */
+export function useExportSteps({ finder, onClose }: { finder: boolean; onClose: () => void }): {
+	step: ExportStep | null;
+	run: (file: string, total: number, work: ExportWork) => void;
+	reset: () => void;
+	enter: (() => void) | undefined;
+	view: ReactNode;
+} {
+	const [step, setStep] = useState<ExportStep | null>(null);
+	const last = useRef<{ file: string; total: number; work: ExportWork } | null>(null);
+	const runs = useRef(0);
+	const run = useCallback((file: string, total: number, work: ExportWork) => {
+		last.current = { file, total, work };
+		const id = ++runs.current;
+		const now = (next: (was: ExportStep | null) => ExportStep | null) =>
+			setStep((was) => (runs.current === id ? next(was) : was));
+		setStep({ kind: "building", file, progress: { done: 0, total } });
+		work((progress) => now((was) => (was?.kind === "building" ? { ...was, progress } : was))).then(
+			(exported) => now(() => ({ kind: "saved", exported })),
+			(error: unknown) =>
+				now(() => ({
+					kind: "failed",
+					message: error instanceof Error && error.message !== "" ? error.message : "Export failed. Try again.",
+				})),
+		);
+	}, []);
+	const reset = useCallback(() => {
+		runs.current++;
+		last.current = null;
+		setStep(null);
+	}, []);
+	const retry = () => {
+		const again = last.current;
+		if (again !== null) run(again.file, again.total, again.work);
+	};
+	const reveal = (path: string | undefined) => {
+		if (path !== undefined) void desktopWindow()?.revealDownload?.(path);
+		onClose();
+	};
+	const enter =
+		step?.kind === "failed"
+			? retry
+			: step?.kind === "saved" && finder && step.exported.path !== undefined
+				? () => reveal(step.exported.path)
+				: undefined;
+	const view =
+		step === null ? null : step.kind === "building" ? (
+			<ExportBuilding file={step.file} progress={step.progress} />
+		) : step.kind === "saved" ? (
+			<ExportSaved
+				exported={step.exported}
+				finder={finder}
+				onReveal={() => reveal(step.exported.path)}
+				onClose={onClose}
+			/>
+		) : (
+			<ExportFailed message={step.message} onRetry={retry} />
+		);
+	return { step, run, reset, enter, view };
+}
 
 export function ExportChoice({
 	format,

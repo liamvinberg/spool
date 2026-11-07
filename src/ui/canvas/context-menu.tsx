@@ -25,18 +25,14 @@ import { MenuItem, MenuSeparator, StepMenu } from "../primitives/overlays";
 import { useRemembered } from "../remembered";
 import {
 	EXPORT_WIDTH,
-	ExportBuilding,
 	ExportChoice,
-	type Exported,
-	ExportFailed,
 	type ExportFormat,
-	type ExportProgress,
-	ExportSaved,
 	type ExportScope,
 	exportFrames,
 	exportTarget,
 	isExportFormat,
 	onlineFrames,
+	useExportSteps,
 } from "./export-menu";
 import type { CapturedFrame } from "./frame-export";
 
@@ -44,13 +40,6 @@ export interface MenuPlacement {
 	x: number;
 	y: number;
 }
-
-type Step =
-	| { kind: "menu" }
-	| { kind: "choice" }
-	| { kind: "building"; file: string; progress: ExportProgress }
-	| { kind: "saved"; exported: Exported }
-	| { kind: "failed"; message: string };
 
 export function ContextMenu({
 	at,
@@ -89,14 +78,15 @@ export function ContextMenu({
 	onClose: () => void;
 }) {
 	const [last, setLast] = useRemembered<ExportFormat>("export.format", "png", isExportFormat);
-	const [step, setStep] = useState<Step>({ kind: "menu" });
+	const [choosing, setChoosing] = useState(false);
+	const exporting = useExportSteps({ finder: desktopWindow()?.onExportDownload !== undefined, onClose });
+	const step = exporting.step?.kind ?? (choosing ? "choice" : "menu");
 	const [format, setFormat] = useState<ExportFormat>(last);
 	const [scope, setScope] = useState<ExportScope>("flow");
 	const [plans, setPlans] = useState<ReadonlyMap<string, ExportPlan>>(new Map());
 	const frames = exportable ?? [];
 	const framesKey = frames.join("\n");
-	const past = step.kind !== "menu";
-	const choosing = step.kind === "choice";
+	const past = step !== "menu";
 
 	// past the menu, the step owns the keyboard as the dialog it replaced did
 	const closing = useRef(onClose);
@@ -111,7 +101,7 @@ export function ContextMenu({
 
 	// what an HTML file would take, asked once the choice is up; a frame the daemon cannot plan takes itself alone
 	useEffect(() => {
-		if (!choosing || framesKey === "") return;
+		if (step !== "choice" || framesKey === "") return;
 		let live = true;
 		const names = framesKey.split("\n");
 		void Promise.all(
@@ -127,33 +117,17 @@ export function ContextMenu({
 		return () => {
 			live = false;
 		};
-	}, [choosing, framesKey, project]);
+	}, [step, framesKey, project]);
 
 	const run = () => {
 		if (frames.length === 0) return;
 		setLast(format);
-		setStep({
-			kind: "building",
-			file: frames.length > 1 && format !== "pdf" ? `${frames.length} files` : exportTarget(project, frames, format),
-			progress: { done: 0, total: frames.length },
-		});
-		exportFrames({ project, frames, format, scope }, capture, (progress) =>
-			setStep((was) => (was.kind === "building" ? { ...was, progress } : was)),
-		).then(
-			(exported) => setStep({ kind: "saved", exported }),
-			(error: unknown) =>
-				setStep({
-					kind: "failed",
-					message: error instanceof Error && error.message !== "" ? error.message : "Export failed. Try again.",
-				}),
+		exporting.run(
+			frames.length > 1 && format !== "pdf" ? `${frames.length} files` : exportTarget(project, frames, format),
+			frames.length,
+			(progress) => exportFrames({ project, frames, format, scope }, capture, progress),
 		);
 	};
-
-	const reveal = (path: string | undefined) => {
-		if (path !== undefined) void desktopWindow()?.revealDownload?.(path);
-		onClose();
-	};
-	const finder = desktopWindow()?.onExportDownload !== undefined;
 
 	const [only] = frames;
 	const reach = frames.length === 1 && only !== undefined ? (plans.get(only)?.reach.length ?? 0) : 0;
@@ -161,17 +135,12 @@ export function ContextMenu({
 	return (
 		<StepMenu
 			at={at}
-			step={step.kind}
+			step={step}
 			width={past ? EXPORT_WIDTH : undefined}
 			onClose={onClose}
 			onKeyDown={(event) => {
 				if (event.key !== "Enter") return;
-				const act =
-					step.kind === "choice" || step.kind === "failed"
-						? run
-						: step.kind === "saved" && finder && step.exported.path !== undefined
-							? () => reveal(step.exported.path)
-							: undefined;
+				const act = step === "choice" ? run : exporting.enter;
 				if (act === undefined) return;
 				event.preventDefault();
 				event.stopPropagation();
@@ -180,7 +149,7 @@ export function ContextMenu({
 			onPointerDown={(event) => event.stopPropagation()}
 			onContextMenu={(event) => event.preventDefault()}
 		>
-			{step.kind === "menu" ? (
+			{step === "menu" ? (
 				<>
 					<MenuItem label="Play from here" shortcut={hotkeyKey("canvas.play")} onClick={onPlay} />
 					{onRecord === undefined ? null : <MenuItem label="Record" onClick={onRecord} />}
@@ -200,14 +169,14 @@ export function ContextMenu({
 							meta={last}
 							onClick={() => {
 								setFormat(last);
-								setStep({ kind: "choice" });
+								setChoosing(true);
 							}}
 						/>
 					)}
 					<MenuSeparator />
 					<MenuItem label="Move to Trash" shortcut={hotkeyKey("canvas.trash")} onClick={onTrash} />
 				</>
-			) : step.kind === "choice" ? (
+			) : step === "choice" ? (
 				<ExportChoice
 					format={format}
 					onFormat={setFormat}
@@ -218,17 +187,8 @@ export function ContextMenu({
 					target={exportTarget(project, frames, format)}
 					onExport={run}
 				/>
-			) : step.kind === "building" ? (
-				<ExportBuilding file={step.file} progress={step.progress} />
-			) : step.kind === "saved" ? (
-				<ExportSaved
-					exported={step.exported}
-					finder={finder}
-					onReveal={() => reveal(step.exported.path)}
-					onClose={onClose}
-				/>
 			) : (
-				<ExportFailed message={step.message} onRetry={run} />
+				exporting.view
 			)}
 		</StepMenu>
 	);
