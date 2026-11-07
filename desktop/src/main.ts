@@ -42,7 +42,7 @@ import {
 	type WorkArea,
 	writeRect,
 } from "./play-window";
-import { installProjectDownloads } from "./project-download";
+import { type CanvasDownloads, installCanvasDownloads } from "./project-download";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import { UpdateCover } from "./update-cover";
 import {
@@ -124,6 +124,8 @@ let resumeCovered = false;
 let dismissedUpdate: string | undefined;
 let saveSequence = 0;
 let saving: { id: number; resolve: () => void; reject: (error: Error) => void } | undefined;
+
+let canvasDownloads: CanvasDownloads | undefined;
 
 function canvasSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): boolean {
 	return window !== undefined && event.sender === window.webContents && event.senderFrame === event.sender.mainFrame;
@@ -917,6 +919,12 @@ function updateCanvasMenu(): void {
 }
 
 function installCanvasChannels(): void {
+	// only a file this app saved in this session, so the page cannot point Finder anywhere else
+	ipcMain.handle("spool:reveal-download", (event, path: unknown) => {
+		if (!canvasSender(event) || canvasDownloads === undefined || !canvasDownloads.saved(path)) return false;
+		shell.showItemInFolder(path);
+		return true;
+	});
 	let choosingDirectory: Promise<string | null> | undefined;
 	ipcMain.handle("spool:choose-directory", (event, request: unknown) => {
 		if (window === undefined || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame)
@@ -1944,7 +1952,7 @@ export function boot(): void {
 			);
 		await offerApplicationsFolder();
 		installPermissions();
-		installProjectDownloads(
+		canvasDownloads = installCanvasDownloads(
 			session.defaultSession,
 			() => app.getPath("downloads"),
 			(contents, url) =>
