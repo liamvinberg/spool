@@ -208,54 +208,62 @@ describe("skill", () => {
 	});
 
 	it("teaches the team history's verb as one that only reads", () => {
-		const team = skillText("team");
+		const team = skillText(["team"]);
 		expect(team).toContain("`spool history frames/<frame>/frame.tsx` lists a file's saves");
 		expect(team).toContain("The verb only reads");
 	});
 
 	it("prints every listed topic", () => {
 		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "knobs", "verbs", "comments"]) {
-			expect(skillText(topic).length).toBeGreaterThan(100);
+			expect(skillText([topic]).length).toBeGreaterThan(100);
 		}
 	});
 
 	it("sends sharing to the canvas's page menu, with no publishing verbs left", () => {
-		const sharing = skillText("sharing");
+		const sharing = skillText(["sharing"]);
 		expect(sharing).toContain("right-click a page in the Pages panel and choose Share…");
 		expect(sharing).toContain("spool login");
-		const all = skillText(
-			...["frames", "flows", "sharing", "team", "history", "scenarios", "styling", "shaders", "verbs"],
-		);
+		const all = skillText([
+			"frames",
+			"flows",
+			"sharing",
+			"team",
+			"history",
+			"scenarios",
+			"styling",
+			"shaders",
+			"verbs",
+		]);
 		expect(all).not.toMatch(/spool cloud|spool build|--entry|publish/);
 	});
 
 	it("tells an agent frames are https-only, how to fake a backend, and that a phone frame owns its safe areas", () => {
-		const frames = skillText("frames");
+		const frames = skillText(["frames"]);
 		expect(frames).toContain("Frames are https-only");
 		expect(frames).toContain("Fake the backend instead: seed what it would answer with a scenario");
 		expect(frames).toContain("pads itself with env(safe-area-inset-*)");
 	});
 
 	it("refuses an unknown topic, listing the real ones", () => {
-		expect(() => skillText("vibes")).toThrowError(SpoolError);
-		expect(() => skillText("vibes")).toThrowError(
-			/frames, flows, sharing, team, comments, history, scenarios, styling, knobs, shaders, verbs/,
+		expect(() => skillText(["vibes"])).toThrowError(SpoolError);
+		expect(() => skillText(["vibes"])).toThrowError(
+			/comments, flows, frames, history, knobs, scenarios, shaders, sharing, styling, team, verbs/,
 		);
-		expect(() => skillText("frames", "vibes")).toThrowError(/no skill topic "vibes"/);
+		expect(() => skillText(["frames", "vibes"])).toThrowError(/no skill topic "vibes"/);
 	});
 
 	it("prints several topics in one text, each named once", () => {
-		const text = skillText("frames", "styling", "frames");
+		const text = skillText(["frames", "styling", "frames"]);
 		expect(text.startsWith("--- frames ---\n\n")).toBe(true);
-		expect(text).toContain(`${skillText("frames")}\n\n--- styling ---\n\n${skillText("styling")}`);
+		expect(text).toContain(`${skillText(["frames"])}\n\n--- styling ---\n\n${skillText(["styling"])}`);
 		expect(text.match(/--- frames ---/g)).toHaveLength(1);
-		expect(skillText("frames")).not.toContain("--- frames ---");
+		expect(skillText(["frames"])).not.toContain("--- frames ---");
 	});
 
 	it("says which verbs fetch a team project's design/, and that skill doesn't", () => {
 		expect(skillText()).not.toContain("any verb");
 		expect(skillText()).toContain("skill never does");
-		expect(skillText("team")).toContain("so do check and the read verbs; skill doesn't");
+		expect(skillText(["team"])).toContain("so do check and the read verbs; skill doesn't");
 	});
 
 	it("puts a driver for interaction checks in the overview, on spool's own browser", () => {
@@ -263,7 +271,7 @@ describe("skill", () => {
 		expect(text).toMatch(/createRequire\(".*[/\\]package\.json"\)\("playwright-core"\)/);
 		expect(text).toContain('chromium.launch({ channel: "chromium-headless-shell" })');
 		expect(text).toContain('node drive.mjs "$(spool url --raw <frame>)"');
-		expect(skillText("verbs")).not.toContain("chromium.launch()");
+		expect(skillText(["verbs"])).not.toContain("chromium.launch()");
 	});
 
 	it("keeps history and team detail in their topics, with a pointer and the rules a frame author needs", () => {
@@ -273,11 +281,11 @@ describe("skill", () => {
 		expect(text).toContain("Commit spool.json, never design/");
 		expect(text).not.toContain("~/.spool/config.json");
 		expect(text).not.toContain("?frame=<frame>");
-		expect(skillText("team")).toContain("?frame=<frame>");
+		expect(skillText(["team"])).toContain("?frame=<frame>");
 	});
 
 	it("says frames have no web storage, and that x and y are yours to write too", () => {
-		const frames = skillText("frames");
+		const frames = skillText(["frames"]);
 		expect(frames).toContain("Frames have no localStorage or sessionStorage");
 		expect(frames).toContain("Writing x and y yourself is fine");
 		expect(frames).toContain("keep its x and y");
@@ -286,7 +294,7 @@ describe("skill", () => {
 	it("opens with the completeness contract and carries the fixed laws verbatim", () => {
 		expect(skillText()).toContain("if it isn't here, spool doesn't do it");
 		expect(skillText()).toContain("never write app-owned files");
-		expect(skillText("styling")).toContain("cn() only, never template-literal class strings");
+		expect(skillText(["styling"])).toContain("cn() only, never template-literal class strings");
 	});
 
 	it("scopes lock-free guidance to authored frame code", () => {
@@ -297,21 +305,21 @@ describe("skill", () => {
 	});
 
 	it("teaches the confirmed frame-authoring traps", () => {
-		const styling = skillText("styling");
+		const styling = skillText(["styling"]);
 		expect(styling).toContain("mt-3.5!");
 		expect(styling).toContain("not !mt-3.5");
 
-		const frames = skillText("frames");
+		const frames = skillText(["frames"]);
 		expect(frames).toContain("Nested flex-fill chains need a definite h-full");
 		expect(frames).toContain("min-h-full does not give flex-1 a definite height");
 
-		const flows = skillText("flows");
+		const flows = skillText(["flows"]);
 		expect(flows).toContain("Shared components may own data-go attributes");
 		expect(flows).toContain("pass a callback");
 	});
 
 	it("teaches that a frame is named by its path, and which walks spool rewrites after a move (#336)", () => {
-		const frames = skillText("frames");
+		const frames = skillText(["frames"]);
 		expect(frames).toContain("A frame is named by its path under frames/");
 		expect(frames).toContain("shop/buttons and vercel/buttons are two frames");
 		expect(frames).toContain(
@@ -321,11 +329,11 @@ describe("skill", () => {
 			"A frame or page renamed or moved outside spool leaves those literals naming the old path",
 		);
 		expect(frames).not.toContain("unique across every page");
-		expect(skillText("flows")).toContain("its full path under frames/ (shop/checkout)");
+		expect(skillText(["flows"])).toContain("its full path under frames/ (shop/checkout)");
 	});
 
 	it("names the selector that actually discriminates a swap's direction and type", () => {
-		const flows = skillText("flows");
+		const flows = skillText(["flows"]);
 		expect(flows).toContain("View Transitions types, not root attributes");
 		expect(flows).toContain(
 			"html:active-view-transition-type(forward)::view-transition-old(root) { animation: 0.2s slide-out; }",
@@ -333,7 +341,7 @@ describe("skill", () => {
 	});
 
 	it("keeps ui.state writes out of a render, one-shot flags included", () => {
-		const flows = skillText("flows");
+		const flows = skillText(["flows"]);
 		expect(flows).toContain("Writes belong in handlers and effects, never in a render");
 		expect(flows).toContain("the value that render read is dropped");
 		expect(flows).toContain("warns once per site");
@@ -341,7 +349,7 @@ describe("skill", () => {
 	});
 
 	it("teaches clipboard writes as awaited user interactions", () => {
-		const flows = skillText("flows");
+		const flows = skillText(["flows"]);
 		expect(flows).toContain("await ui.copy(text)");
 		expect(flows).toContain("click or non-reserved key handler");
 		expect(flows).toContain("Show copied state only after");
@@ -359,13 +367,21 @@ describe("skill", () => {
 	});
 
 	it("puts design history in the contract, switches included (#160)", () => {
-		const text = skillText("history");
+		const text = skillText(["history"]);
 		expect(text).toContain("the daemon commits design/ for you");
 		expect(text).toContain("never commit design/ yourself and never stage it");
 		expect(text).toContain("spool never pushes");
 		expect(text).toContain("spool init --history");
 		expect(text).toContain('`"history": false`');
 		expect(text).toContain("~/.spool/config.json");
+	});
+
+	it("leaves an experiment that is off out of the index, and says so when its topic is asked for", () => {
+		const off = () => false;
+		expect(skillText()).toMatch(/^ {2}knobs {2,}\S/m);
+		expect(skillText([], off)).not.toMatch(/^ {2}knobs /m);
+		expect(skillText(["knobs"], off)).toContain("`spool experiments on knobs` turns it on");
+		expect(skillText(["knobs"])).not.toContain("spool experiments on");
 	});
 
 	it("indexes every topic as its own overview row", () => {
@@ -375,7 +391,7 @@ describe("skill", () => {
 	});
 
 	it("teaches deterministic raw browser driving through Spool's installed Playwright", () => {
-		const verbs = skillText("verbs");
+		const verbs = skillText(["verbs"]);
 		expect(verbs).toContain("spool url --raw <frame>");
 		expect(verbs).toContain('waitUntil: "domcontentloaded"');
 		expect(verbs).toContain("a meaningful selector");
@@ -385,7 +401,7 @@ describe("skill", () => {
 	});
 
 	it("scopes the session contract to the canvas and the player (#182)", () => {
-		const flows = skillText("flows");
+		const flows = skillText(["flows"]);
 		expect(flows).not.toContain("A frame document keeps its session across walks and reloads");
 		expect(flows).toContain("Two surfaces carry a session across a walk");
 		expect(flows).toContain("sandboxed onto an opaque origin with no storage");
@@ -395,7 +411,7 @@ describe("skill", () => {
 	});
 
 	it("says what the raw frame document is for and what it cannot do (#182)", () => {
-		const verbs = skillText("verbs");
+		const verbs = skillText(["verbs"]);
 		expect(verbs).toContain("The raw document is one frame and nothing else");
 		expect(verbs).toContain("no storage, so a reload starts over");
 		expect(verbs).toContain("the next frame boots from the scenario with the state left behind");
@@ -405,7 +421,7 @@ describe("skill", () => {
 	});
 
 	it("reaches player frames through the iframe and sizes the viewport to the frame (#178)", () => {
-		const verbs = skillText("verbs");
+		const verbs = skillText(["verbs"]);
 		expect(verbs).toContain('page.frameLocator("#spool-player")');
 		expect(verbs).not.toMatch(/^\s*await page\.locator\(/m);
 		expect(verbs).toContain("The local player mounts every frame inside a sandboxed");

@@ -1,3 +1,4 @@
+import type { ExperimentsOn } from "../skill";
 import type { CodexRpc } from "./agent-codex-rpc";
 import type { AgentPermissions } from "./agent-defaults";
 import { DESIGNER_DESCRIPTION, DESIGNER_EFFORT, DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
@@ -93,8 +94,14 @@ others, so neither needs an approval. Anything else may ask the human first: say
 you are about to do outside design/ before you do it.`;
 
 /** Codex's framing (`framing`), led by the bypass line when the project bypasses permissions. */
-export function codexFraming(bypass = false): string {
-	return framing({ asks: ASKS, designer: CODEX_DESIGNER_FRAMING, bypass, memory: false });
+export function codexFraming(bypass = false, experiments?: ExperimentsOn): string {
+	return framing({
+		asks: ASKS,
+		designer: CODEX_DESIGNER_FRAMING,
+		bypass,
+		memory: false,
+		...(experiments ? { experiments } : {}),
+	});
 }
 
 /**
@@ -107,8 +114,12 @@ export function codexFraming(bypass = false): string {
  * `thread/start` or `thread/resume`, a typed field of each rather than a per-thread `config`.
  * Codex's own base instructions and the project's AGENTS.md are separate and untouched.
  */
-export function codexInstructions(own: string | undefined, permissions: AgentPermissions): string {
-	const framed = codexFraming(permissions === "bypass");
+export function codexInstructions(
+	own: string | undefined,
+	permissions: AgentPermissions,
+	experiments?: ExperimentsOn,
+): string {
+	const framed = codexFraming(permissions === "bypass", experiments);
 	return own === undefined || own.trim() === "" ? framed : `${own}\n\n${framed}`;
 }
 

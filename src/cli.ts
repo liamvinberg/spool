@@ -39,7 +39,7 @@ import { describeMigration, FOLDER_NAMES_FORMAT, migrateFrameNames } from "./dae
 import { discoverFrames } from "./daemon/projection";
 import { CONTROL_HEADER } from "./daemon/security";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
-import { createSettingsStore } from "./daemon/settings";
+import { createSettingsStore, experimentsOnHere } from "./daemon/settings";
 import { followedLink } from "./daemon/team-sync";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
@@ -749,7 +749,7 @@ program
 	.description("print the spool skill — how agents author for this canvas")
 	.argument("[topics...]", "topics instead of the overview, several in one go")
 	.action((topics: string[]) => {
-		process.stdout.write(`${skillText(...topics)}\n`);
+		process.stdout.write(`${skillText(topics, experimentsOnHere(spoolDir))}\n`);
 	});
 
 const experiments = program
