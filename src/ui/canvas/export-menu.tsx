@@ -291,8 +291,9 @@ export function ExportSaved({
 					</span>
 					<span className="text-primary type-control">{finder ? "Saved to Downloads" : "Downloaded"}</span>
 				</div>
-				<span className="truncate pl-6 text-secondary type-detail">
-					{exported.file} · {fileSize(exported.bytes)}
+				<span className="flex min-w-0 pl-6 text-secondary type-detail">
+					<span className="min-w-0 truncate">{exported.file}</span>
+					<span className="shrink-0 whitespace-pre"> · {fileSize(exported.bytes)}</span>
 				</span>
 			</div>
 			{finder && exported.path !== undefined ? (
