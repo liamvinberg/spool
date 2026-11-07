@@ -47,8 +47,8 @@ export type Step =
 	| { wait: number };
 
 const GLIDE_MS = 600;
-/** twice the 560 px the changelog shows a clip at */
-const WEB_WIDTH = 1120;
+/** three times the 560 px the changelog shows a clip at, so a dense or zoomed screen stays sharp */
+const WEB_WIDTH = 1680;
 const STEP_MS = 1000 / 60;
 const START = { x: 720, y: 450 };
 
@@ -291,10 +291,10 @@ async function main() {
 		);
 		const raw = out.replace(/\.mp4$/, ".raw.mp4");
 		writeFileSync(raw, bytes);
-		// the page shows it 560 wide: twice that, silent, starting to play before it has all arrived
+		// silent, sharp enough that the window's small text survives, starting to play before it has all arrived
 		const web = spawnSync("ffmpeg", [
 			...["-loglevel", "error", "-y", "-i", raw, "-an", "-vf", `scale=${WEB_WIDTH}:-2:flags=lanczos`],
-			...["-c:v", "libx264", "-preset", "slow", "-crf", "24", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out],
+			...["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out],
 		]);
 		if (web.status !== 0) throw new Error(`ffmpeg could not make the web copy: ${web.stderr}`);
 		rmSync(raw);
@@ -310,7 +310,7 @@ async function main() {
 			"-frames:v",
 			"1",
 			"-q:v",
-			"3",
+			"2",
 			poster,
 		]);
 		process.stdout.write(`\n${out} and ${poster}, rendered in ${Math.round((Date.now() - started) / 1000)} s\n`);
