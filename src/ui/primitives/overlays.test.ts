@@ -2,7 +2,7 @@
 import { act, createElement, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { MenuItem, Palette, Scrim } from "./overlays";
+import { MenuItem, Palette, Scrim, StepMenu } from "./overlays";
 
 /**
  * The overlay primitives draw boxes; what they do is small: a menu item acts
@@ -69,6 +69,39 @@ it("an item with an address is a link that goes there", () => {
 	const link = host.querySelector("a");
 	expect(link?.getAttribute("role")).toBe("menuitem");
 	expect(link?.getAttribute("href")).toBe("https://spool.page/harbour-bank");
+});
+
+it("a step menu goes on into its next step in the same box, takes the focus, and Esc closes it and nothing else", () => {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	const before = document.createElement("button");
+	document.body.append(before);
+	before.focus();
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	const onClose = vi.fn();
+	const step = (name: string, label: string) =>
+		act(() =>
+			root.render(
+				createElement(StepMenu, { at: { x: 20, y: 30 }, step: name, onClose }, createElement(MenuItem, { label })),
+			),
+		);
+	step("menu", "Export…");
+	const box = host.querySelector('[role="menu"]');
+	expect(document.activeElement).toBe(box);
+	step("choice", "Export");
+	expect(host.querySelector('[role="menu"]')).toBe(box);
+	expect(host.querySelector('[role="menuitem"]')?.textContent).toBe("Export");
+	const pageKeys = vi.fn();
+	window.addEventListener("keydown", pageKeys);
+	act(() => box?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+	window.removeEventListener("keydown", pageKeys);
+	expect(onClose).toHaveBeenCalledTimes(1);
+	expect(pageKeys).not.toHaveBeenCalled();
+	act(() => root.unmount());
+	expect(document.activeElement).toBe(before);
+	host.remove();
+	before.remove();
 });
 
 it("a scrim with a label is a door out no key lands on, and one without is hidden", () => {
