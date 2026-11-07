@@ -238,6 +238,7 @@ import { setAsideAsk, useSetAside } from "./set-aside";
 import { CanvasSidebar, type FrameSpan, type FrameVerbs, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { type SpatialTrail, stepSpatially } from "./spatial-navigation";
+import { useStillness } from "./stillness";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
 import { TeammatePlaceholder, teammateOf } from "./teammate-agents";
 import { type Notice, NoticeToast } from "./toast";
@@ -413,6 +414,10 @@ interface ProjectCanvasProps {
 	/** The thread whose first ask the daemon is naming this project from, while it does. */
 	naming?: string | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
+	/** A frame to land on once it stands here (Open in spool, spool#241); a new nonce asks again. */
+	landOn?: { frame: string; nonce: number } | undefined;
+	/** The landing `landOn` asked for is done. */
+	onLanded?: (() => void) | undefined;
 }
 
 /**
@@ -445,6 +450,8 @@ function CanvasField({
 	onAgentOpened,
 	team: markTeam,
 	naming,
+	landOn,
+	onLanded,
 	deck,
 	agentDefaults,
 }: ProjectCanvasProps & { deck: DeckStore; agentDefaults: AgentDefaultsDeck }) {
@@ -3198,10 +3205,14 @@ function CanvasField({
 			height: viewport.clientHeight,
 		});
 		const scheme = frameScheme();
-		const told = JSON.stringify([view, store.get().activePage, frames, scheme]);
-		if (told === toldView.current) return;
+		// where it rests and on how much screen: where a reference sent here lands in view (spool#241)
+		const rest = restCameraRef.current;
+		const camera = { x: Math.round(rest.x), y: Math.round(rest.y), k: rest.k };
+		const size = { w: viewport.clientWidth, h: viewport.clientHeight };
+		const told = JSON.stringify([view, store.get().activePage, frames, scheme, camera, size]);
+		if (told === toldView.current || size.w <= 0 || size.h <= 0) return;
 		toldView.current = told;
-		putCanvasView(project, { view, page: store.get().activePage, frames, scheme });
+		putCanvasView(project, { view, page: store.get().activePage, frames, scheme, camera, size });
 	}, [project, store]);
 	// the machine going over to dark at sunset is a scheme every cover that
 	// follows one was not taken in
@@ -3248,6 +3259,11 @@ function CanvasField({
 						message?: string;
 					};
 					if (event.kind === "set-aside") window.dispatchEvent(new CustomEvent("spool-set-aside-change"));
+					// a reference from the Chrome extension (spool#241) arrives as it is placed, in view
+					if (event.kind === "reference" && event.frame !== undefined) {
+						arrivingRef.current.add(event.frame);
+						void refetchFrames();
+					}
 					if (event.kind === "comments") window.dispatchEvent(new CustomEvent(COMMENTS_CHANGE));
 					// a save here or a teammate's arriving is the team's history by now, or nearly (spool#187)
 					if (["frame", "shared", "geometry", "set-aside"].includes(event.kind))
@@ -4769,6 +4785,13 @@ function CanvasField({
 		[recordDeparture, switchToPage, holdChain, camera, store],
 	);
 	landOnFrameRef.current = landOnFrame;
+	// a frame asked for from outside, landed on once it stands here and there is a camera to fly
+	useEffect(() => {
+		if (landOn === undefined || !framed) return;
+		if (!frames.some((frame) => frame.name === landOn.frame)) return;
+		landOnFrame(landOn.frame);
+		onLanded?.();
+	}, [landOn, frames, framed, landOnFrame, onLanded]);
 
 	/**
 	 * What a row in the rail may do about the frame it names, as one object that holds
@@ -5353,6 +5376,41 @@ function CanvasField({
 			...(around.forward === undefined ? [] : [{ keys: PATH_KEYS.forward(), name: label(around.forward) }]),
 		];
 	}, [visits, navigatorPages, project]);
+	/** references the Chrome extension sent while this canvas was open, which arrive the way a placed thing does */
+	const arrivingRef = useRef(new Set<string>());
+	const still = useStillness();
+	// biome-ignore lint/correctness/useExhaustiveDependencies: frames arriving are the trigger — what arrives is read through the ref
+	useLayoutEffect(() => {
+		for (const name of arrivingRef.current) {
+			const frame = frames.find((candidate) => candidate.name === name);
+			if (frame === undefined) continue;
+			arrivingRef.current.delete(name);
+			// a canvas on another page hears of it from the extension's tab, and Open in spool brings it here
+			if (pageOf(frame) !== store.get().activePage) continue;
+			const cam = camera.get();
+			const viewport = viewportRef.current;
+			if (cam !== null && viewport !== null) {
+				// the view had no room for it, so it stands beside the rest: the camera goes to it
+				const seen = {
+					x: -cam.x / cam.k,
+					y: -cam.y / cam.k,
+					w: viewport.clientWidth / cam.k,
+					h: viewport.clientHeight / cam.k,
+				};
+				const inView =
+					frame.x >= seen.x && frame.y >= seen.y && frame.x < seen.x + seen.w && frame.y < seen.y + seen.h;
+				if (!inView) {
+					const centred = centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight);
+					if (still) camera.set(centred);
+					else camera.fly(centred);
+				}
+			}
+			const el = document.querySelector<HTMLElement>(`[data-frame-shell="${CSS.escape(name)}"]`);
+			if (el === null) continue;
+			el.classList.add("animate-place-in");
+			el.addEventListener("animationend", () => el.classList.remove("animate-place-in"), { once: true });
+		}
+	}, [frames]);
 	/** the field and the list, which slide in from the side the path moved toward */
 	const fieldRef = useRef<HTMLDivElement | null>(null);
 	const slidFrom = useRef<string | null>(null);
@@ -5785,7 +5843,7 @@ function CanvasField({
 											}
 											return (
 												<FrameSlot name={frame.name} frame={frame} claims={pictureClaims}>
-													<ShellClip camera={camera} near={near} frame={frame}>
+													<ShellClip name={frame.name} camera={camera} near={near} frame={frame}>
 														<FrameShell
 															project={project}
 															name={frame.name}

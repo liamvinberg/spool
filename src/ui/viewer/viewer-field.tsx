@@ -57,7 +57,7 @@ export const FieldFrame = memo(function FieldFrame({
 			data-viewer-shown={shown ? "" : undefined}
 			style={{ left: frame.x, top: frame.y, width: frame.w, height: frame.h }}
 		>
-			<ShellClip camera={camera} near={near} frame={frame}>
+			<ShellClip name={name} camera={camera} near={near} frame={frame}>
 				{pictured ? null : cover !== undefined ? (
 					<img
 						src={cover}

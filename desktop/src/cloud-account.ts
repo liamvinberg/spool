@@ -34,16 +34,25 @@ export function accountItems(
 	}
 }
 
+/** Open in spool, from the Chrome extension: bring the window forward on this project's frame. */
+export interface Reveal {
+	root: string;
+	frame: string;
+}
+
 /**
  * Follow the daemon's account: read it once the app's event stream is open, and again on every
  * `{ kind: "account" }` it sends, which signing in or out from Home, from this menu or from the
  * terminal all end in. A stream that ends (the daemon restarted or updated) is opened again.
+ * The stream says it is the app's own, so the daemon knows a window can come forward when the
+ * Chrome extension asks, and every `{ kind: "reveal" }` it sends goes to `onReveal`.
  */
 export function followAccount(
 	origin: string,
 	controlToken: string,
 	onAccount: (account: CloudAccountState) => void,
 	reconnectMs = RECONNECT_MS,
+	onReveal: (reveal: Reveal) => void = () => {},
 ): { stop(): void } {
 	const stopped = new AbortController();
 	const headers = { "x-spool-control": controlToken };
@@ -55,12 +64,18 @@ export function followAccount(
 	void (async () => {
 		while (!stopped.signal.aborted) {
 			try {
-				const events = await fetch(new URL("/api/events", origin), { headers, signal: stopped.signal });
+				const events = await fetch(new URL("/api/events", origin), {
+					headers: { ...headers, "x-spool-window": "1" },
+					signal: stopped.signal,
+				});
 				if (!events.ok || events.body === null) throw new Error(`events answered ${events.status}`);
 				// read after subscribing, so a change in between arrives as an event rather than being missed
 				onAccount(await read());
 				for await (const event of appEvents(events.body)) {
 					if (event.kind === "account") onAccount(await read());
+					if (event.kind === "reveal" && typeof event.root === "string" && typeof event.frame === "string") {
+						onReveal({ root: event.root, frame: event.frame });
+					}
 				}
 			} catch {
 				// a daemon that is gone or restarting: try again below
@@ -73,7 +88,9 @@ export function followAccount(
 }
 
 /** The `app` events of the daemon's server-sent event stream, parsed. */
-async function* appEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<{ kind?: string }> {
+async function* appEvents(
+	body: ReadableStream<Uint8Array>,
+): AsyncGenerator<{ kind?: string; root?: unknown; frame?: unknown }> {
 	const decoder = new TextDecoder();
 	let buffer = "";
 	for await (const chunk of body) {

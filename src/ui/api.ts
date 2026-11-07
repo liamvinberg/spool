@@ -222,6 +222,9 @@ export interface CanvasView {
 	frames: string[];
 	/** The colour scheme frames render in here, which covers are taken in. */
 	scheme: ColorScheme;
+	/** Where its camera rests, and the viewport it rests on: where a reference sent here lands in view. */
+	camera?: Camera;
+	size?: { w: number; h: number };
 }
 
 /**

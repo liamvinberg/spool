@@ -1176,14 +1176,12 @@ describe("what an open canvas shows, for the photo booth's order", () => {
 				body: JSON.stringify(body),
 			});
 		expect((await tell({ view, page: "", frames: ["checkout"], scheme: "dark" })).status).toBe(204);
-		// a view is the page, its frames by name and their colour scheme, and nothing else
+		// a view is the page, its frames by name, their colour scheme and where it looks, and nothing else
 		expect((await tell({ view, page: "../up", frames: [], scheme: "dark" })).status).toBe(400);
 		expect((await tell({ view, page: "", frames: ["../up"], scheme: "dark" })).status).toBe(400);
 		expect((await tell({ view, page: "", frames: [], scheme: "dim" })).status).toBe(400);
 		expect((await tell({ view: "not-a-stream", page: "", frames: [], scheme: "dark" })).status).toBe(400);
-		expect((await tell({ view, page: "", frames: [], scheme: "dark", camera: { x: 0, y: 0, k: 1 } })).status).toBe(
-			400,
-		);
+		expect((await tell({ view, page: "", frames: [], scheme: "dark", zoom: 1 })).status).toBe(400);
 	});
 
 	it("takes a report from a canvas whose stream has gone without complaint, and keeps none of it", async () => {

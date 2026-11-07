@@ -34,11 +34,14 @@ const EDIT_SLACK_PX = 2;
  * when the camera rests.
  */
 export function ShellClip({
+	name,
 	camera,
 	near,
 	frame,
 	children,
 }: {
+	/** the frame's name, which a reference arriving looks it up by */
+	name: string;
 	camera: CameraStore;
 	/** whether the corners are worth redrawing while the camera moves */
 	near: NearScreen;
@@ -58,7 +61,7 @@ export function ShellClip({
 		[frame.x, frame.y, frame.w, frame.h, near],
 	);
 	return (
-		<div ref={clip} className="relative h-full w-full overflow-hidden">
+		<div ref={clip} data-frame-shell={name} className="relative h-full w-full overflow-hidden">
 			{children}
 		</div>
 	);

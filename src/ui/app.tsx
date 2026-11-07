@@ -106,6 +106,15 @@ export function App() {
 	const focusedRef = useRef(focused);
 	focusedRef.current = focused;
 	const [booted, setBooted] = useState(false);
+	/**
+	 * A frame to land on when its project's canvas stands: one named in the address (`/p/<name>?frame=…`), or one
+	 * Open in spool from the Chrome extension asked for (spool#241). Keyed by the project's name, as the address is.
+	 */
+	const [landing, setLanding] = useState<{ project: string; frame: string; nonce: number } | null>(() =>
+		addressedFrame(window.location),
+	);
+	/** Open in spool's landing, which the app's event stream calls once the tabs can open (below). */
+	const revealRef = useRef<(root: string, frame: string) => void>(() => {});
 	/** A team project a link at spool.page handed this page, until it has been opened. */
 	const [handed, setHanded] = useState(() => handedOver(window.location.search));
 	/** A team, or one project of it, that spool.page's Export handed this page, to export once the teams are read. */
@@ -359,6 +368,13 @@ export function App() {
 					// and a theme has to land on this page without a reload
 					if (event.kind === "settings") return settingsMoved();
 					if (event.kind === "account") return void readAccount();
+					// Open in spool, from the Chrome extension: the Mac app's window takes it whatever it shows, and a
+					// browser page only when it is on that project's canvas
+					if (event.kind === "reveal" && typeof event.root === "string") {
+						const { frame } = data as { frame?: unknown };
+						if (typeof frame === "string") revealRef.current(event.root, frame);
+						return;
+					}
 					// a project's icon changed on disk, or a team copy's sync paused or lifted: one card moves
 					if (event.kind === "icon" && typeof event.root === "string") {
 						const icon = (data as { icon?: ProjectIcon | null }).icon ?? undefined;
@@ -541,6 +557,11 @@ export function App() {
 		},
 		[focusProject, keepAbandoned],
 	);
+	revealRef.current = (root, frame) => {
+		if (appWindow === undefined && focusedRef.current !== root) return;
+		openTab({ root, name: basename(root) });
+		setLanding({ project: basename(root), frame, nonce: Date.now() });
+	};
 	// Open…, a drop on the window and a paste on Home: whatever it was, one rule opens it
 	const opener = useOpen({
 		home: focusedTab === undefined && !settingsOpen,
@@ -1078,6 +1099,8 @@ export function App() {
 											})
 								}
 								onRename={(name) => requestRename(focusedTab, name)}
+								landOn={landing?.project === focusedTab.name ? landing : undefined}
+								onLanded={() => setLanding(null)}
 							/>
 						)}
 					</div>
@@ -1236,6 +1259,14 @@ function withSyncMarks(card: ProjectCard, paused: string | undefined, goneLocal:
 
 function basename(path: string): string {
 	return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** The frame an address names to land on: `/p/<name>?frame=<path>`, as Open in spool hands a browser. */
+function addressedFrame(location: Location): { project: string; frame: string; nonce: number } | null {
+	const match = location.pathname.match(/^\/p\/([^/]+)$/);
+	const frame = new URLSearchParams(location.search).get("frame");
+	if (match?.[1] === undefined || frame === null) return null;
+	return { project: decodeURIComponent(match[1]), frame, nonce: 0 };
 }
 
 /** Which open root this page's path names, if the session has it open at all. */

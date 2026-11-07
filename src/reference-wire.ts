@@ -68,7 +68,10 @@ export interface ReferenceSent {
 export const referenceOpenSchema = z.object({ project: z.string(), frame: z.string() });
 export type ReferenceOpen = z.infer<typeof referenceOpenSchema>;
 
-/** the answer to an open: `shown` when a spool window (the Mac app or an open canvas tab) took it */
+/**
+ * the answer to an open: `shown` when the Mac app's window took it and came forward. A browser canvas tab on the
+ * project lands on the frame too, but nothing can bring a browser tab forward, so it never counts as shown.
+ */
 export interface ReferenceOpened {
 	shown: boolean;
 	/** the canvas URL on the frame, for the extension to open in a tab when nothing was shown */

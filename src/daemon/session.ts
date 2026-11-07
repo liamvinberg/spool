@@ -41,6 +41,8 @@ export type AppEvent =
 	| { kind: "presence"; root: string; people: TabPresence[] }
 	/** a new project's first turn waits while the agent names it, in this thread; null once the naming is over */
 	| { kind: "naming"; root: string; thread: string | null }
+	/** bring a project's canvas forward on one of its frames: Open in spool, from the Chrome extension (spool#241) */
+	| { kind: "reveal"; root: string; frame: string }
 	// the checkout rebuilt its UI bundle under the pages already running the old
 	// one. Only `pnpm dev serve --foreground` can say this; a published daemon
 	// serves a bundle that never moves and emits it never.
