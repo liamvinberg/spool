@@ -78,6 +78,22 @@ it("sorts real projects, opens a selected root, and retains removal actions", ()
 	expect(callbacks.onTrashProject).not.toHaveBeenCalled();
 });
 
+it("exports a project in its cover's menu, which opens again at its verbs", async () => {
+	// the .spool stays building: the cover's box going on is what this proves, project-transfer.test.ts the steps
+	vi.stubGlobal("fetch", () => new Promise(() => {}));
+	const host = mount(createElement(Home, { projects: [project("coffee", "2026-09-01T00:00:00Z")], ...actions() }));
+	const manage = host.querySelector<HTMLButtonElement>('[aria-label="Manage coffee"]');
+	act(() => manage?.click());
+	const menu = host.querySelector('[role="menu"]');
+	await act(async () => button(host, "Export project…").click());
+	expect(host.querySelector('[role="menu"]')).toBe(menu);
+	expect(menu?.textContent).toContain("Building coffee.spool");
+	act(() => menu?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+	expect(host.querySelector('[role="menu"]')).toBeNull();
+	act(() => manage?.click());
+	expect(button(host, "Export project…")).toBeDefined();
+});
+
 it("offers rename for a project that already has frames", () => {
 	const callbacks = actions();
 	const existing = { ...project("coffee", "2026-09-01T00:00:00Z"), frameCount: 4 };
