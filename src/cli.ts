@@ -587,7 +587,8 @@ program
 	.option("--raw", "mint the bare frame document URL: one frame, no session")
 	.action(async (frame: string, options: { raw?: boolean }) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
-		if (options.raw === true) narrate(`to click or type before a shot, copy the driver in \`${cliName()} skill\``);
+		if (options.raw === true)
+			narrate(`to click or type before a shot, copy the driver in \`${cliName()} skill verbs\``);
 		process.stdout.write(
 			`${
 				options.raw === true

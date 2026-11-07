@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { RefusedError, SpoolError } from "./errors";
-import { skillText } from "./skill";
+import { skillText, skillTopics } from "./skill";
 import { makeProject, makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
 
@@ -247,7 +247,7 @@ describe("skill", () => {
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText(["vibes"])).toThrowError(SpoolError);
 		expect(() => skillText(["vibes"])).toThrowError(
-			/comments, flows, frames, history, knobs, scenarios, shaders, sharing, styling, team, verbs/,
+			/comments, flows, frames, history, knobs, projects, scenarios, shaders, sharing, styling, team, verbs/,
 		);
 		expect(() => skillText(["frames", "vibes"])).toThrowError(/no skill topic "vibes"/);
 	});
@@ -262,16 +262,17 @@ describe("skill", () => {
 
 	it("says which verbs fetch a team project's design/, and that skill doesn't", () => {
 		expect(skillText()).not.toContain("any verb");
-		expect(skillText()).toContain("skill never does");
+		expect(skillText(["projects"])).toContain("skill never does");
 		expect(skillText(["team"])).toContain("so do check and the read verbs; skill doesn't");
 	});
 
-	it("puts a driver for interaction checks in the overview, on spool's own browser", () => {
-		const text = skillText();
+	it("puts a driver for interaction checks in the verbs, on spool's own browser", () => {
+		const text = skillText(["verbs"]);
 		expect(text).toMatch(/createRequire\(".*[/\\]package\.json"\)\("playwright-core"\)/);
 		expect(text).toContain('chromium.launch({ channel: "chromium-headless-shell" })');
 		expect(text).toContain('node drive.mjs "$(spool url --raw <frame>)"');
-		expect(skillText(["verbs"])).not.toContain("chromium.launch()");
+		expect(text).not.toContain("chromium.launch()");
+		expect(skillText()).toContain("topic: verbs, with a driver");
 	});
 
 	it("keeps history and team detail in their topics, with a pointer and the rules a frame author needs", () => {
@@ -357,7 +358,7 @@ describe("skill", () => {
 	});
 
 	it("teaches disposable lanes to register their own source for verification", () => {
-		const text = skillText();
+		const text = skillText(["projects"]);
 		expect(text).toContain("spool open <lane>");
 		expect(text).toContain("before verification");
 		expect(text).toContain("spool remove <lane>");
@@ -374,6 +375,12 @@ describe("skill", () => {
 		expect(text).toContain("spool init --history");
 		expect(text).toContain('`"history": false`');
 		expect(text).toContain("~/.spool/config.json");
+	});
+
+	it("keeps the overview small enough to ride every agent's prompt, and each topic to one read", () => {
+		// the overview is in every spawn's system prompt and every designer reads it: depth goes in a topic
+		expect(skillText().length).toBeLessThan(4_400);
+		for (const topic of skillTopics()) expect(topic.body.length, topic.name).toBeLessThan(12_000);
 	});
 
 	it("leaves an experiment that is off out of the index, and says so when its topic is asked for", () => {
@@ -423,7 +430,6 @@ describe("skill", () => {
 	it("reaches player frames through the iframe and sizes the viewport to the frame (#178)", () => {
 		const verbs = skillText(["verbs"]);
 		expect(verbs).toContain('page.frameLocator("#spool-player")');
-		expect(verbs).not.toMatch(/^\s*await page\.locator\(/m);
 		expect(verbs).toContain("The local player mounts every frame inside a sandboxed");
 		expect(verbs).toContain("On a --raw URL the frame is the page");
 		expect(verbs).toContain('page.frameLocator("#website")');
