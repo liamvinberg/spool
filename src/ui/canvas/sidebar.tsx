@@ -2136,7 +2136,9 @@ const RailTreeRow = memo(function RailTreeRow({
 						) : (
 							<>
 								{label}
-								<span className="ml-2 text-tertiary">mirror of {mirrorOf}</span>
+								<span className="ml-2 text-tertiary type-detail" title={`mirror of ${mirrorOf}`}>
+									mirror of {mirrorOf}
+								</span>
 							</>
 						)
 					) : (
