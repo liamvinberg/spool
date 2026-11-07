@@ -46,9 +46,6 @@ async function teamCanvas() {
 		);
 		writeDesignFile(root, `frames/${name}/frame.json`, `${JSON.stringify(box)}\n`);
 	}
-	// a page standing on the field, which the Comment tool still goes inside
-	writeFrame(root, "shop/cart", "export default function Cart() { return <main>cart</main>; }\n");
-	writeDesignFile(root, "canvas.json", `${JSON.stringify({ places: { shop: { x: 0, y: 600 } } })}\n`);
 	writeDesignFile(root, ".spool/state.json", `${JSON.stringify({ camera: { x: 100, y: 200, k: 0.75 } })}\n`);
 	const daemon = await serveDaemon({
 		spoolDir,
@@ -234,18 +231,6 @@ it("places a pin on a frame at the frame's own point, sends it on Enter, and sho
 	await page.locator(`[data-comment-pin="${ben}"]`).click();
 	await page.locator(`[data-comment-card="${ben}"]`).waitFor();
 	expect(await page.locator(`[data-comment-card="${ben}"]`).textContent()).toContain("on the field");
-});
-
-it("goes inside a page standing on the field rather than commenting on it", { timeout: 120_000 }, async () => {
-	const { page } = await teamCanvas();
-	const shop = page.locator('[data-page-object="shop"]');
-	await shop.waitFor({ timeout: 20_000 });
-	await tapC(page);
-	const box = await shop.boundingBox();
-	if (box === null) throw new Error("no page object");
-	await page.mouse.click(box.x + box.width / 2, box.y + 40);
-	await page.locator('[data-frame-label="shop/cart"]').waitFor({ timeout: 10_000 });
-	expect(await page.locator("[data-comment-composer]").count()).toBe(0);
 });
 
 it("shows the comments it had offline, and says it's offline rather than sending", { timeout: 120_000 }, async () => {

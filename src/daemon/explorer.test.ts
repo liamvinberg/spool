@@ -22,8 +22,10 @@ import { writeCover } from "./thumbs";
  * quietly break is everything keyed by a name that changed: a frame's covers,
  * a page's camera and its place in the rail, and every walk into a moved frame,
  * which is written again at its new name. The one other write is the re-aim of
- * `../` imports whose targets stayed put (#273, `import-aim.test.ts` holds its
- * rules). A copy changes no name, so it rewrites no walk.
+ * `../` imports whose targets stayed put (#273), and of imports reaching into a
+ * moved folder, which keeps a mirror on its original (spool#232);
+ * `import-aim.test.ts` holds their rules. A copy changes no name, so it
+ * rewrites no walk.
  */
 
 const label = (text: string) => `export default function F() {\n\treturn <p>${text}</p>;\n}\n`;
@@ -310,6 +312,27 @@ describe("moving frames between pages", () => {
 		// the healed form counts no folders, so no later move can break it again
 		expect(moved).toContain('from "shared/lib/utils"');
 		expect(moved).not.toContain("../");
+	});
+
+	it("keeps a mirror aimed at its original through a rename, and through a move taking both (spool#232)", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		writeFrame(root, "checkout", label("checkout"));
+		writeFrame(root, "checkout-phone", 'export { default } from "../checkout/frame";\n');
+		mkdirSync(designFile(root, "frames", "shop", "flows"), { recursive: true });
+		const app = makeApp(spoolDir);
+		const mirror = (...at: string[]) => readFileSync(designFile(root, "frames", ...at, "frame.tsx"), "utf8");
+
+		await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "checkout", to: "basket" }));
+		expect(mirror("checkout-phone")).toBe('export { default } from "../basket/frame";\n');
+
+		// the mirror is listed first, so it moves while its original still stands where it was
+		const res = await app.request(
+			`/api/p/${name}/frames/move`,
+			jsonPost({ frames: ["checkout-phone", "basket"], page: "shop/flows" }),
+		);
+
+		expect(res.status).toBe(204);
+		expect(mirror("shop", "flows", "checkout-phone")).toBe('export { default } from "../basket/frame";\n');
 	});
 
 	it("takes a frame already on the page as arrived", async () => {
@@ -690,10 +713,11 @@ describe("trashing a page", () => {
 describe("the order store", () => {
 	it("round-trips through canvas.json, keeping the format stamp and every other field", async () => {
 		const { spoolDir, root, name } = explorerProject();
+		// pages once stood on the field at stored places: nothing reads them now, and nothing rewrites them (spool#224)
 		writeDesignFile(
 			root,
 			"canvas.json",
-			`${JSON.stringify({ format: FORMAT_VERSION, somethingElse: { kept: true } })}\n`,
+			`${JSON.stringify({ format: FORMAT_VERSION, places: { shop: { x: 3000, y: 0 } } })}\n`,
 		);
 		writeFrame(root, "home", label("home"));
 		const app = makeApp(spoolDir);
@@ -706,7 +730,7 @@ describe("the order store", () => {
 		expect(put.status).toBe(204);
 		expect(readJson(designFile(root, "canvas.json"))).toEqual({
 			format: FORMAT_VERSION,
-			somethingElse: { kept: true },
+			places: { shop: { x: 3000, y: 0 } },
 			order,
 		});
 		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual(order);

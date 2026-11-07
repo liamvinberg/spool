@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer as createTlsServer } from "node:tls";
 import { chromium } from "playwright-core";
@@ -184,15 +184,21 @@ it("photographs an edit, a resize and a broken frame without a canvas, and leave
 	expect(project.captureError("edited")).toBeUndefined();
 });
 
-it("times an edited frame's redraws after its picture, and only an edited one", { timeout: 120_000 }, async () => {
-	if (!(await shellAvailable())) return;
-	const project = await served();
+/** A served project whose booth's shell says it draws on the GPU or in software, whichever it really draws on. */
+async function servedDrawing(software: boolean) {
+	const project = await served({ launch: async () => ({ ...(await launchHeadlessShell()), software }) });
 	const pace = (frame: string) => {
 		const file = join(project.root, "design", ".spool", "thumbs", encodeURIComponent(frame), "pace.json");
 		return existsSync(file)
 			? (JSON.parse(readFileSync(file, "utf8")) as { perSecond: number; scale: number })
 			: undefined;
 	};
+	return { project, pace };
+}
+
+it("times an edited frame's redraws after its picture, and only an edited one", { timeout: 120_000 }, async () => {
+	if (!(await shellAvailable())) return;
+	const { project, pace } = await servedDrawing(false);
 	writeFrame(project.root, "timed", frameOf("#f5391a"));
 	await project.projection();
 	await expect.poll(() => project.coverOf("timed"), { timeout: 45_000 }).toBeDefined();
@@ -222,6 +228,21 @@ export default function Frame() {
 	// and the edit that lightens it says so
 	writeFrame(project.root, "timed", frameOf("#11aa11"));
 	await expect.poll(() => pace("timed")?.perSecond ?? 0, { timeout: 45_000 }).toBeGreaterThanOrEqual(SLOW_PER_SECOND);
+});
+
+it("times nothing in a browser that draws in software, and forgets what it timed before", {
+	timeout: 120_000,
+}, async () => {
+	if (!(await shellAvailable())) return;
+	const { project, pace } = await servedDrawing(true);
+	writeFrame(project.root, "untimed", frameOf("#f5391a"));
+	await project.projection();
+	await expect.poll(() => project.coverOf("untimed"), { timeout: 45_000 }).toBeDefined();
+	// a slow timing a software booth recorded before #225
+	const file = join(project.root, "design", ".spool", "thumbs", "untimed", "pace.json");
+	writeFileSync(file, `${JSON.stringify({ perSecond: 3, slowestMs: 400, scale: 2 })}\n`);
+	writeFrame(project.root, "untimed", frameOf("#1a39f5"));
+	await expect.poll(() => pace("untimed"), { timeout: 45_000 }).toBeUndefined();
 });
 
 it("photographs in the scheme the canvas shows, and again only what follows it when that changes", {

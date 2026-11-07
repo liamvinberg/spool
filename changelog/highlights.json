@@ -1,0 +1,77 @@
+{
+	"through": "0.51.2",
+	"headlines": {
+		"2b96f16": "Experimental settings",
+		"3042dde": "Pages as lists",
+		"0109d88": "Record",
+		"506245b": "Rename team projects",
+		"1523885": "Get it finds your clone",
+		"4072864": "Shares that end on their own",
+		"7405324": "Moving a project out keeps it",
+		"194f246": "Broken frames say why",
+		"cad0354": "spool check covers the whole canvas",
+		"4d9b579": "Knobs",
+		"93072ae": "New project and Open…",
+		"c4e539d": "Images up to 25 MB",
+		"69c10cc": "Versions in History",
+		"6570fd1": "Spool Cloud is for business use",
+		"9528d21": "Delete your account",
+		"bd2c29f": "Get it in an unsynced checkout",
+		"5ee2dae": "Teams down Home's sidebar",
+		"768f40c": "Watched teams on Home",
+		"dd99329": "Covers say where design/ went",
+		"5aa5cf2": "Unseen marks for outsiders",
+		"487f27d": "Reconnect a copy that stopped syncing",
+		"a4ba26f": "Share a whole team project",
+		"4b6c980": "Share a whole solo project",
+		"3fb91a9": "A slimmer player bar",
+		"cb89abd": "Copies repair themselves",
+		"643bf20": "Export a team",
+		"c729198": "Compare with history",
+		"57e4302": "History pane",
+		"8922e6e": "Restore from History",
+		"b5ae4aa": "spool history",
+		"bfdaf46": "Offline, said plainly",
+		"dbe6e65": "Sync pauses on an old spool",
+		"ff199d1": "Copy link in the player",
+		"d484eb7": "Shares email the people named",
+		"ce2d6c5": "Shares open on your selection",
+		"96c1184": "Names instead of emails",
+		"ac69a0c": "Agents answer comments",
+		"78247b5": "Comment in the browser",
+		"6d25229": "Changes sync as one bundle",
+		"cea68aa": "Comment emails setting",
+		"0595504": "Resolve, edit and delete comments",
+		"5778f71": "Comments follow their frames",
+		"2c0bf6c": "Comments reach your shares",
+		"ecea1f6": "New sync for team projects",
+		"7311cee": "Comments on team projects"
+	},
+	"highlights": [
+		{
+			"id": "3042dde",
+			"clip": "3042dde-e1e7f90f.mp4",
+			"poster": "3042dde-e1e7f90f.jpg"
+		},
+		{
+			"id": "4d9b579",
+			"clip": "4d9b579-c52e2d45.mp4",
+			"poster": "4d9b579-c52e2d45.jpg"
+		},
+		{
+			"id": "93072ae"
+		},
+		{
+			"id": "69c10cc"
+		},
+		{
+			"id": "a4ba26f"
+		},
+		{
+			"id": "57e4302"
+		},
+		{
+			"id": "7311cee"
+		}
+	]
+}

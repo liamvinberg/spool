@@ -7,7 +7,7 @@ import { writeAtomic } from "../atomic-write";
 import { account, type CloudRequestOptions, CloudSignedOut, originOf } from "../cloud-auth";
 import { CloudShareRefused, cloudShares, type SharePlace } from "../cloud-shares";
 import { CloudTeamRefused } from "../cloud-teams";
-import { ROOT_PAGE } from "../page-path";
+import { pageHolds, ROOT_PAGE } from "../page-path";
 import type { ProjectShares, ShareChange, ShareRequest } from "../share-view";
 import { localCopyOf } from "../team-project";
 import { FILE_LIMIT_BYTES, travels } from "../team-sync-protocol";
@@ -125,16 +125,15 @@ export function createProjectShares(options: ProjectSharesOptions) {
 	 * Put a solo project's shared pages at spool.page as they stand: the files they are made of and nothing else,
 	 * the bytes it lacks first, then the list that makes them its copy, then the covers of their frames. The pages
 	 * are its live shares', and those of a share about to be made (`asking`); a whole-project share's are every page
-	 * the project has now, so a page added since goes up with it (spool#185). With none, its copy there is emptied.
+	 * the project has now, so a page added since goes up with it (spool#185), and a share following a folder every
+	 * page under it now (spool#230). With none, its copy there is emptied.
 	 */
-	async function upload(root: string, id: string, asking?: Pick<ShareRequest, "pages" | "whole">): Promise<void> {
+	async function upload(root: string, id: string, asking?: Asked): Promise<void> {
 		const cloud = client();
 		const { shares } = await cloud.list({ kind: "solo", id });
-		const asked: Pick<ShareRequest, "pages" | "whole">[] = asking === undefined ? shares : [...shares, asking];
+		const asked: Asked[] = asking === undefined ? shares : [...shares, asking];
 		const designDir = realDesignDir(root);
-		const pages = asked.some((share) => share.whole === true)
-			? everyPage(designDir)
-			: [...new Set(asked.flatMap((share) => share.pages ?? []))];
+		const pages = shownPages(asked, designDir);
 		const { files, frames, sources } = await sharedFiles(root, designDir, pages, options.version);
 		const hashes: Record<string, string> = {};
 		for (const [path, bytes] of files) hashes[path] = sha256(bytes);
@@ -169,9 +168,9 @@ export function createProjectShares(options: ProjectSharesOptions) {
 			else if (!still.failed) options.owe?.(root, frame, "stale");
 		}
 		if (asking !== undefined) return;
-		// a whole-project share follows the project even while it has no page: one added later goes up
-		if (asked.length === 0 || (pages.length === 0 && !asked.some((share) => share.whole === true)))
-			stopWatching(root);
+		// a whole-project share follows the project, and a share of a folder that folder, even while they hold no page:
+		// one added later goes up
+		if (asked.length === 0 || (pages.length === 0 && !asked.some(follows))) stopWatching(root);
 		else follow(root);
 	}
 
@@ -258,7 +257,16 @@ export function createProjectShares(options: ProjectSharesOptions) {
 				// a solo project's new pages go up before the share that shows them, so it opens on them at once
 				const solo = place;
 				await enqueue(() =>
-					upload(root, solo.id, request.whole === true ? { whole: true } : { pages: request.pages ?? [] }),
+					upload(
+						root,
+						solo.id,
+						request.whole === true
+							? { whole: true }
+							: {
+									pages: request.pages ?? [],
+									...(request.folders === undefined ? {} : { folders: request.folders }),
+								},
+					),
 				);
 				const share = await client().create(solo, request);
 				follow(root);
@@ -394,6 +402,34 @@ export async function sharedFiles(
 		}
 	}
 	return { files: shown.size === 0 ? new Map() : files, frames, sources };
+}
+
+/** What a solo project's share shows, as the upload reads it: its pages, the folders it follows, or the whole project. */
+interface Asked {
+	readonly pages?: readonly string[] | undefined;
+	readonly whole?: true | undefined;
+	readonly folders?: readonly string[] | undefined;
+}
+
+/** Whether a share takes in pages added later: the whole project's, or a folder's. */
+function follows(share: Asked): boolean {
+	return share.whole === true || (share.folders ?? []).length > 0;
+}
+
+/**
+ * The pages these shares show now: each one's own, every page under a folder one follows, and every page holding a
+ * frame once one is the whole project.
+ */
+function shownPages(asked: readonly Asked[], designDir: string): string[] {
+	const every = asked.some(follows) ? everyPage(designDir) : [];
+	if (asked.some((share) => share.whole === true)) return every;
+	const folders = asked.flatMap((share) => share.folders ?? []);
+	return [
+		...new Set([
+			...asked.flatMap((share) => share.pages ?? []),
+			...every.filter((page) => folders.some((folder) => pageHolds(folder, page))),
+		]),
+	];
 }
 
 /** Every page holding a frame, the root page's own frames included: what a whole-project share shows now. */

@@ -59,7 +59,7 @@ async function launch(path: string) {
 				return answer;
 			}
 			const canvas = pathname.match(/^\/api\/p\/([^/]+)\/frames$/);
-			if (canvas !== null) return Response.json({ root: `/w/${canvas[1]}`, pages: [], places: {}, frames: [] });
+			if (canvas !== null) return Response.json({ root: `/w/${canvas[1]}`, pages: [], frames: [] });
 			if (pathname === "/api/settings") return Response.json({ project: null, entries: [] });
 			// the canvas of a tab asks for a great deal more, and is told there is nothing
 			return new Response(null, { status: 404 });

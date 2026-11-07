@@ -345,8 +345,8 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	const playedBox = (geometry: FrameGeometry): FrameGeometry => {
 		const room = { w: window.innerWidth, h: Math.max(window.innerHeight - DESK_BAR_PX, 1) };
 		// a frame played at a clip's shape lays itself out in that shape (spool#221)
-		const shaped = shapedAs === null ? null : shapedBox(shapedAs, room);
-		return shaped ?? { w: Math.min(room.w, geometry.w), h: room.h };
+		if (shapedAs !== null) return shapedBox(shapedAs, room, geometry);
+		return { w: Math.min(room.w, geometry.w), h: room.h };
 	};
 	const playedList = (frames: { name: string; w: number; h: number }[]) =>
 		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame) } : frame));
@@ -953,7 +953,7 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	return {
 		controller,
 		...(recorder === undefined ? {} : { recorder }),
-		shaped: () => shapedAs !== null && shapedAs !== "frame",
+		shaped: () => shapedAs !== null,
 		view: () => ({ hidden, revealed, loadError, loadEscape }),
 		loaded: () => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE),
 		geometryPending,

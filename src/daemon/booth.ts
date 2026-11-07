@@ -1022,9 +1022,12 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		if (follows && shot.scheme !== scheme) owedAgain("stale");
 		// timed only when an edit is what sat it: that is a frame an agent may be
 		// about to check, and timing every picture would slow the first pass
-		// through a project for frames nobody touched
+		// through a project for frames nobody touched. A browser drawing in
+		// software times none: a frame that keeps up on any GPU lags in it, and
+		// timing it costs the CPU the agents are using (#225)
 		if (sitting.reason === "edited" && deps.paced !== undefined) {
-			deps.paced(root, frame, await timedPace(slot, tab, shape));
+			const software = (await tab.live.shell).software;
+			deps.paced(root, frame, software ? undefined : await timedPace(slot, tab, shape));
 		}
 	}
 

@@ -1,8 +1,8 @@
-[![spool. A canvas for working things out. A weather app prototype playing live on the canvas.](https://raw.githubusercontent.com/liamvinberg/spool/main/docs/assets/spool.jpg)](https://spool.page)
+[![spool. Feel it before you build it. spool’s window up close on Rally, a padel app’s flow from tonight’s games to a court.](https://raw.githubusercontent.com/liamvinberg/spool/main/docs/assets/spool.jpg)](https://spool.page)
 
 [Website and live demo](https://spool.page) · [Download for Mac](https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg) · [Contributing](CONTRIBUTING.md)
 
-spool is a local-first prototyping canvas for websites, apps and presentations. Your agent writes live TSX frames into your repo, and you play the flows between them like a real app.
+spool is a local-first prototyping canvas for coding agents. Your agent writes live TSX frames into your repo, and you play the flows between them like a real app.
 
 Free on your Mac, with the source on GitHub. [Spool Cloud](https://spool.page/#cloud) for teams, from $16 a seat. Pre-1.0, actively developed and used every day.
 

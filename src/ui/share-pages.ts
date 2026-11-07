@@ -140,6 +140,20 @@ export function saidChoice(chosen: ReadonlySet<string>, rows: readonly PickRow[]
 	return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
 }
 
+/**
+ * The folders a choice follows (spool#230): each page chosen with everything under it, said once at its highest, so
+ * the pages added there later join the share. The top page is never one: sharing all of it is the whole project.
+ */
+export function followedFolders(chosen: ReadonlySet<string>, rows: readonly PickRow[]): string[] {
+	const folders: string[] = [];
+	for (const row of rows) {
+		if (row.page === ROOT_PAGE || tickOf(row, chosen) !== "all") continue;
+		if (folders.some((folder) => pageHolds(folder, row.page))) continue;
+		folders.push(row.page);
+	}
+	return folders;
+}
+
 /** Where a found row lives, as its meta says it: the page above it, or top. */
 export function foundAt(row: PickRow): string {
 	const parent = pageParent(row.page);

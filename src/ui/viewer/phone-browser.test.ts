@@ -46,7 +46,7 @@ function bigCanvas(): ViewerProject["canvas"] {
 	];
 	for (const page of pages)
 		for (let n = 0; n < 4; n++) frames.push({ name: `${page}/screen-${n}`, page, x: n * 500, y: 0, w: 390, h: 844 });
-	return { pages, places: {}, order: {}, frames };
+	return { pages, order: {}, frames };
 }
 
 const member: ViewerProject = {
@@ -90,7 +90,6 @@ const outsider: ViewerProject = {
 	account: null,
 	canvas: {
 		pages: ["shop"],
-		places: {},
 		order: { frames: { shop: ["cart", "pay", "admin"] } },
 		frames: [
 			{ name: "shop/pay", page: "shop", x: 500, y: 0, w: 390, h: 844 },
@@ -286,7 +285,8 @@ describe("a shared link on a phone", () => {
 		timeout: 60_000,
 	}, async () => {
 		const { page } = await onPhone("/", { as: outsider, config: LINK });
-		const card = page.getByRole("dialog", { name: "checkout, shared with you" });
+		// called by the page shared, never the project's name (spool#230)
+		const card = page.getByRole("dialog", { name: "shop, shared with you" });
 		await card.waitFor();
 		expect(await card.textContent()).toContain("ana shared this · updated 2 min ago");
 		expect(await card.textContent()).toContain("Add to Home Screen");

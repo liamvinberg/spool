@@ -55,6 +55,12 @@ export interface PlayerController {
 	close(): void;
 }
 
+/** A frame as the player's bar names it: the place it is in, when it says one, and its name there. */
+export interface FrameSaid {
+	place: string | null;
+	name: string;
+}
+
 export function Player({
 	project,
 	frames,
@@ -66,6 +72,7 @@ export function Player({
 	linkable = false,
 	recorder,
 	shaped,
+	said = (frame) => ({ place: project, name: frame }),
 }: {
 	project: string;
 	frames: Record<string, ComponentType>;
@@ -84,6 +91,11 @@ export function Player({
 	recorder?: PlayerRecorder;
 	/** Whether the frame is played at a clip's shape, in a box of its own rather than the window's. */
 	shaped?: () => boolean;
+	/**
+	 * How the bar and the tab name a frame: in the project by its whole path, unless the one playing it sees less
+	 * of the project (an outsider on a share, spool#230), whose bar says the page holding it at most.
+	 */
+	said?: (frame: string) => FrameSaid;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
 	useSyncExternalStore(recorder?.subscribe ?? noSubscription, recorder?.version ?? noVersion);
@@ -99,7 +111,8 @@ export function Player({
 	// mount and never again.
 	const [desk] = useState(deskWindow);
 
-	usePlayedUrl(project, frame, controller);
+	const named = said(frame);
+	usePlayedUrl(named.place === null ? named.name : `${named.name} · ${named.place}`, frame, controller);
 
 	// Spool's own gesture lives behind accel, never on a plain key: a live frame
 	// keeps every ordinary key, its own esc for modals included. ⌘W is the exit
@@ -119,8 +132,7 @@ export function Player({
 
 	const bar = (
 		<TopBar
-			project={project}
-			frame={frame}
+			said={named}
 			viewport={viewport}
 			loading={loading}
 			{...(recorder === undefined ? {} : { recorder })}
@@ -166,7 +178,7 @@ export function Player({
  * disagrees with itself, and stepping back through it is a real walk the
  * session takes: the flow graph is told about it like any other.
  */
-function usePlayedUrl(project: string, frame: string, controller: PlayerController): void {
+function usePlayedUrl(title: string, frame: string, controller: PlayerController): void {
 	const named = useRef<string | undefined>(undefined);
 	const popped = useRef<string | undefined>(undefined);
 	/** Where in the pushed history this page stands, so a pop can be told from a press. */
@@ -177,7 +189,7 @@ function usePlayedUrl(project: string, frame: string, controller: PlayerControll
 		const wasPopped = popped.current === frame;
 		named.current = frame;
 		popped.current = undefined;
-		document.title = `${frame} · ${project}`;
+		document.title = title;
 		// A popped entry is already the address bar's; pushing over it would bury
 		// the entry the reader just stepped back to.
 		if (wasPopped) return;
@@ -187,7 +199,7 @@ function usePlayedUrl(project: string, frame: string, controller: PlayerControll
 		const state = { spool: "play", frame, index: index.current };
 		if (first) window.history.replaceState(state, "", url);
 		else window.history.pushState(state, "", url);
-	}, [frame, project]);
+	}, [frame, title]);
 
 	useEffect(() => {
 		const onPop = (event: PopStateEvent) => {
@@ -265,8 +277,7 @@ function Tip({ label, chord }: { label: string; chord?: string }) {
  * worth its space.
  */
 function TopBar({
-	project,
-	frame,
+	said,
 	viewport,
 	loading,
 	desk,
@@ -276,8 +287,7 @@ function TopBar({
 	linkable = false,
 	recorder,
 }: {
-	project: string;
-	frame: string;
+	said: FrameSaid;
 	viewport: Viewport;
 	/** The frame is being compiled or fetched: said in the bar, since the screen has nothing to show yet. */
 	loading: boolean;
@@ -302,8 +312,8 @@ function TopBar({
 	return (
 		<div className={desk === undefined ? "spool-top" : "spool-top is-desk"} style={{ height: DESK_BAR_PX }}>
 			<span className="spool-bar-title">
-				{layout.project && <span className="spool-bar-project">{project} /</span>}
-				<span className="spool-bar-name">{frame}</span>
+				{layout.project && said.place !== null && <span className="spool-bar-project">{said.place} /</span>}
+				<span className="spool-bar-name">{said.name}</span>
 			</span>
 			{layout.size && (
 				<span className={resizing ? "spool-bar-size is-on" : "spool-bar-size"} aria-hidden={!resizing}>
@@ -432,7 +442,7 @@ function RecordControl({ recorder }: { recorder: PlayerRecorder }) {
 const SHAPE_SAYS: Record<ClipAspect, string> = {
 	"16:9": "The frame plays at 16:9 while it records, so the clip is the frame edge to edge.",
 	"1:1": "The frame plays square while it records, so the clip is the frame edge to edge.",
-	frame: "The frame as the window plays it.",
+	frame: "The frame at its size on the canvas, so the clip is what the canvas shows.",
 };
 
 /** Record's panel, under the dot: the clip's shape, then Start. Escape or Cancel puts it away. */

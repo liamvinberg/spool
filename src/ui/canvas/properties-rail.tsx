@@ -4,7 +4,7 @@ import type { Geometry, RungRead } from "../api";
 import { readRungs } from "../api";
 import { cn } from "../cn";
 import { Menu, MenuItem } from "../primitives/overlays";
-import { Bar, PropertyValue, ScrollArea, Section } from "../primitives/structure";
+import { Bar, ScrollArea, Section } from "../primitives/structure";
 import { type KnobsActs, KnobsSection } from "./knobs-section";
 import type { PickedHit } from "./protocol";
 import { NumField, popoverAt, Row, useCloseOnPressAway, VALUE } from "./rail-fields";
@@ -37,10 +37,6 @@ const FRAME_FLOOR = 80;
 export type Held =
 	| { kind: "frame"; name: string; geometry: Geometry }
 	| { kind: "frames"; count: number }
-	// a page standing on the field (#265). It has nothing editable: a page's name
-	// is its folder, its place is the drag, and its size is derived from what is
-	// inside it — so what the rail can say is what it is and how much is in it
-	| { kind: "page"; page: string; name: string; count: number }
 	| {
 			kind: "element";
 			frame: string;
@@ -197,7 +193,6 @@ export function useRungs(project: string, held: Held | null, revision: number): 
 function Body({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
 	if (held === null) return <Empty says="select an element" />;
 	if (held.kind === "frames") return <Empty says={`${held.count} frames`} />;
-	if (held.kind === "page") return <PageFacts held={held} />;
 	// an element, or several in one frame, shows the frame it is in (#338):
 	// that frame's own geometry is all the rail sets
 	const name = held.kind === "frame" ? held.name : held.frame;
@@ -359,31 +354,5 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 				</Section>
 			))}
 		</>
-	);
-}
-
-/**
- * What the rail can say about a page (#265): what it is called, where it lives,
- * and how much is under it.
- *
- * Nothing is editable, and that is the point rather than an omission. A page's
- * name is its folder and the rail renames it; its place is the drag itself; its
- * size is derived from the frames inside it, so a field for it would be a scale
- * control on a picture and would mean nothing about the project.
- */
-function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
-	const rows: readonly [string, string][] = [
-		["name", held.name],
-		["path", `frames/${held.page}`],
-		["frames", String(held.count)],
-	];
-	return (
-		<Section title="page" meta="design/frames">
-			{rows.map(([name, value]) => (
-				<Row key={name} name={name}>
-					<PropertyValue value={value} />
-				</Row>
-			))}
-		</Section>
 	);
 }

@@ -33,7 +33,6 @@ const project: ViewerProject = {
 	account: "vic@devosurf.com",
 	canvas: {
 		pages: [],
-		places: {},
 		order: {},
 		frames: names.map((name, i) => ({
 			name,

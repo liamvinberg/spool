@@ -52,7 +52,6 @@ describe("the canvas read from a copy of design/", () => {
 		const daemon = listProjectFrames(root);
 
 		expect(cloud.pages).toEqual(daemon.pages);
-		expect(cloud.places).toEqual(daemon.places);
 		expect(cloud.frames).toEqual(daemon.frames.map(({ born: _born, ...frame }) => frame));
 		expect(cloud.order).toEqual({ pages: { "": ["shop", "about"] } });
 		expect(cloud.frames.map((frame) => frame.name)).toContain("shop/cart");
@@ -68,7 +67,6 @@ describe("the canvas read from a copy of design/", () => {
 	it("reads an empty folder as an empty canvas", () => {
 		expect(projectDesign("/nothing/design", memoryDesignFiles([]))).toEqual({
 			pages: [],
-			places: {},
 			frames: [],
 			order: {},
 		});
@@ -98,6 +96,6 @@ describe("the frame a team project's cover pictures", () => {
 		writePageFrame(root, "shop", "pay", TSX);
 		writeDesignFile(root, "frames/shop/pay/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
 		expect(coverFrame(projectDesign("/copy/design", memoryDesignFiles(files(root))))).toBe("shop/pay");
-		expect(coverFrame({ pages: [], places: {}, frames: [], order: {} })).toBeUndefined();
+		expect(coverFrame({ pages: [], frames: [], order: {} })).toBeUndefined();
 	});
 });

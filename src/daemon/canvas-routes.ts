@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { validator } from "hono/validator";
 import { isFramePath } from "../page-path";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
-import { parsePlaces, writePlaces } from "./canvas-places";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import type { createChangeHub } from "./events";
 import { type createFlowGraph, recordWalk } from "./flows";
@@ -17,7 +16,7 @@ import { type createSelectionStore, parseSelectionPut } from "./selection";
 
 /**
  * One project's canvas over HTTP, mounted under `/api/p`: its frames, the arrangement a hand made of them
- * (camera, order, places, geometry), the flow map, what has been looked at, and what is selected.
+ * (camera, order, geometry), the flow map, what has been looked at, and what is selected.
  */
 export function canvasRoutes(deps: {
 	resolve: ResolveProject;
@@ -36,7 +35,7 @@ export function canvasRoutes(deps: {
 				const name = c.req.param("project");
 				return withProject(c, deps.resolve, async (root) => {
 					try {
-						const projection = await listProjectFramesAwaited(root, { seen: true });
+						const projection = await listProjectFramesAwaited(root, { seen: true, mirrors: true });
 						return c.json({
 							...projection,
 							frames: projection.frames.map((frame) => {
@@ -119,31 +118,6 @@ export function canvasRoutes(deps: {
 				(c) =>
 					withProject(c, deps.resolve, (root) => {
 						const written = answeringDiskRefusals(c, () => writeOrder(root, c.req.valid("json")));
-						if ("response" in written) return written.response;
-						return c.body(null, 204);
-					}),
-			)
-			/**
-			 * Where each page stands on the field holding it (#265).
-			 *
-			 * The second thing about this canvas a hand arranged, and it goes in the
-			 * same committed file for the same reason. There is no GET beside this
-			 * one: a page's place arrives on the projection, already completed for
-			 * every page that had none, so a second read would only be able to say
-			 * less.
-			 */
-			.put(
-				"/:project/places",
-				validator("json", (value, c) => {
-					const places = parsePlaces(value);
-					if (places === undefined) {
-						return c.text('places must be { "<page>": { "x": number, "y": number } }', 400);
-					}
-					return places;
-				}),
-				(c) =>
-					withProject(c, deps.resolve, (root) => {
-						const written = answeringDiskRefusals(c, () => writePlaces(root, c.req.valid("json")));
 						if ("response" in written) return written.response;
 						return c.body(null, 204);
 					}),

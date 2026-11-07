@@ -12,7 +12,6 @@ import {
 	mentionAsked,
 	mentionedIn,
 	mentionRuns,
-	pageCount,
 } from "./comments-model";
 
 const person = (accountId: string) => ({ accountId, name: accountId, color: "#7aa7ff" });
@@ -114,12 +113,6 @@ describe("the inbox's list", () => {
 			["site", "cart", null, ["site"]],
 		]);
 		expect(groupsOf(shown, "page").map((group) => group.page)).toEqual(["app", "promo", "site"]);
-	});
-
-	it("counts a page object's open comments, its pages' too, and says whether one is unread", () => {
-		const nested = [...all, comment("deep", 1, { page: "site/blog" })];
-		expect(pageCount(nested, "site", reader)).toEqual({ open: 2, unread: true });
-		expect(pageCount(nested, "promo", reader)).toEqual({ open: 0, unread: false });
 	});
 });
 

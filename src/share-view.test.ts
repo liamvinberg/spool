@@ -17,6 +17,9 @@ describe("what a share shows, as its row says it (spool#182)", () => {
 
 	it("names a pages share's pages, the root page as the top page", () => {
 		expect(sharedWhat({ pages: ["", "flows/checkout"] })).toBe("the top page, checkout");
+		// a folder it follows is said once, whatever spool.page lists under it now (spool#230)
+		const folder = { pages: ["", "clients/scania", "clients/scania/offer"], folders: ["clients/scania"] };
+		expect(sharedWhat(folder)).toBe("the top page, scania");
 	});
 });
 

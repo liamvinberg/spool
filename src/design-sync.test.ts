@@ -13,7 +13,7 @@ function repo(files: Record<string, string>): string {
 	return root;
 }
 
-it("carries the primitives to the canvas with every file they import, and nothing else", () => {
+it("carries the primitives and the experiments to the canvas with every file they import, and nothing else", () => {
 	const root = repo({
 		"src/ui/primitives/actions.tsx": 'import { Kbd } from "./display";\nimport { cn } from "../cn";',
 		"src/ui/primitives/actions.test.tsx": 'import { Button } from "./actions";',
@@ -22,9 +22,12 @@ it("carries the primitives to the canvas with every file they import, and nothin
 		"src/ui/cn.ts": "",
 		"src/brand.ts": "",
 		"src/ui/home.tsx": "",
+		"src/settings/experiments.ts": "",
+		"src/settings/registry.ts": "",
 	});
 	expect([...synced(root).keys()].filter((path) => path.startsWith("design/shared/system/"))).toEqual([
 		"design/shared/system/brand.ts",
+		"design/shared/system/settings/experiments.ts",
 		"design/shared/system/ui/cn.ts",
 		"design/shared/system/ui/icons.tsx",
 		"design/shared/system/ui/primitives/actions.tsx",

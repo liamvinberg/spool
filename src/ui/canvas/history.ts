@@ -1,6 +1,6 @@
 import { movedOnto, pageWithin, ROOT_PAGE } from "../../page-path";
 import type { KnobPath, KnobValue } from "../../runtime/knob-protocol";
-import type { Geometry, HeldPatch, Place } from "../api";
+import type { Geometry, HeldPatch } from "../api";
 
 /**
  * One undo stack for the hands (#23, #230).
@@ -77,22 +77,9 @@ export interface OrderList {
 	readonly after: readonly string[];
 }
 
-/**
- * One gesture's places, per page: where each stood, and where it ended up.
- *
- * Its own shape rather than a `Rects` with the size left out, because a page
- * object has no size to put back — the box is derived from what is inside it,
- * so the only thing a drag can change is where it stands (#265).
- */
-export type Places = Record<string, { before: Place; after: Place }>;
-
 /** One undoable thing the hands did. */
 export type HistoryEntry =
 	| { readonly kind: "geometry"; readonly rects: Rects }
-	// a page dragged on the field holding it (#265). It sits on this stack beside
-	// the frame moves it happens among, because one press has to walk all of it
-	// — a hand that moved a frame and then a page undoes them in that order
-	| { readonly kind: "place"; readonly places: Places }
 	// one thing a hand did to a frame's source (#314, #317): words typed, or
 	// elements taken out. The patch to run next, in whichever direction this entry
 	// currently sits, and the ask the frame holds the DOM half under. Running the
@@ -150,6 +137,12 @@ export type HistoryEntry =
 			readonly frames: readonly Moved[];
 			readonly to: string;
 			readonly lists: readonly OrderList[];
+			/**
+			 * Where frames let go on a spot of a peek stand either side of the move
+			 * (spool#224), by the name each had before it: one gesture, so one entry,
+			 * and running it either way puts each frame on its page and its spot.
+			 */
+			readonly places?: Readonly<Record<string, { readonly before: Geometry; readonly after: Geometry }>>;
 	  }
 	// a page that changed the page holding it, which carries its whole subtree
 	// (#231): its own kind rather than a second list on a move, because putting
@@ -228,26 +221,6 @@ export function entryOf(before: Record<string, Geometry>, after: Record<string, 
 	return Object.keys(rects).length === 0 ? undefined : { kind: "geometry", rects };
 }
 
-/** One page drag's worth of change, rounded like the durable's write. */
-export function placeEntryOf(before: Record<string, Place>, after: Record<string, Place>): HistoryEntry | undefined {
-	const places: Places = {};
-	for (const [page, raw] of Object.entries(before)) {
-		const landed = after[page];
-		if (landed === undefined) continue;
-		const from = { x: Math.round(raw.x), y: Math.round(raw.y) };
-		const to = { x: Math.round(landed.x), y: Math.round(landed.y) };
-		if (from.x !== to.x || from.y !== to.y) places[page] = { before: from, after: to };
-	}
-	return Object.keys(places).length === 0 ? undefined : { kind: "place", places };
-}
-
-/** The places one entry writes, run this way. */
-export function placesOf(places: Places, way: Way): Record<string, Place> {
-	return Object.fromEntries(
-		Object.entries(places).map(([page, place]) => [page, way === "undo" ? place.before : place.after]),
-	);
-}
-
 /** A fresh edit: pushed, capped, and any redo future is voided. */
 export function record(history: History, entry: HistoryEntry): History {
 	return { undo: [...history.undo, entry].slice(-HISTORY_LIMIT), redo: [] };
@@ -257,6 +230,22 @@ export interface Taken {
 	readonly history: History;
 	/** The entry, narrowed to what the projection still holds. */
 	readonly entry: HistoryEntry;
+}
+
+/**
+ * The spots a move's frames take once it has run this way, by the names they
+ * then have: where each stood for an undo, where it was let go for a redo.
+ */
+export function placesOf(entry: Extract<HistoryEntry, { kind: "move" }>, way: Way): Record<string, Geometry> {
+	const places = entry.places;
+	if (places === undefined) return {};
+	return Object.fromEntries(
+		entry.frames.flatMap((moved) => {
+			const place = places[moved.name];
+			if (place === undefined) return [];
+			return [way === "undo" ? [moved.name, place.before] : [movedOnto(entry.to, moved.name), place.after]] as const;
+		}),
+	);
 }
 
 /** The rects one geometry entry writes, run this way. */
@@ -388,13 +377,6 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 		case "geometry": {
 			const rects = liveRects(entry.rects, alive);
 			return Object.keys(rects).length === 0 ? undefined : { kind: "geometry", rects };
-		}
-		case "place": {
-			// a page that went away has nowhere to be put back; the rest of the
-			// gesture still runs, exactly as a rect entry has always skipped a
-			// deleted frame
-			const places = Object.fromEntries(Object.entries(entry.places).filter(([page]) => alive.pages.has(page)));
-			return Object.keys(places).length === 0 ? undefined : { kind: "place", places };
 		}
 		case "rename": {
 			const from = way === "undo" ? entry.to : entry.from;

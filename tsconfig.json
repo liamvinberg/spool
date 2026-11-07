@@ -21,6 +21,7 @@
 	},
 	"include": [
 		".agents/skills/*/scripts",
+		"changelog/clips",
 		".github/scripts",
 		"src",
 		"bench",

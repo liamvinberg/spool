@@ -158,6 +158,10 @@
 	--animate-chrome-in: chrome-in var(--transition-duration-fast) var(--ease-out);
 	/* Home's page as you go to another place: it fades up 6px, on the everyday scale */
 	--animate-place-in: place-in var(--transition-duration-base) var(--ease-out);
+	/* a canvas page as you go into one of its pages (spool#224): it arrives from the right, deeper
+	 * the way the path reads; going up, from the left */
+	--animate-page-in: page-in var(--transition-duration-base) var(--ease-out);
+	--animate-page-up: page-up var(--transition-duration-base) var(--ease-out);
 	/* the History pane's head as its scope changes (spool#187): the new name rises into place */
 	--animate-history-rise: history-rise var(--transition-duration-base) var(--ease-out) both;
 	/* a restore's row arriving at the top of the history (spool#188): washed in the accent, which fades */
@@ -808,6 +812,20 @@
 		}
 	}
 
+	@keyframes page-in {
+		from {
+			opacity: 0;
+			transform: translateX(28px);
+		}
+	}
+
+	@keyframes page-up {
+		from {
+			opacity: 0;
+			transform: translateX(-28px);
+		}
+	}
+
 	@keyframes chrome-in {
 		from {
 			opacity: 0;
@@ -925,6 +943,8 @@
 	.animate-find-in,
 	.animate-chrome-in,
 	.animate-place-in,
+	.animate-page-in,
+	.animate-page-up,
 	.animate-history-rise,
 	.animate-history-wash,
 	.animate-history-ring,

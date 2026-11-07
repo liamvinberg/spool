@@ -4,7 +4,7 @@
  * (its team's, or a solo project's own account), shows a set of pages to outsiders, and is either named people,
  * who sign in, or anyone with its link. Pure, so the canvas, the viewer and the daemon spell it alike.
  */
-import { pageName, ROOT_PAGE } from "./page-path";
+import { pageHolds, pageName, ROOT_PAGE } from "./page-path";
 import { personName } from "./person-name";
 
 export type ShareKind = "people" | "link";
@@ -12,10 +12,15 @@ export type ShareKind = "people" | "link";
 export interface ShareView {
 	id: string;
 	kind: ShareKind;
-	/** The page paths it shows; for a whole-project share, every page as the project now stands. */
+	/**
+	 * The page paths it shows; for a whole-project share, every page as the project now stands, and for one following
+	 * folders, each folder and every page under it as it now stands.
+	 */
 	pages: string[];
 	/** A whole-project share (spool#182): every page, and pages added later. */
 	whole?: true;
+	/** The folders it follows (spool#230): each folder's pages, and pages added under it later; absent for none. */
+	folders?: string[];
 	/** Whom a people share names, by address; none for a link share. */
 	people: string[];
 	/** The same people by name, in the same order, as spool.page says them everywhere; absent from an older spool.page. */
@@ -99,20 +104,25 @@ export function readCommenters(value: unknown): ShareCommenter[] | null {
 }
 
 /** What a new share asks for. */
-export type ShareRequest = (
-	| { pages: string[]; whole?: undefined }
-	/** The whole project, pages added later included (spool#182): no pages to name. */
-	| { whole: true; pages?: undefined }
-) & {
-	kind: ShareKind;
-	people?: string[];
-	/** The frame its link opens playing, on one of its pages, or any frame of a whole-project share. */
-	start?: string;
-	/** Email the people it names a link that opens it. */
-	notify?: boolean;
-	/** When it ends, counted by spool.page from when it is made (spool#183); absent, it never ends. */
-	ends?: ShareEnds;
-};
+export type ShareRequest =
+	/**
+	 * Pages, and of them the folders it follows (spool#230), whose pages added later it takes in. Every page chosen is
+	 * named, a followed folder's own pages too, so a spool.page that follows no folder shows them as they are.
+	 */
+	(
+		| { pages: string[]; folders?: string[]; whole?: undefined }
+		/** The whole project, pages added later included (spool#182): no pages to name. */
+		| { whole: true; pages?: undefined }
+	) & {
+		kind: ShareKind;
+		people?: string[];
+		/** The frame its link opens playing, on one of its pages, or any frame of a whole-project share. */
+		start?: string;
+		/** Email the people it names a link that opens it. */
+		notify?: boolean;
+		/** When it ends, counted by spool.page from when it is made (spool#183); absent, it never ends. */
+		ends?: ShareEnds;
+	};
 
 /** When a new share ends: never, or so many days from when it is made (spool#183). */
 export type ShareEnds = "never" | "30d" | "7d";
@@ -150,17 +160,26 @@ export function sharedPageName(page: string): string {
 	return page === ROOT_PAGE ? TOP_PAGE : pageName(page);
 }
 
-/** What a share shows, as its row says it: "whole project", or its pages by name. */
+/**
+ * What a share was made of: the folders it follows, each said once whatever it holds now, and the pages it shows on
+ * their own.
+ */
+export function sharedItems(share: Pick<ShareView, "pages" | "folders">): string[] {
+	const folders = share.folders ?? [];
+	return [...folders, ...share.pages.filter((page) => !folders.some((folder) => pageHolds(folder, page)))].sort();
+}
+
+/** What a share shows, as its row says it: "whole project", or what it was made of by name. */
 export function sharedWhat(
-	share: Pick<ShareView, "pages" | "whole">,
+	share: Pick<ShareView, "pages" | "whole" | "folders">,
 	name: (page: string) => string = sharedPageName,
 ): string {
-	return share.whole === true ? "whole project" : share.pages.map(name).join(", ");
+	return share.whole === true ? "whole project" : sharedItems(share).map(name).join(", ");
 }
 
 /** What a share shows and, when it ends, when: "checkout · ends 9 Nov", as its rows say it (spool#183). */
 export function sharedWhatEnds(
-	share: Pick<ShareView, "pages" | "whole" | "endsAt">,
+	share: Pick<ShareView, "pages" | "whole" | "folders" | "endsAt">,
 	name: (page: string) => string = sharedPageName,
 ): string {
 	const ends = saidEnds(share);

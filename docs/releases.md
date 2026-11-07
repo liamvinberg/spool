@@ -11,7 +11,7 @@ When a change alters what someone running the published package sees, land a cha
 "spool.page": minor
 ---
 
-Added the frame finder: press `/` to search frames by name and jump to one.
+**Frame finder.** Press `/` to search frames by name and jump to one.
 ```
 
 | Bump | Use when |
@@ -21,6 +21,8 @@ Added the frame finder: press `/` to search frames by name and jump to one.
 | `major` | The public contract becomes incompatible (from `1.0.0`; see below) |
 
 Write the prose for someone reading the changelog, not for a reviewer: what they can do now, or what stopped being broken. Write it the way one person tells another: short plain sentences, no em dashes, no jargon, no flourish. One coherent change per file, and several commits may share one changeset. Name the file after the change (`frame-finder.md`), or let `pnpm changeset` scaffold one.
+
+A `minor` opens with its name in bold, two to four words ending in a period, as above: spool.page/changelog lists it under that name, and its first sentence follows. A `patch` needs none; the changelog shows its first sentence alone, so let that sentence say what is fixed.
 
 Work with no published effect ships no changeset: the `design/` canvas, docs, tests, CI, refactors, benchmarks.
 

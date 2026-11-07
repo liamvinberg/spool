@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Rect } from "../page-box";
 import {
 	agentReader,
 	type FakeAgentProc,
@@ -29,6 +28,7 @@ import {
 } from "./agent-frames";
 import type { AgentTurn } from "./agent-turn";
 import type { ChangeEvent } from "./events";
+import type { Rect } from "./placement";
 import { listProjectFrames } from "./projection";
 import type { PlaceholderAuthor } from "./sidecar";
 

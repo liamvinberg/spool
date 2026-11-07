@@ -2,7 +2,7 @@ import { type Dispatch, type SetStateAction, useLayoutEffect, useReducer, useRef
 import type { ProjectedPlaceholder } from "../../daemon/projection";
 import type { Unseen } from "../../daemon/seen";
 import { ROOT_PAGE } from "../../page-path";
-import type { FlowEdge, Place, ProjectedFrame } from "../api";
+import type { CanvasOrder, FlowEdge, ProjectedFrame } from "../api";
 import type { ShareContext } from "../share-control";
 import type { CanvasTool } from "./canvas-tools";
 import type { CommentDraft } from "./comments-layer";
@@ -10,7 +10,7 @@ import { FILTERS, type Filters } from "./comments-model";
 import type { HandEdit } from "./hand-edit";
 import type { Staging } from "./history";
 import type { PickedSelection } from "./overlays";
-import { type PageObject, pageObjectsOn } from "./page-objects";
+import type { PageWorld } from "./page-list";
 import { pageOf } from "./pages";
 
 /**
@@ -28,16 +28,16 @@ export interface CanvasState {
 	selected: string[];
 	/** the elements held inside frames */
 	picked: PickedSelection[];
-	/** the page object held, which is never held with frames */
+	/** the page picked among this page's own: the list's lit row, and where ⌘↓ goes */
 	selectedPage: string | null;
 	/** the whole projection, every page's frames */
 	frames: ProjectedFrame[];
 	/** the frames on their way: designers' placeholders, drawn dashed where their frames will land (#369) */
 	placeholders: readonly ProjectedPlaceholder[];
-	/** where each page stands on the field holding it (#265), the whole project's */
-	places: Readonly<Record<string, Place>>;
 	/** the named pages on disk (#39) */
 	pages: string[];
+	/** the rail's order (#228), as the rail last stored it: what the list of a page of pages follows */
+	order: CanvasOrder;
 	/** the page the canvas shows */
 	activePage: string;
 	/** frames staged for the Trash, gone from the canvas while the toast stands */
@@ -108,8 +108,8 @@ export function createCanvasStore(): CanvasStore {
 		selectedPage: null,
 		frames: [],
 		placeholders: [],
-		places: {},
 		pages: [],
+		order: {},
 		activePage: ROOT_PAGE,
 		hidden: new Set<string>(),
 		hiddenPages: new Set<string>(),
@@ -252,18 +252,10 @@ export const navigatorPagesOf = derived(
 	([pages, hidden]) => pages.filter((page) => !hidden.has(page)),
 );
 
-/**
- * The pages standing on the field, composed from the projection (#265).
- *
- * Nothing is fetched and nothing is baked: every frame under a page is
- * already in hand with its geometry and its cover, so the picture is a read
- * of what this side holds and a frame edited two pages down redraws the
- * object above it as soon as the projection lands.
- */
-export const pageObjectsOf: (state: CanvasState) => PageObject[] = derived(
-	(state) =>
-		[navigatorFramesOf(state), navigatorPagesOf(state), state.places, state.placeholders, state.activePage] as const,
-	([frames, pages, places, placeholders, page]) => pageObjectsOn(page, pages, frames, places, placeholders),
+/** The project as a page of pages reads it (page-list.ts): what stands on each page, and the rail's order. */
+export const pageWorldOf = derived(
+	(state) => [navigatorFramesOf(state), navigatorPagesOf(state), state.placeholders, state.order] as const,
+	([frames, pages, waiting, order]): PageWorld => ({ frames, pages, waiting, order }),
 );
 
 /** The tool in hand: Space borrows the Hand for as long as it is held. */

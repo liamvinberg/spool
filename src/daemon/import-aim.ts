@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { extname, join, posix, relative, resolve, sep } from "node:path";
+import { basename, extname, join, posix, relative, resolve, sep } from "node:path";
 
 /**
  * Escaping imports re-aimed when a folder moves (#273).
@@ -22,11 +22,11 @@ import { extname, join, posix, relative, resolve, sep } from "node:path";
  * and is never touched — the canvas rearranges, it does not write.
  *
  * What else is left alone: specifiers that stay inside the moved folder (they
- * moved with it), paths that answer to no file on disk (nothing to aim at),
- * paths that escape design/ (the compile refuses those in its own words), and
- * a target that is itself mid-move in the same request — a frame reaching into
- * another frame's folder is outside the contract, and its old path answering
- * nothing is the signal to not guess. A rename or a copy beside the original
+ * moved with it), paths that answer to no file on disk (nothing to aim at) and
+ * paths that escape design/ (the compile refuses those in its own words). A
+ * target in another folder moving in the same request is aimed at wherever it
+ * stands when this folder's turn comes; `importersReaimed` puts the other side
+ * right when that folder's turn comes. A rename or a copy beside the original
  * keeps every count, so it is skipped whole and a copy stays byte-identical.
  */
 export function reaimEscapingImports(designDir: string, fromDir: string, toDir: string): void {
@@ -46,6 +46,55 @@ export function reaimEscapingImports(designDir: string, fromDir: string, toDir: 
 		});
 		if (rewritten !== source) writeFileSync(file, rewritten);
 	}
+}
+
+/**
+ * The other side of a move (spool#232): files outside the moved folder that
+ * import into it, re-aimed at where it went, as rewrites not yet written.
+ *
+ * A mirror is a frame whose whole source is `export { default } from
+ * "../checkout/frame"` with a size of its own, so renaming or moving the
+ * original would leave every mirror of it pointing at nothing. Whatever
+ * reached into the folder's old path by a relative specifier is spelled again
+ * from where the importing file stands to the same file in the folder's new
+ * place, in frames/ and shared/ alike. Copies never come here: the original
+ * still stands where every importer points.
+ */
+export function importersReaimed(
+	designDir: string,
+	fromDir: string,
+	toDir: string,
+): { file: string; path: string; source: string }[] {
+	const fromRel = designRelative(designDir, fromDir);
+	const toRel = designRelative(designDir, toDir);
+	if (fromRel === toRel) return [];
+	// a specifier reaching into the folder from outside it has to name it
+	const named = basename(fromRel);
+	const writes: { file: string; path: string; source: string }[] = [];
+	for (const file of [
+		...sourceFilesUnder(join(designDir, "frames")),
+		...sourceFilesUnder(join(designDir, "shared")),
+	]) {
+		const path = designRelative(designDir, file);
+		if (path.startsWith(`${toRel}/`)) continue;
+		const syntax = RELATIVE_SYNTAX[extname(file)];
+		if (syntax === undefined) continue;
+		let source: string;
+		try {
+			source = readFileSync(file, "utf8");
+		} catch {
+			continue;
+		}
+		if (!source.includes(named)) continue;
+		const dir = posix.dirname(path);
+		const rewritten = source.replace(syntax, (whole, lead: string, quote: string, spec: string) => {
+			const target = posix.normalize(posix.join(dir, spec));
+			if (target !== fromRel && !target.startsWith(`${fromRel}/`)) return whole;
+			return `${lead}${quote}${relativeSpec(dir, toRel + target.slice(fromRel.length))}${quote}`;
+		});
+		if (rewritten !== source) writes.push({ file, path, source: rewritten });
+	}
+	return writes;
 }
 
 /**
@@ -69,6 +118,10 @@ function reaim(designDir: string, fromRel: string, oldDir: string, newDir: strin
 const SCRIPT_SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])((?:\.\.\/)+[^"'\n]*)\2/g;
 const STYLE_SPECIFIER = /(@import\s*|url\(\s*)(["']?)((?:\.\.\/)+[^"')\s]*)\2/g;
 
+/** The same positions, for any relative specifier: an importer can sit above the folder it reaches into. */
+const SCRIPT_RELATIVE = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])(\.\.?\/[^"'\n]*)\2/g;
+const STYLE_RELATIVE = /(@import\s*|url\(\s*)(["']?)(\.\.?\/[^"')\s]*)\2/g;
+
 /** The files a specifier can live in; sidecars and images hold none. */
 const SYNTAX: Record<string, RegExp> = {
 	".ts": SCRIPT_SPECIFIER,
@@ -77,6 +130,15 @@ const SYNTAX: Record<string, RegExp> = {
 	".jsx": SCRIPT_SPECIFIER,
 	".mjs": SCRIPT_SPECIFIER,
 	".css": STYLE_SPECIFIER,
+};
+
+const RELATIVE_SYNTAX: Record<string, RegExp> = {
+	".ts": SCRIPT_RELATIVE,
+	".tsx": SCRIPT_RELATIVE,
+	".js": SCRIPT_RELATIVE,
+	".jsx": SCRIPT_RELATIVE,
+	".mjs": SCRIPT_RELATIVE,
+	".css": STYLE_RELATIVE,
 };
 
 /** How esbuild would finish an extensionless specifier, plus the file as named. */
@@ -109,4 +171,12 @@ function filesUnder(dir: string): string[] {
 	} catch {
 		return [];
 	}
+}
+
+/** Every file under a folder, app-owned and hidden folders skipped. */
+function sourceFilesUnder(dir: string): string[] {
+	return filesUnder(dir).filter((file) => {
+		const inner = designRelative(dir, file).split("/");
+		return !inner.some((segment) => segment.startsWith(".") || segment === "node_modules");
+	});
 }

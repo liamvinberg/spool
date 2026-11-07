@@ -370,6 +370,7 @@ describe("the booth before any browser", () => {
 		).rejects.toThrow("the browser did not start within 1 s");
 		const late = {
 			browser: {} as HeadlessShell["browser"],
+			software: false,
 			close: vi.fn(async () => {}),
 			kill: vi.fn(async () => {}),
 		};
