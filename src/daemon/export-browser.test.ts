@@ -40,20 +40,23 @@ export default function Frame() {
 	</main>;
 }`;
 
+/** a frame named past what the export row can show */
+const LONG = "second-frame-whose-name-runs-well-past-the-export-row";
+
 it("downloads PNGs and a PDF from the canvas export menu", { timeout: 120_000 }, async () => {
 	const source = `export default function Frame() { return <main style={{width: "100%", height: "100%", background: "#f5391a"}}>Export me</main>; }`;
 	const f = await handCanvas({}, source, { w: 420, h: 300 });
-	mkdirSync(join(f.project.root, "design/frames/second"), { recursive: true });
-	writeFileSync(join(f.project.root, "design/frames/second/swatch.png"), Buffer.from(AMBER_PNG, "base64"));
-	writeFrame(f.project.root, "second", IMAGE_FRAME);
-	writeDesignFile(f.project.root, "frames/second/frame.json", JSON.stringify({ x: 460, y: 0, w: 420, h: 300 }));
+	mkdirSync(join(f.project.root, `design/frames/${LONG}`), { recursive: true });
+	writeFileSync(join(f.project.root, `design/frames/${LONG}/swatch.png`), Buffer.from(AMBER_PNG, "base64"));
+	writeFrame(f.project.root, LONG, IMAGE_FRAME);
+	writeDesignFile(f.project.root, `frames/${LONG}/frame.json`, JSON.stringify({ x: 460, y: 0, w: 420, h: 300 }));
 	const { page } = f;
-	await expect.poll(() => page.locator('[data-frame-label="second"]').count()).toBe(1);
+	await expect.poll(() => page.locator(`[data-frame-label="${LONG}"]`).count()).toBe(1);
 	await expect
-		.poll(() => page.frameLocator('iframe[title="second"]').locator("output").textContent(), { timeout: 30_000 })
+		.poll(() => page.frameLocator(`iframe[title="${LONG}"]`).locator("output").textContent(), { timeout: 30_000 })
 		.toBe("255,204,0,255");
 	await page.locator('[data-frame-label="home"]').click();
-	await page.locator('[data-frame-label="second"]').click({ modifiers: ["Shift"] });
+	await page.locator(`[data-frame-label="${LONG}"]`).click({ modifiers: ["Shift"] });
 	// the menu's Export becomes the choice in the same box, its last row the act
 	const exportRow = page.getByRole("menuitem", { name: /^Export.*↵$/ });
 	const openExport = async () => {
@@ -88,7 +91,7 @@ it("downloads PNGs and a PDF from the canvas export menu", { timeout: 120_000 },
 	expect(centre).toEqual([255, 204, 0, 255]);
 	expect(pngs.map((download) => download.suggestedFilename())).toEqual([
 		`${f.project.name}-home.png`,
-		`${f.project.name}-second.png`,
+		`${f.project.name}-${LONG}.png`,
 	]);
 	await page.getByText("Downloaded", { exact: true }).waitFor();
 	await page.keyboard.press("Escape");
@@ -102,4 +105,20 @@ it("downloads PNGs and a PDF from the canvas export menu", { timeout: 120_000 },
 	const pdf = await PDFDocument.load(readFileSync(path));
 	expect(pdf.getPageCount()).toBe(2);
 	expect(pdf.getPage(0).getSize()).toEqual({ width: 315, height: 225 });
+
+	// one frame's file name is too long for the row: it gives way, and the row still says Export inside the box
+	// the second Escape puts the pair down
+	await page.keyboard.press("Escape");
+	await page.keyboard.press("Escape");
+	await page.locator(`[data-frame-label="${LONG}"]`).click();
+	await page.locator(`[data-frame-label="${LONG}"]`).click({ button: "right" });
+	await page.getByRole("menuitem", { name: /^Export…/ }).click();
+	await exportRow.waitFor();
+	const fits = await exportRow.evaluate((row) => {
+		const box = row.getBoundingClientRect();
+		const label = row.firstElementChild as HTMLElement;
+		const name = [...row.querySelectorAll("span")].at(-1)?.getBoundingClientRect();
+		return label.scrollWidth <= label.clientWidth && name !== undefined && name.right <= box.right;
+	});
+	expect(fits).toBe(true);
 });
