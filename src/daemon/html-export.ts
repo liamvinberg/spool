@@ -131,7 +131,7 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 			styles,
 			fonts: bundle.fonts === undefined ? undefined : await inline(bundle.fonts),
 			transitions: bundle.transitions,
-			importMap: offFileImportMap(bundle.importMap),
+			importMap: exportImportMap(bundle.importMap, await vendorReactJs()),
 			poster: poster === undefined ? undefined : `data:${poster.type};base64,${poster.bytes.toString("base64")}`,
 		});
 		return { kind: "ok", value: { html, filename: exportFilename(project, frame) } };
@@ -250,16 +250,22 @@ function offFileSpecifiers(root: string): string[] {
 		.map(([specifier]) => specifier);
 }
 
-/** The composition's import map without spool's pins, which the file carries itself; nothing when nothing is left. */
-function offFileImportMap(importMap: object): object | undefined {
-	const map = importMap as { imports?: Record<string, string>; scopes?: object };
-	const pinned = new Set<string>([...REACT_SPECIFIERS, "spool", "spool/jsx-dev-runtime"]);
+/**
+ * The file's import map: the composition's, with spool's runtime pins dropped
+ * (the module carries the runtime) and every React specifier sent to React as
+ * one data: module. React stays a module of its own so a package the project
+ * maps to the web, which imports React by name, finds the same React the
+ * frames render with.
+ */
+function exportImportMap(importMap: object, react: string): object {
+	const map = importMap as { imports?: Record<string, string> };
+	const reactUrl = `data:text/javascript;base64,${Buffer.from(react).toString("base64")}`;
 	const imports = Object.fromEntries(
-		Object.entries(map.imports ?? {}).filter(([specifier]) => !pinned.has(specifier)),
+		Object.entries(map.imports ?? {}).filter(
+			([specifier]) => specifier !== "spool" && specifier !== "spool/jsx-dev-runtime",
+		),
 	);
-	const scopes = map.scopes ?? {};
-	if (Object.keys(imports).length === 0 && Object.keys(scopes).length === 0) return undefined;
-	return { ...map, imports };
+	return { ...map, imports: { ...imports, ...Object.fromEntries(REACT_SPECIFIERS.map((spec) => [spec, reactUrl])) } };
 }
 
 function readText(file: string): string {
@@ -276,21 +282,18 @@ export function exportFilename(project: string, frame: string): string {
 }
 
 /**
- * The composition and spool's runtime and React in one module, so the file
- * needs no import map for them and no module from anywhere. Whatever else the
- * frames import (a package the project maps to a CDN) stays an import.
+ * The composition and spool's runtime in one module. React stays an import,
+ * which the file's import map answers with React's own data: module, and so
+ * does whatever else the frames import (a package the project maps to a CDN).
  */
 async function oneModule(bundle: PlayerBundle): Promise<string> {
 	const entry = bundle.chunks.get(bundle.entry);
 	if (entry === undefined) throw new Error("the composition has no entry module");
-	// every React specifier is the one module, as the import map makes it one URL
 	const modules = new Map<string, string>([
-		...REACT_SPECIFIERS.map((specifier) => [specifier, "react"] as const),
 		["spool", "spool"],
 		["spool/jsx-dev-runtime", "spool/jsx-dev-runtime"],
 	]);
 	const vendored = new Map<string, () => Promise<string>>([
-		["react", vendorReactJs],
 		["spool", async () => (await vendorSpoolJs()).js],
 		["spool/jsx-dev-runtime", async () => (await vendorSpoolJsxJs()).js],
 	]);
@@ -382,7 +385,7 @@ function exportDocument({
 	styles: ReadonlyMap<string, string>;
 	fonts: string | undefined;
 	transitions: string | undefined;
-	importMap: object | undefined;
+	importMap: object;
 	poster: string | undefined;
 }): string {
 	const opening = config.styles[config.start];
@@ -409,7 +412,8 @@ function exportDocument({
 <script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(config))})</script>
 <style>${escapeInlineStyle(PLAYER_SCREEN_RULES)}</style>
 ${fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`}${sheets}
-${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</style>\n`}${importMap === undefined ? "" : `<script type="importmap">${escapeJsonScript(importMap)}</script>\n`}</head>
+${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</style>\n`}<script type="importmap">${escapeJsonScript(importMap)}</script>
+</head>
 <body>
 <div id="root">${still}</div>
 <script type="module">${escapeInlineScript(js)}</script>

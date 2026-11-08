@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import type { Page } from "playwright-core";
+import type { BrowserContext, Page, Worker } from "playwright-core";
 import { renderClip } from "../../../../src/daemon/record";
+import { createSettingsStore } from "../../../../src/daemon/settings";
 import type { RecordedInput } from "../../../../src/runtime/record-protocol";
 
 /**
@@ -20,7 +21,47 @@ export interface Clip {
 	files: Readonly<Record<string, string>>;
 	/** The window's size in CSS pixels; 1440×900 by default, the page's 16:10. */
 	viewport?: { w: number; h: number };
-	steps: readonly Step[];
+	/** What the replayed take does; a live clip walks its own. */
+	steps?: readonly Step[];
+	/** The one turn a stand-in `claude` plays in this clip's spool, for a clip of the agent at work (fake-claude.mjs). */
+	agent?: AgentTurn;
+	/** Load spool's Chrome extension (built with --test) into the window's browser, its sends aimed at this clip's spool. */
+	extension?: boolean;
+	/**
+	 * A clip the replayed take cannot make (an agent's turn, a dropped file, another site): walked once and filmed as
+	 * it happens, on the wall clock, with the cursor drawn in the page. Runs instead of `steps`.
+	 */
+	live?: (take: Take) => Promise<void>;
+	/** What a live clip sets up before filming starts. Filming then starts on the spool window, unless it filmed another page. */
+	prepare?: (take: Take) => Promise<void>;
+}
+
+/** A turn for the stand-in agent: what it says, and each file it writes, its source streamed in over `ms`. */
+export interface AgentTurn {
+	name?: string;
+	steps: readonly (
+		| { say: string }
+		| { write: string; content: string; json?: string; ms?: number }
+		| { wait: number }
+	)[];
+}
+
+/** What a live clip drives. */
+export interface Take {
+	/** the spool window, on the clip's canvas */
+	page: Page;
+	context: BrowserContext;
+	/** the canvas's address, and the spool it is on */
+	url: string;
+	port: number;
+	/** the clip project's folder */
+	root: string;
+	/** the extension's service worker, when the clip loads it */
+	extension: Worker | null;
+	/** walk steps on a page, the drawn cursor following the hand */
+	walk(steps: readonly Step[], on?: Page): Promise<void>;
+	/** film this page from now on, in front */
+	film(page: Page): Promise<void>;
 }
 
 /**
@@ -108,15 +149,41 @@ async function pointOf(page: Page, target: Target): Promise<{ x: number; y: numb
 export async function rehearse(
 	page: Page,
 	steps: readonly Step[],
-): Promise<{ inputs: RecordedInput[]; duration: number }> {
+	/** told every point the hand moves to, for a live take's drawn cursor */
+	hand?: (x: number, y: number) => Promise<void>,
+	from = START,
+): Promise<{ inputs: RecordedInput[]; duration: number; at: { x: number; y: number } }> {
 	const inputs: RecordedInput[] = [];
 	let t = 500;
-	let at = START;
+	let at = from;
+	const move = async (x: number, y: number) => {
+		await page.mouse.move(x, y);
+		await hand?.(x, y);
+	};
+	/**
+	 * A live take is filmed on the wall clock, so its glide keeps to its own times, dropping a move it fell behind on;
+	 * a rehearsal records the times and may take as long as it likes.
+	 */
 	const real = async (moves: RecordedInput[]) => {
-		for (const move of moves) if (move.kind === "move") await page.mouse.move(move.x, move.y);
+		const began = Date.now();
+		const first = moves[0]?.t ?? 0;
+		for (const [i, one] of moves.entries()) {
+			if (one.kind !== "move") continue;
+			if (hand !== undefined) {
+				const due = one.t - first - (Date.now() - began);
+				if (due > 0) await page.waitForTimeout(due);
+				const next = moves[i + 1];
+				if (next !== undefined && next.t - first < Date.now() - began) continue;
+			}
+			await move(one.x, one.y);
+		}
+	};
+	/** a live take's pause for what a rehearsal only counts */
+	const beat = async (ms: number) => {
+		if (hand !== undefined) await page.waitForTimeout(ms);
 	};
 	inputs.push({ t: 0, kind: "move", x: at.x, y: at.y, button: 0 });
-	await page.mouse.move(at.x, at.y);
+	await move(at.x, at.y);
 	for (const step of steps) {
 		if ("wait" in step) {
 			await page.waitForTimeout(step.wait);
@@ -148,10 +215,8 @@ export async function rehearse(
 			const to = "by" in step ? { x: from.x + step.by.dx, y: from.y + step.by.dy } : await pointOf(page, step.to);
 			const ms = step.ms ?? 1200;
 			const moves = glide(from, to, t, ms, 0);
-			for (const move of moves) {
-				if (move.kind === "move") await page.mouse.move(move.x, move.y);
-				inputs.push(move);
-			}
+			await real(moves);
+			inputs.push(...moves);
 			t += ms + 100;
 			inputs.push({ t, kind: "up", ...to, button: 0 });
 			await page.mouse.up();
@@ -163,6 +228,7 @@ export async function rehearse(
 				const key = keyOf(char);
 				inputs.push({ t, kind: "key-down", ...key }, { t: t + 40, kind: "key-up", ...key, text: "" });
 				await page.keyboard.press(char);
+				await beat(per);
 				t += per;
 			}
 			t += 200;
@@ -170,6 +236,7 @@ export async function rehearse(
 			const key = keyOf(step.press);
 			inputs.push({ t, kind: "key-down", ...key }, { t: t + 60, kind: "key-up", ...key, text: "" });
 			await page.keyboard.press(step.press);
+			await beat(300);
 			t += 300;
 		} else if ("scroll" in step) {
 			const to = await pointOf(page, step.scroll);
@@ -188,7 +255,7 @@ export async function rehearse(
 		}
 		await page.waitForTimeout(60);
 	}
-	return { inputs, duration: t + 800 };
+	return { inputs, duration: t + 800, at };
 }
 
 const free = () =>
@@ -205,6 +272,8 @@ const free = () =>
 
 const CHECKOUT = resolve(dirname(new URL(import.meta.url).pathname), "../../../..");
 
+const SCRIPTS = dirname(new URL(import.meta.url).pathname);
+
 /** this checkout's spool, in its own lane so the shared daemon is never touched; run from the checkout, which its daemon builds the window from */
 function spool(args: string[], env: NodeJS.ProcessEnv) {
 	return spawnSync(
@@ -220,10 +289,24 @@ function spool(args: string[], env: NodeJS.ProcessEnv) {
 }
 
 /** a fresh spool on the clip's project, in its own state and port, stopped and removed after */
-async function withLane<T>(clip: Clip, keep: boolean, use: (url: string) => Promise<T>): Promise<T> {
+async function withLane<T>(
+	clip: Clip,
+	keep: boolean,
+	use: (url: string, lane: { root: string; port: number; dir: string }) => Promise<T>,
+): Promise<T> {
 	const lane = mkdtempSync(join(tmpdir(), "spool-changelog-clip-"));
 	const project = join(lane, "clip");
-	const env = { SPOOL_DIR: join(lane, "state"), SPOOL_PORT: String(await free()) };
+	const env: NodeJS.ProcessEnv = { SPOOL_DIR: join(lane, "state"), SPOOL_PORT: String(await free()) };
+	if (clip.agent !== undefined) {
+		// the stand-in is the only agent on the lane's PATH, so the pane offers it and nothing real
+		const bin = join(lane, "bin");
+		mkdirSync(bin);
+		symlinkSync(join(SCRIPTS, "fake-claude.mjs"), join(bin, "claude"));
+		symlinkSync(process.execPath, join(bin, "node"));
+		writeFileSync(join(lane, "turn.json"), JSON.stringify(clip.agent));
+		env.CLIP_AGENT_SCRIPT = join(lane, "turn.json");
+		env.PATH = `${bin}:/usr/bin:/bin`;
+	}
 	try {
 		// with history, as a person's project has it: without, the first hand edit says nothing is catching it
 		spawnSync("git", ["init", "-q", project]);
@@ -233,9 +316,15 @@ async function withLane<T>(clip: Clip, keep: boolean, use: (url: string) => Prom
 			mkdirSync(dirname(join(project, path)), { recursive: true });
 			writeFileSync(join(project, path), content);
 		}
+		// a project the clip makes (New project, a dropped file) lands in the lane, never in ~/spool
+		createSettingsStore(join(lane, "state")).write("projects.location", join(lane, "projects"));
 		const served = spool(["serve"], env);
 		if (served.status !== 0) throw new Error(`spool did not start: ${served.stdout}${served.stderr}`);
-		return await use(`http://127.0.0.1:${env.SPOOL_PORT}/p/clip`);
+		return await use(`http://127.0.0.1:${env.SPOOL_PORT}/p/clip`, {
+			root: project,
+			port: Number(env.SPOOL_PORT),
+			dir: lane,
+		});
 	} finally {
 		spool(["stop"], env);
 		if (keep) process.stdout.write(`kept ${lane}\n`);
@@ -262,6 +351,7 @@ async function main() {
 	}
 	const clip = ((await import(pathToFileURL(resolve(script)).href)) as { default: Clip }).default;
 	const viewport = clip.viewport ?? { w: 1440, h: 900 };
+	if (clip.live !== undefined) return live(clip, clip.live, viewport, out, values);
 	const { chromium } = await import("playwright-core");
 	const { inputs, duration } = await withLane(clip, values.keep, async (url) => {
 		const browser = await chromium.launch({ channel: "chromium-headless-shell" });
@@ -272,7 +362,7 @@ async function main() {
 			await page.locator("img, iframe").first().waitFor({ timeout: 60_000 });
 			await page.waitForTimeout(2000);
 			await page.screenshot({ path: out.replace(/\.mp4$/, ".start.png") });
-			const rehearsed = await rehearse(page, clip.steps);
+			const rehearsed = await rehearse(page, clip.steps ?? []);
 			await page.screenshot({ path: out.replace(/\.mp4$/, ".end.png") });
 			return rehearsed;
 		} finally {
@@ -315,6 +405,165 @@ async function main() {
 		]);
 		process.stdout.write(`\n${out} and ${poster}, rendered in ${Math.round((Date.now() - started) / 1000)} s\n`);
 	});
+}
+
+/**
+ * The cursor a live take draws in the page, as the recorder draws it over a replayed one: the Mac's arrow at 1.5 times
+ * its size, or its pointing hand over what points, fading out once the hand rests.
+ */
+const CURSOR = `(() => {
+	if (window.top !== window) return;
+	const arrow = '<path d="M0 0v16.6l4.2-4 2.9 6.6 2.8-1.2-2.8-6.4h5.8Z" fill="#000" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" paint-order="stroke"/>';
+	const hand = '<path d="M-1.5 10.5V1.5a1.5 1.5 0 0 1 3 0V8V7a1.5 1.5 0 0 1 3 0v1.5V8a1.5 1.5 0 0 1 3 0v1.5v-.2a1.3 1.3 0 0 1 2.6 0v5.2c0 3.3-2 5.5-5.1 5.5h-2c-1.9 0-3.2-.8-4.3-2.4l-3.6-5a1.4 1.4 0 0 1 2.2-1.7Z" fill="#fff" stroke="#000" stroke-width="1.1" stroke-linejoin="round"/><path d="M1.5 8v3.2M4.5 8.5v2.7M7.5 9.5v2.2" stroke="#000" stroke-linecap="round"/>';
+	let element, idle, shown = "";
+	window.__clipHand = (x, y) => {
+		if (!element) {
+			element = document.createElement("div");
+			element.style.cssText = "position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none;transition:opacity 300ms;filter:drop-shadow(0 1.5px 2px rgba(0,0,0,.4))";
+			document.documentElement.append(element);
+		}
+		const under = document.elementFromPoint(x, y);
+		const kind = under && getComputedStyle(under).cursor === "pointer" ? "hand" : "arrow";
+		if (kind !== shown) {
+			shown = kind;
+			element.innerHTML = '<svg width="36" height="36" viewBox="-4 -2 24 24" style="overflow:visible;margin:-3px 0 0 -6px">' + (kind === "hand" ? hand : arrow) + "</svg>";
+		}
+		element.style.transform = "translate(" + x + "px," + y + "px)";
+		// a thing the clip has the hand carry, such as a file dragged in from outside the window
+		const held = document.querySelector("[data-clip-held]");
+		if (held) held.style.transform = "translate(" + x + "px," + y + "px)";
+		element.style.transition = "opacity 100ms";
+		element.style.opacity = "1";
+		clearTimeout(idle);
+		idle = setTimeout(() => { element.style.transition = "opacity 300ms"; element.style.opacity = "0"; }, 1200);
+	};
+})()`;
+
+/** A live clip: one lane, walked once while the page is filmed, the frames laid on a 60 fps clock after. */
+async function live(
+	clip: Clip,
+	act: (take: Take) => Promise<void>,
+	viewport: { w: number; h: number },
+	out: string,
+	options: { keep: boolean; rehearse: boolean },
+): Promise<void> {
+	const { chromium } = await import("playwright-core");
+	const shots: { at: number; data: string }[] = [];
+	await withLane(clip, options.keep, async (url, lane) => {
+		const size = { viewport: { width: viewport.w, height: viewport.h }, deviceScaleFactor: 2 };
+		const unpacked = join(CHECKOUT, "extension/dist");
+		const context =
+			clip.extension === true
+				? await chromium.launchPersistentContext(join(lane.dir, "profile"), {
+						channel: "chromium",
+						headless: true,
+						args: [`--disable-extensions-except=${unpacked}`, `--load-extension=${unpacked}`],
+						...size,
+					})
+				: await (await chromium.launch({ channel: "chromium-headless-shell" })).newContext(size);
+		try {
+			await context.addInitScript(CURSOR);
+			let extension: Worker | null = null;
+			if (clip.extension === true) {
+				extension = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
+				await extension.evaluate(
+					(port) =>
+						(
+							globalThis as unknown as { chrome: { storage: { local: { set(items: object): Promise<void> } } } }
+						).chrome.storage.local.set({ ports: [port] }),
+					lane.port,
+				);
+			}
+			const page = context.pages()[0] ?? (await context.newPage());
+			await page.goto(url);
+			await page.locator("img, iframe").first().waitFor({ timeout: 60_000 });
+			await page.waitForTimeout(2000);
+			await page.screenshot({ path: out.replace(/\.mp4$/, ".start.png") });
+			let filmed = null as { stop: () => Promise<void> } | null;
+			let filming: Page | null = null;
+			const film = async (on: Page) => {
+				filming = on;
+				await filmed?.stop();
+				await on.bringToFront();
+				if (options.rehearse) return;
+				const cdp = await context.newCDPSession(on);
+				cdp.on("Page.screencastFrame", (frame) => {
+					shots.push({ at: frame.metadata.timestamp ?? Date.now() / 1000, data: frame.data });
+					void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
+				});
+				await cdp.send("Page.startScreencast", {
+					format: "jpeg",
+					quality: 92,
+					maxWidth: viewport.w * 2,
+					maxHeight: viewport.h * 2,
+					everyNthFrame: 1,
+				});
+				filmed = { stop: () => cdp.send("Page.stopScreencast").catch(() => {}) as Promise<void> };
+			};
+			const hands = new Map<Page, { x: number; y: number }>();
+			const walk = async (steps: readonly Step[], on: Page = page) => {
+				const walked = await rehearse(
+					on,
+					steps,
+					(x, y) =>
+						on.evaluate(
+							(at) => (window as { __clipHand?: (x: number, y: number) => void }).__clipHand?.(at.x, at.y),
+							{ x, y },
+						),
+					hands.get(on) ?? START,
+				);
+				hands.set(on, walked.at);
+			};
+			const take: Take = { page, context, url, port: lane.port, root: lane.root, extension, walk, film };
+			await clip.prepare?.(take);
+			if (filming === null) await film(page);
+			try {
+				await act(take);
+			} catch (error) {
+				await (context.pages().at(-1) ?? page).screenshot({ path: out.replace(/\.mp4$/, ".fail.png") });
+				throw error;
+			}
+			await filmed?.stop();
+			await (context.pages().at(-1) ?? page).screenshot({ path: out.replace(/\.mp4$/, ".end.png") });
+		} finally {
+			await context.close();
+		}
+	});
+	if (options.rehearse) return;
+	// each still holds until the next, the last for a beat
+	const dir = mkdtempSync(join(tmpdir(), "spool-changelog-live-"));
+	const lines = ["ffconcat version 1.0"];
+	shots.sort((a, b) => a.at - b.at);
+	shots.forEach((shot, i) => {
+		writeFileSync(join(dir, `${i}.jpg`), Buffer.from(shot.data, "base64"));
+		const next = shots[i + 1]?.at ?? shot.at + 0.8;
+		lines.push(`file ${i}.jpg`, `duration ${(next - shot.at).toFixed(4)}`);
+	});
+	lines.push(`file ${shots.length - 1}.jpg`);
+	writeFileSync(join(dir, "list.ffconcat"), `${lines.join("\n")}\n`);
+	const web = spawnSync("ffmpeg", [
+		...["-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", join(dir, "list.ffconcat"), "-an"],
+		...["-vf", `fps=60,scale=${WEB_WIDTH}:-2:flags=lanczos`],
+		...["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out],
+	]);
+	if (web.status !== 0) throw new Error(`ffmpeg could not make the web copy: ${web.stderr}`);
+	rmSync(dir, { recursive: true, force: true });
+	const poster = out.replace(/\.mp4$/, ".jpg");
+	spawnSync("ffmpeg", [
+		"-loglevel",
+		"error",
+		"-y",
+		"-sseof",
+		"-0.5",
+		"-i",
+		out,
+		"-frames:v",
+		"1",
+		"-q:v",
+		"2",
+		poster,
+	]);
+	process.stdout.write(`${out} and ${poster}, ${shots.length} pictures\n`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) await main();

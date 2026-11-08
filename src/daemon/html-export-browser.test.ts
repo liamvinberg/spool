@@ -41,13 +41,26 @@ export default function Menu() {
 	return { file, html };
 }
 
-/** A page that may read its own file and nothing else. */
-async function offline(browser: Browser, file: string, javaScriptEnabled = true): Promise<Page> {
+/** A page that may read its own file and nothing else, but for the web modules it is given. */
+async function offline(
+	browser: Browser,
+	file: string,
+	javaScriptEnabled = true,
+	web: Record<string, string> = {},
+): Promise<Page> {
 	const context = await browser.newContext({ javaScriptEnabled });
 	const asked: string[] = [];
 	await context.route("**/*", (route) => {
 		const url = route.request().url();
 		if (url === pathToFileURL(file).href) return route.continue();
+		const module = web[url];
+		if (module !== undefined) {
+			return route.fulfill({
+				body: module,
+				contentType: "text/javascript",
+				headers: { "access-control-allow-origin": "*" },
+			});
+		}
 		asked.push(url);
 		return route.abort();
 	});
@@ -86,4 +99,34 @@ it("leaves out the frames its start links to when only the frame is asked for", 
 	await page.locator("button").click();
 	await page.waitForTimeout(300);
 	expect(await page.locator("h1").textContent()).toBe("Menu for Cata");
+}, 120_000);
+
+it("lets a package the project maps to the web use the React the frames render with", async () => {
+	const spoolDir = join(makeTempDir(), ".spool");
+	const { root, name } = makeProject(spoolDir);
+	const counter = "https://cdn.spool.test/counter.js";
+	writeDesignFile(root, "shared/importmap.json", JSON.stringify({ imports: { counter } }));
+	writeFrame(
+		root,
+		"tally",
+		`import { useCounter } from "counter";
+export default function Tally() {
+	const [count, add] = useCounter();
+	return <button onClick={add}>Tapped {count}</button>;
+}
+`,
+	);
+	const res = await makeApp(spoolDir).request(`/api/p/${name}/export/html?frame=tally&scope=one`);
+	expect(res.status, await res.clone().text()).toBe(200);
+	const file = join(makeTempDir(), `${name}-tally.html`);
+	writeFileSync(file, await res.text());
+
+	const page = await offline(await testBrowser(), file, true, {
+		[counter]: `import { useState } from "react";
+export function useCounter() { const [n, set] = useState(0); return [n, () => set(n + 1)]; }
+`,
+	});
+	await expect.poll(() => page.locator("button").textContent(), { timeout: 30_000 }).toBe("Tapped 0");
+	await page.locator("button").click();
+	await expect.poll(() => page.locator("button").textContent()).toBe("Tapped 1");
 }, 120_000);

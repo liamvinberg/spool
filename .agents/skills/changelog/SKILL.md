@@ -19,13 +19,13 @@ Read `changelog/highlights.json` and the releases in `CHANGELOG.md` above its `t
 
 ## 2. Name and pick
 
-Give each new minor without a bold title a headline. Then pick highlights for the weeks the new releases fall in, keeping any already picked:
+Give each new minor without a bold title a headline. Then pick highlights from the new releases. Picks already made stay as they are, and never stand in for new ones: a release whose week already has picks still gets its own.
 
 - Pick what changes how someone works: a new thing to do, a new place in the window. Not a fix, a rename or plumbing.
 - Prefer a change the window can show in ten seconds.
-- One to three a week; a fixes-only week gets none.
+- One to three for each release with minors; a fixes-only release gets none.
 
-**Done when:** every new minor has a name, and each touched week has its picks.
+**Done when:** every new minor has a name, and each new release with minors has its picks.
 
 ## 3. Record each new pick
 
@@ -41,7 +41,8 @@ pnpm exec tsx .agents/skills/changelog/scripts/clip.ts changelog/clips/<id>.ts -
 - Aim steps by selector (`text=radius`, `[aria-label="#c8553d"]`, `role=button[name="Play"]`) rather than points, so the script survives layout changes.
 - The take replays the rehearsal's inputs on a virtual clock, so the window's slow parts (a frame selected, its knobs arriving) need a `wait` after them. A take that drifts from the rehearsal needs a longer one.
 - The recorder carries no modifier keys: drive a shortcut's menu item instead.
-- When the window cannot show the change alone (a CLI verb, a share link's page), make a frame on the canvas that does and record it with `pnpm -s dev record`.
+- When a replay cannot drive the change (the agent's turn, a file dropped in from outside, the Chrome extension on a website), make it a live clip: `live` walks it once and films it on the wall clock, `prepare` sets the window up before filming, `agent` gives a stand-in `claude` the turn it plays, and `extension` loads the extension, built first with `pnpm extension:build --test`. `changelog/clips/d53550b.ts` (agent), `d350c40.ts` (a dropped file) and `9528894.ts` (extension) are worked examples. There `--rehearse` only walks it.
+- When the window cannot show the change at all (a CLI verb, a share link's page), make a frame on the canvas that does and record it with `pnpm -s dev record`.
 
 Extract stills across the take with ffmpeg and look at them before keeping it. A take that does not show the change is worse than none: keep the highlight without a clip.
 
@@ -51,6 +52,6 @@ Extract stills across the take with ffmpeg and look at them before keeping it. A
 
 Name each file `<id>-<first 8 of its sha256>.mp4` and `.jpg`, so a new take never meets an old one in a cache, and upload both to the `spool-changelog` R2 bucket under `changelog/` with `cache-control: public, max-age=31536000, immutable`; the run that sent you here says how. Add `{ "id", "clip", "poster" }` with those names to `highlights`, set `through`, and commit `changelog/` alone to main (`changelog: curate 0.51.0`).
 
-Report the week's picks in one line each, the clip linked as `https://media.spool.page/changelog/<file>`, so a person can say which to drop.
+Report the new picks in one line each, the clip linked as `https://media.spool.page/changelog/<file>`, so a person can say which to drop.
 
 **Done when:** main has the commit, and spool.page/changelog shows it within ten minutes.

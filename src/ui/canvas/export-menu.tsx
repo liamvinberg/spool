@@ -321,15 +321,15 @@ export function ExportChoice({
 	);
 }
 
-/** the file name, its extension rising anew as the format changes */
+/** the file name, its extension rising anew as the format changes; a long one gives way before its extension */
 function FileName({ file }: { file: string }) {
 	const dot = file.lastIndexOf(".");
 	if (dot === -1) return <>{file}</>;
 	const extension = file.slice(dot);
 	return (
-		<span className="inline-flex whitespace-pre">
-			{file.slice(0, dot)}
-			<span key={extension} className="animate-step-in">
+		<span className="flex min-w-0 whitespace-pre">
+			<span className="min-w-0 truncate">{file.slice(0, dot)}</span>
+			<span key={extension} className="shrink-0 animate-step-in">
 				{extension}
 			</span>
 		</span>
