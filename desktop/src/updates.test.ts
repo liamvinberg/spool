@@ -311,6 +311,30 @@ test("a feed with no update is refused without downloading", async () => {
 	assert.equal(fake.downloaded, 0);
 });
 
+test("a GitHub outage during a check reads as one, with the raw error kept for the log", async () => {
+	const raw =
+		'Cannot parse releases feed: Error: Unable to find latest version on GitHub (https://github.com/liamvinberg/spool/releases/latest), please ensure a production release exists: HttpError: 504 "method: GET url: https://github.com/liamvinberg/spool/releases/latest"\nHeaders: {\n"set-cookie": ["_gh_sess=secret"]\n}\n    at createHttpError (httpExecutor.js:53:12)';
+	fake.check = async () => {
+		fake.emit("error", new Error(raw));
+		throw new Error(raw);
+	};
+	const logged: string[] = [];
+	await assert.rejects(
+		api.checkForUpdate((line) => logged.push(line)),
+		(error: Error) =>
+			error.message === "GitHub did not answer (504). That is on GitHub's side: try again in a minute.",
+	);
+	assert.ok(logged.some((line) => line.includes("_gh_sess")));
+	assert.equal(
+		api.plainUpdateError("net::ERR_INTERNET_DISCONNECTED"),
+		"Spool could not reach GitHub. Check the connection and try again.",
+	);
+	assert.equal(
+		api.plainUpdateError(`${raw.replace("504", "404")}`),
+		"GitHub answered 404 instead of naming the latest release.",
+	);
+});
+
 test("checks report the feed's version without downloading and configure listeners once", async () => {
 	const checks = await Promise.all([api.checkForUpdate(silent), api.checkForUpdate(silent)]);
 	assert.deepEqual(checks, [
