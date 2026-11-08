@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react";
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../cn";
 import { hotkeyKey } from "../hotkeys";
 import { Kbd } from "../primitives/display";
@@ -27,6 +27,23 @@ export interface PathSeg {
 	readonly page: string;
 	readonly name: string;
 	readonly kind: "crumb" | "here" | "ghost";
+	/** the key that reaches it, shown under it while ⌘ is held */
+	readonly keys?: string | undefined;
+	/** its own address, where the path is in a browser: the name is then a link, which a modified click opens apart */
+	readonly href?: string | undefined;
+}
+
+/**
+ * Where the project lives, before its name on a browser's path (spool#238): the team with its mark, or `shared` for
+ * someone outside it. Always at full ink, never waiting on the wake, and a real link out of the canvas, whose
+ * underline draws in under the pointer and the keyboard's focus.
+ */
+export interface PathPlace {
+	readonly name: string;
+	readonly href: string;
+	/** what is there, said as the link's title */
+	readonly title: string;
+	readonly mark: ReactNode;
 	/** the key that reaches it, shown under it while ⌘ is held */
 	readonly keys?: string | undefined;
 }
@@ -78,6 +95,7 @@ export function CanvasPath({
 	awake = false,
 	lit = null,
 	peeked = null,
+	place,
 	onGo,
 }: {
 	segs: readonly PathSeg[];
@@ -97,6 +115,8 @@ export function CanvasPath({
 	lit?: string | null;
 	/** the name a peek is showing */
 	peeked?: string | null;
+	/** where the project lives, first on the path: a browser's alone */
+	place?: PathPlace | undefined;
 	onGo: (page: string) => void;
 }) {
 	const still = useReducedMotion() === true;
@@ -211,6 +231,27 @@ export function CanvasPath({
 			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}
 		>
+			{place === undefined ? null : (
+				<span className="relative flex items-center">
+					<a
+						href={place.href}
+						title={place.title}
+						data-path-place=""
+						className="group/place flex h-control-sm items-center gap-1.5 rounded-xs px-1 text-primary type-value focus-ring"
+					>
+						{place.mark}
+						<span className="relative">
+							{place.name}
+							{/* the underline draws in from the name's start, and back out */}
+							<span
+								aria-hidden="true"
+								className="absolute inset-x-0 -bottom-px h-px origin-left scale-x-0 bg-current transition-transform duration-fast ease-out group-hover/place:scale-x-100 group-focus-visible/place:scale-x-100 motion-reduce:transition-none"
+							/>
+						</span>
+					</a>
+					{place.keys === undefined ? null : <HeldKey keys={place.keys} held={held} fade={dur} after={false} />}
+				</span>
+			)}
 			<AnimatePresence mode="popLayout" initial={false} custom={way}>
 				{segs.map((seg, at) => {
 					return (
@@ -229,7 +270,7 @@ export function CanvasPath({
 							transition={{ duration: dur, ease: EASE }}
 							className="relative flex items-center"
 						>
-							{at === 0 ? null : (
+							{at === 0 && place === undefined ? null : (
 								<span aria-hidden="true" className="relative flex w-4 justify-center">
 									<Sep />
 								</span>
@@ -286,9 +327,11 @@ function PathName({
 	const [t, s, ws, wp] = inks(seg.kind);
 	// every name that stands is a folder a drag can land in and Space can peek at, but the page you are on
 	const folder = present && seg.kind !== "here";
+	const link = folder && seg.href !== undefined;
+	const Name = link ? "a" : "button";
 	return (
-		<button
-			type="button"
+		<Name
+			{...(link ? { href: seg.href } : { type: "button" as const })}
 			data-path-page={present ? seg.page : undefined}
 			data-path-kind={present ? seg.kind : undefined}
 			data-drop-page={folder ? seg.page : undefined}
@@ -299,7 +342,13 @@ function PathName({
 			aria-hidden={present ? undefined : true}
 			tabIndex={present ? undefined : -1}
 			aria-label={seg.kind === "here" ? seg.name : seg.kind === "ghost" ? `Into ${seg.name}` : `Up to ${seg.name}`}
-			onClick={() => present && seg.kind !== "here" && onGo(seg.page)}
+			onClick={(event: MouseEvent<HTMLElement>) => {
+				// a link pressed with a modifier, or by the middle button, opens where the browser opens it
+				if (link && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0))
+					return;
+				event.preventDefault();
+				if (folder) onGo(seg.page);
+			}}
 			className={cn(
 				"relative grid h-control-sm items-center rounded-xs px-1 type-value transition-colors duration-fast ease-out",
 				seg.kind === "here" || !present ? "pointer-events-none" : "cursor-pointer",
@@ -328,7 +377,7 @@ function PathName({
 					{seg.name}
 				</span>
 			</span>
-		</button>
+		</Name>
 	);
 }
 
