@@ -243,6 +243,7 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 		update: (address: string, change: { name?: string; address?: string }) =>
 			call<Pick<CloudTeam, "id" | "address" | "name">>("PATCH", team(address), change),
 		delete: (address: string) => call<{ purgeAfter: number }>("DELETE", team(address)),
+		purge: (address: string) => call<null>("POST", `${team(address)}/purge`),
 		setLogo: (address: string, bytes: Uint8Array) =>
 			call<null>("PUT", `${team(address)}/logo`, bytes, "application/octet-stream"),
 		removeLogo: (address: string) => call<null>("DELETE", `${team(address)}/logo`),

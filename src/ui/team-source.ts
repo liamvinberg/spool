@@ -127,6 +127,8 @@ export interface TeamsSource {
 	people(address: string): Promise<TeamPeople>;
 	update(address: string, change: { name?: string; address?: string }): Promise<Pick<CloudTeam, "address" | "name">>;
 	delete(address: string): Promise<unknown>;
+	/** A deleted team gone for good now, for every admin, rather than on its purge date. */
+	purge(address: string): Promise<unknown>;
 	setLogo(address: string, image: Blob): Promise<unknown>;
 	removeLogo(address: string): Promise<unknown>;
 	invite(address: string, email: string, role: TeamRole): Promise<{ emailed: boolean }>;
@@ -311,6 +313,7 @@ export function teamsAt(
 		people: (address) => call("GET", `${team(address)}/people`),
 		update: (address, change) => call("PATCH", team(address), change),
 		delete: (address) => call("DELETE", team(address)),
+		purge: (address) => call("POST", `${team(address)}/purge`),
 		async setLogo(address, image) {
 			let response: Response;
 			try {

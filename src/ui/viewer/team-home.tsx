@@ -340,6 +340,10 @@ function Home({
 							key={deleted.address}
 							team={deleted}
 							onExport={(address) => handOffExport(address, undefined, HAND_OFF)}
+							onDeleted={() => {
+								moved.say(`${deleted.name} is deleted for good.`);
+								void refresh();
+							}}
 						/>
 					) : ready === null ? null : needle !== "" ? (
 						<CloudFound
