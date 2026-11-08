@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.52.1
+
+### Patch Changes
+
+- 9e3a727: A deleted team in the team menu shows its name again, marked Deleted, instead of a long note that hid the name and ran past the menu's edge. The day it goes for good is on hover and on its page.
+- dfbb9bf: When the Mac app cannot check for updates, it now says why in one plain line, such as the update server not answering, instead of showing the raw request with its headers and stack.
+- 134f59b: The Mac app now updates from updates.spool.page instead of GitHub, so an outage on GitHub's release pages no longer stops updates or downloads. The download links point there too.
+
 ## 0.52.0
 
 ### Minor Changes
