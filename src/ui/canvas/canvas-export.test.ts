@@ -76,7 +76,7 @@ describe("multi-frame canvas export", () => {
 				if (url.pathname.endsWith("/flows")) {
 					return Response.json({ frames: ["a", "b"], links: [], edges: [], unreadable: [] });
 				}
-				if (url.pathname.endsWith("/export/plan")) return Response.json({ reach: [], online: [] });
+				if (url.pathname.endsWith("/export/plan")) return Response.json({ reach: [] });
 				if (url.pathname.startsWith("/covers/")) {
 					return new Response(PNG_BYTES, { headers: { "content-type": "image/png" } });
 				}

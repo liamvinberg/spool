@@ -31,7 +31,6 @@ import {
 	exportFrames,
 	exportTarget,
 	isExportFormat,
-	onlineFrames,
 	useExportSteps,
 } from "./export-menu";
 import type { CapturedFrame } from "./frame-export";
@@ -108,7 +107,7 @@ export function ContextMenu({
 			names.map((frame) =>
 				fetchExportPlan(project, frame).then(
 					(plan): [string, ExportPlan] => [frame, plan],
-					(): [string, ExportPlan] => [frame, { reach: [], online: [] }],
+					(): [string, ExportPlan] => [frame, { reach: [] }],
 				),
 			),
 		).then((answered) => {
@@ -183,7 +182,6 @@ export function ContextMenu({
 					scope={scope}
 					onScope={setScope}
 					reach={reach}
-					online={onlineFrames(frames, plans, reach > 0 ? scope : "flow")}
 					target={exportTarget(project, frames, format)}
 					onExport={run}
 				/>

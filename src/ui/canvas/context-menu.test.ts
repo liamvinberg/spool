@@ -21,10 +21,10 @@ const callbacks = {
 	onTrash: () => {},
 };
 
-const PLANS: Record<string, { reach: string[]; online: string[] }> = {
-	checkout: { reach: ["cart", "pay/card", "receipt", "map"], online: ["pay/card"] },
-	a: { reach: [], online: [] },
-	b: { reach: [], online: ["b"] },
+const PLANS: Record<string, { reach: string[] }> = {
+	checkout: { reach: ["cart", "pay/card", "receipt", "map"] },
+	a: { reach: [] },
+	b: { reach: [] },
 };
 
 let unmount: (() => void) | undefined;
@@ -137,13 +137,8 @@ describe("the right-click menu's export", () => {
 		await choose(host, "html");
 		await settle(() => row(host, "This frame and the 4 it links to") !== undefined);
 		expect(row(host, "This frame and the 4 it links to")?.getAttribute("aria-checked")).toBe("true");
-		// by its name, as the canvas labels it: the page it sits on would only push the line long
-		expect(host.textContent).toContain("card needs the internet to work");
-		expect(host.textContent).not.toContain("pay/card");
 		expect(host.textContent).toContain("demo-checkout.html");
 		await act(async () => row(host, "Only this frame")?.click());
-		// alone, it takes nothing that needs the internet
-		expect(host.textContent).not.toContain("needs the internet");
 
 		await press(host, "Enter");
 		await settle(() => downloads.length === 1);
@@ -177,9 +172,8 @@ describe("the right-click menu's export", () => {
 		const { host } = render(["a", "b"]);
 		await act(async () => row(host, "Export 2 frames…")?.click());
 		await choose(host, "html");
-		await settle(() => host.textContent?.includes("b needs the internet to work") === true);
+		await settle(() => host.textContent?.includes("2 × .html") === true);
 		expect(row(host, "This frame and")).toBeUndefined();
-		expect(host.textContent).toContain("2 × .html");
 
 		await act(async () => row(host, "Export")?.click());
 		await settle(() => host.textContent?.includes("Downloaded") === true);

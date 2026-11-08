@@ -9,8 +9,7 @@
  */
 
 import { type ReactNode, useCallback, useRef, useState } from "react";
-import { pageName } from "../../page-path";
-import { type ExportPlan, fetchExportHtml } from "../api";
+import { fetchExportHtml } from "../api";
 import { desktopWindow } from "../desktop-window";
 import { CheckIcon } from "../icons";
 import { SpinRing } from "../primitives/display";
@@ -45,21 +44,6 @@ export function fileSize(bytes: number): string {
 	if (bytes < 1000) return `${bytes} B`;
 	if (bytes < 1_000_000) return `${Math.round(bytes / 1000)} KB`;
 	return `${(bytes / 1_000_000).toFixed(1)} MB`;
-}
-
-/** which frames the files would need the internet for, as the choice names them */
-export function onlineFrames(
-	frames: readonly string[],
-	plans: ReadonlyMap<string, ExportPlan>,
-	scope: ExportScope,
-): string[] {
-	const named = new Set<string>();
-	for (const frame of frames) {
-		const plan = plans.get(frame);
-		if (plan === undefined) continue;
-		for (const name of plan.online) if (frames.length > 1 || scope === "flow" || name === frame) named.add(name);
-	}
-	return [...named];
 }
 
 export interface ExportProgress {
@@ -253,7 +237,6 @@ export function ExportChoice({
 	scope,
 	onScope,
 	reach,
-	online,
 	target,
 	onExport,
 }: {
@@ -263,7 +246,6 @@ export function ExportChoice({
 	onScope: (scope: ExportScope) => void;
 	/** the frames beyond the one exported that its links reach; empty for several frames */
 	reach: number;
-	online: readonly string[];
 	target: string;
 	onExport: () => void;
 }) {
@@ -303,13 +285,6 @@ export function ExportChoice({
 						onClick={() => onScope("one")}
 					/>
 				</>
-			) : null}
-			{html && online.length > 0 ? (
-				<p className="animate-step-in pt-0.5 pr-3 pb-1.5 pl-8 text-secondary type-label">
-					{/* by name, as the canvas labels them: the page each sits on would only push the line long */}
-					<span className="text-primary type-value">{online.map(pageName).join(", ")}</span>{" "}
-					{online.length === 1 ? "needs" : "need"} the internet to work
-				</p>
 			) : null}
 			<MenuSeparator />
 			<MenuItem

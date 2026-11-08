@@ -441,10 +441,9 @@ export async function setProjectThumbnail(project: string, frame: string): Promi
 	return ((await res.json()) as { thumbnail: ProjectThumbnail }).thumbnail;
 }
 
-/** What exporting a frame as HTML takes with it: the frames its links reach, and which of them need the internet. */
+/** What exporting a frame as HTML takes with it: the frames its links reach. */
 export interface ExportPlan {
 	reach: string[];
-	online: string[];
 }
 
 export async function fetchExportPlan(project: string, frame: string): Promise<ExportPlan> {
