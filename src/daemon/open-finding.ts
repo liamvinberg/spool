@@ -7,6 +7,7 @@ import { realDir } from "../paths";
 import { teamProjects } from "../registry";
 import { resolveProjectRoot } from "../resolve";
 import { parseProjectLink, readProjectLink } from "../team-project";
+import { adapterFor, type ImportSource } from "./import/imports";
 
 /**
  * What Open… was handed, read once: a folder, a `.spool` file or a link, whether it came from the open panel, a drop
@@ -20,6 +21,8 @@ export type Finding =
 	| { kind: "folder"; path: string; name: string; branch: string | null; code: boolean; items: number }
 	/** a `.spool` file, imported into the projects location, `into`, under the name its archive gives */
 	| { kind: "file"; path: string; name: string; bytes: number; into: string }
+	/** another design tool's file, which becomes a project of its own the agent rebuilds (spool#242) */
+	| { kind: "import"; path: string; name: string; source: ImportSource; bytes: number }
 	/** a git link that answers, cloned into the projects location */
 	| { kind: "repo"; url: string; name: string; repo: string; branch: string | null; into: string }
 	/** a team's project not on this Mac yet; `checkout` is a checkout here that holds its spool.json without design/ */
@@ -119,6 +122,8 @@ async function findAtPath(path: string, deps: FindingDeps): Promise<Finding> {
 	if (!isDir && path.toLowerCase().endsWith(".spool")) {
 		return { kind: "file", path, name: basename(path), bytes, into: deps.location };
 	}
+	const adapter = isDir ? undefined : adapterFor(path);
+	if (adapter !== undefined) return { kind: "import", path, name: basename(path), source: adapter.source, bytes };
 	const dir = realDir(isDir ? path : dirname(path));
 	const root = resolveProjectRoot(dir);
 	if (root !== undefined) {

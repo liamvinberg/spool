@@ -144,6 +144,11 @@ it("photographs an edit, a resize and a broken frame without a canvas, and leave
 	await expect.poll(() => project.coverOf("edited"), { timeout: 45_000 }).toBeDefined();
 	const first = (await project.coverOf("edited"))?.hash;
 	expect(imageSize((await project.image("edited", first ?? "")).bytes)).toEqual({ width: 800, height: 1731 });
+	// and what it said in the picture, which the frame finder answers by
+	const said = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frame-words`, {
+		headers: { "X-Spool-Control": project.controlToken },
+	});
+	expect(await said.json()).toEqual({ words: { edited: ["booth"] } });
 
 	// an agent's edit to the file is a picture owed, whether or not anyone is looking
 	writeFrame(project.root, "edited", frameOf("#1a39f5"));

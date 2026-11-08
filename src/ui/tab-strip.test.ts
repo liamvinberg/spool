@@ -2,7 +2,7 @@
 
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { focusAfterClose, heldRoom, TabStrip, tabWidths } from "./tab-strip";
 
 /**
@@ -251,11 +251,15 @@ async function render(props: Partial<Parameters<typeof TabStrip>[0]> = {}) {
 	return { host, rerender };
 }
 
-it("exports an inactive tab without focusing it, and restores keyboard focus on dismissal", async () => {
-	const onExport = vi.fn();
+it("exports an inactive tab in its own menu without focusing it, and restores keyboard focus on dismissal", async () => {
+	// the .spool stays building: the box going on is what this proves, project-transfer.test.ts the steps
+	vi.stubGlobal("fetch", () => new Promise(() => {}));
+	onTestFinished(() => {
+		vi.unstubAllGlobals();
+	});
 	const onFocus = vi.fn();
 	const onClose = vi.fn();
-	const { host } = await render({ onExport, onFocus, onClose });
+	const { host } = await render({ onFocus, onClose });
 	const beta = host.querySelectorAll<HTMLButtonElement>(".project-tab-label")[1];
 	await act(async () =>
 		beta?.dispatchEvent(
@@ -264,9 +268,17 @@ it("exports an inactive tab without focusing it, and restores keyboard focus on 
 	);
 	expect(onFocus).not.toHaveBeenCalled();
 	expect(document.activeElement?.textContent).toBe("Export project…");
+	const menu = document.querySelector('[role="menu"]');
 	await act(async () => document.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click());
-	expect(onExport).toHaveBeenCalledWith(tabs[1]);
+	expect(document.querySelector('[role="menu"]')).toBe(menu);
+	expect(menu?.textContent).toContain("Building beta.spool");
 	expect(onFocus).not.toHaveBeenCalled();
+	await act(async () =>
+		document.activeElement?.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+		),
+	);
+	expect(document.querySelector('[role="menu"]')).toBeNull();
 	expect(document.activeElement).toBe(beta);
 	await act(async () =>
 		beta?.dispatchEvent(
@@ -279,13 +291,6 @@ it("exports an inactive tab without focusing it, and restores keyboard focus on 
 		),
 	);
 	expect(document.activeElement?.textContent).toBe("Close tab");
-	await act(async () =>
-		document.activeElement?.dispatchEvent(
-			new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-		),
-	);
-	expect(document.querySelector('[role="menu"]')).toBeNull();
-	expect(document.activeElement).toBe(beta);
 	expect(onClose).not.toHaveBeenCalled();
 });
 
@@ -376,8 +381,13 @@ describe("heldRoom", () => {
 });
 
 it("dots a tab not focused with who else is in its project, three at most, and never the focused one", async () => {
-	const mate = (name: string, idle = false) => ({ accountId: name, name, color: "#7aa7ff", idle });
-	const here = [mate("ana"), mate("ben"), mate("cleo"), mate("dag", true)];
+	const mate = (name: string, look: "active" | "unfocused" = "active") => ({
+		accountId: name,
+		name,
+		color: "#7aa7ff",
+		look,
+	});
+	const here = [mate("ana"), mate("ben"), mate("cleo"), mate("dag", "unfocused")];
 	const { host, rerender } = await render({
 		tabs: [
 			{ root: "/w/alpha", name: "alpha", here },
@@ -402,7 +412,7 @@ it("dots a tab not focused with who else is in its project, three at most, and n
 });
 
 it("swells a tab's dots into everyone's name pills while the pointer is on them", async () => {
-	const mate = (name: string) => ({ accountId: name, name, color: "#7aa7ff", idle: false });
+	const mate = (name: string) => ({ accountId: name, name, color: "#7aa7ff", look: "active" as const });
 	const { host } = await render({
 		tabs: [
 			{ root: "/w/alpha", name: "alpha" },

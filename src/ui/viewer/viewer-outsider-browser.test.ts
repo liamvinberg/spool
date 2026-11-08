@@ -208,10 +208,10 @@ it("signed out on a link share: frames, no pins and no count, and everything ask
 	expect(await page.locator("[data-comment-pin]").count()).toBe(0);
 	expect(await page.locator("[data-comments-count]").count()).toBe(0);
 	expect(opened.socket()).toBeUndefined();
-	// a link's holder came from nowhere spool.page knows: the path names the project alone, and leads nowhere back
+	// a link's holder came from nowhere spool.page knows: the path names their top alone, and leads nowhere back
 	const path = page.getByRole("navigation", { name: "Path" });
 	expect(await path.locator("[data-path-page]").evaluateAll((names) => names.map((name) => name.ariaLabel))).toEqual([
-		"checkout",
+		"Shared with you",
 	]);
 	expect(await page.locator("[data-path-place]").count()).toBe(0);
 	expect(await page.locator("[data-viewer-sign-in]").count()).toBe(0);

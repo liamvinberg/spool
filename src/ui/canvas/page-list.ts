@@ -12,6 +12,8 @@ import { mergeOrder, mergePageTree } from "./order";
 export interface PageListRow {
 	readonly page: string;
 	readonly name: string;
+	/** its parent's name, said quietly beside its own where another row has its name (spool#230) */
+	readonly place?: string;
 	/** every frame under it, and every one on its way there: the rail's number */
 	readonly count: number;
 	/** the names of its own pages, in rail order */
@@ -44,16 +46,25 @@ export function pageTreeOf(world: Pick<ListWorld, "pages" | "order">): Map<strin
 /**
  * Whether a page draws as a list: it holds pages and nothing of its own, not a
  * frame and not a placeholder. The root page is one too, once it has no frames.
+ * `tree` is how the pages hold each other, where a canvas arranges them its own
+ * way (a share's top, spool#230).
  */
-export function listsPages(page: string, world: ListWorld): boolean {
+export function listsPages(
+	page: string,
+	world: ListWorld,
+	tree: ReadonlyMap<string, readonly string[]> = pageTreeOf(world),
+): boolean {
 	if (world.frames.some((frame) => pageSlot(frame) === page)) return false;
 	if (world.waiting.some((one) => pageSlot(one) === page)) return false;
-	return (pageTreeOf(world).get(page) ?? []).length > 0;
+	return (tree.get(page) ?? []).length > 0;
 }
 
 /** The rows of a page of pages, in rail order. */
-export function pageListRows(page: string, world: ListWorld): PageListRow[] {
-	const tree = pageTreeOf(world);
+export function pageListRows(
+	page: string,
+	world: ListWorld,
+	tree: ReadonlyMap<string, readonly string[]> = pageTreeOf(world),
+): PageListRow[] {
 	const own = (at: string): ListWorld["frames"][number][] => {
 		const here = world.frames.filter((frame) => pageSlot(frame) === at);
 		const leaves = mergeOrder(

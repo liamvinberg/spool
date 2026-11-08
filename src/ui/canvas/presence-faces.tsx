@@ -1,15 +1,25 @@
 import { useEffect, useReducer, useRef, useState } from "react";
-import { ROOT_PAGE } from "../../page-path";
 import { PRESENCE_SHOWN } from "../../team-sync-protocol";
 import { cn } from "../cn";
-import { MenuItem, MenuSeparator } from "../primitives/overlays";
-import { agentSays, idle, idleFor, nextChange, type PresenceRoom, type Teammate } from "./presence";
+import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
+import {
+	agentSays,
+	awayFor,
+	here,
+	type Look,
+	look,
+	nextChange,
+	type PresenceRoom,
+	placeOf,
+	type Teammate,
+} from "./presence";
 
 /**
- * Who's here, at the top right of a team canvas (DEV-196, task 139): one chip, standing on the canvas rather than
- * in the window's bar so switching tabs never moves the tabs. It holds a face for each teammate, four at most (three
- * and a `+N` past that), and is one button: pressed, it grows in place into the list of who's here and where each of
- * them is, or how long they've been idle. A row follows that person; pressing it again, or esc, stops.
+ * Who's here, as a row of faces right after the page path at the canvas's top left (task 503): the people on this
+ * page first, filled in their colour, then the ones on the project's other pages as rings, the unfocused at half
+ * ink. The away aren't here, so they aren't drawn. Four faces at most, three and a `+N` past that. Pressed, it lets a
+ * list down from the path: everyone here with where they are, then the away and how long, then you. A row follows
+ * that person; pressing it again, or esc once the list is closed, stops.
  */
 
 /** The near-black every name in a person's colour is written in, whatever the theme: on their colour it always reads. */
@@ -17,21 +27,13 @@ export const PRESENCE_INK = "#0e0e0e";
 
 /** The faces drawn before the rest collapse into `+N`. */
 const FACES_SHOWN = 4;
-const SIZE = 22;
-const STEP = 17;
-/** How wide the chip opens into its list. */
-const LIST_W = 248;
-/** The chip's padding and edge, around its one button. */
-const CHIP_EDGE = 4 * 2 + 2;
-
-/** What the who's-here list says a page is called: its path, and `frames` for the root page, which is that folder. */
-function pageLabel(page: string): string {
-	return page === ROOT_PAGE ? "frames" : page;
-}
+/** A face in the row, and how far each one tucks under the one before it. */
+const SIZE = 18;
+const TUCK = 4;
 
 /**
  * Draw again whenever anyone in the room changes, and whenever the clock alone changes what is said of them: a
- * name going quiet, someone going idle, and each minute an idle someone has been so.
+ * name going quiet, someone's look changing, and each minute while someone is away, which the list counts.
  */
 export function useRoomDrawn(room: PresenceRoom): void {
 	const [, redraw] = useReducer((n: number) => n + 1, 0);
@@ -40,11 +42,12 @@ export function useRoomDrawn(room: PresenceRoom): void {
 		const schedule = () => {
 			if (timer !== undefined) clearTimeout(timer);
 			const now = Date.now();
-			const next = nextChange(room.teammates(), now);
-			// the list says how long someone has been idle, so it counts the minutes too
-			const minute = now + 60_000 - (now % 60_000);
-			const at = next === undefined ? minute : Math.min(next, minute);
-			timer = setTimeout(schedule, at - now + 5);
+			const mates = room.teammates();
+			const next = nextChange(mates, now);
+			const counting = mates.some((mate) => mate.left === null && look(mate, now) === "away");
+			const minute = counting ? now + 60_000 - (now % 60_000) : undefined;
+			const at = next === undefined ? minute : minute === undefined ? next : Math.min(next, minute);
+			timer = at === undefined ? undefined : setTimeout(schedule, at - now + 5);
 			redraw();
 		};
 		schedule();
@@ -56,54 +59,50 @@ export function useRoomDrawn(room: PresenceRoom): void {
 	}, [room]);
 }
 
-/** Working people first, then the idle, each in the order they arrived: the order the faces and the list take. */
-function hereInOrder(mates: readonly Teammate[], now: number): Teammate[] {
-	return [...mates.filter((mate) => !idle(mate, now)), ...mates.filter((mate) => idle(mate, now))];
-}
-
-/** The closed chip's width: its padding, the faces' run, the `+N`, the chevron. Every part is a fixed size. */
-function chipWidth(here: number): number {
-	const faces = here > FACES_SHOWN ? FACES_SHOWN - 1 : here;
-	const more = here > FACES_SHOWN ? 5 + Math.max(26, String(here - faces).length * 7 + 12) : 0;
-	return CHIP_EDGE + 8 + (faces - 1) * STEP + SIZE + more + 4 + 16 + 4;
-}
-
 export function PresenceFaces({
 	room,
 	page,
+	project,
 	following,
 	onFollow,
 }: {
 	room: PresenceRoom;
-	/** The page this canvas is on: someone elsewhere is drawn hollow. */
+	/** The page this canvas is on: someone elsewhere is drawn as a ring. */
 	page: string;
+	/** What the project's root page is called where a place names it. */
+	project: string;
 	following: string | null;
 	onFollow: (accountId: string | null) => void;
 }) {
 	useRoomDrawn(room);
 	const [open, setOpen] = useState(false);
-	const chip = useRef<HTMLDivElement | null>(null);
+	const root = useRef<HTMLDivElement | null>(null);
 	const button = useRef<HTMLButtonElement | null>(null);
 	const now = Date.now();
-	const here = hereInOrder(
-		room.teammates().filter((mate) => mate.left === null),
-		now,
-	);
-	const empty = here.length === 0;
+	// in the order they arrived, so a face that dims stays where it was instead of trading places
+	const mates = room
+		.teammates()
+		.filter((mate) => mate.left === null)
+		.map((mate) => ({ mate, look: look(mate, now) }));
+	const onPage = mates.filter((one) => here(one.look) && one.mate.state.page === page);
+	const elsewhere = mates.filter((one) => here(one.look) && one.mate.state.page !== page);
+	const away = mates.filter((one) => one.look === "away");
+	const faces = [...onPage, ...elsewhere];
+	const empty = faces.length === 0;
 	useEffect(() => {
 		if (empty) setOpen(false);
 	}, [empty]);
 	useEffect(() => {
 		if (!open) return;
 		const close = (event: PointerEvent) => {
-			if (!chip.current?.contains(event.target as Node)) setOpen(false);
+			if (!root.current?.contains(event.target as Node)) setOpen(false);
 		};
 		const closeOnEsc = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
 			// the list goes first; following stops on the esc after
 			event.stopImmediatePropagation();
 			setOpen(false);
-			if (chip.current?.contains(document.activeElement)) button.current?.focus();
+			if (root.current?.contains(document.activeElement)) button.current?.focus();
 		};
 		window.addEventListener("pointerdown", close, true);
 		window.addEventListener("keydown", closeOnEsc, true);
@@ -113,10 +112,9 @@ export function PresenceFaces({
 		};
 	}, [open]);
 
-	// the canvas under it never takes a press, a wheel or a menu meant for the chip, once the chip is drawn
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the chip comes and goes with whether anyone is here
+	// the canvas under it never takes a press, a wheel or a menu meant for the faces or the list
 	useEffect(() => {
-		const element = chip.current;
+		const element = root.current;
 		if (element === null) return;
 		const keep = (event: Event) => event.stopPropagation();
 		const kinds = ["pointerdown", "wheel", "contextmenu"] as const;
@@ -124,24 +122,30 @@ export function PresenceFaces({
 		return () => {
 			for (const kind of kinds) element.removeEventListener(kind, keep);
 		};
-	}, [empty]);
+	}, []);
 
-	if (empty) return null;
-	const shown = here.length > FACES_SHOWN ? here.slice(0, FACES_SHOWN - 1) : here;
-	const more = here.length - shown.length;
-	const closed = chipWidth(here.length);
+	const shown = faces.length > FACES_SHOWN ? faces.slice(0, FACES_SHOWN - 1) : faces;
+	const more = faces.length - shown.length;
 	const follow = (mate: Teammate) => {
 		setOpen(false);
 		onFollow(following === mate.person.accountId ? null : mate.person.accountId);
 	};
+	const row = ({ mate, look }: { mate: Teammate; look: Look }) => (
+		<Row
+			key={mate.person.accountId}
+			mate={mate}
+			look={look}
+			page={page}
+			project={project}
+			now={now}
+			followed={following === mate.person.accountId}
+			onFollow={follow}
+		/>
+	);
 
 	return (
-		<div ref={chip} className="relative h-[42px]" style={{ width: closed }} data-presence-faces="">
-			<div
-				data-presence-chip={open ? "open" : "closed"}
-				className="absolute top-0 right-0 overflow-hidden rounded-lg border border-line-strong bg-surface-window p-1 transition-[width] duration-base ease-snap"
-				style={{ width: open ? LIST_W : closed }}
-			>
+		<div ref={root} className="relative flex items-center" data-presence-faces="">
+			{!empty && (
 				<button
 					ref={button}
 					type="button"
@@ -150,8 +154,8 @@ export function PresenceFaces({
 					aria-haspopup="menu"
 					data-presence-open=""
 					className={cn(
-						"flex h-8 shrink-0 items-center rounded-md pr-1 pl-2 transition-colors duration-fast hover:bg-state-hover-raised",
-						open ? "w-full" : "ml-auto",
+						"group/faces flex h-control-sm items-center rounded-full pr-1.5 pl-1 transition-colors duration-fast ease-out hover:bg-state-hover focus-ring",
+						open && "bg-state-hover",
 					)}
 					onClick={(event) => {
 						const opening = !open;
@@ -159,113 +163,62 @@ export function PresenceFaces({
 						// opened from the keyboard, the keyboard goes on into the list
 						if (opening && event.detail === 0)
 							requestAnimationFrame(() =>
-								chip.current?.querySelector<HTMLButtonElement>("[data-presence-row]")?.focus(),
+								root.current?.querySelector<HTMLButtonElement>("[data-presence-row]")?.focus(),
 							);
 					}}
 				>
-					{open ? (
+					{shown.map(({ mate, look }, i) => (
 						<span
-							data-presence-count=""
-							className="mr-auto whitespace-nowrap text-secondary tabular-nums type-detail"
+							key={mate.person.accountId}
+							data-presence-face={mate.person.accountId}
+							title={`${mate.person.name} · ${agentSays(mate) ?? placeOf(mate, page, project).full}`}
+							className="relative animate-presence-in transition-[margin] duration-fast ease-out group-hover/faces:ml-0.5"
+							style={{ marginLeft: i === 0 ? 0 : -TUCK, zIndex: shown.length - i }}
 						>
-							{here.length} here
+							<Face
+								mate={mate}
+								look={look}
+								elsewhere={mate.state.page !== page}
+								followed={following === mate.person.accountId}
+							/>
 						</span>
-					) : (
-						<>
-							<span className="relative flex h-[30px] items-center">
-								{shown.map((mate, i) => (
-									<span
-										key={mate.person.accountId}
-										data-presence-face={mate.person.accountId}
-										title={
-											agentSays(mate) === null
-												? mate.person.name
-												: `${mate.person.name} · ${agentSays(mate)}`
-										}
-										className="relative h-[30px] shrink-0 animate-presence-in"
-										style={{ width: i === shown.length - 1 ? SIZE : STEP, zIndex: shown.length - i }}
-									>
-										<Face
-											mate={mate}
-											away={mate.state.page !== page}
-											resting={idle(mate, now)}
-											followed={following === mate.person.accountId}
-										/>
-									</span>
-								))}
-							</span>
-							{more > 0 && (
-								<span className="ml-[5px] flex h-[22px] min-w-[26px] items-center justify-center rounded-full bg-surface-panel px-1 text-secondary tabular-nums type-detail">
-									+{more}
-								</span>
-							)}
-						</>
+					))}
+					{more > 0 && (
+						<span data-presence-more="" className="ml-1.5 text-secondary tabular-nums type-detail">
+							+{more}
+						</span>
 					)}
-					<Chevron up={open} />
 				</button>
-				<div
-					className="grid transition-[grid-template-rows,opacity] duration-base ease-snap"
-					style={{ gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0 }}
+			)}
+			{open && (
+				<Menu
+					aria-label="Who is here"
+					data-presence-list=""
+					className="absolute top-full left-0 z-30 mt-1.5 w-[296px]"
 				>
-					<div
-						role="menu"
-						aria-label="Who is here"
-						data-presence-list=""
-						className="flex min-h-0 flex-col"
-						inert={!open}
-					>
-						<MenuSeparator />
-						{here.map((mate) => {
-							const followed = following === mate.person.accountId;
-							return (
-								<MenuItem
-									key={mate.person.accountId}
-									data-presence-row={mate.person.accountId}
-									title={`${followed ? "Stop following" : "Follow"} ${mate.person.name}`}
-									icon={
-										<span className="relative block size-4">
-											<Face
-												mate={mate}
-												away={mate.state.page !== page}
-												resting={idle(mate, now)}
-												followed={false}
-												size={16}
-											/>
-										</span>
-									}
-									label={<span className={cn(idle(mate, now) && "text-secondary")}>{mate.person.name}</span>}
-									meta={
-										<span
-											className="block max-w-[110px] truncate"
-											data-presence-row-says=""
-											style={followed ? { color: mate.person.color } : undefined}
-										>
-											{followed
-												? "following"
-												: (agentSays(mate) ??
-													(idle(mate, now) ? idleFor(mate, now) : pageLabel(mate.state.page)))}
-										</span>
-									}
-									onClick={() => follow(mate)}
-								/>
-							);
-						})}
-						<MenuSeparator />
-						<div className="flex h-row items-center gap-2 px-2 text-secondary">
-							<span className="size-4 shrink-0 rounded-full border border-line-strong" />
-							<span className="min-w-0 flex-1 type-control">You</span>
-							<span className="block max-w-[110px] truncate type-detail" title={pageLabel(page)}>
-								{pageLabel(page)}
-							</span>
-						</div>
+					{onPage.map(row)}
+					{onPage.length > 0 && elsewhere.length > 0 && <MenuSeparator />}
+					{elsewhere.map(row)}
+					{away.length > 0 && <MenuSeparator />}
+					{away.map(row)}
+					<MenuSeparator />
+					<div className="flex h-row items-center gap-2 px-2 text-secondary">
+						<span className="size-4 shrink-0 rounded-full border border-line-strong" />
+						<span className="min-w-0 flex-1 truncate type-control">You</span>
+						<span
+							className="max-w-[150px] shrink-0 truncate type-detail"
+							title={placeOf(null, page, project).full}
+						>
+							{placeOf(null, page, project).said}
+						</span>
 					</div>
-				</div>
-			</div>
-			{room.pointerHidden() && (
+				</Menu>
+			)}
+			{room.pointerHidden() && !open && (
 				<div
 					data-presence-hidden=""
 					role="status"
-					className="absolute top-[46px] right-0 whitespace-nowrap rounded-md border border-line-strong bg-surface-window px-2 py-1 text-secondary type-detail"
+					className="absolute top-full left-0 mt-1.5 whitespace-nowrap rounded-md border border-line-strong bg-surface-window px-2 py-1 text-secondary type-detail"
 				>
 					Your pointer is hidden: {PRESENCE_SHOWN} others are shown on this page
 				</div>
@@ -274,60 +227,103 @@ export function PresenceFaces({
 	);
 }
 
-function Chevron({ up }: { up: boolean }) {
+/** One person in the list: face, whole name, where they are. Pointed at, the place makes way for what a press does. */
+function Row({
+	mate,
+	look,
+	page,
+	project,
+	now,
+	followed,
+	onFollow,
+}: {
+	mate: Teammate;
+	look: Look;
+	page: string;
+	project: string;
+	now: number;
+	followed: boolean;
+	onFollow: (mate: Teammate) => void;
+}) {
+	const place = placeOf(mate, page, project);
+	const says = look === "away" ? awayFor(mate, now) : (agentSays(mate) ?? place.said);
 	return (
-		<svg
-			viewBox="0 0 16 16"
-			className={cn("ml-1 size-4 shrink-0 text-secondary transition-transform duration-fast", up && "rotate-180")}
-			fill="none"
-			aria-hidden="true"
-		>
-			<path
-				d="m5 6.5 3 3 3-3"
-				stroke="currentColor"
-				strokeWidth="1.3"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-			/>
-		</svg>
+		<MenuItem
+			data-presence-row={mate.person.accountId}
+			title={`${mate.person.name} · ${look === "away" ? says : (agentSays(mate) ?? place.full)}`}
+			icon={
+				<Face
+					mate={mate}
+					look={look}
+					elsewhere={mate.state.page !== page}
+					size={16}
+					edge="var(--color-surface-window)"
+				/>
+			}
+			label={<span className={cn(look !== "active" && "text-secondary")}>{mate.person.name}</span>}
+			meta={
+				followed ? (
+					<span data-presence-row-says="" style={{ color: mate.person.color }}>
+						following
+					</span>
+				) : (
+					<span className="grid justify-items-end">
+						<span
+							data-presence-row-says=""
+							className="col-start-1 row-start-1 max-w-[150px] truncate transition-opacity duration-fast ease-out group-hover/item:opacity-0 group-focus-visible/item:opacity-0"
+						>
+							{says}
+						</span>
+						<span
+							aria-hidden="true"
+							className="col-start-1 row-start-1 text-primary opacity-0 transition-opacity duration-fast ease-out group-hover/item:opacity-100 group-focus-visible/item:opacity-100"
+						>
+							follow
+						</span>
+					</span>
+				)
+			}
+			onClick={() => onFollow(mate)}
+		/>
 	);
 }
 
-/** One person's face: filled in their colour where this canvas is, hollow elsewhere, faded while idle. */
+/**
+ * One person's face: the first letter on their colour where this canvas is, a ring of their colour elsewhere, half
+ * ink while unfocused, without colour while away, and a ring round it while followed.
+ */
 export function Face({
 	mate,
-	away,
-	resting,
-	followed,
+	look,
+	elsewhere,
+	followed = false,
 	size = SIZE,
+	edge = "var(--color-surface-canvas)",
 }: {
 	mate: Teammate;
-	away: boolean;
-	resting: boolean;
-	followed: boolean;
+	look: Look;
+	elsewhere: boolean;
+	followed?: boolean;
 	size?: number;
+	/** what it is cut out of where faces overlap */
+	edge?: string;
 }) {
 	const { color, name } = mate.person;
+	const away = look === "away" || look === "gone";
 	return (
 		<span
-			className="absolute top-1/2 left-0 -translate-y-1/2 transition-[opacity,filter] duration-500"
+			className="relative flex shrink-0 items-center justify-center rounded-full font-semibold uppercase leading-none transition-[background-color,color,box-shadow,opacity] duration-base ease-out"
 			style={{
 				width: size,
 				height: size,
-				opacity: resting ? 0.45 : 1,
-				filter: resting ? "saturate(0.2)" : undefined,
+				fontSize: size <= 16 ? 9 : 10,
+				opacity: look === "unfocused" ? 0.5 : 1,
+				background: away ? "var(--color-surface-control)" : elsewhere ? edge : color,
+				color: away ? "var(--color-tertiary)" : elsewhere ? color : PRESENCE_INK,
+				boxShadow: `0 0 0 2px ${edge}${elsewhere && !away ? `, inset 0 0 0 1.25px ${color}` : ""}`,
 			}}
 		>
-			<span
-				className="absolute inset-0 flex items-center justify-center rounded-full font-semibold text-[10px] uppercase leading-none"
-				style={{
-					background: away ? "var(--color-surface-window)" : color,
-					color: away ? color : PRESENCE_INK,
-					boxShadow: `0 0 0 2px var(--color-surface-window)${away ? `, inset 0 0 0 1.25px ${color}` : ""}`,
-				}}
-			>
-				{name.charAt(0)}
-			</span>
+			{name.charAt(0)}
 			{followed && (
 				<span className="absolute -inset-[4px] rounded-full border-[1.5px]" style={{ borderColor: color }} />
 			)}
@@ -335,16 +331,26 @@ export function Face({
 	);
 }
 
-/** The window's edge in the followed person's colour, and how to stop. */
-export function FollowMark({ mate }: { mate: Teammate }) {
+/**
+ * Following someone: the canvas's edge in their colour, and how to stop. The words hang from the top right, where
+ * nothing else stands, so a long path or a long name never runs into them; `centre` hangs them from the top's
+ * middle, where the top right holds other things.
+ */
+export function FollowMark({ mate, centre = false }: { mate: Teammate; centre?: boolean }) {
 	return (
-		<div className="pointer-events-none absolute inset-0 z-30" data-presence-following={mate.person.accountId}>
+		<div
+			className="pointer-events-none absolute inset-0 z-30 animate-presence-in"
+			data-presence-following={mate.person.accountId}
+		>
 			<span className="absolute inset-0 border-2" style={{ borderColor: mate.person.color }} />
 			<span
-				className="absolute top-0 left-1/2 -translate-x-1/2 rounded-b-xs px-2 pt-[2px] pb-[3px] type-detail"
+				className={cn(
+					"absolute top-0 max-w-[60%] truncate rounded-b-xs px-2 pt-[2px] pb-[3px] type-detail",
+					centre ? "left-1/2 -translate-x-1/2" : "right-3",
+				)}
 				style={{ background: mate.person.color, color: PRESENCE_INK }}
 			>
-				following {mate.person.name.toLowerCase()} · esc
+				following {mate.person.name} · esc
 			</span>
 		</div>
 	);

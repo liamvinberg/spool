@@ -1,11 +1,12 @@
 /**
  * The right-click menu (#23), the second door to decided actions only (#7),
  * Play from here / Record / Copy path / History… / Reload / Set as thumbnail / Tidy /
- * adaptive export / Move to Trash. History… is a team project's (spool#187). Set as thumbnail makes the frame's
+ * Export… / Move to Trash. History… is a team project's (spool#187). Set as thumbnail makes the frame's
  * still as it is now the project's picture on Home; it waits, disabled, until
- * the frame has one. Export exists only for a frame selection: one frame downloads
- * immediately; a multi-selection opens the format choice. Tidy is always here —
- * it lays out the field, so it answers to no one frame.
+ * the frame has one. Export exists only for a frame selection, and it never
+ * leaves the menu (spool#239): the menu becomes the export choice, then the
+ * building line, then the saved one, in the same box at the pointer. Tidy is
+ * always here — it lays out the field, so it answers to no one frame.
  * Play is the player's door (#13/#24); the player owns cinema in its own tab.
  * Record (spool#221) is the same door, opened recording; only while that experiment is on.
  *
@@ -15,29 +16,36 @@
  * need a key for.
  */
 
+import { useEffect, useRef, useState } from "react";
+import { type ExportPlan, fetchExportPlan } from "../api";
+import { desktopWindow } from "../desktop-window";
+import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { hotkeyKey } from "../hotkeys";
-import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
+import { MenuItem, MenuSeparator, StepMenu } from "../primitives/overlays";
+import { useRemembered } from "../remembered";
+import {
+	EXPORT_WIDTH,
+	ExportChoice,
+	type ExportFormat,
+	type ExportScope,
+	exportFrames,
+	exportTarget,
+	isExportFormat,
+	onlineFrames,
+	useExportSteps,
+} from "./export-menu";
+import type { CapturedFrame } from "./frame-export";
 
 export interface MenuPlacement {
 	x: number;
 	y: number;
 }
 
-/** the menu's box: rows and rules in a 4px inset, inside a hairline */
-const MENU_WIDTH = 200;
-const ROW = 28;
-const RULE = 9;
-const FRAME = 10;
-
-export function contextMenuSize(canExport: boolean, history = false, record = false): { w: number; h: number } {
-	const rows = 6 + (canExport ? 1 : 0) + (history ? 1 : 0) + (record ? 1 : 0);
-	const rules = 2;
-	return { w: MENU_WIDTH, h: rows * ROW + rules * RULE + FRAME };
-}
-
 export function ContextMenu({
 	at,
-	exportAction,
+	project,
+	exportable,
+	capture,
 	tidyLabel,
 	onTidy,
 	onPlay,
@@ -47,9 +55,14 @@ export function ContextMenu({
 	onReload,
 	onSetThumbnail,
 	onTrash,
+	onClose,
 }: {
 	at: MenuPlacement;
-	exportAction: { selectionCount: number; onSelect: () => void } | null;
+	project: string;
+	/** the frames Export takes, in canvas order; null when the menu acts on an element */
+	exportable: readonly string[] | null;
+	/** one frame's picture as the canvas draws it, for PNG and PDF */
+	capture: (frame: string) => Promise<CapturedFrame>;
 	tidyLabel: string;
 	onTidy: () => void;
 	onPlay: () => void;
@@ -62,36 +75,121 @@ export function ContextMenu({
 	/** "Set as thumbnail"; absent while the frame has no still, which leaves the item disabled. */
 	onSetThumbnail?: (() => void) | undefined;
 	onTrash: () => void;
+	onClose: () => void;
 }) {
+	const [last, setLast] = useRemembered<ExportFormat>("export.format", "png", isExportFormat);
+	const [choosing, setChoosing] = useState(false);
+	const exporting = useExportSteps({ finder: desktopWindow()?.onExportDownload !== undefined, onClose });
+	const step = exporting.step?.kind ?? (choosing ? "choice" : "menu");
+	const [format, setFormat] = useState<ExportFormat>(last);
+	const [scope, setScope] = useState<ExportScope>("flow");
+	const [plans, setPlans] = useState<ReadonlyMap<string, ExportPlan>>(new Map());
+	const frames = exportable ?? [];
+	const framesKey = frames.join("\n");
+	const past = step !== "menu";
+
+	// past the menu, the step owns the keyboard as the dialog it replaced did
+	const closing = useRef(onClose);
+	closing.current = onClose;
+	useEffect(
+		() =>
+			past
+				? attachHotkeyLayer({ scope: "dialog", handlers: { "dialog.close": () => closing.current() } })
+				: undefined,
+		[past],
+	);
+
+	// what an HTML file would take, asked once the choice is up; a frame the daemon cannot plan takes itself alone
+	useEffect(() => {
+		if (step !== "choice" || framesKey === "") return;
+		let live = true;
+		const names = framesKey.split("\n");
+		void Promise.all(
+			names.map((frame) =>
+				fetchExportPlan(project, frame).then(
+					(plan): [string, ExportPlan] => [frame, plan],
+					(): [string, ExportPlan] => [frame, { reach: [], online: [] }],
+				),
+			),
+		).then((answered) => {
+			if (live) setPlans(new Map(answered));
+		});
+		return () => {
+			live = false;
+		};
+	}, [step, framesKey, project]);
+
+	const run = () => {
+		if (frames.length === 0) return;
+		setLast(format);
+		exporting.run(
+			frames.length > 1 && format !== "pdf" ? `${frames.length} files` : exportTarget(project, frames, format),
+			frames.length,
+			(progress) => exportFrames({ project, frames, format, scope }, capture, progress),
+		);
+	};
+
+	const [only] = frames;
+	const reach = frames.length === 1 && only !== undefined ? (plans.get(only)?.reach.length ?? 0) : 0;
+
 	return (
-		<Menu
-			className="absolute z-30"
-			style={{ left: at.x, top: at.y }}
+		<StepMenu
+			at={at}
+			step={step}
+			width={past ? EXPORT_WIDTH : undefined}
+			onClose={onClose}
+			onKeyDown={(event) => {
+				if (event.key !== "Enter") return;
+				const act = step === "choice" ? run : exporting.enter;
+				if (act === undefined) return;
+				event.preventDefault();
+				event.stopPropagation();
+				act();
+			}}
 			onPointerDown={(event) => event.stopPropagation()}
 			onContextMenu={(event) => event.preventDefault()}
 		>
-			<MenuItem label="Play from here" shortcut={hotkeyKey("canvas.play")} onClick={onPlay} />
-			{onRecord === undefined ? null : <MenuItem label="Record" onClick={onRecord} />}
-			<MenuItem label="Copy path" onClick={onCopyPath} />
-			{onHistory === undefined ? null : <MenuItem label="History…" onClick={onHistory} />}
-			<MenuItem label="Reload frame" shortcut={hotkeyKey("canvas.reload")} onClick={onReload} />
-			<MenuItem
-				label="Set as thumbnail"
-				disabled={onSetThumbnail === undefined}
-				onClick={() => onSetThumbnail?.()}
-			/>
-			<MenuSeparator />
-			<MenuItem label={tidyLabel} shortcut={hotkeyKey("canvas.tidy")} onClick={onTidy} />
-			{exportAction !== null ? (
-				<MenuItem
-					label={
-						exportAction.selectionCount === 1 ? "Export as PNG" : `Export ${exportAction.selectionCount} frames…`
-					}
-					onClick={exportAction.onSelect}
+			{step === "menu" ? (
+				<>
+					<MenuItem label="Play from here" shortcut={hotkeyKey("canvas.play")} onClick={onPlay} />
+					{onRecord === undefined ? null : <MenuItem label="Record" onClick={onRecord} />}
+					<MenuItem label="Copy path" onClick={onCopyPath} />
+					{onHistory === undefined ? null : <MenuItem label="History…" onClick={onHistory} />}
+					<MenuItem label="Reload frame" shortcut={hotkeyKey("canvas.reload")} onClick={onReload} />
+					<MenuItem
+						label="Set as thumbnail"
+						disabled={onSetThumbnail === undefined}
+						onClick={() => onSetThumbnail?.()}
+					/>
+					<MenuSeparator />
+					<MenuItem label={tidyLabel} shortcut={hotkeyKey("canvas.tidy")} onClick={onTidy} />
+					{exportable === null ? null : (
+						<MenuItem
+							label={frames.length === 1 ? "Export…" : `Export ${frames.length} frames…`}
+							meta={last}
+							onClick={() => {
+								setFormat(last);
+								setChoosing(true);
+							}}
+						/>
+					)}
+					<MenuSeparator />
+					<MenuItem label="Move to Trash" shortcut={hotkeyKey("canvas.trash")} onClick={onTrash} />
+				</>
+			) : step === "choice" ? (
+				<ExportChoice
+					format={format}
+					onFormat={setFormat}
+					scope={scope}
+					onScope={setScope}
+					reach={reach}
+					online={onlineFrames(frames, plans, reach > 0 ? scope : "flow")}
+					target={exportTarget(project, frames, format)}
+					onExport={run}
 				/>
-			) : null}
-			<MenuSeparator />
-			<MenuItem label="Move to Trash" shortcut={hotkeyKey("canvas.trash")} onClick={onTrash} />
-		</Menu>
+			) : (
+				exporting.view
+			)}
+		</StepMenu>
 	);
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MAX_ATTACHMENT_BYTES } from "../attachment";
@@ -21,6 +21,10 @@ import type { AgentEvent } from "./agent-events";
 import { agentFraming } from "./agent-spawn";
 import { readThread } from "./agent-threads";
 import { STOP_GRACE_MS, startAgentTurn } from "./agent-turn";
+import { figma } from "./import/figma";
+import { importPrompt, writeImport } from "./import/imports";
+
+const FIG = join(import.meta.dirname, "../fixtures/import/reading-list.fig");
 
 /** Every event of one turn, read off the stream the way a client would. */
 async function drainTurn(res: Response, limit = 4000): Promise<AgentEvent[]> {
@@ -535,6 +539,29 @@ describe("one turn over the wire", () => {
 		// one spawn, so it really was one turn reading both rather than two turns
 		expect(agent.spawned).toHaveLength(1);
 		expect(agent.spawned[0]?.inputs).toHaveLength(1);
+	});
+
+	it("starts the agent on work brought in from another tool once, pointing it at the import (spool#242)", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeImport(root, figma.read(new Uint8Array(readFileSync(FIG)), "Reading list"), "Reading list.fig");
+		const agent = replayAgentExecutor("claude-compact");
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+		const waiting = async () => (await app.request(`/api/p/${name}/agent/imports`)).json();
+		expect(await waiting()).toEqual([{ slug: "reading-list", source: "Figma", label: "Reading list · 3 frames" }]);
+
+		await drainTurn(
+			await startTurn(name, app, {
+				said: [
+					{ prompt: "Rebuild these as frames, with the prototype links as walks.", imports: ["reading-list"] },
+				],
+			}),
+		);
+
+		expect(sentContent(agent.spawned[0]?.inputs[0]).map((block) => block.text)).toEqual([
+			`${importPrompt(root, "reading-list")}\n\nRebuild these as frames, with the prototype links as walks.`,
+		]);
+		expect(await waiting()).toEqual([]);
 	});
 
 	it("refuses a captured selection it cannot read rather than printing half of one", async () => {

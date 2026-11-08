@@ -17,6 +17,7 @@ import { askOnce, namingPrompt } from "./agent-naming";
 import type { AgentAsk, AgentModel, AgentOffer } from "./agent-offer";
 import { type AgentLogin, agentInstalled } from "./agent-preflight";
 import { engineSessions } from "./agent-sessions";
+import { experimentsOnHere } from "./settings";
 
 /**
  * Codex, the person's own, through `codex app-server` (#362).
@@ -302,6 +303,7 @@ export function createCodexEngine({
 				onSession: (thread) => sessions.write(session.id, thread),
 				version,
 				designer: mountDesigner(spoolDir, "codex"),
+				experiments: experimentsOnHere(spoolDir),
 				allowed: allowedIn(session.id),
 			}),
 	};

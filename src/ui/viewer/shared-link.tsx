@@ -7,6 +7,7 @@ import { RibbonMark } from "../icons";
 import { MODAL } from "../primitives/overlays";
 import { standalone } from "./phone";
 import { PhonePlay } from "./phone-play";
+import { canvasTop, topTitle } from "./shared-top";
 import { address, locate, type ViewerConfig, type ViewerProject, type ViewerShared } from "./source";
 
 /** Where a phone remembers it has been told how to keep this link, once per link: each link share is its own host. */
@@ -21,6 +22,11 @@ const TOLD_KEY = "spool-link:told";
 export function SharedLink({ config, project }: { config: ViewerConfig; project: ViewerProject }) {
 	const { canvas } = project;
 	const shared = project.shared as ViewerShared;
+	// a share of some of the project is called by what it shares, never the project's name (spool#230)
+	const title = useMemo(
+		() => (shared.whole === true ? project.project : topTitle(canvasTop(canvas, canvas.order, true))),
+		[canvas, shared, project.project],
+	);
 	const first = useMemo(() => {
 		for (const page of [...shared.pages, ROOT_PAGE]) {
 			const here = canvas.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page).map((frame) => frame.name);
@@ -60,7 +66,7 @@ export function SharedLink({ config, project }: { config: ViewerConfig; project:
 					setStart(frame);
 				}}
 			/>
-			{!told && <FirstOpen project={project.project} shared={shared} onOpen={() => setTold(true)} />}
+			{!told && <FirstOpen project={title} shared={shared} onOpen={() => setTold(true)} />}
 		</>
 	);
 }

@@ -259,8 +259,8 @@ describe("the framing", () => {
 		expect(framing).toContain(skillText());
 		// only the overview: a thread that renames one frame would otherwise pay
 		// for six thousand tokens of topics it never opens
-		expect(framing).not.toContain(skillText("frames"));
-		expect(framing).not.toContain(skillText("verbs"));
+		expect(framing).not.toContain(skillText(["frames"]));
+		expect(framing).not.toContain(skillText(["verbs"]));
 	});
 
 	it("is the same bytes on every spawn, so it caches", () => {

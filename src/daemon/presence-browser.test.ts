@@ -13,9 +13,9 @@ import { syncUrl } from "./team-sync";
 
 /**
  * What one person sees of their teammates on a team canvas (DEV-196), drawn by the real canvas from presence
- * the team sends: a named pointer whose name holds and fades, idle and gone, the pill docked on a frame's
+ * the team sends: a named pointer whose name holds and fades, unfocused, away and gone, the pill docked on a frame's
  * name, the grabbing hand and the outline, what their pointer does inside a live frame, the faces and their
- * crowd, and following a view. Ana's canvas is
+ * crowd, the mark at the edge, and following a view. Ana's canvas is
  * the one looked at; the teammates are fixtures the fake team says, and Ben's connection hears Ana.
  */
 
@@ -198,28 +198,23 @@ it("draws a teammate's named pointer, holds the name after they stop, and dims a
 	say(BEN, at(420, 260, { pressed: true }));
 	await expect.poll(() => page.locator('[data-presence-pill="ben"][data-presence-said]').count()).toBe(1);
 
-	// idle: the pointer sinks to a third of its ink, and the list says for how long
-	say(BEN, at(420, 260), 5 * 60_000);
-	await expect.poll(() => cursor.getAttribute("data-presence-idle")).toBe("");
-	await expect
-		.poll(async () =>
-			Number(
-				await cursor
-					.locator("> div")
-					.first()
-					.evaluate((element) => getComputedStyle(element).opacity),
-			),
-		)
-		.toBeCloseTo(1 / 3, 2);
-	await page.locator("[data-presence-open]").click();
-	await expect.poll(() => page.locator('[data-presence-row="ben"]').textContent()).toContain("idle · 5m");
-	await page.keyboard.press("Escape");
+	// unfocused: the pointer rests where it was at a third of its ink, their face at half
+	say(BEN, at(420, 260), 3 * 60_000);
+	await expect.poll(() => cursor.getAttribute("data-presence-look")).toBe("unfocused");
+	const ink = () =>
+		cursor.locator("[data-presence-ink]").evaluate((element) => Number(getComputedStyle(element).opacity));
+	await expect.poll(ink).toBeCloseTo(1 / 3, 2);
+
+	// away, their canvas hidden: the pointer folds into a dot that says how long, and their face goes from the row
+	say(BEN, at(420, 260, { focus: "hidden" }));
+	await expect.poll(() => cursor.getAttribute("data-presence-look")).toBe("away");
+	await expect.poll(() => cursor.locator("[data-presence-dot-away]").getAttribute("title")).toBe("ben · away 3m");
+	await expect.poll(() => page.locator('[data-presence-face="ben"]').count()).toBe(0);
 
 	// leaving fades them out
 	say(BEN, null);
-	await expect.poll(() => cursor.getAttribute("data-presence-gone")).toBe("");
+	await expect.poll(() => cursor.getAttribute("data-presence-look")).toBe("gone");
 	await expect.poll(() => cursor.count()).toBe(0);
-	await expect.poll(() => page.locator("[data-presence-faces]").count()).toBe(0);
 });
 
 it("docks the name on a frame's label while they're inside it, lines several up, and flies it back", {
@@ -249,7 +244,7 @@ it("docks the name on a frame's label while they're inside it, lines several up,
 	const pointer = await tip(page, "ben");
 	expect(Math.hypot(pointer.x - docked.x, pointer.y - docked.y)).toBeGreaterThan(40);
 
-	// a second person inside lines up to the left of the first; an idle one dims
+	// a second person inside lines up to the left of the first; an unfocused one dims
 	say(CLEO, at(200, 100, { inside: "home" }));
 	await expect
 		.poll(() => page.locator('[data-presence-pill="cleo"]').getAttribute("data-presence-docked"))
@@ -270,7 +265,7 @@ it("docks the name on a frame's label while they're inside it, lines several up,
 	// by the width each is drawn at, an even gap between them
 	expect(ben.x - (cleo.x + cleo.width)).toBeCloseTo(6, 0);
 	expect(Math.abs(cleo.y - ben.y)).toBeLessThan(1);
-	say(CLEO, at(200, 100, { inside: "home" }), 5 * 60_000);
+	say(CLEO, at(200, 100, { inside: "home" }), 3 * 60_000);
 	await expect
 		.poll(async () =>
 			Number(
@@ -389,22 +384,22 @@ it("shows a teammate's clicks, drags and scrolls inside a live frame on their po
 	await expect.poll(() => ben.locator("[data-presence-scroll]").count(), { timeout: 3_000 }).toBe(0);
 });
 
-it("shows the faces of who's here on the canvas, opens the list from them, collapses a crowd, and follows a row's view", {
+it("shows the faces of who's here after the path, opens the list from them, collapses a crowd, and follows a row's view or an edge's", {
 	timeout: 120_000,
 }, async () => {
 	const { page, say } = await teamCanvas();
 	say(BEN, at(300, 200, { view: { x: 800, y: 0, w: 640, h: 400 } }));
 	const face = page.locator('[data-presence-face="ben"]');
 	await face.waitFor();
-	// on the canvas, at its top right, never in the window's bar
-	expect(await page.locator('[role="application"] [data-presence-faces]').count()).toBe(1);
+	// after the path on the canvas, never in the window's bar
+	expect(await page.locator('[role="application"] [data-page-path] [data-presence-faces]').count()).toBe(1);
 	expect(await page.locator("header [data-presence-faces]").count()).toBe(0);
 	const follow = async (accountId: string) => {
 		await page.locator("[data-presence-open]").click();
 		await page.locator(`[data-presence-row="${accountId}"]`).click();
 	};
 	await page.locator("[data-presence-open]").click();
-	expect(await page.locator("[data-presence-count]").textContent()).toBe("1 here");
+	await page.locator("[data-presence-list]").waitFor();
 	await page.locator('[data-presence-row="ben"]').click();
 	await page.locator('[data-presence-following="ben"]').waitFor();
 	expect(await page.locator('[data-presence-following="ben"]').textContent()).toBe("following ben · esc");
@@ -453,6 +448,18 @@ it("shows the faces of who's here on the canvas, opens the list from them, colla
 	await page.mouse.wheel(200, 0);
 	await expect.poll(() => page.locator("[data-presence-following]").count()).toBe(0);
 
+	// someone whose pointer is off this screen is their face at the edge nearest it, which follows them
+	say(BEN, at(30_000, 200, { view: { x: 29_700, y: 0, w: 640, h: 400 } }));
+	const edge = page.locator('[data-presence-edge="ben"]');
+	await edge.waitFor();
+	const edgeBox = await box(page, '[data-presence-edge="ben"]');
+	const field = await box(page, '[role="application"]');
+	expect(edgeBox.x + edgeBox.width).toBeGreaterThan(field.x + field.width - 40);
+	await edge.click();
+	await page.locator('[data-presence-following="ben"]').waitFor();
+	await page.keyboard.press("Escape");
+	await expect.poll(() => page.locator("[data-presence-following]").count()).toBe(0);
+
 	// someone on another page has a face and no pointer here
 	say(CLEO, at(10, 10, { page: "elsewhere" }));
 	await page.locator('[data-presence-face="cleo"]').waitFor();
@@ -464,7 +471,6 @@ it("shows the faces of who's here on the canvas, opens the list from them, colla
 	await expect.poll(() => page.locator("[data-presence-faces]").textContent()).toContain("+3");
 	expect(await page.locator("[data-presence-face]").count()).toBe(3);
 	await page.locator("[data-presence-open]").click();
-	expect(await page.locator("[data-presence-count]").textContent()).toBe("6 here");
 	expect(await page.locator("[data-presence-row]").count()).toBe(6);
 	// each row's face sits in its own row, not stacked on the first
 	const faceTops = await page

@@ -285,7 +285,8 @@ describe("a shared link on a phone", () => {
 		timeout: 60_000,
 	}, async () => {
 		const { page } = await onPhone("/", { as: outsider, config: LINK });
-		const card = page.getByRole("dialog", { name: "checkout, shared with you" });
+		// called by the page shared, never the project's name (spool#230)
+		const card = page.getByRole("dialog", { name: "shop, shared with you" });
 		await card.waitFor();
 		expect(await card.textContent()).toContain("ana shared this · updated 2 min ago");
 		expect(await card.textContent()).toContain("Add to Home Screen");

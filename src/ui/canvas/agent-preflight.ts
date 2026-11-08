@@ -79,6 +79,8 @@ export interface InstallDeck {
 	readonly stale: readonly AgentEngineId[];
 	/** spool looked and no engine it runs has anything to spawn: the wall (#363) */
 	readonly none: boolean;
+	/** a look has answered for this thread's engine, so missing says what is so rather than what was assumed */
+	readonly looked?: boolean;
 	readonly checking: boolean;
 	/** the last look came back without one, which is allowed and says so */
 	readonly foundNothing: boolean;
@@ -132,6 +134,7 @@ export function useAgentInstall(project: string, engine?: AgentEngineId, thread?
 	const [none, setNone] = useState(false);
 	const [checking, setChecking] = useState(false);
 	const [foundNothing, setFoundNothing] = useState(false);
+	const [looked, setLooked] = useState(false);
 
 	useEffect(() => {
 		let gone = false;
@@ -139,6 +142,7 @@ export function useAgentInstall(project: string, engine?: AgentEngineId, thread?
 			void lookFor(project, engine, thread).then(({ there, old, any, stale: found }) => {
 				if (gone) return;
 				if (there !== null) setMissing(!there);
+				if (there !== null) setLooked(true);
 				if (old !== null) setOutdated(old);
 				if (found !== null) setStale(found);
 				if (any !== null) setNone(!any);
@@ -169,5 +173,5 @@ export function useAgentInstall(project: string, engine?: AgentEngineId, thread?
 		});
 	}, [project, checking, engine, thread]);
 
-	return { missing, outdated, stale, none, checking, foundNothing, look };
+	return { missing, outdated, stale, none, checking, foundNothing, look, looked };
 }

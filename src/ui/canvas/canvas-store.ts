@@ -66,9 +66,6 @@ export interface CanvasState {
 	read: ReadonlySet<string>;
 	/** the right-click menu that is open */
 	menu: CanvasContextMenu | null;
-	/** the frames the export dialog is choosing a format for (#7) */
-	exportDialog: readonly string[] | null;
-	exporting: boolean;
 	/** whether the frame finder (/) is open */
 	finding: boolean;
 	/** the comment the Comment tool placed, its composer open at its pin (spool#169) */
@@ -88,6 +85,8 @@ export interface CanvasContextMenu {
 	y: number;
 	frame: string;
 	selection: "frames" | "element";
+	/** which right-click opened it: each one opens the menu anew, at its first step */
+	opened: number;
 }
 
 export interface CanvasStore {
@@ -125,8 +124,6 @@ export function createCanvasStore(): CanvasStore {
 		pendingTrash: null,
 		read: new Set<string>(),
 		menu: null,
-		exportDialog: null,
-		exporting: false,
 		finding: false,
 		commentDraft: null,
 		commentWritten: false,

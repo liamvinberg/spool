@@ -1,13 +1,17 @@
-import { type CSSProperties, useEffect, useLayoutEffect, useReducer, useRef } from "react";
+import { type CSSProperties, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { cn } from "../cn";
 import { Count } from "../primitives/display";
 import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
 import {
+	awayFor,
 	CLICK_MS,
 	followGesture,
 	gestureMoving,
-	idle,
+	here as isHere,
+	type Look,
+	look as lookOf,
 	nextChange,
 	type PointerGesture,
 	type PresenceRoom,
@@ -18,11 +22,15 @@ import {
 	type Teammate,
 	TRAIL_MS,
 } from "./presence";
+import { Face, PRESENCE_INK } from "./presence-faces";
 
 /**
  * Teammates on this page of a team canvas (DEV-196): each one's pointer in their colour with their name in a
  * pill, the pill docked on a frame's name while they're inside it live, a grabbing hand while they drag, and
- * the frames they're moving outlined in their colour. Inside a live frame their pointer goes on moving, and
+ * the frames they're moving outlined in their colour. Everyone on this page is here until they're gone (task 503):
+ * active, the pointer moves and says their name while it does; unfocused, it rests where they left it at a third of
+ * its ink; away, it folds into a dot on that spot. One whose pointer is off this screen is their face held just
+ * inside the nearest edge, pointing their way, which a press follows. Inside a live frame their pointer goes on moving, and
  * shows what they do there, since nothing in the frame itself is shared: a click squashes it and bursts from
  * its tip, a drag closes it into a hand with a line fading behind, and a scroll turns it into a mouse with
  * chevrons the way it went.
@@ -36,8 +44,10 @@ import {
 const POINTER_W = 15;
 /** How quickly a pill flies to a frame's name and back. */
 const DOCK_W = 10;
-/** The ink an idle pointer sinks to. */
-const IDLE_INK = 1 / 3;
+/** The ink an unfocused pointer sinks to. */
+const UNFOCUSED_INK = 1 / 3;
+/** How far inside the canvas an edge mark keeps: clear of the path above and the tools below. */
+const EDGE_INSET = { top: 56, right: 20, bottom: 92, left: 20 };
 /** A pill's height, and the gap between pills lined up on one name. */
 const PILL_H = 18;
 /** A pill's padding either side of its name. */
@@ -151,14 +161,32 @@ export function PresenceLayer({
 	camera,
 	frames,
 	page,
+	following = null,
+	onFollow,
 }: {
 	room: PresenceRoom;
 	camera: CameraStore;
 	/** The frames on this page, in world units. */
 	frames: readonly (Box & { name: string })[];
 	page: string;
+	following?: string | null;
+	/** Follow someone from the mark at the edge their pointer is past. */
+	onFollow?: (accountId: string) => void;
 }) {
 	const [, redraw] = useReducer((n: number) => n + 1, 0);
+	// the layer's own size, which says whose pointer is off the screen
+	const layer = useRef<HTMLDivElement>(null);
+	const [size, setSize] = useState({ w: 0, h: 0 });
+	useLayoutEffect(() => {
+		const element = layer.current;
+		if (element === null) return;
+		const read = () => setSize({ w: element.clientWidth, h: element.clientHeight });
+		read();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(read);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, []);
 	const motions = useRef(new Map<string, Motion>());
 	// each docked pill's drawn width, by person or `moreKey`, so they line up by it rather than the estimate
 	const widths = useRef(new Map<string, number>());
@@ -243,9 +271,17 @@ export function PresenceLayer({
 	});
 
 	const cam = camera.get();
-	if (cam === null) return null;
 	const now = Date.now();
-	const here = room.teammates().filter((mate) => mate.state.page === page);
+	// the gone are drawn no more, but for one who just left, fading out
+	const looks = new Map(room.teammates().map((mate) => [mate.person.accountId, lookOf(mate, now)]));
+	const lookAt = (mate: Teammate): Look => looks.get(mate.person.accountId) ?? "gone";
+	const here =
+		cam === null
+			? []
+			: room
+					.teammates()
+					.filter((mate) => mate.state.page === page && (mate.left !== null || lookAt(mate) !== "gone"));
+	if (cam === null) return <div ref={layer} className="pointer-events-none absolute inset-0" aria-hidden="true" />;
 	const toScreen = (x: number, y: number) => ({ x: x * cam.k + cam.x, y: y * cam.k + cam.y });
 
 	// the pills docked on each frame's name, right to left in the order their people went inside
@@ -254,7 +290,7 @@ export function PresenceLayer({
 		frames,
 		(name) =>
 			here
-				.filter((mate) => mate.left === null && mate.state.inside === name)
+				.filter((mate) => mate.left === null && isHere(lookAt(mate)) && mate.state.inside === name)
 				.sort((a, b) => a.entered - b.entered)
 				.map((mate) => ({ id: mate.person.accountId, name: mate.person.name })),
 		toScreen,
@@ -286,8 +322,25 @@ export function PresenceLayer({
 	for (const id of [...gestures.current.keys()])
 		if (!here.some((mate) => mate.person.accountId === id)) gestures.current.delete(id);
 
+	// whoever is here with a pointer off the screen: their face just inside the edge nearest it
+	const edges = here.flatMap((mate) => {
+		const motion = motions.current.get(mate.person.accountId);
+		if (mate.left !== null || !isHere(lookAt(mate)) || mate.state.pointer === null) return [];
+		if (motion === undefined || motion.x === null || motion.y === null || size.w === 0) return [];
+		const at = toScreen(motion.x.p, motion.y.p);
+		if (at.x >= 0 && at.x <= size.w && at.y >= 0 && at.y <= size.h) return [];
+		const x = Math.min(size.w - EDGE_INSET.right, Math.max(EDGE_INSET.left, at.x));
+		const y = Math.min(size.h - EDGE_INSET.bottom, Math.max(EDGE_INSET.top, at.y));
+		return [{ mate, x, y, angle: Math.atan2(at.y - y, at.x - x) }];
+	});
+
 	return (
-		<div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true" data-presence-layer="">
+		<div
+			ref={layer}
+			className="pointer-events-none absolute inset-0 overflow-hidden"
+			aria-hidden="true"
+			data-presence-layer=""
+		>
 			{here.flatMap((mate) =>
 				mate.state.dragging.flatMap((name) => {
 					const frame = byName.get(name);
@@ -327,6 +380,7 @@ export function PresenceLayer({
 				<Cursor
 					key={mate.person.accountId}
 					mate={mate}
+					look={lookAt(mate)}
 					now={now}
 					motion={motions.current.get(mate.person.accountId)}
 					slot={slots.get(mate.person.accountId)}
@@ -338,7 +392,80 @@ export function PresenceLayer({
 			{more.map((pill) => (
 				<More key={pill.frame} pill={pill} measured={measured} />
 			))}
+			{edges.map(({ mate, x, y, angle }) => (
+				<EdgeMark
+					key={`edge:${mate.person.accountId}`}
+					mate={mate}
+					look={lookAt(mate)}
+					x={x}
+					y={y}
+					angle={angle}
+					followed={following === mate.person.accountId}
+					onFollow={onFollow}
+				/>
+			))}
 		</div>
+	);
+}
+
+/**
+ * Someone on this page whose pointer is off the screen: their face held just inside the edge nearest them, a notch
+ * pointing the way, at half ink while unfocused. A press follows them.
+ */
+function EdgeMark({
+	mate,
+	look,
+	x,
+	y,
+	angle,
+	followed,
+	onFollow,
+}: {
+	mate: Teammate;
+	look: Look;
+	x: number;
+	y: number;
+	angle: number;
+	followed: boolean;
+	onFollow: ((accountId: string) => void) | undefined;
+}) {
+	const { person } = mate;
+	return (
+		<button
+			type="button"
+			tabIndex={-1}
+			data-presence-edge={person.accountId}
+			title={`Follow ${person.name}`}
+			className="group/edge pointer-events-auto absolute top-0 left-0 flex size-7 animate-presence-in items-center justify-center transition-opacity duration-base ease-out"
+			style={{ transform: `translate(${x - 14}px, ${y - 14}px)`, opacity: look === "unfocused" ? 0.45 : 1 }}
+			onPointerDown={(event) => event.stopPropagation()}
+			onClick={() => onFollow?.(person.accountId)}
+		>
+			<span
+				aria-hidden="true"
+				className="absolute inset-0 transition-transform duration-fast ease-out"
+				style={{ transform: `rotate(${angle}rad)` }}
+			>
+				<svg
+					viewBox="0 0 28 28"
+					width="28"
+					height="28"
+					className="absolute inset-0 overflow-visible"
+					aria-hidden="true"
+				>
+					<path
+						d="M22 8.5 29 14l-7 5.5Z"
+						fill={person.color}
+						stroke={PRESENCE_INK}
+						strokeWidth="1.15"
+						strokeLinejoin="round"
+					/>
+				</svg>
+			</span>
+			<span className="relative transition-transform duration-fast ease-out group-hover/edge:scale-110">
+				<Face mate={mate} look="active" elsewhere={false} size={20} followed={followed} edge={PRESENCE_INK} />
+			</span>
+		</button>
 	);
 }
 
@@ -363,6 +490,7 @@ function More({ pill, measured }: { pill: MorePill; measured: (key: string, widt
 
 function Cursor({
 	mate,
+	look,
 	now,
 	motion,
 	slot,
@@ -374,6 +502,7 @@ function Cursor({
 	/** Told the pill's drawn width as a name, which the layer lines docked pills up by. */
 	measured: (key: string, width: number) => void;
 	mate: Teammate;
+	look: Look;
 	now: number;
 	motion: Motion | undefined;
 	slot: PillSlot | undefined;
@@ -385,8 +514,9 @@ function Cursor({
 	const natural = useRef(pillWidth(mate.person.name));
 	const { person, state } = mate;
 	const gone = mate.left !== null;
-	const resting = idle(mate, now);
-	// a pointer off the canvas isn't drawn; one never placed on this page has nowhere to be drawn
+	const resting = look !== "active";
+	const away = look === "away";
+	// one never placed on this page has nowhere to be drawn
 	const at =
 		state.pointer === null || motion === undefined || motion.x === null || motion.y === null
 			? null
@@ -418,36 +548,56 @@ function Cursor({
 	const grabbing = state.pressed && state.dragging.length > 0;
 	const shape = grabbing ? "hand" : gesture === undefined ? "arrow" : pointerShape(gesture, now);
 	const click = gesture?.click != null && now - gesture.click.at < CLICK_MS ? gesture.click : null;
-	// out on the canvas the pill speaks and goes quiet; docked it stays, and dims when idle
+	// out on the canvas the pill speaks and goes quiet; docked it stays, and dims while unfocused
 	const said = slot !== undefined ? (resting ? 0.45 : 1) : !resting && speaking(mate, now) ? 1 : 0;
-	const ink = gone ? 0 : resting ? IDLE_INK : 1;
+	const ink = gone || away ? 0 : resting ? UNFOCUSED_INK : 1;
 	return (
 		<div
 			className="animate-presence-in"
 			data-presence-cursor={person.accountId}
 			data-presence-name={person.name}
-			data-presence-idle={resting ? "" : undefined}
-			data-presence-gone={gone ? "" : undefined}
+			data-presence-look={gone ? "gone" : look}
 		>
 			{at !== null && (
-				<div
-					className="absolute top-0 left-0 transition-opacity duration-[400ms]"
-					style={{ transform: `translate(${at.x - 1}px, ${at.y - 1}px)`, opacity: ink }}
-				>
-					{/* a click squashes the arrow from its tip; each one is its own element, so each one plays */}
+				<div className="absolute top-0 left-0" style={{ transform: `translate(${at.x - 1}px, ${at.y - 1}px)` }}>
+					{/* where an away pointer was: a dot, which says who on hover */}
 					<span
-						key={click === null ? "still" : `click${click.n}`}
-						className={`absolute top-0 left-0 origin-[1px_1px] ${click === null ? "" : "animate-presence-squash"}`}
+						data-presence-dot-away={away ? "" : undefined}
+						title={away ? `${person.name} · ${awayFor(mate, now)}` : undefined}
+						className={cn(
+							"absolute top-[-3px] left-[-3px] size-[7px] rounded-full transition-[opacity,transform] duration-slow ease-out",
+							away && !gone ? "pointer-events-auto" : "pointer-events-none",
+						)}
+						style={{
+							background: person.color,
+							opacity: away && !gone ? 0.5 : 0,
+							transform: away ? "scale(1)" : "scale(0.4)",
+							boxShadow: `0 0 0 1px ${PRESENCE_INK}`,
+						}}
+					/>
+					<div
+						data-presence-ink=""
+						className="absolute top-0 left-0 origin-[1px_1px] transition-[opacity,transform] duration-slower ease-out"
+						style={{ opacity: ink, transform: away ? "scale(0.3)" : undefined }}
 					>
-						<Arrow
+						{/* a click squashes the arrow from its tip; each one is its own element, so each one plays */}
+						<span
+							key={click === null ? "still" : `click${click.n}`}
+							className={`absolute top-0 left-0 origin-[1px_1px] ${click === null ? "" : "animate-presence-squash"}`}
+						>
+							<Arrow
+								color={person.color}
+								shown={shape === "arrow" || shape === "pressed"}
+								pressed={shape === "pressed"}
+							/>
+						</span>
+						<GrabbingHand color={person.color} shown={shape === "hand"} />
+						<ScrollingMouse
 							color={person.color}
-							shown={shape === "arrow" || shape === "pressed"}
-							pressed={shape === "pressed"}
+							way={shape === "scroll" ? (gesture?.scroll?.way ?? null) : null}
 						/>
-					</span>
-					<GrabbingHand color={person.color} shown={shape === "hand"} />
-					<ScrollingMouse color={person.color} way={shape === "scroll" ? (gesture?.scroll?.way ?? null) : null} />
-					{click !== null && <ClickBurst key={click.n} color={person.color} />}
+						{click !== null && <ClickBurst key={click.n} color={person.color} />}
+					</div>
 				</div>
 			)}
 			{pill !== null && (

@@ -31,7 +31,7 @@ import {
 	type Limited,
 	type ListedFile,
 	type Moved,
-	PRESENCE_IDLE_MS,
+	PRESENCE_UNFOCUSED_MS,
 	PROJECT_LIMIT_BYTES,
 	PROTOCOL_VERSION,
 	type Presence,
@@ -1914,10 +1914,10 @@ function aboutHowLong(ms: number): string {
 	return minutes === 1 ? "about a minute" : `about ${minutes} minutes`;
 }
 
-/** A person's state without what their agent is doing: what they change themselves. */
+/** A person's state without what their agent is doing or their window's focus: what they change themselves. */
 function ownPart(state: PresenceState | null): string {
 	if (state === null) return "null";
-	const { agent: _, ...own } = state;
+	const { agent: _, focus: __, ...own } = state;
 	return JSON.stringify(own);
 }
 
@@ -1959,8 +1959,12 @@ function copyPresence(
 		const active = own ? now - presence.still : (elsewhere ?? was?.active ?? now);
 		others.set(id, { presence, heard: now, active });
 		onPresence?.(presence);
-		const back = was !== undefined && now - was.active >= PRESENCE_IDLE_MS && now - active < PRESENCE_IDLE_MS;
-		if (was === undefined || back) onRoster?.();
+		// the window works out by the clock when someone dims and goes, so it is told what the clock can't know: that
+		// they came back, and what their window's focus is
+		const back =
+			was !== undefined && now - was.active >= PRESENCE_UNFOCUSED_MS && now - active < PRESENCE_UNFOCUSED_MS;
+		const refocused = was !== undefined && was.presence.state?.focus !== presence.state.focus;
+		if (was === undefined || back || refocused) onRoster?.();
 	};
 	const sayIfChanged = (socket: SyncSocket | undefined) => {
 		const state = standing();
@@ -2015,7 +2019,11 @@ function copyPresence(
 			if (had) onRoster?.();
 		},
 		roster: (): TabPresence[] =>
-			[...others.values()].map(({ presence, active }) => ({ person: presence.person, quiet: Date.now() - active })),
+			[...others.values()].map(({ presence, active }) => ({
+				person: presence.person,
+				quiet: Date.now() - active,
+				...(presence.state?.focus === undefined ? {} : { focus: presence.state.focus }),
+			})),
 		people: (): Presence[] =>
 			[...others.values()].map(({ presence, heard }) => ({
 				...presence,

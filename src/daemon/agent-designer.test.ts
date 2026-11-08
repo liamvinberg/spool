@@ -101,9 +101,15 @@ describe("the designer's files", () => {
 			codex: join(designerDir(spoolDir), "codex-designer.toml"),
 			pi: join(designerDir(spoolDir), "pi-designer.ts"),
 		});
-		const agents = JSON.parse(readFileSync(mount.claude, "utf8")) as Record<string, { prompt: string }>;
+		const agents = JSON.parse(readFileSync(mount.claude, "utf8")) as Record<
+			string,
+			{ prompt: string; effort: string }
+		>;
 		expect(Object.keys(agents)).toEqual(["designer"]);
 		expect(agents.designer?.prompt).toBe(DESIGNER_PROMPT);
+		// a default the Agent tool's own effort outranks, rather than the thread's xhigh
+		expect(agents.designer?.effort).toBe("medium");
+		// Codex's effort rides the spawn instead: a role file's own would outrank the agent's ask
 		expect(readFileSync(mount.codex, "utf8")).toBe(`developer_instructions = ${JSON.stringify(DESIGNER_PROMPT)}\n`);
 		const extension = readFileSync(mount.pi, "utf8");
 		expect(extension).toContain('name: "designer"');
@@ -126,10 +132,10 @@ describe("the designer's files", () => {
 });
 
 describe("the framing", () => {
-	it("tells every engine's main agent to fan directions out, each into its own frame, and keep single edits", () => {
-		expect(DESIGNER_FRAMING).toBe(
-			"When someone asks for options or several directions, give each direction to its own designer with a brief. Before it starts, choose each designer's own frame and name it in the brief as design/frames/<page>/<name>/frame.tsx, one new frame per designer: spool puts a placeholder there the moment the designer starts, and the designer draws into it. Make single edits yourself.",
-		);
+	it("tells every engine's main agent where a designer draws and how hard it thinks", () => {
+		// the placeholder lands where the brief says, so the brief has to say it
+		expect(DESIGNER_FRAMING).toContain("name it in the brief as design/frames/<page>/<name>/frame.tsx");
+		expect(DESIGNER_FRAMING).toContain("medium effort");
 		expect(agentFraming()).toContain(DESIGNER_FRAMING);
 		expect(piFraming()).toContain(DESIGNER_FRAMING);
 		// Codex lists its multi-agent tools only under exec's ALL_TOOLS, so its line says where
@@ -181,6 +187,8 @@ describe("codex's designer", () => {
 		const file = mountDesigner(spoolDir, "codex");
 		expect(overrides(args)).toContain(`agents.designer.config_file=${JSON.stringify(file)}`);
 		expect(overrides(args)).toContain(`agents.designer.description=${JSON.stringify(CODEX_DESIGNER_DESCRIPTION)}`);
+		// medium unless the spawn asks for another
+		expect(overrides(args)).toContain('agents.default_subagent_reasoning_effort="medium"');
 		expect(file.startsWith(spoolDir) && !file.startsWith(root)).toBe(true);
 		expect(existsSync(file)).toBe(true);
 		// a role rides as flags: Codex's own home is never pointed elsewhere

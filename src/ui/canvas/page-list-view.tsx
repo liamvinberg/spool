@@ -88,6 +88,7 @@ export function PageListView({
 								)}
 							>
 								{row.name}
+								{row.place !== undefined && <span className="ml-2 text-tertiary">{row.place}</span>}
 							</span>
 							<span className="truncate text-secondary tabular-nums type-detail">{holdsLine(row)}</span>
 						</div>

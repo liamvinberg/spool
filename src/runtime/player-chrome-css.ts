@@ -1,11 +1,8 @@
 /**
- * The played page's own rules (#227): the page, the screen and the 30px bar,
- * for every document that wears the player's chrome. The daemon's player
- * document carries them after its colours and fonts (play.ts), and the
- * read-only canvas in a browser carries them around the frame it plays, so the
- * bar is one bar wherever a frame is played.
+ * The page and the screen alone, which an exported file (spool#239) wears with
+ * no bar: the same screen the player shows, on the same page.
  */
-export const PLAYER_CHROME_RULES = `/* the page is as tall as its content and the browser scrolls it: no clipped
+export const PLAYER_SCREEN_RULES = `/* the page is as tall as its content and the browser scrolls it: no clipped
    body, no scroll container of spool's own (#227) */
 body { margin: 0; background: #0e0e0e; }
 #root, .spool-page { min-height: 100vh; }
@@ -29,6 +26,16 @@ body { margin: 0; background: #0e0e0e; }
 	background: #fff;
 	view-transition-name: spool-screen;
 }
+`;
+
+/**
+ * The played page's own rules (#227): the page, the screen and the 30px bar,
+ * for every document that wears the player's chrome. The daemon's player
+ * document carries them after its colours and fonts (play.ts), and the
+ * read-only canvas in a browser carries them around the frame it plays, so the
+ * bar is one bar wherever a frame is played.
+ */
+export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
 /* the outward-link confirmation is modal, and this page scrolls: pinned to the
    window rather than to the page, or a tall document puts it out of sight */
 .spool-page > .spool-external-backdrop { position: fixed; }

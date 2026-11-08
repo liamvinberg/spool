@@ -1070,6 +1070,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 										selection: words.selection,
 										attached: words.attached ?? undefined,
 										comments: words.comments,
+										imports: words.imports,
 									})),
 								},
 							},

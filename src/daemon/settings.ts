@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { getNested, setNested } from "../machine-state";
-import { experimentOfKey, legacyExperiments } from "../settings/experiments";
+import { type ExperimentId, experimentOfKey, experimentsOn, legacyExperiments } from "../settings/experiments";
 import {
 	isSettingKey,
 	parseSetting,
@@ -189,4 +189,10 @@ function readConfig(file: string): Config {
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
 		return { kind: "unreadable", fields: {} };
 	return { kind: "read", fields: parsed as Record<string, unknown> };
+}
+
+/** Which experiments this machine has on, as the skill and the agents' framing ask it. */
+export function experimentsOnHere(spoolDir: string): (id: ExperimentId) => boolean {
+	const on = new Set(experimentsOn(createSettingsStore(spoolDir).read().entries));
+	return (id) => on.has(id);
 }

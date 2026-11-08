@@ -1,23 +1,28 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Presence, PresenceState } from "../../team-sync-protocol";
 import {
+	AWAY_MS,
 	agentSays,
+	awayFor,
 	CLICK_MS,
 	createPresenceRoom,
 	followCamera,
 	followGesture,
+	GONE_MS,
 	gestureMoving,
-	IDLE_MS,
-	idle,
-	idleFor,
 	LEAVE_MS,
+	look,
+	lookFor,
 	nextChange,
 	PILL_HOLD_MS,
 	type PointerGesture,
+	placeOf,
 	pointerShape,
 	SCROLL_MS,
 	speaking,
 	springStep,
+	type Teammate,
+	UNFOCUSED_MS,
 } from "./presence";
 
 const ben = { accountId: "ben", name: "ben", color: "#eaa94a" };
@@ -43,25 +48,70 @@ describe("what one person sees of another", () => {
 		expect(speaking(mate, 1_200 + PILL_HOLD_MS)).toBe(false);
 		expect(nextChange([mate], 1_300)).toBe(1_200 + PILL_HOLD_MS);
 
-		// a camera move alone isn't moving: the name stays quiet, but they're not idle
+		// a camera move alone isn't moving: the name stays quiet, but they're still active
 		room.hear(heard(at(2, 2, { view: { x: 0, y: 0, w: 10, h: 10 } })), 5_000);
 		const still = room.get("ben");
 		if (still === undefined) throw new Error("ben is here");
 		expect(speaking(still, 5_000)).toBe(false);
-		expect(idle(still, 5_000 + IDLE_MS - 1)).toBe(false);
+		expect(look(still, 5_000 + UNFOCUSED_MS - 1)).toBe("active");
 		// a press says it however still they are
 		room.hear(heard(at(2, 2, { pressed: true })), 6_000);
 		expect(speaking(room.get("ben") as never, 60_000)).toBe(true);
 	});
 
-	it("is idle after a while of nothing, and says how long", () => {
+	it("dims them as their window loses focus or they change nothing, away once hidden or quiet longer, then gone", () => {
+		// from change-recency alone, as from a relay that doesn't carry focus yet
+		expect(lookFor(0, undefined)).toBe("active");
+		expect(lookFor(UNFOCUSED_MS, undefined)).toBe("unfocused");
+		expect(lookFor(AWAY_MS, undefined)).toBe("away");
+		expect(lookFor(GONE_MS, undefined)).toBe("gone");
+		// their window says the rest at once
+		expect(lookFor(0, "focused")).toBe("active");
+		expect(lookFor(0, "blurred")).toBe("unfocused");
+		expect(lookFor(0, "hidden")).toBe("away");
+		expect(lookFor(UNFOCUSED_MS, "hidden")).toBe("away");
+		expect(lookFor(GONE_MS, "hidden")).toBe("gone");
+		expect(lookFor(GONE_MS - 1, "blurred")).toBe("away");
+	});
+
+	it("wakes at each look's boundary, and keeps 'away' counting from their last change, not their focus", () => {
 		const room = createPresenceRoom(() => 0);
-		room.hear(heard(at(1, 1), 4 * 60_000), 10 * 60_000);
-		const mate = room.get("ben");
-		if (mate === undefined) throw new Error("ben is here");
-		expect(idle(mate, 10 * 60_000)).toBe(true);
-		expect(idleFor(mate, 10 * 60_000)).toBe("idle · 4m");
-		expect(idleFor(mate, 10 * 60_000 + 3 * 3_600_000)).toBe("idle · 3h");
+		room.hear(heard(at(1, 1)), 1_000);
+		const mate = () => room.get("ben") as Teammate;
+		expect(nextChange([mate()], 1_000 + PILL_HOLD_MS)).toBe(1_000 + UNFOCUSED_MS);
+		expect(nextChange([mate()], 1_000 + UNFOCUSED_MS)).toBe(1_000 + AWAY_MS);
+		expect(nextChange([mate()], 1_000 + AWAY_MS)).toBe(1_000 + GONE_MS);
+		expect(nextChange([mate()], 1_000 + GONE_MS)).toBeUndefined();
+		// hiding their canvas is not a change of theirs: it makes them away now, counted from when they last moved
+		room.hear(heard(at(1, 1, { focus: "hidden" })), 3 * 60_000);
+		expect(look(mate(), 3 * 60_000)).toBe("away");
+		expect(awayFor(mate(), 26 * 60_000)).toBe("away 25m");
+		expect(look(mate(), 1_000 + GONE_MS)).toBe("gone");
+		// back in focus they change nothing yet, and read unfocused until they do
+		room.hear(heard(at(1, 1)), 4 * 60_000);
+		expect(look(mate(), 4 * 60_000)).toBe("unfocused");
+		room.hear(heard(at(2, 2)), 4 * 60_000 + 10);
+		expect(look(mate(), 4 * 60_000 + 10)).toBe("active");
+	});
+
+	it("says where someone is in a few words that fit, and in full for the title", () => {
+		const mate = (page: string, inside: string | null = null) =>
+			({ state: at(0, 0, { page, inside }) }) as unknown as Teammate;
+		expect(placeOf(mate("app", "app/cart"), "app", "checkout")).toEqual({ said: "cart", full: "app/cart" });
+		expect(placeOf(mate("explore/flows"), "explore/flows", "checkout")).toEqual({
+			said: "flows",
+			full: "explore/flows",
+		});
+		expect(placeOf(mate(""), "", "checkout").said).toBe("checkout");
+		expect(placeOf(mate("explore/flows"), "app", "checkout").said).toBe("explore/flows");
+		expect(placeOf(mate("explore/sharing-publish-flow"), "app", "checkout")).toEqual({
+			said: "sharing-publish-flow",
+			full: "explore/sharing-publish-flow",
+		});
+		expect(placeOf(mate("explore/a-very-long-folder-name-indeed"), "app", "checkout").said).toBe(
+			"a-very-lo…me-indeed",
+		);
+		expect(placeOf(null, "app/cart", "checkout")).toEqual({ said: "cart", full: "app/cart" });
 	});
 
 	it("fades someone who left, then forgets them", async () => {
@@ -138,16 +188,16 @@ describe("a teammate's agent in their presence (#378)", () => {
 		expect(agentSays(mate())).toBeNull();
 	});
 
-	it("is not them at work: their agent alone never keeps them from going idle", () => {
+	it("is not them at work: their agent alone never keeps them active", () => {
 		const room = createPresenceRoom(() => 0);
 		room.hear(heard(at(1, 1)), 0);
-		room.hear(heard(at(1, 1, { agent })), IDLE_MS - 10);
-		room.hear(heard(at(1, 1, { agent: { ...agent, status: "1 designer working, 1 done" } })), IDLE_MS + 10);
+		room.hear(heard(at(1, 1, { agent })), UNFOCUSED_MS - 10);
+		room.hear(heard(at(1, 1, { agent: { ...agent, status: "1 designer working, 1 done" } })), UNFOCUSED_MS + 10);
 		const mate = room.get("ben");
-		expect(mate !== undefined && idle(mate, IDLE_MS + 10)).toBe(true);
-		room.hear(heard(at(5, 5, { agent })), IDLE_MS + 20);
+		expect(mate !== undefined && look(mate, UNFOCUSED_MS + 10)).toBe("unfocused");
+		room.hear(heard(at(5, 5, { agent })), UNFOCUSED_MS + 20);
 		const moved = room.get("ben");
-		expect(moved !== undefined && idle(moved, IDLE_MS + 20)).toBe(false);
+		expect(moved !== undefined && look(moved, UNFOCUSED_MS + 20)).toBe("active");
 	});
 
 	it("remembers who someone is after they leave", () => {

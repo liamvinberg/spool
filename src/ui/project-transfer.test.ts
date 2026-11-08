@@ -2,52 +2,126 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { exportProject, fetchProjection } from "./api";
-import { useProjectExport } from "./project-transfer";
+import { exportProject } from "./api";
+import type { ProjectDownload } from "./desktop-window";
+import { ProjectTabMenu } from "./project-tab-menu";
 
-vi.mock("./api", () => ({
-	exportProject: vi.fn(),
-	fetchProjection: vi.fn(),
-}));
-const mounted: Array<() => void> = [];
+/**
+ * Export project… never leaves the menu that asked (spool#240): it goes
+ * straight to building the .spool, then where it landed, in the same box. The
+ * tab's menu stands in for the cover's, which takes the same steps.
+ */
+
+vi.mock("./api", async (actual) => ({ ...(await actual<typeof import("./api")>()), exportProject: vi.fn() }));
+
+let unmount: (() => void) | undefined;
+
 afterEach(() => {
-	for (const cleanup of mounted.splice(0)) cleanup();
+	unmount?.();
+	unmount = undefined;
+	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 	vi.clearAllMocks();
 });
-function mount() {
+
+function render() {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	const downloads: string[] = [];
+	vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:project");
+	vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+	vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+		downloads.push(this.download);
+	});
+	const anchor = document.createElement("button");
+	document.body.append(anchor);
 	const host = document.createElement("div");
 	document.body.append(host);
 	const root = createRoot(host);
-	function Surface() {
-		const transfer = useProjectExport();
-		return createElement(
-			"div",
-			null,
-			createElement(
-				"button",
-				{ type: "button", onClick: () => transfer.exportProject({ name: "coffee", root: "/coffee" }) },
-				"Export",
-			),
-			transfer.surface,
-		);
-	}
-	act(() => root.render(createElement(Surface)));
-	mounted.push(() => {
+	const onClose = vi.fn();
+	act(() =>
+		root.render(
+			createElement(ProjectTabMenu, {
+				project: { name: "coffee", root: "/w/coffee" },
+				x: 20,
+				y: 30,
+				anchor,
+				onClose,
+				onCloseTab: () => {},
+			}),
+		),
+	);
+	unmount = () => {
 		act(() => root.unmount());
 		host.remove();
-	});
-	return { host };
+		anchor.remove();
+	};
+	return { onClose, downloads };
 }
-it("closes export confirmation before preparing the download", async () => {
-	vi.mocked(fetchProjection).mockResolvedValue(undefined);
-	vi.mocked(exportProject).mockRejectedValue(new Error("Disk unavailable."));
-	const { host } = mount();
-	await act(async () => host.querySelector("button")?.click());
-	expect(host.querySelector("dialog")).not.toBeNull();
-	await act(async () =>
-		host.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
-	);
-	expect(host.querySelector("dialog")).toBeNull();
-	expect(host.querySelector('[role="alert"]')?.textContent).toBe("Disk unavailable.");
-	expect(exportProject).toHaveBeenCalledWith("/coffee", expect.any(AbortSignal));
+
+const box = () => document.querySelector<HTMLElement>('[role="menu"]');
+const row = (label: string) =>
+	[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.startsWith(label));
+
+async function settle(done: () => boolean) {
+	for (let attempt = 0; attempt < 50; attempt++) {
+		if (done()) return;
+		await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+	}
+	throw new Error("the menu did not settle");
+}
+
+const press = (key: string) =>
+	act(() => {
+		box()?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+	});
+
+it("builds the .spool in the menu's own box, and in the Mac app says where it saved and shows it in Finder", async () => {
+	const listeners: ((report: ProjectDownload) => void)[] = [];
+	const revealDownload = vi.fn();
+	vi.stubGlobal("spoolCanvasWindow", {
+		onCommand: () => () => {},
+		setCanvasActive: () => {},
+		onProjectDownload: (listener: (report: ProjectDownload) => void) => {
+			listeners.push(listener);
+			return () => listeners.splice(listeners.indexOf(listener), 1);
+		},
+		revealDownload,
+	});
+	vi.mocked(exportProject).mockResolvedValue({ blob: new Blob(["a project"]), filename: "coffee.spool" });
+	const { onClose, downloads } = render();
+	const menu = box();
+	await act(async () => row("Export project…")?.click());
+	// no format to choose: straight to building, in the same box
+	expect(box()).toBe(menu);
+	expect(menu?.textContent).toContain("Building coffee.spool");
+	await settle(() => downloads.length === 1);
+	expect(exportProject).toHaveBeenCalledWith("/w/coffee");
+	expect(downloads).toEqual(["coffee.spool"]);
+	await act(async () => {
+		for (const listener of [...listeners])
+			listener({
+				status: "completed",
+				filename: "coffee (1).spool",
+				path: "/Users/cata/Downloads/coffee (1).spool",
+			});
+	});
+	await settle(() => menu?.textContent?.includes("Saved to Downloads") === true);
+	expect(menu?.textContent).toContain("coffee (1).spool · 9 B");
+	await press("Enter");
+	expect(revealDownload).toHaveBeenCalledWith("/Users/cata/Downloads/coffee (1).spool");
+	expect(onClose).toHaveBeenCalled();
+});
+
+it("keeps a failure in the box, and Try again builds it again; a browser says Downloaded", async () => {
+	vi.mocked(exportProject).mockRejectedValueOnce(new Error("Disk unavailable."));
+	vi.mocked(exportProject).mockResolvedValueOnce({ blob: new Blob(["a project"]), filename: "coffee.spool" });
+	const { downloads } = render();
+	await act(async () => row("Export project…")?.click());
+	await settle(() => box()?.querySelector('[role="alert"]') !== null);
+	expect(box()?.querySelector('[role="alert"]')?.textContent).toBe("Disk unavailable.");
+	await press("Enter");
+	await settle(() => box()?.textContent?.includes("Downloaded") === true);
+	expect(exportProject).toHaveBeenCalledTimes(2);
+	expect(downloads).toEqual(["coffee.spool"]);
+	expect(row("Show in Finder")).toBeUndefined();
 });

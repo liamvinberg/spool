@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import type { DesignFrame } from "../../daemon/design-projection";
 import { isFramePath } from "../../page-path";
 import { fulfillClipboardCopy } from "../../runtime/clipboard-host";
-import { Player, type PlayerController } from "../../runtime/player-chrome";
+import { type FrameSaid, Player, type PlayerController } from "../../runtime/player-chrome";
 import { PLAYER_CHROME_RULES } from "../../runtime/player-chrome-css";
 import { DESK_BAR_PX } from "../../runtime/player-page";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
@@ -59,8 +59,11 @@ export function ViewerPlayer({
 	coverOf,
 	onWalked,
 	onClosed,
+	said,
 }: {
 	project: string;
+	/** How the bar names a frame, where the one playing it sees less than the project (spool#230). */
+	said?: (frame: string) => FrameSaid;
 	frames: readonly DesignFrame[];
 	documentOf: (frame: string) => string;
 	/**
@@ -239,6 +242,7 @@ export function ViewerPlayer({
 				<div ref={shell} className="min-h-full origin-top-left">
 					<Player
 						project={project}
+						{...(said === undefined ? {} : { said })}
 						frames={{}}
 						controller={controller}
 						closeLabel="Back to the canvas"

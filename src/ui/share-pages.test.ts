@@ -3,6 +3,7 @@ import { ROOT_PAGE } from "../page-path";
 import { saidAgo, shareWho } from "../share-view";
 import { menuEntries } from "./canvas/sidebar-menu";
 import {
+	followedFolders,
 	foundAt,
 	foundRows,
 	leavingLinks,
@@ -112,9 +113,13 @@ describe("sharing a page", () => {
 		expect([...chosen].sort()).toEqual(["app", "explore/cloud", "explore/cloud/home", "explore/cloud/moves"]);
 		expect(tickOf(cloud, chosen)).toBe("all");
 		expect(tickOf(explore, chosen)).toBe("some");
+		// a page chosen with all under it is a folder the share follows, said at its highest; one partly chosen isn't
+		expect(followedFolders(chosen, rows)).toEqual(["app", "explore/cloud"]);
+		expect(followedFolders(new Set(["explore", "explore/rail"]), rows)).toEqual(["explore/rail"]);
 		// a folder partly chosen takes the rest on a press, and a second press lets all of it go
 		chosen = pressed(explore, chosen);
 		expect(tickOf(explore, chosen)).toBe("all");
+		expect(followedFolders(chosen, rows)).toEqual(["app", "explore"]);
 		chosen = pressed(explore, chosen);
 		expect([...chosen]).toEqual(["app"]);
 	});

@@ -213,7 +213,6 @@ export function TabStrip({
 	onClose,
 	onReorder,
 	onPick,
-	onExport,
 	onChangeIcon,
 	onRemoveIcon,
 	onMatchTeam,
@@ -232,7 +231,6 @@ export function TabStrip({
 	onReorder: (order: readonly string[]) => void;
 	/** the "+" door: open a project folder */
 	onPick: () => void;
-	onExport?: (project: TabProject) => void;
 	/** "Change icon…": choose an image for the project. */
 	onChangeIcon?: (project: TabProject) => void;
 	/** "Remove icon", offered while the icon is the project's own file. */
@@ -682,11 +680,12 @@ export function TabStrip({
 			</nav>
 			{menu && (
 				<ProjectTabMenu
+					// opened anew, on another tab or at another place, it starts at its verbs
+					key={`${menu.project.root} ${menu.x} ${menu.y}`}
 					{...menu}
 					// the tab as it is now: an icon changed while the menu is open shows in its header
 					project={tabs.find((tab) => tab.root === menu.project.root) ?? menu.project}
 					onClose={() => setMenu(null)}
-					onExport={() => onExport?.(menu.project)}
 					onCloseTab={() => onClose(menu.project.root)}
 					{...(onRenaming === undefined ? {} : { onRename: () => onRenaming(menu.project.root) })}
 					{...(onChangeIcon === undefined ? {} : { onChangeIcon: () => onChangeIcon(menu.project) })}
@@ -758,7 +757,7 @@ function Backing({ sheet }: { sheet: boolean }) {
 }
 
 /**
- * Who else is in a project whose tab isn't focused: a dot each in their colour, the ones working first and the idle
+ * Who else is in a project whose tab isn't focused: a dot each in their colour, the active first and the unfocused
  * at the faces' resting ink, three at most and a count for the rest. They stand after the name rather than in it, so
  * a long name fades out under its own gradient and the dots sit where the fade ends, never cut off with it. They go
  * with the name when the tab is squeezed to its mark.
@@ -805,8 +804,8 @@ function TabDots({ mates }: { mates: readonly TabMate[] }) {
 						background: mate.color,
 						boxShadow: "0 0 0 1.5px var(--color-surface-window)",
 						zIndex: shown.length - i,
-						opacity: mate.idle ? 0.45 : 1,
-						filter: mate.idle ? "saturate(0.2)" : undefined,
+						opacity: mate.look === "unfocused" ? 0.45 : 1,
+						filter: mate.look === "unfocused" ? "saturate(0.2)" : undefined,
 					}}
 				/>
 			))}
@@ -866,10 +865,10 @@ function HerePills({ mates, from }: { mates: readonly TabMate[]; from: HereFrom 
 						style={{
 							background: mate.color,
 							color: PRESENCE_INK,
-							filter: mate.idle ? "saturate(0.2)" : undefined,
+							filter: mate.look === "unfocused" ? "saturate(0.2)" : undefined,
 						}}
 						initial={tucked}
-						animate={{ x: 0, y: 0, width: "auto", height: PILL_H, opacity: mate.idle ? 0.45 : 1 }}
+						animate={{ x: 0, y: 0, width: "auto", height: PILL_H, opacity: mate.look === "unfocused" ? 0.45 : 1 }}
 						exit={{ ...tucked, transition: { duration: scale.base / 1000 / 1.5, ease: scale.curve } }}
 						transition={{ duration: ms, ease: scale.curve, delay: (i * ms) / 8, opacity: { duration: ms / 3 } }}
 					>

@@ -76,6 +76,7 @@ describe("multi-frame canvas export", () => {
 				if (url.pathname.endsWith("/flows")) {
 					return Response.json({ frames: ["a", "b"], links: [], edges: [], unreadable: [] });
 				}
+				if (url.pathname.endsWith("/export/plan")) return Response.json({ reach: [], online: [] });
 				if (url.pathname.startsWith("/covers/")) {
 					return new Response(PNG_BYTES, { headers: { "content-type": "image/png" } });
 				}
@@ -135,21 +136,19 @@ describe("multi-frame canvas export", () => {
 		);
 		expect(host.querySelectorAll("iframe")).toHaveLength(0);
 
-		// export lost its key to the Edit tool, so the frame's own menu opens it
+		// export lost its key to the Edit tool, so the frame's own menu opens it, and becomes the choice
 		await act(async () => {
 			canvas.dispatchEvent(
 				new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }),
 			);
 		});
-		const exportItem = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((candidate) =>
-			candidate.querySelector("span")?.textContent?.startsWith("Export"),
-		);
-		await act(async () => exportItem?.click());
-		await until(() => host.querySelector('[role="dialog"]') !== null);
-		const exportButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
-			(button) => button.textContent === "Export",
-		);
-		await act(async () => exportButton?.click());
+		const item = (label: string) =>
+			[...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+				(candidate) => candidate.querySelector("span")?.textContent === label,
+			);
+		await act(async () => item("Export 2 frames…")?.click());
+		await until(() => item("Export") !== undefined);
+		await act(async () => item("Export")?.click());
 
 		await completeMountedCapture(host, "a", "11111111111111111111111111111111");
 		// The held document must survive a download that outlasts several sweeps
@@ -163,12 +162,12 @@ describe("multi-frame canvas export", () => {
 			expect(host.querySelector('iframe[title="b"]')).toBeNull();
 			releaseDownload?.();
 		}
-		await until(() => downloads.length === 1);
-		expect(downloads).toEqual(["a.png"]);
+		// every file is built before any is handed over
+		expect(downloads).toEqual([]);
 		await completeMountedCapture(host, "b", "22222222222222222222222222222222");
-		await until(() => host.textContent?.includes("Exported 2 PNG images") === true);
+		await until(() => host.textContent?.includes("Downloaded") === true);
 
-		expect(downloads).toEqual(["a.png", "b.png"]);
+		expect(downloads).toEqual(["test-a.png", "test-b.png"]);
 		expect(broker.id).toHaveBeenCalledTimes(2);
 		expect(broker.raster.mock.calls.map(([source]) => source.frame)).toEqual(["a", "b"]);
 		expect(requests.filter((path) => path.startsWith("/covers/"))).toEqual([]);

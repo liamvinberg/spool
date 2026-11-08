@@ -75,18 +75,23 @@ export async function pngBytesFromImageBlob(blob: Blob, width: number, height: n
 }
 
 /**
- * The file a frame's picture downloads as. A frame is named by its path
- * (#336), and a file name cannot hold a slash, so the page rides in front with
- * a dash: `shop/checkout` saves as `shop-checkout.png`, and two `checkout`s
- * exported together stay two files.
+ * The file one frame exports as: the project first, then the frame. A frame is
+ * named by its path (#336), and a file name cannot hold a slash, so the page
+ * rides in front with a dash: `kaffe` · `shop/checkout` saves as
+ * `kaffe-shop-checkout.png`, and two `checkout`s exported together stay two files.
  */
-export function pngFileName(frame: string): string {
-	return `${frame.replaceAll("/", "-")}.png`;
+export function exportFileName(project: string, frame: string, format: "png" | "pdf" | "html"): string {
+	return `${project}-${frame.replaceAll("/", "-")}.${format}`;
 }
 
 export function downloadBytes(bytes: Uint8Array, type: string, filename: string): void {
 	const copy = Uint8Array.from(bytes);
-	const url = URL.createObjectURL(new Blob([copy.buffer], { type }));
+	downloadBlob(new Blob([copy.buffer], { type }), filename);
+}
+
+/** hand a file to the browser to download; its address outlives the click by a minute, for a big one to be read */
+export function downloadBlob(blob: Blob, filename: string): void {
+	const url = URL.createObjectURL(blob);
 	const anchor = document.createElement("a");
 	anchor.href = url;
 	anchor.download = filename;
@@ -94,5 +99,5 @@ export function downloadBytes(bytes: Uint8Array, type: string, filename: string)
 	document.body.append(anchor);
 	anchor.click();
 	anchor.remove();
-	setTimeout(() => URL.revokeObjectURL(url), 1000);
+	setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
