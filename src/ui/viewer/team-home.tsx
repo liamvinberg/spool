@@ -7,9 +7,10 @@ import { FindNav, FoundHead, finds, NARROW_NAV, ProjectsHead, useFoundPlace } fr
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { PlusIcon, ShareIcon } from "../icons";
 import { Button } from "../primitives/actions";
-import { Count, Dot } from "../primitives/display";
+import { Count, Dot, LetterMark } from "../primitives/display";
 import { EmptyFrames, EmptyState } from "../primitives/feedback";
 import { NavItem } from "../primitives/navigation";
+import { nameHue } from "../project-icon";
 import { CloudCovers, SharedCovers } from "../team-covers";
 import { handOffExport } from "../team-export";
 import { type MoveDone, MoveTeamSheet, mayMoveFrom, moveTargets, teamMoveDone, useMovedToast } from "../team-move";
@@ -30,7 +31,7 @@ import {
 } from "../teams";
 import { AccountPage } from "./account-page";
 import { type AccountSource, cloudAccount } from "./account-source";
-import { byTeam, cloudShared, isNew, type SharedSource, type SharedWithYou } from "./shared-source";
+import { byTeam, cloudShared, isNew, type SharedSource, type SharedWithYou, sharerName } from "./shared-source";
 import { cloudTeams } from "./team-source";
 
 /**
@@ -506,7 +507,7 @@ function CloudFound({
 			.filter((project) => finds(needle, project.name, project.repo ?? ""))
 			.map((project) => ({ team, project })),
 	);
-	const sharedFound = shares.filter((share) => finds(needle, share.project, share.team.name));
+	const sharedFound = shares.filter((share) => finds(needle, share.project, share.team?.name ?? sharerName(share)));
 	const places = [
 		...teams.map((team) => ({
 			key: team.address,
@@ -575,11 +576,23 @@ function SharedPage({ shares, fresh }: { shares: readonly SharedWithYou[]; fresh
 				/>
 			) : (
 				<div className="flex flex-col gap-[44px]">
-					{byTeam(shares).map(({ team, shares }) => (
-						<section key={team.address} aria-label={team.name} data-shared-by={team.address}>
+					{byTeam(shares).map(({ from, shares }) => (
+						<section
+							key={from.key}
+							aria-label={from.kind === "team" ? from.team.name : from.person.name || from.person.email}
+							data-shared-by={from.key}
+						>
 							<h2 className="mb-[18px] flex items-center gap-[10px] type-title font-[500]">
-								<TeamMark team={team} size={18} />
-								{team.name}
+								{from.kind === "team" ? (
+									<TeamMark team={from.team} size={18} />
+								) : (
+									<LetterMark
+										name={from.person.name || from.person.email}
+										hue={nameHue(from.person.email)}
+										size="md"
+									/>
+								)}
+								{from.kind === "team" ? from.team.name : from.person.name || from.person.email}
 								<Count value={shares.length} className="text-tertiary" />
 							</h2>
 							<SharedCovers shares={shares} fresh={fresh} />

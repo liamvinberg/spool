@@ -431,23 +431,26 @@ describe("Home in a browser", () => {
 	}, async () => {
 		const now = Date.now();
 		// settle-up changed since it was last opened here, booking hasn't, packaging never was
+		// and one from a person's own project, in no team
+		const own = { ...share("s4", "portfolio", "Solo", "Ada", { shared: 300 * HOUR }), team: null };
 		const { page } = await open("/devosurf", {
-			shares: SHARES,
-			opened: { s1: now - 3 * HOUR, s3: now - 100 * HOUR },
+			shares: [...SHARES, own],
+			opened: { s1: now - 3 * HOUR, s3: now - 100 * HOUR, s4: now },
 		});
 		const row = page.locator("[data-nav-item][title='Shared with you']");
 		await row.waitFor();
-		expect(await row.innerText()).toMatch(/Shared with you\s*3/u);
+		expect(await row.innerText()).toMatch(/Shared with you\s*4/u);
 		expect(await row.getAttribute("data-new")).toBe("");
 		await row.click();
 		await page.getByRole("heading", { name: "Shared with you", exact: true }).waitFor();
 		expect(new URL(page.url()).pathname).toBe("/shared");
 		expect(await page.title()).toBe("Shared with you · spool");
-		// grouped by the team that shared, the team with the newest change first
+		// grouped by the team that shared, the team with the newest change first, and by whoever shared from no team
 		const groups = page.locator("main section");
 		expect(await groups.evaluateAll((all) => all.map((one) => one.getAttribute("aria-label")))).toEqual([
 			"Tidemark",
 			"Brus",
+			"Ada",
 		]);
 		const covers = (group: string) =>
 			page.locator(`main section[aria-label=${group}] a`).evaluateAll((links) =>
@@ -459,11 +462,14 @@ describe("Home in a browser", () => {
 				})),
 			);
 		expect(await covers("Tidemark")).toEqual([
-			{ name: "Open settle-up", href: "/shared/s1", line: "Elin · today", fresh: true },
+			{ name: "Open settle-up", href: "/shared/s1", line: "Elin · 2 hours ago", fresh: true },
 			{ name: "Open booking", href: "/shared/s3", line: "Elin · 5 days ago", fresh: false },
 		]);
 		expect(await covers("Brus")).toEqual([
 			{ name: "Open packaging", href: "/shared/s2", line: "Karin · 2 days ago", fresh: true },
+		]);
+		expect(await covers("Ada")).toEqual([
+			{ name: "Open portfolio", href: "/shared/s4", line: "Ada · last week", fresh: false },
 		]);
 		await page.getByText("A link someone sent you opens without signing in, so it isn’t listed here.").waitFor();
 		// the team stays in its box, none of its pages current

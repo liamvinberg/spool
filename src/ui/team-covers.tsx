@@ -1,11 +1,12 @@
 import { useContext, useEffect, useState } from "react";
+import { saidAgo } from "../share-view";
 import type { CloudTeam } from "./api";
-import { CoverTile, MenuBackdrop, relativeTime } from "./home";
+import { CoverTile, MenuBackdrop } from "./home";
 import { MenuItem } from "./primitives/overlays";
 import { ProjectIconView } from "./project-icon";
 import type { ListedTeamProject } from "./team-source";
 import { type TeamHere, TeamsSourceContext } from "./teams";
-import type { SharedWithYou } from "./viewer/shared-source";
+import { type SharedWithYou, sharerName } from "./viewer/shared-source";
 
 /** Home's covers, three across, two on a narrower window and one below 720 px. */
 const GRID =
@@ -167,9 +168,9 @@ export function SharedCovers({
 					line={
 						<span className="mt-[5px] block truncate text-secondary type-detail">
 							{[
-								said && share.team.name,
-								share.by.name || share.by.email,
-								relativeTime(share.updated ?? share.sharedAt),
+								said && share.team?.name,
+								sharerName(share),
+								saidAgo(Date.parse(share.updated ?? share.sharedAt) / 1000),
 							]
 								.filter(Boolean)
 								.join(" · ")}

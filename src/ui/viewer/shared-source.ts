@@ -1,12 +1,16 @@
 import { shareOpenedAt } from "./outsider-seen";
 
-/** One canvas shared with this account by a team it isn't in, as spool.page's `GET /api/shared` lists it. */
+/**
+ * One canvas shared with this account by a team it isn't in, or by someone's own project in no team, as spool.page's
+ * `GET /api/shared` lists it.
+ */
 export interface SharedWithYou {
 	id: string;
 	/** Where it opens: the share's own canvas at spool.page. */
 	href: string;
 	project: string;
-	team: { name: string; address: string; logo: string | null };
+	/** The team it was shared from; null for a project in no team, which only its sharer stands for. */
+	team: { name: string; address: string; logo: string | null } | null;
 	by: { name: string; email: string };
 	sharedAt: string;
 	/** The last time what it shares changed; null when it hasn't since it was shared. */
@@ -48,14 +52,29 @@ export function isNew(share: SharedWithYou, opened: number | null | undefined = 
 	return Date.parse(share.updated ?? share.sharedAt) > opened;
 }
 
-/** The shares by the team that shared them, each team where its newest share stands. */
-export function byTeam(shares: readonly SharedWithYou[]): { team: SharedWithYou["team"]; shares: SharedWithYou[] }[] {
+/** Who a group of shares is from: the team that shared them, or the person who shared them from no team. */
+export type SharedFrom =
+	| { kind: "team"; key: string; team: NonNullable<SharedWithYou["team"]> }
+	| { kind: "person"; key: string; person: SharedWithYou["by"] };
+
+/**
+ * The shares by the team that shared them, and those from no team by the person who shared them, each group where its
+ * newest share stands.
+ */
+export function byTeam(shares: readonly SharedWithYou[]): { from: SharedFrom; shares: SharedWithYou[] }[] {
 	const newest = (share: SharedWithYou) => Date.parse(share.updated ?? share.sharedAt);
-	const groups = new Map<string, { team: SharedWithYou["team"]; shares: SharedWithYou[] }>();
+	const groups = new Map<string, { from: SharedFrom; shares: SharedWithYou[] }>();
 	for (const share of [...shares].sort((a, b) => newest(b) - newest(a))) {
-		const group = groups.get(share.team.address);
-		if (group === undefined) groups.set(share.team.address, { team: share.team, shares: [share] });
+		const from: SharedFrom =
+			share.team === null
+				? { kind: "person", key: `person:${share.by.email}`, person: share.by }
+				: { kind: "team", key: share.team.address, team: share.team };
+		const group = groups.get(from.key);
+		if (group === undefined) groups.set(from.key, { from, shares: [share] });
 		else group.shares.push(share);
 	}
 	return [...groups.values()];
 }
+
+/** The name a share's sharer goes by: their name, or their address when they gave none. */
+export const sharerName = (share: SharedWithYou) => share.by.name || share.by.email;
