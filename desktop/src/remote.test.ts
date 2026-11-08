@@ -153,7 +153,7 @@ test("the tunnel is the forward ssh opens, connected once spool answers through 
 	tunnel.start();
 	assert.equal(spawned[0]?.command, "/usr/bin/ssh");
 	assert.deepEqual(spawned[0]?.args.slice(-4), ["-L", "127.0.0.1:7768:127.0.0.1:7768", "--", "devobee"]);
-	assert.ok(spawned[0]?.args.includes("ExitOnForwardFailure=yes"));
+	assert.ok(spawned[0]?.args.includes("ExitOnForwardFailure=no"));
 	assert.ok(spawned[0]?.args.includes("BatchMode=yes"));
 	await clock.advance(READY_STEP_MS * 3);
 	assert.deepEqual(tunnel.status, { state: "connecting" });
@@ -167,6 +167,21 @@ test("the tunnel is the forward ssh opens, connected once spool answers through 
 	answers = true;
 	await clock.advance(5_000);
 	assert.deepEqual(statuses.at(-1), { state: "connected" });
+	tunnel.stop();
+});
+
+test("a local port ssh could not bind ends that ssh, while a config RemoteForward the far end refuses does not", async () => {
+	const { children, tunnel } = harness(() => false);
+	tunnel.start();
+	children[0]?.stderr.emit("data", Buffer.from("Warning: remote port forwarding failed for listen port 18339\n"));
+	assert.deepEqual(children[0]?.killed, []);
+	children[0]?.stderr.emit(
+		"data",
+		Buffer.from("bind [127.0.0.1]:7768: Address already in use\nCould not request local forwarding.\n"),
+	);
+	assert.deepEqual(children[0]?.killed, ["SIGTERM"]);
+	children[0]?.die();
+	assert.deepEqual(tunnel.status, { state: "failed", reason: "port 7768 is already in use on this Mac" });
 	tunnel.stop();
 });
 

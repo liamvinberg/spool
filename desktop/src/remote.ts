@@ -99,8 +99,10 @@ export function sshArgs(config: Pick<RemoteConfig, "ssh" | "port">): string[] {
 		"-N",
 		"-o",
 		"BatchMode=yes",
+		// not yes: a RemoteForward in ~/.ssh/config that the far end already holds would end the tunnel
+		// too, and ClearAllForwardings clears this -L with it, so the local bind failing is read off stderr
 		"-o",
-		"ExitOnForwardFailure=yes",
+		"ExitOnForwardFailure=no",
 		"-o",
 		"ServerAliveInterval=15",
 		"-o",
@@ -113,6 +115,8 @@ export function sshArgs(config: Pick<RemoteConfig, "ssh" | "port">): string[] {
 		config.ssh,
 	];
 }
+
+const LOCAL_BIND_FAILED = /could not request local forwarding/i;
 
 function forwardSpec(port: number): string {
 	return `127.0.0.1:${port}:127.0.0.1:${port}`;
@@ -280,6 +284,8 @@ export class Tunnel {
 		this.options.log?.("remote", "ssh", `pid=${child.pid ?? "?"}`, this.config.name, `port=${this.config.port}`);
 		child.stderr?.on("data", (chunk) => {
 			this.stderr = `${this.stderr}${chunk.toString()}`.slice(-4_000);
+			// a forward that could not bind leaves ssh up with the port answering for whoever holds it
+			if (generation === this.generation && LOCAL_BIND_FAILED.test(this.stderr)) child.kill("SIGTERM");
 		});
 		child.once("error", (error) => this.exited(generation, `ssh could not start: ${error.message}`));
 		child.once("close", (code) =>
