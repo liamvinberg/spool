@@ -452,9 +452,14 @@ it("shows the faces of who's here after the path, opens the list from them, coll
 	say(BEN, at(30_000, 200, { view: { x: 29_700, y: 0, w: 640, h: 400 } }));
 	const edge = page.locator('[data-presence-edge="ben"]');
 	await edge.waitFor();
-	const edgeBox = await box(page, '[data-presence-edge="ben"]');
+	// the wheel can leave their old pointer off the left edge first: wait for the right one
 	const field = await box(page, '[role="application"]');
-	expect(edgeBox.x + edgeBox.width).toBeGreaterThan(field.x + field.width - 40);
+	await expect
+		.poll(async () => {
+			const edgeBox = await box(page, '[data-presence-edge="ben"]');
+			return edgeBox.x + edgeBox.width;
+		})
+		.toBeGreaterThan(field.x + field.width - 40);
 	await edge.click();
 	await page.locator('[data-presence-following="ben"]').waitFor();
 	await page.keyboard.press("Escape");
