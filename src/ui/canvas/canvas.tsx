@@ -6321,6 +6321,8 @@ function CanvasField({
 							trail={pathTrail}
 							viewport={viewportRef}
 							onGo={(page) => {
+								// the names stand over the open finder, and going somewhere by one is leaving it
+								setFinding(false);
 								if (pageWithin(page, activePage) || page === ROOT_PAGE) goUpTo(page);
 								else goInsidePage(page);
 							}}

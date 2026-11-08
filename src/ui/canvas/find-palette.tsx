@@ -18,7 +18,7 @@ import { FolderIcon, SearchIcon } from "../icons";
 import { Kbd } from "../primitives/display";
 import { MODAL, Scrim } from "../primitives/overlays";
 import { ScrollArea, StatusLine } from "../primitives/structure";
-import { findKeys } from "./find-door";
+import { doorSpot, findKeys } from "./find-door";
 import { FindPreview, fitScale, Picture } from "./find-preview";
 import { ageOf, type FrameWords, findFrames, type Hit, newestFirst } from "./frame-find";
 import { pageLabel, pageOf } from "./pages";
@@ -207,7 +207,7 @@ export function FindPalette({
 		[project],
 	);
 
-	// where the door stands and how big the canvas is, read as it opens and while the canvas resizes
+	// where the door stands and how big the canvas is, read as it opens and while the canvas or the path resizes
 	const [spot, setSpot] = useState<Rect>(NO_DOOR);
 	const [size, setSize] = useState({ w: 900, h: 856 });
 	useLayoutEffect(() => {
@@ -219,21 +219,17 @@ export function FindPalette({
 				const next = { w: Math.round(v.width), h: Math.round(v.height) };
 				return was.w === next.w && was.h === next.h ? was : next;
 			});
-			const door = view.querySelector<HTMLElement>("[data-find-door]");
-			if (door === null) return;
-			const b = door.getBoundingClientRect();
-			const next = {
-				x: Math.round(b.left - v.left),
-				y: Math.round(b.top - v.top),
-				w: Math.round(b.width),
-				h: Math.round(b.height),
-			};
+			const next = doorSpot(view);
+			if (next === null) return;
 			setSpot((was) => (was.x === next.x && was.y === next.y && was.w === next.w ? was : next));
 		};
 		read();
 		if (!open || typeof ResizeObserver === "undefined") return;
 		const observer = new ResizeObserver(read);
 		observer.observe(view);
+		// the path moves the door too: a face that joins, a name that changes
+		const path = view.querySelector("[data-page-path]");
+		if (path !== null) observer.observe(path);
 		return () => observer.disconnect();
 	}, [open]);
 
