@@ -44,8 +44,10 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 			<x-player poster="/poster.jpg" style="object-fit: cover"></x-player>
 			<div class="spinner"></div>
 			<canvas id="drawn" width="8" height="8"></canvas><canvas id="empty" width="8" height="8"></canvas>
+			<svg class="icon"><use href="#arrow"></use></svg>
 		</section>
 	</main>
+	<svg class="sprite"><symbol id="arrow"><path fill="url(#ink)" d="M0 0h8v8z"></path></symbol><linearGradient id="ink"></linearGradient><symbol id="unused"></symbol></svg>
 </body>
 </html>`;
 
@@ -142,6 +144,10 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	// a player whose video plays in another site's frame shows its poster
 	expect(c.html).toContain(
 		`<x-player poster="${at(page)}/poster.jpg" style="object-fit: cover; background: url(&quot;${at(page)}/poster.jpg&quot;) center / cover no-repeat"></x-player>`,
+	);
+	// the icons it draws from a sprite elsewhere on the page, and what those draw with, but no more
+	expect(c.html).toContain(
+		'</section><svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden"><symbol id="arrow"><path fill="url(#ink)" d="M0 0h8v8z"></path></symbol><linearGradient id="ink"></linearGradient></svg></main>',
 	);
 	// a canvas as the picture it shows; one that reads back empty (as WebGL does once drawn) left out, with a note
 	expect(c.html).toMatch(

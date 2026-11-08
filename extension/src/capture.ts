@@ -93,6 +93,7 @@ export function capture(target: CaptureTarget, opts: CaptureOptions = {}): Refer
 		for (let p = el.parentElement; p !== null && p !== body && p !== html; p = p.parentElement) chain.unshift(p);
 		for (const a of chain) out.push(open(a, ctx, { contents: true }));
 		element(el, out, ctx, false, true);
+		sprites(el, out, ctx);
 		for (const a of chain.reverse()) out.push(`</${a.localName}>`);
 	}
 
@@ -165,6 +166,45 @@ function element(el: Element, out: string[], ctx: Context, shadow: boolean, pick
 		// its sources are a stream: the poster is what can come
 	} else children(el, out, ctx, shadow);
 	out.push(`</${tag}>`);
+}
+
+const SVG = "http://www.w3.org/2000/svg";
+const REFERS = ["fill", "stroke", "mask", "clip-path", "filter", "marker-start", "marker-mid", "marker-end", "style"];
+
+/**
+ * The parts of the page outside a picked element that its SVG draws with: the symbols its icons `<use>` from a sprite
+ * at the end of the body, the gradients, masks and filters those name, kept out of sight beside it.
+ */
+function sprites(el: Element, out: string[], ctx: Context): void {
+	const doc = el.ownerDocument;
+	const found: Element[] = [];
+	const seen = new Set<string>();
+	const visit = (root: Element) => {
+		for (const node of [root, ...Array.from(root.querySelectorAll("*"))]) {
+			const ids: string[] = [];
+			const href = node.localName === "use" ? (node.getAttribute("href") ?? node.getAttribute("xlink:href")) : null;
+			if (href?.startsWith("#")) ids.push(href.slice(1));
+			for (const name of REFERS) {
+				for (const m of (node.getAttribute(name) ?? "").matchAll(/url\(\s*['"]?#([^'")\s]+)/g)) {
+					if (m[1] !== undefined) ids.push(m[1]);
+				}
+			}
+			for (const id of ids) {
+				if (seen.has(id)) continue;
+				seen.add(id);
+				const target = doc.getElementById(id);
+				if (target === null || target.namespaceURI !== SVG || el.contains(target)) continue;
+				if (found.some((one) => one.contains(target))) continue;
+				found.push(target);
+				visit(target);
+			}
+		}
+	};
+	visit(el);
+	if (found.length === 0) return;
+	out.push('<svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden">');
+	for (const target of found) element(target, out, ctx, false, false);
+	out.push("</svg>");
 }
 
 function shadowRoot(root: ShadowRoot, out: string[], ctx: Context): void {
