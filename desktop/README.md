@@ -118,6 +118,41 @@ a lane asked for the lock the installed app was holding, was refused as a second
 launch of it, and raised that app's canvas instead of opening its own. With no
 `SPOOL_DIR` set the path is where every release has put it.
 
+## Connecting to another machine's daemon
+
+A development aid, hidden unless you ask for it: a `remote.json` you write by
+hand into the state directory (`~/.spool`, or `SPOOL_DIR`) puts a Connect to
+<name> checkbox in the Spool menu and the menu bar, and checking it shows that
+machine's canvas in the window instead of this Mac's.
+
+```json
+{ "ssh": "liam@devobee.tail9e5223.ts.net", "port": 7768, "name": "devobee" }
+```
+
+`ssh` is anything `ssh` accepts as a destination, a `~/.ssh/config` alias
+included, and it has to work without a prompt (`BatchMode`): a key, and the host
+key already trusted. `port` is the daemon's port over there. `name` defaults to
+the host. The app never writes this file; a broken one is logged in `app.log` and
+leaves the menu as it was. Whether the window is on the remote is remembered in
+`remote-connect.json` beside it.
+
+It is an SSH local forward, `127.0.0.1:port` here to `127.0.0.1:port` there, kept
+up by the app and started again after it drops or the Mac wakes. The daemon only
+listens on loopback, frames are served on `*.localhost` names that only resolve
+to loopback, and the daemon refuses writes whose Origin names another port, so
+the window has to see the remote daemon at 127.0.0.1 on the same port it
+listens on there. Nothing on this Mac may already hold that port. The ssh's pid
+is kept in `remote-tunnel.pid`, so one a crashed app left behind is ended on the
+next launch.
+
+While the window is on the remote it behaves like a browser tab on that address.
+Off: the native folder picker, paths of dropped files and of files opened from
+Finder (they name this Mac's disk), the Cloud Account menu and the Chrome
+extension's Open in spool (both this Mac's daemon's), and play windows sized from
+the frame (that needs the remote's control token). Downloads still land in this
+Mac's Downloads. This Mac's daemon is not started for the window, the CLI still
+starts it when it needs one, and app updates only ever stop this Mac's.
+
 ## Why this folder is not in the repo's pnpm workspace
 
 `desktop/` carries its own `pnpm-workspace.yaml`, which makes it its own pnpm
