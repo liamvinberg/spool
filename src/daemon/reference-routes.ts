@@ -29,8 +29,11 @@ import { type ReferenceFetch, type ReferenceLimits, referencePage } from "./refe
  * off them. A process on this Mac could forge the header, and could as well write the project's files directly.
  */
 
-/** The extensions that may send references: spool's own, as its manifest key pins it. */
-export const REFERENCE_EXTENSION_IDS: ReadonlySet<string> = new Set(["ajdldgfdhejgjjmmjcalpgffidppnoae"]);
+/** The extensions that may send references: spool's own, as the Chrome Web Store lists it and as its manifest key pins it unpacked. */
+export const REFERENCE_EXTENSION_IDS: ReadonlySet<string> = new Set([
+	"mimdanfobmdjhlnniafmjaenmhmdniln",
+	"ajdldgfdhejgjjmmjcalpgffidppnoae",
+]);
 
 export const REFERENCE_PATHS: ReadonlySet<string> = new Set(["/api/references", "/api/references/open"]);
 
