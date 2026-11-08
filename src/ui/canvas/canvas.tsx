@@ -3812,8 +3812,11 @@ function CanvasField({
 		const onWheel = (event: WheelEvent) => {
 			// Leave the finder's native list scrolling alone before cancelling the wheel.
 			if (store.get().finding) return;
-			// a list of pages scrolls as any list does; it has no camera to zoom
-			if (event.target instanceof Element && event.target.closest("[data-page-list]") !== null) {
+			// a list of pages, or a broken frame's error, scrolls as any list does; it has no camera to zoom
+			if (
+				event.target instanceof Element &&
+				event.target.closest("[data-page-list], [data-broken-error]") !== null
+			) {
 				if (event.ctrlKey || event.metaKey) event.preventDefault();
 				setMenu(null);
 				return;
