@@ -371,7 +371,18 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 			if (stream(video)) {
 				delete a.src;
 				ctx.notes.add(NOTE.stream);
-			} else if (video.currentSrc) a.src = video.currentSrc;
+				break;
+			}
+			if (video.currentSrc) a.src = video.currentSrc;
+			// one under way shows the frame it was on: the frame runs no script to play it, so it opens there, the poster
+			// behind it until it loads
+			if (video.currentSrc && video.currentTime > 0) {
+				a.src = `${video.currentSrc.replace(/#.*$/, "")}#t=${Math.round(video.currentTime * 1000) / 1000}`;
+				a.preload = "auto";
+				if (a.poster !== undefined && a.poster !== "")
+					addStyle(a, `background: url("${a.poster}") center / ${fitted(el)} no-repeat`);
+				delete a.poster;
+			}
 			break;
 		}
 		case "iframe":
@@ -383,11 +394,15 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 			// a player made as a web component (vimeo-video, mux-player) plays in a frame that cannot come: its poster stands in
 			const poster = a.poster;
 			if (poster === undefined || poster === "" || !el.localName.includes("-")) break;
-			const fit = el.ownerDocument.defaultView?.getComputedStyle(el).objectFit;
-			const size = fit === "cover" ? "cover" : fit === "fill" ? "100% 100%" : "contain";
-			addStyle(a, `background: url("${poster}") center / ${size} no-repeat`);
+			addStyle(a, `background: url("${poster}") center / ${fitted(el)} no-repeat`);
 		}
 	}
+}
+
+/** A picture's background size that draws it as the element fits its own: `object-fit` in `background-size` words. */
+function fitted(el: Element): string {
+	const fit = el.ownerDocument.defaultView?.getComputedStyle(el).objectFit;
+	return fit === "cover" ? "cover" : fit === "fill" ? "100% 100%" : "contain";
 }
 
 function addStyle(a: Record<string, string>, decl: string): void {
@@ -455,7 +470,8 @@ export async function readCanvases(root: Element, ms = 500): Promise<Map<HTMLCan
 	read();
 	for (const canvas of pending) {
 		const r = canvas.getBoundingClientRect();
-		if (r.bottom <= 0 || r.right <= 0 || r.top >= view.innerHeight || r.left >= view.innerWidth) pending.delete(canvas);
+		if (r.bottom <= 0 || r.right <= 0 || r.top >= view.innerHeight || r.left >= view.innerWidth)
+			pending.delete(canvas);
 	}
 	const until = view.performance.now() + ms;
 	while (pending.size > 0 && view.performance.now() < until) {

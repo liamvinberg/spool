@@ -42,6 +42,7 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 			<textarea id="note"></textarea>
 			<x-card></x-card>
 			<x-player poster="/poster.jpg" style="object-fit: cover"></x-player>
+			<video id="clip" src="/clip.mp4" poster="/still.jpg" muted style="object-fit: cover"></video>
 			<div class="spinner"></div>
 			<canvas id="drawn" width="8" height="8"></canvas><canvas id="empty" width="8" height="8"></canvas>
 			<svg class="icon"><use href="#arrow"></use></svg>
@@ -89,6 +90,10 @@ async function captured(whole: boolean): Promise<ReferenceCapture> {
 				easing: "ease-in-out",
 				direction: "alternate",
 			});
+		// a video four and a half seconds in (the fixture has none to play: its clock is set as one would be)
+		const clip = document.querySelector("#clip") as HTMLVideoElement;
+		Object.defineProperty(clip, "currentTime", { value: 4.5 });
+		Object.defineProperty(clip, "currentSrc", { value: clip.src });
 		const pen = (document.querySelector("#drawn") as HTMLCanvasElement).getContext("2d");
 		if (pen !== null) pen.fillRect(3, 3, 1, 1);
 		await document.fonts.ready;
@@ -144,6 +149,10 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	// a player whose video plays in another site's frame shows its poster
 	expect(c.html).toContain(
 		`<x-player poster="${at(page)}/poster.jpg" style="object-fit: cover; background: url(&quot;${at(page)}/poster.jpg&quot;) center / cover no-repeat"></x-player>`,
+	);
+	// a video under way opens on the frame it was on, its poster behind it until that loads
+	expect(c.html).toContain(
+		`<video id="clip" src="${at(page)}/clip.mp4#t=4.5" muted style="object-fit: cover; background: url(&quot;${at(page)}/still.jpg&quot;) center / cover no-repeat" preload="auto"></video>`,
 	);
 	// the icons it draws from a sprite elsewhere on the page, and what those draw with, but no more
 	expect(c.html).toContain(
