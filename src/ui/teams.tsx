@@ -1340,10 +1340,10 @@ export function useTeamLists(teams: readonly CloudTeam[], copies: string) {
 }
 
 const HOME_PLACE = "home.place";
-/** A Mac's own places: Account is spool.page's, so a Mac never stands there. */
+/** A Mac's own places: Account and Shared with you are spool.page's, so a Mac never stands there. */
 const macPlace = (path: string): HomePlace | null => {
 	const place = placeOf(path);
-	return place?.page === "account" ? null : place;
+	return place?.page === "account" || place?.page === "shared" ? null : place;
 };
 const isPlace = (value: unknown): value is string => typeof value === "string" && macPlace(value) !== null;
 
