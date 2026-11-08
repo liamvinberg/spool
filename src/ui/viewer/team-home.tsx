@@ -148,14 +148,20 @@ function Home({
 		setPlace(next);
 		setQuery("");
 	}, []);
-	// in front again after a canvas: where the address says, with what was opened there seen
-	const wasFront = useRef(front);
-	useEffect(() => {
-		if (front && !wasFront.current) {
+	// in front again after a canvas: where the address says, taken as it renders, so nothing that follows the place
+	// (the fallback for a team it isn't in, say) acts on the place Home was left at, or never had
+	const [shownFront, setShownFront] = useState(front);
+	if (front !== shownFront) {
+		setShownFront(front);
+		if (front) {
 			setPlace(browserPlace(location.pathname));
 			setQuery("");
-			void refresh();
 		}
+	}
+	// and with what was opened there seen
+	const wasFront = useRef(front);
+	useEffect(() => {
+		if (front && !wasFront.current) void refresh();
 		wasFront.current = front;
 	}, [front, refresh]);
 	useEffect(

@@ -199,10 +199,37 @@ async function open(
 					json: { projects: [{ name: "checkout", url: "", people: [{ name: "sam", color: "#7fd1b9" }] }] },
 				});
 			if (url.pathname === "/api/teams/devosurf/people") return route.fulfill({ json: PEOPLE });
-			if (url.pathname === "/api/teams/devosurf/projects/checkout/canvas") {
+			const member = url.pathname.match(/^\/api\/teams\/([^/]+)\/projects\/checkout\/canvas$/u)?.[1];
+			const team = teams.find((each) => each.address === member);
+			if (team !== undefined) {
 				await given.reading;
-				return route.fulfill({ json: CHECKOUT });
+				return route.fulfill({
+					json: { ...CHECKOUT, team: { address: team.address, name: team.name, logo: null } },
+				});
 			}
+			// a people share as its outsider reads it, a solo project's with no comments to name it
+			const outsider = shares.find((each) => url.pathname === `/api/shares/${each.id}/canvas`);
+			if (outsider !== undefined)
+				return route.fulfill({
+					json: {
+						team: outsider.team,
+						project: outsider.project,
+						account: CHECKOUT.account,
+						canvas: CHECKOUT.canvas,
+						frames: CHECKOUT.frames,
+						shared: { id: outsider.id, kind: "people", by: outsider.by.name, pages: [""], updated: null },
+						...(outsider.team === null
+							? {}
+							: {
+									outsider: {
+										share: { id: outsider.id, kind: "people", who: ["Vic"] },
+										me: { id: "a1", name: "Vic" },
+										comments: `/api/shares/${outsider.id}/comments`,
+										socket: `/api/shares/${outsider.id}/comments/socket`,
+									},
+								}),
+					} satisfies ViewerProject,
+				});
 			if (url.pathname === "/api/teams/devosurf/projects/checkout/cover")
 				return route.fulfill({
 					body: readFileSync(join(process.cwd(), "src/ui/agent-app-assets/claude.png")),
@@ -215,13 +242,20 @@ async function open(
 		loads.push(url.pathname);
 		const served = given.whole ? app : entry;
 		// the canvas's own address says where its project is read, as spool.page's page for it does
-		const canvas = given.whole && /^\/devosurf\/checkout(\/|$)/u.test(url.pathname);
+		const [, first, second] = url.pathname.split("/");
+		const canvas = !given.whole
+			? null
+			: first === "shared" && second
+				? { api: `/api/shares/${second}/canvas`, path: `/shared/${second}` }
+				: second === "checkout"
+					? { api: `/api/teams/${first}/projects/checkout/canvas`, path: `/${first}/checkout` }
+					: null;
 		return route.fulfill({
 			contentType: "text/html",
 			body: `<!doctype html><html><head>${served.css.map((css) => `<link rel="stylesheet" href="/_viewer/${css}">`).join("")}
 <script type="module" src="/_viewer/${served.file}"></script></head><body>
 <script id="spool-home" type="application/json">${JSON.stringify({ account: "vic@devosurf.com" })}</script>
-${canvas ? `<script id="spool-viewer" type="application/json">${JSON.stringify({ api: "/api/teams/devosurf/projects/checkout/canvas", path: "/devosurf/checkout" })}</script>` : ""}
+${canvas ? `<script id="spool-viewer" type="application/json">${JSON.stringify(canvas)}</script>` : ""}
 <div id="root"></div></body></html>`,
 		});
 	});
@@ -599,5 +633,14 @@ describe("Home in a browser", () => {
 		await direct.page.locator("[data-path-place]").click();
 		await direct.page.getByRole("link", { name: "Open checkout" }).waitFor();
 		expect(direct.loads).toEqual(["/devosurf/checkout"]);
+		// back to where the canvas belongs, never the first team: a second team's, and Shared with you from a share
+		const client = await open("/client/checkout", { whole: true });
+		await client.page.locator("[data-path-place]").click();
+		await expect.poll(() => client.page.title()).toBe("Client Co · spool");
+		expect(new URL(client.page.url()).pathname).toBe("/client");
+		const shared = await open("/shared/s1", { whole: true, shares: SHARES });
+		await shared.page.locator("[data-path-place]").click();
+		await shared.page.getByRole("heading", { name: "Shared with you", exact: true }).waitFor();
+		expect(new URL(shared.page.url()).pathname).toBe("/shared");
 	});
 });
