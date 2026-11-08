@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import * as React from "react";
-import { createElement, useSyncExternalStore } from "react";
+import { createElement, useLayoutEffect, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { isFramePath } from "../page-path";
@@ -1804,12 +1804,15 @@ function PlayerDocument() {
 function ExportedDocument() {
 	useSyncExternalStore(subscribePlay, () => playVersion);
 	const Screen = screens[mountedFrame];
+	const width = playerController.geometry(mountedFrame).w;
+	// the file's page rules read the cap off the root, the column under the screen included
+	useLayoutEffect(() => document.documentElement.style.setProperty("--spool-screen-w", `${width}px`), [width]);
 	return createElement(
 		"div",
 		{ className: "spool-page" },
 		createElement(
 			"div",
-			{ className: "spool-screen", style: { width: "100%", maxWidth: playerController.geometry(mountedFrame).w } },
+			{ className: "spool-screen" },
 			Screen === undefined ? null : createElement(Screen, { key: arrival }),
 		),
 	);

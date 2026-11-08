@@ -130,3 +130,33 @@ export function useCounter() { const [n, set] = useState(0); return [n, () => se
 	await page.locator("button").click();
 	await expect.poll(() => page.locator("button").textContent()).toBe("Tapped 1");
 }, 120_000);
+
+it("gives the frame the document it has on the canvas: its own scroll box scrolls, in the scheme its root sets", async () => {
+	const spoolDir = join(makeTempDir(), ".spool");
+	const { root, name } = makeProject(spoolDir);
+	writeFrame(
+		root,
+		"long",
+		`export default function Long() {
+	return (
+		<div id="scroller" style={{ height: "100%", overflowY: "auto", overscrollBehavior: "none" }}>
+			<style>{":root { color-scheme: dark; }"}</style>
+			<div style={{ height: 3000 }}>Long</div>
+		</div>
+	);
+}
+`,
+	);
+	const res = await makeApp(spoolDir).request(`/api/p/${name}/export/html?frame=long&scope=one`);
+	expect(res.status, await res.clone().text()).toBe(200);
+	const file = join(makeTempDir(), `${name}-long.html`);
+	writeFileSync(file, await res.text());
+
+	const page = await offline(await testBrowser(), file);
+	const scroller = page.locator("#scroller");
+	await expect.poll(() => scroller.count(), { timeout: 30_000 }).toBe(1);
+	expect(await scroller.evaluate((el) => getComputedStyle(el).colorScheme)).toBe("dark");
+	await page.mouse.move(100, 100);
+	await page.mouse.wheel(0, 600);
+	await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(600);
+}, 120_000);

@@ -2,7 +2,6 @@ import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { build, type Plugin } from "esbuild";
-import { PLAYER_SCREEN_RULES } from "../runtime/player-chrome-css";
 import { ASSET_KINDS, ASSET_MEDIA_TYPES } from "./assets";
 import { daemonCompileHost } from "./compile-host";
 import { type CompileHost, describeCompileError, parseImportMap } from "./design-compile";
@@ -400,9 +399,9 @@ function exportDocument({
 	const still =
 		poster === undefined
 			? ""
-			: `<div class="spool-page"><div class="spool-screen" style="width:100%;max-width:${width}px"><img src="${poster}" alt="" style="display:block;width:100%;height:auto"></div></div>`;
+			: `<div class="spool-page"><div class="spool-screen"><img src="${poster}" alt="" style="display:block;width:100%;height:auto"></div></div>`;
 	return `<!doctype html>
-<html lang="en">
+<html lang="en" style="--spool-screen-w:${width}px">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -410,7 +409,7 @@ function exportDocument({
 <title>${escapeHtml(config.start)}</title>
 <link rel="icon" href="data:,">
 <script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(config))})</script>
-<style>${escapeInlineStyle(PLAYER_SCREEN_RULES)}</style>
+<style>${EXPORT_PAGE_RULES}</style>
 ${fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`}${sheets}
 ${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</style>\n`}<script type="importmap">${escapeJsonScript(importMap)}</script>
 </head>
@@ -421,6 +420,19 @@ ${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</st
 </html>
 `;
 }
+
+/**
+ * The page a frame gets in the file: the document it has on the canvas and in
+ * Play (document.ts), viewport tall, so a frame that is its own scroll box
+ * scrolls itself and a taller one runs past it for the browser to scroll. Its
+ * colour scheme is the one the frame's own `:root` sets, and the column under
+ * the screen is that scheme's canvas colour, as a frame's document paints it,
+ * between spool's dark either side. The runtime keeps `--spool-screen-w` at
+ * the authored width of the frame on show.
+ */
+const EXPORT_PAGE_RULES = `html, body, #root, .spool-page, .spool-screen { height: 100%; }
+body { margin: 0; background: #0e0e0e linear-gradient(Canvas, Canvas) top center / min(100%, var(--spool-screen-w)) 1px repeat-y; }
+.spool-screen { position: relative; z-index: 0; isolation: isolate; width: 100%; max-width: var(--spool-screen-w); margin: 0 auto; color: CanvasText; view-transition-name: spool-screen; }`;
 
 /** The first frame a stylesheet is the closure of: the attribute the runtime falls back on. */
 function frameOf(styles: Record<string, string>, resource: string): string {
