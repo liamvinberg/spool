@@ -36,7 +36,7 @@ function capture(overrides: Partial<ReferenceCapture> = {}): ReferenceCapture {
 		label: "section.pricing",
 		size: { w: 600, h: 300 },
 		viewport: { w: 1280, h: 800 },
-		html: '<main class="page"><section class="pricing" data-spool-reference=""><img src="https://cdn.example.com/hero.png" loading="lazy" onclick="steal()"><p style="background:url(&quot;/dot.png&quot;)">Plans</p></section></main>',
+		html: '<main class="page"><section class="pricing" data-spool-reference=""><img src="https://cdn.example.com/hero.png" loading="lazy" onclick="steal()"><p style="background:url(&quot;/dot.png&quot;)">Plans</p><x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price></section></main>',
 		htmlAttrs: { class: "dark", lang: "en" },
 		bodyAttrs: { class: "site" },
 		styles: [
@@ -163,6 +163,10 @@ describe("a reference", () => {
 		// a face's other formats are never fetched, and nothing runs
 		expect(asked).not.toContain("https://cdn.example.com/fonts/site.woff");
 		expect(page).not.toContain("onclick");
+		// a web component keeps its shadow root, declared, or it draws nothing
+		expect(page).toContain(
+			'<x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price>',
+		);
 		const tsx = readFileSync(join(folder, "frame.tsx"), "utf8");
 		expect(tsx).toContain("Left out: a cross-origin iframe; 1 file the site would not give.");
 		// in view, and the canvas is told it arrived

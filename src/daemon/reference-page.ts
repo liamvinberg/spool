@@ -202,13 +202,16 @@ function cssUrls(css: string): string[] {
 	return found;
 }
 
-/** The markup without what can't or mustn't run in a reference: scripts, their fallbacks, and the page's own head. */
+/**
+ * The markup without what can't or mustn't run in a reference: scripts, their fallbacks, and the page's own head.
+ * Templates stay: the extension sends open shadow roots as declarative ones, and a web component (MDN's, a video
+ * player's) draws nothing without its own.
+ */
 function cleanMarkup(html: string): string {
 	return html
 		.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "")
 		.replace(/<noscript\b[\s\S]*?<\/noscript\s*>/gi, "")
-		.replace(/<(?:base|meta|link)\b(?:"[^"]*"|'[^']*'|[^>"'])*>/gi, "")
-		.replace(/<template\b[\s\S]*?<\/template\s*>/gi, "");
+		.replace(/<(?:base|meta|link)\b(?:"[^"]*"|'[^']*'|[^>"'])*>/gi, "");
 }
 
 const TAG = /<([a-zA-Z][\w:-]*)((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)(\s*\/?)>/g;
