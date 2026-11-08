@@ -360,14 +360,25 @@ export function readConfig(): ViewerConfig {
 	return app === true ? { api, path, app } : { api, path };
 }
 
+/** The header a canvas opened in place reads its project with, so spool.page counts a share's open as a page load does. */
+export const OPEN_HEADER = "x-spool-open";
+
 /**
  * The project, read. Its outsider part is checked field by field before the canvas trusts it, since it names the one
  * origin a sign-in's message is taken from and every address an outsider writes to; one that isn't whole is dropped,
  * and the canvas opens as it would for nobody signed in.
  */
-export async function readProject(config: ViewerConfig): Promise<ViewerProject | undefined> {
-	const response = await fetch(config.api, { credentials: "same-origin", headers: { accept: "application/json" } });
-	if (!response.ok) return undefined;
+export async function readProject(
+	config: ViewerConfig,
+	{ open = false }: { open?: boolean } = {},
+): Promise<ViewerProject | undefined> {
+	const response = await fetch(config.api, {
+		credentials: "same-origin",
+		// opened in place, with no page load for spool.page to count as the share's open, the read says so itself
+		headers: { accept: "application/json", ...(open ? { [OPEN_HEADER]: "1" } : {}) },
+	});
+	// a read spool.page sent elsewhere is its page's to follow, not the canvas's to draw
+	if (!response.ok || response.redirected) return undefined;
 	const value: unknown = await response.json().catch(() => undefined);
 	if (!isRecord(value)) return undefined;
 	const { outsider, ...rest } = value;

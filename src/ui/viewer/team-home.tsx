@@ -73,15 +73,31 @@ export function BrowserHome({
 	source = cloudTeams,
 	account = cloudAccount,
 	shared = cloudShared,
+	front = true,
+	onTeams,
 }: {
 	config: HomeConfig;
 	source?: TeamsSource;
 	account?: AccountSource;
 	shared?: SharedSource;
+	/**
+	 * Whether Home is the place on screen. Where the app keeps it behind a canvas, so that coming back is instant, it
+	 * leaves the address, the tab's title and the keys alone, and takes its place from the address once in front again.
+	 */
+	front?: boolean;
+	/** The teams this account is in, by address, each time they are read. */
+	onTeams?: (addresses: readonly string[]) => void;
 }) {
 	return (
 		<TeamsSourceContext.Provider value={source}>
-			<Home account={config.account} source={source} accountSource={account} sharedSource={shared} />
+			<Home
+				account={config.account}
+				source={source}
+				accountSource={account}
+				sharedSource={shared}
+				front={front}
+				onTeams={onTeams}
+			/>
 		</TeamsSourceContext.Provider>
 	);
 }
@@ -91,13 +107,19 @@ function Home({
 	source,
 	accountSource,
 	sharedSource,
+	front,
+	onTeams,
 }: {
 	account: string;
 	source: TeamsSource;
 	accountSource: AccountSource;
 	sharedSource: SharedSource;
+	front: boolean;
+	onTeams: ((addresses: readonly string[]) => void) | undefined;
 }) {
 	const [place, setPlace] = useState<HomePlace | null>(() => browserPlace(location.pathname));
+	const frontRef = useRef(front);
+	frontRef.current = front;
 	// the team Account was opened from stays in the sidebar while it is open
 	const [lastTeam, setLastTeam] = useState<string | null>(null);
 	const [teams, setTeams] = useState<CloudTeamsState | null>(null);
@@ -107,9 +129,12 @@ function Home({
 	const [cycle] = useState(() => cycleOf(location.search));
 	const [shares, setShares] = useState<SharedWithYou[] | null>(null);
 	const [sharedOut, setSharedOut] = useState(false);
+	const told = useRef(onTeams);
+	told.current = onTeams;
 	const refresh = useCallback(async () => {
 		const [teams, shared] = await Promise.all([source.list(), sharedSource.list()]);
 		setTeams(teams);
+		if (teams.state === "ready") told.current?.(teams.teams.map((team) => team.address));
 		if (shared.state === "signed-out") setSharedOut(true);
 		else setShares(shared.shares);
 	}, [source, sharedSource]);
@@ -123,18 +148,30 @@ function Home({
 		setPlace(next);
 		setQuery("");
 	}, []);
+	// in front again after a canvas: where the address says, with what was opened there seen
+	const wasFront = useRef(front);
+	useEffect(() => {
+		if (front && !wasFront.current) {
+			setPlace(browserPlace(location.pathname));
+			setQuery("");
+			void refresh();
+		}
+		wasFront.current = front;
+	}, [front, refresh]);
 	useEffect(
 		() =>
-			attachHotkeyLayer({
-				scope: "home",
-				handlers: {
-					"home.search": (event) => {
-						event?.preventDefault();
-						searchRef.current?.focus();
-					},
-				},
-			}),
-		[],
+			front
+				? attachHotkeyLayer({
+						scope: "home",
+						handlers: {
+							"home.search": (event) => {
+								event?.preventDefault();
+								searchRef.current?.focus();
+							},
+						},
+					})
+				: undefined,
+		[front],
 	);
 	useEffect(() => {
 		if (place?.team) setLastTeam(place.team);
@@ -144,7 +181,11 @@ function Home({
 	useEffect(() => {
 		void refresh();
 		const back = () => void refresh();
-		const moved = () => setPlace(browserPlace(location.pathname));
+		// an address that isn't one of Home's places is a canvas's, which the app opens in Home's stead
+		const moved = () => {
+			const next = browserPlace(location.pathname);
+			if (frontRef.current && next !== null) setPlace(next);
+		};
 		window.addEventListener("focus", back);
 		// back from a share, kept whole by the browser: what it opened is seen now
 		window.addEventListener("pageshow", back);
@@ -174,16 +215,18 @@ function Home({
 	}, []);
 	// a team left, deleted or never this account's: the next one it is in, or Shared with you when none
 	useEffect(() => {
+		if (!front) return;
 		if (teams?.state === "signed-out" || sharedOut) signIn();
 		if (ready === null || current !== null || deleted !== null || onAccount || onShared) return;
 		const next = ready.teams[0];
 		go(next === undefined ? SHARED_PLACE : { team: next.address, page: "projects" }, true);
-	}, [teams, sharedOut, ready, current, deleted, onAccount, onShared, go, signIn]);
+	}, [front, teams, sharedOut, ready, current, deleted, onAccount, onShared, go, signIn]);
 	useEffect(() => {
+		if (!front) return;
 		if (onAccount) document.title = "Account · spool";
 		else if (onShared) document.title = "Shared with you · spool";
 		else if (current !== null) document.title = `${current.name} · spool`;
-	}, [current, onAccount, onShared]);
+	}, [front, current, onAccount, onShared]);
 	// what this browser hasn't opened since it changed, read again with the list
 	const fresh = useCallback((share: SharedWithYou) => isNew(share), []);
 	const anyNew = shares?.some(fresh) ?? false;

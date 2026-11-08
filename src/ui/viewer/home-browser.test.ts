@@ -7,6 +7,7 @@ import { testBrowser } from "../../test-browser";
 import { builtViewer } from "../../test-helpers";
 import { buildEntry } from "./build-entry";
 import type { SharedWithYou } from "./shared-source";
+import type { ViewerProject } from "./source";
 
 /**
  * Home as spool.page serves it at /<team>: the package's own build, a page that says who is signed in, and the team
@@ -65,12 +66,33 @@ const SHARES: SharedWithYou[] = [
 	share("s3", "booking", "Tidemark", "Elin", { shared: 200 * HOUR, updated: 120 * HOUR }),
 ];
 
+/** A member's project as its canvas reads it: two frames, one with a picture. */
+const CHECKOUT: ViewerProject = {
+	team: { address: "devosurf", name: "Devosurf", logo: null },
+	project: "checkout",
+	account: "vic@devosurf.com",
+	canvas: {
+		pages: [],
+		order: {},
+		frames: [
+			{ name: "cart", x: 0, y: 0, w: 800, h: 600 },
+			{ name: "pay", x: 1000, y: 0, w: 800, h: 600 },
+		],
+	},
+	frames: `${APP}/frames/`,
+	covers: { cart: "/api/teams/devosurf/projects/checkout/cover" },
+	role: "viewer",
+};
+
 let built: string;
 let entry: { file: string; css: string[] };
+let app: { file: string; css: string[] };
 
 beforeAll(async () => {
 	built = await builtViewer();
-	entry = buildEntry(JSON.parse(readFileSync(join(built, "manifest.json"), "utf8")), "home.html");
+	const manifest = JSON.parse(readFileSync(join(built, "manifest.json"), "utf8"));
+	entry = buildEntry(manifest, "home.html");
+	app = buildEntry(manifest, "app.html");
 }, 120_000);
 
 async function open(
@@ -82,8 +104,12 @@ async function open(
 		shares?: SharedWithYou[];
 		/** When this browser last opened each share, by its id. */
 		opened?: Record<string, number>;
+		/** Served as the one document holding Home and the canvas, as spool.page does once its package has it. */
+		whole?: boolean;
+		/** Holds the canvas's read until it settles. */
+		reading?: Promise<void>;
 	} = {},
-): Promise<{ page: Page; asked: string[]; left: string[] }> {
+): Promise<{ page: Page; asked: string[]; left: string[]; loads: string[] }> {
 	const { teams = TEAMS, billing = BILLING, shares = [] } = given;
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
@@ -96,6 +122,8 @@ async function open(
 	}, given.opened ?? {});
 	const asked: string[] = [];
 	const left: string[] = [];
+	/** Every document the tab loaded, by its path. */
+	const loads: string[] = [];
 	let name: string | null = null;
 	let commentEmails = "for-you";
 	const macs = [
@@ -171,6 +199,10 @@ async function open(
 					json: { projects: [{ name: "checkout", url: "", people: [{ name: "sam", color: "#7fd1b9" }] }] },
 				});
 			if (url.pathname === "/api/teams/devosurf/people") return route.fulfill({ json: PEOPLE });
+			if (url.pathname === "/api/teams/devosurf/projects/checkout/canvas") {
+				await given.reading;
+				return route.fulfill({ json: CHECKOUT });
+			}
 			if (url.pathname === "/api/teams/devosurf/projects/checkout/cover")
 				return route.fulfill({
 					body: readFileSync(join(process.cwd(), "src/ui/agent-app-assets/claude.png")),
@@ -178,16 +210,23 @@ async function open(
 				});
 			return route.fulfill({ status: 404, json: { error: "not_found" } });
 		}
+		if (url.pathname.startsWith("/frames/"))
+			return route.fulfill({ contentType: "text/html", body: "<!doctype html><body>frame</body>" });
+		loads.push(url.pathname);
+		const served = given.whole ? app : entry;
+		// the canvas's own address says where its project is read, as spool.page's page for it does
+		const canvas = given.whole && /^\/devosurf\/checkout(\/|$)/u.test(url.pathname);
 		return route.fulfill({
 			contentType: "text/html",
-			body: `<!doctype html><html><head>${entry.css.map((css) => `<link rel="stylesheet" href="/_viewer/${css}">`).join("")}
-<script type="module" src="/_viewer/${entry.file}"></script></head><body>
+			body: `<!doctype html><html><head>${served.css.map((css) => `<link rel="stylesheet" href="/_viewer/${css}">`).join("")}
+<script type="module" src="/_viewer/${served.file}"></script></head><body>
 <script id="spool-home" type="application/json">${JSON.stringify({ account: "vic@devosurf.com" })}</script>
+${canvas ? `<script id="spool-viewer" type="application/json">${JSON.stringify({ api: "/api/teams/devosurf/projects/checkout/canvas", path: "/devosurf/checkout" })}</script>` : ""}
 <div id="root"></div></body></html>`,
 		});
 	});
 	await page.goto(`${APP}${path}`);
-	return { page, asked, left };
+	return { page, asked, left, loads };
 }
 
 /** A picture of the page in `SPOOL_TEST_SHOTS`, when it names a folder. */
@@ -508,5 +547,57 @@ describe("Home in a browser", () => {
 		const empty = await open("/", { teams: [] });
 		await empty.page.getByText("Nothing shared with you yet").waitFor();
 		expect(await empty.page.locator("[data-nav-item][title='Shared with you']").isVisible()).toBe(true);
+	});
+
+	it("goes between Home and a canvas in place, with no page load, and back at once", { timeout: 60_000 }, async () => {
+		let read = () => {};
+		const reading = new Promise<void>((done) => {
+			read = done;
+		});
+		const { page, loads } = await open("/devosurf", { whole: true, reading });
+		const checkout = page.getByRole("link", { name: "Open checkout" });
+		await checkout.waitFor();
+		// held, or opened in a new tab, the cover is a link like any
+		const [tab] = await Promise.all([
+			page.context().waitForEvent("page"),
+			checkout.click({ modifiers: ["ControlOrMeta"] }),
+		]);
+		await tab?.close();
+		expect(new URL(page.url()).pathname).toBe("/devosurf");
+
+		await checkout.click();
+		expect(new URL(page.url()).pathname).toBe("/devosurf/checkout");
+		// only while the project is on its way, a hairline runs along the top
+		const line = page.getByRole("progressbar", { name: "Opening" });
+		await line.waitFor();
+		read();
+		await page.locator("[data-path-place]").waitFor();
+		expect(await line.count()).toBe(0);
+		expect(await page.title()).toBe("checkout · Devosurf · spool");
+
+		// the path's first crumb is Home again, as it was left
+		await page.locator("[data-path-place]").click();
+		await checkout.waitFor();
+		expect(new URL(page.url()).pathname).toBe("/devosurf");
+		expect(await page.title()).toBe("Devosurf · spool");
+
+		// Back and Forward swap the two in place, and ⌘↑ from the project's top goes up to its team
+		await page.goBack();
+		await page.locator("[data-path-place]").waitFor();
+		expect(await checkout.isVisible()).toBe(false);
+		await page.keyboard.press("ControlOrMeta+ArrowUp");
+		await checkout.waitFor();
+		expect(new URL(page.url()).pathname).toBe("/devosurf");
+		await page.goBack();
+		await page.locator("[data-path-place]").waitFor();
+		await page.goForward();
+		await checkout.waitFor();
+
+		// one document all along; a canvas opened by its own address loads once, Home behind it
+		expect(loads).toEqual(["/devosurf"]);
+		const direct = await open("/devosurf/checkout", { whole: true });
+		await direct.page.locator("[data-path-place]").click();
+		await direct.page.getByRole("link", { name: "Open checkout" }).waitFor();
+		expect(direct.loads).toEqual(["/devosurf/checkout"]);
 	});
 });

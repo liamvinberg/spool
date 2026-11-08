@@ -6,7 +6,7 @@ interface Chunk {
 }
 
 /**
- * What a page serving one of the browser build's entries (`index.html`, `home.html`) links: the entry's script, and
+ * What a page serving one of the browser build's entries (`index.html`, `home.html`, `app.html`) links: the entry's script, and
  * every stylesheet of the chunks it imports, since the entries share theirs.
  */
 export function buildEntry(manifest: Record<string, Chunk>, key: string): { file: string; css: string[] } {

@@ -93,8 +93,8 @@ describe("packed install", () => {
 				prefix,
 			),
 		);
-		// the read-only canvas and Home, each with its script and every stylesheet it links
-		for (const page of ["index.html", "home.html"]) {
+		// the read-only canvas, Home and both in one, each with its script and every stylesheet it links
+		for (const page of ["index.html", "home.html", "app.html"]) {
 			const entry = buildEntry(manifest, page);
 			expect(existsSync(join(dirname(anchor), "dist", "viewer", entry.file))).toBe(true);
 			expect(entry.css.length).toBeGreaterThan(0);

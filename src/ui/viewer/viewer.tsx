@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DesignFrame } from "../../daemon/design-projection";
 import type { Unseen } from "../../daemon/seen";
 import { isFramePath, pageChain, pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
@@ -38,11 +38,12 @@ import { useFollow, usePointerHidden, usePresenceSender } from "../canvas/use-pr
 import { handoverAddress, knock } from "../handover";
 import { FolderIcon, FrameIcon, ShareIcon } from "../icons";
 import { Divider } from "../primitives/display";
-import { TextAction, Toast } from "../primitives/feedback";
+import { Progress, TextAction, Toast } from "../primitives/feedback";
 import { Bar, Panel, ScrollArea, StatusLine, TreeRow } from "../primitives/structure";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
 import { type LinkSignedIn, signOutHere, type ViewerLinkSignIn } from "./link-sign-in";
+import { NavigateContext } from "./navigate";
 import { Navigator, type NavigatorToast } from "./navigator";
 import { markSeen, openShare, seenKey } from "./outsider-seen";
 import { onPhone } from "./phone";
@@ -90,21 +91,56 @@ import { CommentsTip, markTipSeen, SignInDialog, tipSeen } from "./viewer-sign-i
  * tool, the Mac's pins and cards, and the Comments list in a panel. Comments
  * are the one thing the canvas writes, besides an editor's shares.
  */
-export function Viewer({ config }: { config: ViewerConfig }) {
+export function Viewer({
+	config,
+	swapped = false,
+	onMissing,
+}: {
+	config: ViewerConfig;
+	/**
+	 * Opened in place from another of the app's places, with no page load of its own: its first read counts as the
+	 * share's open, and it names the tab once read.
+	 */
+	swapped?: boolean;
+	/** The project can't be read here (gone, refused, sent elsewhere): the caller loads its page whole instead. */
+	onMissing?: (() => void) | undefined;
+}) {
 	// undefined while it is being read, null when there is no project to read
 	const [project, setProject] = useState<ViewerProject | null | undefined>(undefined);
 	const [phone] = useState(onPhone);
+	const missing = useRef(onMissing);
+	missing.current = onMissing;
 	useEffect(() => {
 		let live = true;
-		readProject(config).then(
-			(read) => live && setProject(read ?? null),
-			() => live && setProject(null),
+		readProject(config, { open: swapped }).then(
+			(read) => {
+				if (!live) return;
+				if (read === undefined && missing.current) return missing.current();
+				setProject(read ?? null);
+			},
+			() => {
+				if (!live) return;
+				if (missing.current) return missing.current();
+				setProject(null);
+			},
 		);
 		return () => {
 			live = false;
 		};
-	}, [config]);
-	if (project === undefined) return <Quiet>opening</Quiet>;
+	}, [config, swapped]);
+	useEffect(() => {
+		if (!swapped || !project) return;
+		document.title = [project.project, project.shared === undefined ? project.team?.name : undefined, "spool"]
+			.filter(Boolean)
+			.join(" · ");
+	}, [swapped, project]);
+	// only while the project's data is on its way: a hairline along the top edge, and the canvas's own ground
+	if (project === undefined)
+		return (
+			<div className="h-dvh bg-surface-canvas">
+				<Progress label="Opening" className="fixed top-0 bottom-auto z-50" />
+			</div>
+		);
 	if (project === null) return <Quiet>This project isn’t here</Quiet>;
 	// a phone gets no spatial canvas: a shared link plays, and a team canvas is a navigator
 	if (phone && project.shared !== undefined) return <SharedLink config={config} project={project} />;
@@ -441,13 +477,19 @@ function ViewerCanvas({
 		[config],
 	);
 	useEffect(() => {
-		const onPop = () => setWhere(locate(config, new URL(window.location.href)));
+		const onPop = () => {
+			const at = new URL(window.location.href);
+			// back to another of the app's places: that place opens instead of this canvas
+			if (config.path !== "" && at.pathname !== config.path && !at.pathname.startsWith(`${config.path}/`)) return;
+			setWhere(locate(config, at));
+		};
 		window.addEventListener("popstate", onPop);
 		return () => window.removeEventListener("popstate", onPop);
 	}, [config]);
 
 	// --- the way back (spool#238): the path at the canvas's top left, from where the project lives down to the page
 	const place = useMemo(() => placeOf(project), [project]);
+	const navigate = useContext(NavigateContext);
 	/** whether a page is one this person can be on: every page for a member, the shared ones for anyone else */
 	const reachable = useCallback(
 		(each: string) =>
@@ -490,7 +532,7 @@ function ViewerCanvas({
 			if (target instanceof HTMLElement && target.tagName === "TEXTAREA") return;
 			if (above === null) return;
 			event.preventDefault();
-			if (above === "place" && place !== undefined) window.location.assign(place.href);
+			if (above === "place" && place !== undefined) navigate(place.href);
 			else if (above !== "place") {
 				setKeyMoves((was) => was + 1);
 				go({ page: above, frame: null });
@@ -498,7 +540,7 @@ function ViewerCanvas({
 		};
 		window.addEventListener("keydown", down);
 		return () => window.removeEventListener("keydown", down);
-	}, [played, above, place, go]);
+	}, [played, above, place, go, navigate]);
 
 	// --- comments (spool#173): a member's, written to spool.page and heard on the presence socket
 	const commentsUrl = useMemo(() => new URL(address(config, ROOT_PAGE, null), window.location.href).href, [config]);
