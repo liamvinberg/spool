@@ -32,7 +32,7 @@ export interface DesktopBridge {
 }
 
 /** The dmg under the name that never moves, for the pill's way out when the app cannot update itself. */
-export const DOWNLOAD_URL = "https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg";
+export const DOWNLOAD_URL = "https://updates.spool.page/Spool.dmg";
 
 export function isAppUpdate(value: unknown): value is AppUpdate | null {
 	if (value === null) return true;
