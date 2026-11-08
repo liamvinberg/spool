@@ -225,6 +225,35 @@ it("shows the parts waiting to fade in as they scroll into view as they end, and
 	]);
 });
 
+it("keeps a box scrolled where it was, sticky parts and all, in a frame that runs no script", {
+	timeout: 60_000,
+}, async () => {
+	const kept = await (await openTab()).evaluate(async () => {
+		document.body.innerHTML = `
+			<nav id="side" style="height: 100px; overflow: auto; scroll-snap-type: y proximity">
+				<div><p id="filter" style="position: sticky; top: 0; margin: 0">filter</p><p style="height: 400px">list</p></div>
+				<p style="scroll-snap-align: start">end</p>
+			</nav>`;
+		const side = document.getElementById("side") as HTMLElement;
+		side.scrollTop = 120;
+		const { capture } = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture;
+		const c = capture({ el: document.body, whole: true, label: location.host });
+		// the frame's sandbox, which may be read from here but runs nothing
+		const frame = document.createElement("iframe");
+		frame.sandbox.add("allow-same-origin");
+		frame.srcdoc = c.html;
+		await new Promise((done) => {
+			frame.onload = done;
+			document.body.append(frame);
+		});
+		const there = frame.contentDocument as Document;
+		const box = there.getElementById("side") as HTMLElement;
+		const filter = there.getElementById("filter") as HTMLElement;
+		return [box.scrollTop, filter.getBoundingClientRect().top - box.getBoundingClientRect().top];
+	});
+	expect(kept).toEqual([120, 0]);
+});
+
 it("catches a WebGL drawing in the frame it was drawn, though it reads back empty after", {
 	timeout: 60_000,
 }, async () => {

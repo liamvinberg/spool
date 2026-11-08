@@ -193,6 +193,8 @@ function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boo
 		a["data-spool-reference"] = "";
 		for (const decl of standAlone(el)) addStyle(a, decl);
 	}
+	// the picked element's parent is an ancestor drawn as nothing: its scroll is none of the frame's
+	if (how.contents !== true) for (const decl of scrollKept(el, how.picked !== true)) addStyle(a, decl);
 	const anim = ctx.anims.get(el);
 	if (anim !== undefined) a["data-spool-anim"] = anim;
 	let s = `<${tag}`;
@@ -244,6 +246,45 @@ function waitingToReveal(el: Element): string[] {
 	if (shifted) out.push("transform: none !important");
 	if (blurred) out.push("filter: none !important");
 	return out;
+}
+
+/**
+ * A box a person or the page scrolled (a docs sidebar on its current entry, a carousel on its third card) kept where it
+ * was, though the frame runs no script to scroll it: the box snaps, as it lays out, to one child set to stand where it
+ * stood. Its other children snap nowhere, so theirs can't pull it elsewhere. `inBox` says whether the parent is drawn.
+ */
+export function scrollKept(el: Element, inBox: boolean): string[] {
+	const out: string[] = [];
+	const own = scrolled(el);
+	if (own !== null) {
+		const axis = own.top !== 0 && own.left !== 0 ? "both" : own.top !== 0 ? "y" : "x";
+		out.push(`scroll-snap-type: ${axis} mandatory !important`, "scroll-padding: 0 !important");
+	}
+	const box = inBox ? el.parentElement : null;
+	const plan = box === null ? null : scrolled(box);
+	if (box !== null && plan !== null) {
+		if (plan.at !== el) out.push("scroll-snap-align: none !important");
+		else {
+			const r = el.getBoundingClientRect();
+			const b = box.getBoundingClientRect();
+			const top = round(r.top - b.top - box.clientTop);
+			const left = round(r.left - b.left - box.clientLeft);
+			out.push("scroll-snap-align: start !important", `scroll-margin: ${top}px 0 0 ${left}px !important`);
+		}
+	}
+	return out;
+}
+
+/** how far a box (not the page's own scroll) had scrolled, and the child it snaps to; null for one at its start */
+function scrolled(box: Element): { top: number; left: number; at: Element } | null {
+	const doc = box.ownerDocument;
+	const view = doc.defaultView;
+	if (box === doc.body || box === doc.documentElement || view === null) return null;
+	if (box.scrollTop === 0 && box.scrollLeft === 0) return null;
+	const at = Array.from(box.children).find(
+		(child) => /^(static|relative)$/.test(view.getComputedStyle(child).position) && child.getClientRects().length > 0,
+	);
+	return at === undefined ? null : { top: box.scrollTop, left: box.scrollLeft, at };
 }
 
 /** what the element is now rather than what it was authored as: typed values, chosen sources, drawn canvases */
