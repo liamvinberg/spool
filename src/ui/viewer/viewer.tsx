@@ -54,7 +54,7 @@ import { TeamMark } from "../teams";
 import { type LinkSignedIn, signOutHere, type ViewerLinkSignIn } from "./link-sign-in";
 import { NavigateContext } from "./navigate";
 import { Navigator, type NavigatorToast } from "./navigator";
-import { markSeen, openShare, seenKey } from "./outsider-seen";
+import { markSeen, type OutsiderUnseen, openShare, seenKey } from "./outsider-seen";
 import { onPhone } from "./phone";
 import { SharedLink } from "./shared-link";
 import { type CanvasTop, canvasTop, frameSaid, topTitle } from "./shared-top";
@@ -117,6 +117,8 @@ export function Viewer({
 }) {
 	// undefined while it is being read, null when there is no project to read
 	const [project, setProject] = useState<ViewerProject | null | undefined>(undefined);
+	/** An outsider's open of their share, recorded as it is read, on a phone as on a desktop (spool#184). */
+	const [opened, setOpened] = useState<SeenOpen | null>(null);
 	const [phone] = useState(onPhone);
 	const missing = useRef(onMissing);
 	missing.current = onMissing;
@@ -126,6 +128,10 @@ export function Viewer({
 			(read) => {
 				if (!live) return;
 				if (read === undefined && missing.current) return missing.current();
+				if (read?.shared !== undefined) {
+					const key = seenKey(config, read);
+					setOpened({ key, unseen: openShare(key, read) });
+				}
 				setProject(read ?? null);
 			},
 			() => {
@@ -154,7 +160,13 @@ export function Viewer({
 	if (project === null) return <Quiet>This project isn’t here</Quiet>;
 	// a phone gets no spatial canvas: a shared link plays, and a team canvas is a navigator
 	if (phone && project.shared !== undefined) return <SharedLink config={config} project={project} />;
-	return <LiveCanvas config={config} first={project} phone={phone} />;
+	return <LiveCanvas config={config} first={project} phone={phone} opened={opened} />;
+}
+
+/** Where an outsider's share is kept as seen in this browser, and what it hadn't seen at this open. */
+interface SeenOpen {
+	key: string;
+	unseen: OutsiderUnseen;
 }
 
 /** How long a burst of saves is let land before the canvas reads the project again. */
@@ -178,7 +190,17 @@ const RENEW_MS = 60 * 60 * 1000;
  * A frame a save touched while it had a cover is stale: its picture is of the frame before the save. It stays
  * stale until a newer cover arrives, and meanwhile may stand as its document wherever it is on screen.
  */
-function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: ViewerProject; phone: boolean }) {
+function LiveCanvas({
+	config,
+	first,
+	phone,
+	opened: open,
+}: {
+	config: ViewerConfig;
+	first: ViewerProject;
+	phone: boolean;
+	opened: SeenOpen | null;
+}) {
 	const [project, setProject] = useState(first);
 	/** How many times each frame's document has been made again since this tab opened. */
 	const [revisions, setRevisions] = useState<ReadonlyMap<string, number>>(new Map());
@@ -187,8 +209,8 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 	/** Frames a save touched after their cover was taken, with that cover's address. */
 	const [stale, setStale] = useState<ReadonlyMap<string, string>>(new Map());
 	// an outsider's marks are what their share added since this browser last opened it (spool#184)
-	const [shareKey] = useState(() => (first.shared === undefined ? null : seenKey(config, first)));
-	const [opened] = useState(() => (shareKey === null ? null : openShare(shareKey, first)));
+	const [shareKey] = useState(() => open?.key ?? null);
+	const [opened] = useState(() => open?.unseen ?? null);
 	const [marks, setMarks] = useState<ReadonlyMap<string, Unseen>>(
 		() => new Map([...(opened?.frames ?? [])].map((frame) => [frame, "new"])),
 	);
