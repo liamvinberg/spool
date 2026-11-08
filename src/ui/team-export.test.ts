@@ -198,7 +198,7 @@ it("gives an admin Export… on a team project's cover, and an editor or someone
 	expect((await menu("site")).map((item) => item.textContent)).not.toContain("Export…");
 });
 
-it("keeps a deleted team in its admin's places, marked with the day it goes, and opens it to Export all alone", async () => {
+it("keeps a deleted team in its admin's places, marked with the day it goes, and opens it to Export all and Delete now", async () => {
 	const chosen: string[] = [];
 	const host = render(
 		createElement(HomePlaces, {
@@ -233,19 +233,36 @@ it("keeps a deleted team in its admin's places, marked with the day it goes, and
 	expect(alone.querySelector("[aria-haspopup=menu]")?.textContent).toContain("Harbour");
 
 	const exported: string[] = [];
+	const fake = fakeTeamsSource({ teams: [] });
+	let deleted = 0;
 	const page = render(
-		createElement(DeletedTeamPage, {
-			team: DELETED,
-			onExport: async (address: string) => {
-				exported.push(address);
-				return null;
-			},
-		}),
+		createElement(
+			TeamsSourceContext.Provider,
+			{ value: fake.source },
+			createElement(DeletedTeamPage, {
+				team: DELETED,
+				onExport: async (address: string) => {
+					exported.push(address);
+					return null;
+				},
+				onDeleted: () => deleted++,
+			}),
+		),
 	);
 	expect(page.textContent).toContain("Harbour was deleted. It’s gone for good on November 20.");
-	expect(buttons(page)).toEqual(["Export all…"]);
+	expect(buttons(page)).toEqual(["Export all…", "Delete now…"]);
 	await click(page, "Export all…");
 	expect(exported).toEqual(["harbour"]);
+
+	// Delete now asks first, then erases it for every admin today
+	await click(page, "Delete now…");
+	expect(page.textContent).toContain("It goes for good today instead of on November 20, for every admin.");
+	await act(async () =>
+		page.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+	);
+	await settle();
+	expect(fake.asked).toContain("purge harbour");
+	expect(deleted).toBe(1);
 });
 
 it("on spool.page, opens spool on this Mac on the export, or offers the download when it doesn't answer", async () => {
