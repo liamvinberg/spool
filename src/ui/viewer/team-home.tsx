@@ -1,13 +1,16 @@
 import { type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ACCOUNT_PLACE, type HomePlace, pathOf, placeOf } from "../../home-places";
+import { ACCOUNT_PLACE, type HomePlace, pathOf, placeOf, SHARED_PLACE } from "../../home-places";
 import { AccountFoot } from "../account-foot";
 import type { BillingCycle, CloudTeam, CloudTeamsState } from "../api";
 import { HOME_MAIN, HomeShell, PlaceIn } from "../home";
-import { FindNav, FoundHead, finds, useFoundPlace } from "../home-find";
+import { FindNav, FoundHead, finds, NARROW_NAV, ProjectsHead, useFoundPlace } from "../home-find";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
+import { PlusIcon, ShareIcon } from "../icons";
 import { Button } from "../primitives/actions";
+import { Count, Dot } from "../primitives/display";
 import { EmptyFrames, EmptyState } from "../primitives/feedback";
-import { CloudCovers } from "../team-covers";
+import { NavItem } from "../primitives/navigation";
+import { CloudCovers, SharedCovers } from "../team-covers";
 import { handOffExport } from "../team-export";
 import { type MoveDone, MoveTeamSheet, mayMoveFrom, moveTargets, teamMoveDone, useMovedToast } from "../team-move";
 import { type SetupHost, useSetUpToast } from "../team-setup";
@@ -17,6 +20,7 @@ import {
 	HomePlaces,
 	InviteLine,
 	NewTeamDialog,
+	TeamMark,
 	type TeamPage,
 	TeamPeoplePage,
 	TeamProjects,
@@ -26,12 +30,13 @@ import {
 } from "../teams";
 import { AccountPage } from "./account-page";
 import { type AccountSource, cloudAccount } from "./account-source";
+import { byTeam, cloudShared, isNew, type SharedSource, type SharedWithYou } from "./shared-source";
 import { cloudTeams } from "./team-source";
 
 /**
  * What spool.page tells Home in a browser, in a `<script id="spool-home" type="application/json">`: who is signed
  * in. Which team and page it shows is the address: `/<team>`, `/<team>/people`, `/<team>/settings` and
- * `/<team>/settings/billing`, or `/account`, the account's own page.
+ * `/<team>/settings/billing`, `/shared`, what other teams shared with the account, or `/account`, its own page.
  */
 export interface HomeConfig {
 	account: string;
@@ -57,22 +62,25 @@ function browserPlace(path: string): HomePlace | null {
 }
 
 /**
- * Home at spool.page/<team>: the Mac app's Home with no tabs above it and no Mac beside it. The same switcher, nav,
+ * Home at spool.page/<team>: the Mac app's Home with no tabs above it and no Mac beside it. The same team box, nav,
  * covers, People and Settings, read and changed at spool.page with this browser's session. Every team is a place
- * here, a viewer's included, and each project opens as the read-only canvas.
+ * here, a viewer's included, and each project opens as the read-only canvas. Above the team, Shared with you holds
+ * what people in other teams shared with this account; an account in no team opens on it.
  */
 export function BrowserHome({
 	config,
 	source = cloudTeams,
 	account = cloudAccount,
+	shared = cloudShared,
 }: {
 	config: HomeConfig;
 	source?: TeamsSource;
 	account?: AccountSource;
+	shared?: SharedSource;
 }) {
 	return (
 		<TeamsSourceContext.Provider value={source}>
-			<Home account={config.account} source={source} accountSource={account} />
+			<Home account={config.account} source={source} accountSource={account} sharedSource={shared} />
 		</TeamsSourceContext.Provider>
 	);
 }
@@ -81,10 +89,12 @@ function Home({
 	account,
 	source,
 	accountSource,
+	sharedSource,
 }: {
 	account: string;
 	source: TeamsSource;
 	accountSource: AccountSource;
+	sharedSource: SharedSource;
 }) {
 	const [place, setPlace] = useState<HomePlace | null>(() => browserPlace(location.pathname));
 	// the team Account was opened from stays in the sidebar while it is open
@@ -94,7 +104,14 @@ function Home({
 	const [joined] = useState(() => new URLSearchParams(location.search).get("joined") === "viewer");
 	// the cycle the landing's switch showed, when spool.page/start sent this team here: the payment choice starts on it
 	const [cycle] = useState(() => cycleOf(location.search));
-	const refresh = useCallback(async () => setTeams(await source.list()), [source]);
+	const [shares, setShares] = useState<SharedWithYou[] | null>(null);
+	const [sharedOut, setSharedOut] = useState(false);
+	const refresh = useCallback(async () => {
+		const [teams, shared] = await Promise.all([source.list(), sharedSource.list()]);
+		setTeams(teams);
+		if (shared.state === "signed-out") setSharedOut(true);
+		else setShares(shared.shares);
+	}, [source, sharedSource]);
 	// the search in the sidebar reaches every team; going to any place puts it away
 	const [query, setQuery] = useState("");
 	const searchRef = useRef<HTMLInputElement>(null);
@@ -128,20 +145,24 @@ function Home({
 		const back = () => void refresh();
 		const moved = () => setPlace(browserPlace(location.pathname));
 		window.addEventListener("focus", back);
+		// back from a share, kept whole by the browser: what it opened is seen now
+		window.addEventListener("pageshow", back);
 		window.addEventListener("popstate", moved);
 		return () => {
 			window.removeEventListener("focus", back);
+			window.removeEventListener("pageshow", back);
 			window.removeEventListener("popstate", moved);
 		};
 	}, [refresh]);
 	const ready = teams?.state === "ready" ? teams : null;
 	const onAccount = place?.page === "account";
+	const onShared = place?.page === "shared";
 	const current = onAccount
 		? (ready?.teams.find((team) => team.address === lastTeam) ?? ready?.teams[0] ?? null)
 		: (ready?.teams.find((team) => team.address === place?.team) ?? null);
 	// a deleted team this account is an admin of, until its purge: its page is Export all alone
 	const deleted =
-		onAccount || current !== null
+		onAccount || onShared || current !== null
 			? null
 			: (ready?.deletedTeams?.find((team) => team.address === place?.team) ?? null);
 	const signIn = useCallback(() => location.assign(`/sign-in?next=${encodeURIComponent(location.pathname)}`), []);
@@ -150,21 +171,27 @@ function Home({
 			location.assign("/sign-in"),
 		);
 	}, []);
-	// a team left, deleted or never this account's: the next one it is in, or the account page when none
+	// a team left, deleted or never this account's: the next one it is in, or Shared with you when none
 	useEffect(() => {
-		if (teams?.state === "signed-out") signIn();
-		if (ready === null || current !== null || deleted !== null || onAccount) return;
+		if (teams?.state === "signed-out" || sharedOut) signIn();
+		if (ready === null || current !== null || deleted !== null || onAccount || onShared) return;
 		const next = ready.teams[0];
-		go(next === undefined ? ACCOUNT_PLACE : { team: next.address, page: "projects" }, true);
-	}, [teams, ready, current, deleted, onAccount, go, signIn]);
+		go(next === undefined ? SHARED_PLACE : { team: next.address, page: "projects" }, true);
+	}, [teams, sharedOut, ready, current, deleted, onAccount, onShared, go, signIn]);
 	useEffect(() => {
 		if (onAccount) document.title = "Account · spool";
+		else if (onShared) document.title = "Shared with you · spool";
 		else if (current !== null) document.title = `${current.name} · spool`;
-	}, [current, onAccount]);
+	}, [current, onAccount, onShared]);
+	// what this browser hasn't opened since it changed, read again with the list
+	const fresh = useCallback((share: SharedWithYou) => isNew(share), []);
+	const anyNew = shares?.some(fresh) ?? false;
+	// a client in no team always has the place; a member only while something is shared with them
+	const sharedRow = ready !== null && (ready.teams.length === 0 || (shares !== null && shares.length > 0));
 	const tab = place?.team ? place.tab : undefined;
 	const page: TeamPage | null =
 		place === null || place.team === null
-			? onAccount
+			? onAccount || onShared
 				? null
 				: "projects"
 			: place.page === "settings" && current?.role !== "admin"
@@ -176,16 +203,25 @@ function Home({
 			switcher={
 				ready && (
 					<>
-						{ready.teams.length === 0 ? (
-							<div className="pj-team-switch mb-[18px] flex flex-col gap-[10px] [@media(max-width:720px)]:hidden">
-								<p className="pl-[2px] text-secondary type-label">You’re not in a team yet.</p>
-								<Button className="w-full justify-start" onClick={() => location.assign("/start")}>
-									Start a team…
-								</Button>
-							</div>
-						) : (
-							<FindNav query={query} onQuery={setQuery} inputRef={searchRef} />
-						)}
+						<FindNav query={query} onQuery={setQuery} inputRef={searchRef}>
+							{sharedRow && (
+								<NavItem
+									icon={
+										<span className="relative grid size-4 shrink-0 place-items-center">
+											<ShareIcon />
+											<Dot tone="accent" on={anyNew} className="absolute -top-0.5 -right-1" />
+										</span>
+									}
+									label="Shared with you"
+									title="Shared with you"
+									meta={shares?.length}
+									current={onShared && needle === ""}
+									data-new={anyNew ? "" : undefined}
+									className={NARROW_NAV}
+									onClick={() => go(SHARED_PLACE)}
+								/>
+							)}
+						</FindNav>
 						{creating && (
 							<NewTeamDialog
 								allowed={ready.mayCreateTeam}
@@ -203,7 +239,7 @@ function Home({
 			}
 			nav={
 				ready &&
-				(ready.teams.length > 0 || (ready.deletedTeams ?? []).length > 0) && (
+				(ready.teams.length > 0 || (ready.deletedTeams ?? []).length > 0 ? (
 					<HomePlaces
 						teams={ready.teams}
 						deleted={ready.deletedTeams}
@@ -213,7 +249,16 @@ function Home({
 						onPage={(to, address) => go({ team: address, page: to })}
 						onNewTeam={() => setCreating(true)}
 					/>
-				)
+				) : (
+					// an account in no team starts one at spool.page/start
+					<NavItem
+						icon={<PlusIcon />}
+						label="Start a team…"
+						title="Start a team…"
+						className={NARROW_NAV}
+						onClick={() => location.assign("/start")}
+					/>
+				))
 			}
 			foot={
 				<AccountFoot
@@ -228,7 +273,10 @@ function Home({
 			}
 		>
 			<PlaceIn key={needle !== "" ? "search" : place === null ? "" : pathOf(place)}>
-				<main className={HOME_MAIN} aria-busy={onAccount ? undefined : current === null}>
+				<main
+					className={HOME_MAIN}
+					aria-busy={onAccount ? undefined : onShared && needle === "" ? shares === null : current === null}
+				>
 					{onAccount ? (
 						<AccountPage
 							source={accountSource}
@@ -243,9 +291,20 @@ function Home({
 							team={deleted}
 							onExport={(address) => handOffExport(address, undefined, HAND_OFF)}
 						/>
-					) : current === null || ready === null ? null : needle !== "" ? (
-						<CloudFound teams={ready.teams} needle={needle} query={query} onClear={() => setQuery("")} />
-					) : page === "people" ? (
+					) : ready === null ? null : needle !== "" ? (
+						<CloudFound
+							teams={ready.teams}
+							shares={shares ?? []}
+							fresh={fresh}
+							needle={needle}
+							query={query}
+							onClear={() => setQuery("")}
+						/>
+					) : onShared ? (
+						shares === null ? null : (
+							<SharedPage shares={shares} fresh={fresh} />
+						)
+					) : current === null ? null : page === "people" ? (
 						<TeamPeoplePage key={current.address} team={current} onChanged={() => void refresh()} />
 					) : page === "settings" ? (
 						<TeamSettingsPage
@@ -409,16 +468,21 @@ function Projects({
 }
 
 /**
- * What the search in the sidebar found: every team's projects whose name or repo it finds, by name, with a tab per
- * team to narrow them to one. Each team's list is read once the search starts.
+ * What the search in the sidebar found: every team's projects whose name or repo it finds, by name, then what is
+ * shared with this account whose name or team it finds, with a tab per place to narrow them to one. Each team's list
+ * is read once the search starts.
  */
 function CloudFound({
 	teams,
+	shares,
+	fresh,
 	needle,
 	query,
 	onClear,
 }: {
 	teams: readonly CloudTeam[];
+	shares: readonly SharedWithYou[];
+	fresh: (share: SharedWithYou) => boolean;
 	needle: string;
 	query: string;
 	onClear: () => void;
@@ -442,13 +506,15 @@ function CloudFound({
 			.filter((project) => finds(needle, project.name, project.repo ?? ""))
 			.map((project) => ({ team, project })),
 	);
-	const places = teams
-		.map((team) => ({
+	const sharedFound = shares.filter((share) => finds(needle, share.project, share.team.name));
+	const places = [
+		...teams.map((team) => ({
 			key: team.address,
 			name: team.name,
 			count: found.filter((each) => each.team.address === team.address).length,
-		}))
-		.filter((place) => place.count > 0);
+		})),
+		{ key: SHARED_KEY, name: "Shared with you", count: sharedFound.length },
+	].filter((place) => place.count > 0);
 	const [only, setOnly] = useFoundPlace(places);
 	if (lists === undefined) return null;
 	if (places.length === 0)
@@ -459,7 +525,11 @@ function CloudFound({
 					className="min-h-[420px] justify-center p-[35px]"
 					art={<EmptyFrames />}
 					title={`Nothing matches “${query}”`}
-					description="It looked in every team you’re in."
+					description={
+						teams.length === 0
+							? "It looked in everything shared with you."
+							: "It looked in every team you’re in and everything shared with you."
+					}
 					actions={
 						<Button size="lg" onClick={onClear}>
 							Clear search
@@ -468,17 +538,58 @@ function CloudFound({
 				/>
 			</>
 		);
+	const teamCovers = found
+		.filter((each) => only === null || each.team.address === only)
+		.sort((a, b) => a.project.name.localeCompare(b.project.name));
+	const sharedCovers = only === null || only === SHARED_KEY ? sharedFound : [];
 	return (
 		<>
 			<FoundHead places={places} only={only} onOnly={setOnly} />
-			<CloudCovers
-				covers={found
-					.filter((each) => only === null || each.team.address === only)
-					.sort((a, b) => a.project.name.localeCompare(b.project.name))}
-				said={teams.length > 1}
-				menu={menu}
-				onMenu={setMenu}
-			/>
+			<div className="flex flex-col gap-[34px]">
+				{teamCovers.length > 0 && (
+					<CloudCovers covers={teamCovers} said={teams.length > 1} menu={menu} onMenu={setMenu} />
+				)}
+				{sharedCovers.length > 0 && <SharedCovers shares={sharedCovers} fresh={fresh} said />}
+			</div>
+		</>
+	);
+}
+
+/** The search's tab for what is shared with this account: no team's address, since `shared` is reserved. */
+const SHARED_KEY = "shared";
+
+/**
+ * Shared with you: what people in teams this account isn't in shared with it, by the team that shared it, the
+ * newest change first. Each opens look and comment only; nothing is made here.
+ */
+function SharedPage({ shares, fresh }: { shares: readonly SharedWithYou[]; fresh: (share: SharedWithYou) => boolean }) {
+	return (
+		<>
+			<ProjectsHead title="Shared with you" count={{ total: shares.length }} />
+			{shares.length === 0 ? (
+				<EmptyState
+					className="min-h-[420px] justify-center p-[35px]"
+					art={<EmptyFrames />}
+					title="Nothing shared with you yet"
+					description="When someone in another team shares a canvas with your email, it shows here."
+				/>
+			) : (
+				<div className="flex flex-col gap-[44px]">
+					{byTeam(shares).map(({ team, shares }) => (
+						<section key={team.address} aria-label={team.name} data-shared-by={team.address}>
+							<h2 className="mb-[18px] flex items-center gap-[10px] type-title font-[500]">
+								<TeamMark team={team} size={18} />
+								{team.name}
+								<Count value={shares.length} className="text-tertiary" />
+							</h2>
+							<SharedCovers shares={shares} fresh={fresh} />
+						</section>
+					))}
+				</div>
+			)}
+			<p className="mt-[46px] text-tertiary type-detail">
+				A link someone sent you opens without signing in, so it isn’t listed here.
+			</p>
 		</>
 	);
 }

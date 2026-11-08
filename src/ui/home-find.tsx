@@ -33,6 +33,7 @@ export function FindNav({
 	inputRef,
 	recent,
 	onRecent,
+	children,
 }: {
 	query: string;
 	onQuery: (query: string) => void;
@@ -40,6 +41,8 @@ export function FindNav({
 	/** Recent stands in the page; absent where there is no Recent, as in a browser. */
 	recent?: boolean | undefined;
 	onRecent?: (() => void) | undefined;
+	/** Places after Recent that reach past one team, as Shared with you in a browser. */
+	children?: ReactNode;
 }) {
 	const [over, setOver] = useState(false);
 	const searching = query.trim() !== "";
@@ -99,6 +102,7 @@ export function FindNav({
 					onClick={onRecent}
 				/>
 			)}
+			{children}
 		</div>
 	);
 }

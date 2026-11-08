@@ -6,6 +6,7 @@ import type { BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "../../clo
 import { testBrowser } from "../../test-browser";
 import { builtViewer } from "../../test-helpers";
 import { buildEntry } from "./build-entry";
+import type { SharedWithYou } from "./shared-source";
 
 /**
  * Home as spool.page serves it at /<team>: the package's own build, a page that says who is signed in, and the team
@@ -43,6 +44,27 @@ const BILLING: BillingSummary = {
 	lapsesAt: null,
 };
 
+const HOUR = 3_600_000;
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+const share = (id: string, project: string, team: string, by: string, at: { shared: number; updated?: number }) =>
+	({
+		id,
+		href: `/shared/${id}`,
+		project,
+		team: { name: team, address: team.toLowerCase(), logo: null },
+		by: { name: by, email: `${by.toLowerCase()}@${team.toLowerCase()}.com` },
+		sharedAt: ago(at.shared),
+		updated: at.updated === undefined ? null : ago(at.updated),
+		cover: null,
+	}) satisfies SharedWithYou;
+
+/** Shared with vic by two teams vic isn't in, newest change first, as spool.page orders them. */
+const SHARES: SharedWithYou[] = [
+	share("s1", "settle-up", "Tidemark", "Elin", { shared: 72 * HOUR, updated: 2 * HOUR }),
+	share("s2", "packaging", "Brus", "Karin", { shared: 48 * HOUR }),
+	share("s3", "booking", "Tidemark", "Elin", { shared: 200 * HOUR, updated: 120 * HOUR }),
+];
+
 let built: string;
 let entry: { file: string; css: string[] };
 
@@ -53,11 +75,25 @@ beforeAll(async () => {
 
 async function open(
 	path: string,
-	given: { teams?: CloudTeam[]; billing?: BillingSummary; setup?: TeamSetup } = {},
+	given: {
+		teams?: CloudTeam[];
+		billing?: BillingSummary;
+		setup?: TeamSetup;
+		shares?: SharedWithYou[];
+		/** When this browser last opened each share, by its id. */
+		opened?: Record<string, number>;
+	} = {},
 ): Promise<{ page: Page; asked: string[]; left: string[] }> {
-	const { teams = TEAMS, billing = BILLING } = given;
+	const { teams = TEAMS, billing = BILLING, shares = [] } = given;
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
+	await page.addInitScript((opened) => {
+		for (const [id, at] of Object.entries(opened))
+			localStorage.setItem(
+				`spool-share-seen:${id}`,
+				JSON.stringify({ pages: [], frames: [], unseenPages: [], unseenFrames: [], opened: at }),
+			);
+	}, given.opened ?? {});
 	const asked: string[] = [];
 	const left: string[] = [];
 	let name: string | null = null;
@@ -118,6 +154,7 @@ async function open(
 				return route.fulfill({ json: { ...given.setup, done: true } });
 			if (request.method() !== "GET") return route.fulfill({ json: {} });
 			if (url.pathname === "/api/teams/devosurf/billing") return route.fulfill({ json: billing });
+			if (url.pathname === "/api/shared") return route.fulfill({ json: { shares } });
 			if (url.pathname === "/api/teams")
 				return route.fulfill({ json: { teams, invites: [], mayCreateTeam: false } });
 			if (url.pathname === "/api/teams/devosurf/projects")
@@ -167,13 +204,15 @@ describe("Home in a browser", () => {
 		expect(await checkout.getAttribute("href")).toBe("/devosurf/checkout");
 		await page.getByRole("link", { name: "Open onboarding" }).waitFor();
 		expect(await page.getByRole("heading", { name: "Devosurf" }).count()).toBe(1);
-		// the team you're in is the box, its pages under it; Your projects and Recent are a Mac's
+		// the team you're in is the box, its pages under it; Your projects and Recent are a Mac's, and Shared with you
+		// is gone while nothing is shared with a member of a team
 		expect(
 			await page
 				.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
 				.evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
 		).toEqual(["Devosurf", "Projects", "People", "Settings"]);
 		expect(await page.getByText("Recent", { exact: true }).count()).toBe(0);
+		expect(await page.getByText("Shared with you", { exact: true }).count()).toBe(0);
 		// each cover is the still spool.page keeps
 		await expect
 			.poll(() => checkout.locator("img").evaluate((node) => (node as HTMLImageElement).naturalWidth))
@@ -234,15 +273,12 @@ describe("Home in a browser", () => {
 		await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
 	});
 
-	it("takes an account in no team to Account, with the way to start one, and names the account there, everywhere at once, saying the rule when spool.page refuses a name", {
+	it("names the account on its page, everywhere at once, saying the rule when spool.page refuses a name", {
 		timeout: 60_000,
 	}, async () => {
-		const { page, asked } = await open("/devosurf", { teams: [] });
+		const { page, asked } = await open("/account", { teams: [] });
 		const main = page.locator("main");
 		await main.getByText("Not in a team yet.", { exact: true }).waitFor();
-		expect(new URL(page.url()).pathname).toBe("/account");
-		expect(await page.locator("aside").textContent()).toContain("You’re not in a team yet.");
-		await page.getByRole("button", { name: "Start a team…" }).waitFor();
 		// no name yet: everyone sees the address before the @, which the field offers as its placeholder
 		const field = main.getByRole("textbox", { name: "Name" });
 		expect(await field.inputValue()).toBe("");
@@ -388,5 +424,83 @@ describe("Home in a browser", () => {
 		await viewer.page.getByText("Client Co has no projects yet").waitFor();
 		expect(await viewer.page.locator(".pj-billing-failing").count()).toBe(0);
 		expect(viewer.asked.filter((line) => line.includes("/billing"))).toEqual([]);
+	});
+
+	it("lists what other teams shared with a member under Shared with you, by team, newest first, with what's new to this browser", {
+		timeout: 60_000,
+	}, async () => {
+		const now = Date.now();
+		// settle-up changed since it was last opened here, booking hasn't, packaging never was
+		const { page } = await open("/devosurf", {
+			shares: SHARES,
+			opened: { s1: now - 3 * HOUR, s3: now - 100 * HOUR },
+		});
+		const row = page.locator("[data-nav-item][title='Shared with you']");
+		await row.waitFor();
+		expect(await row.innerText()).toMatch(/Shared with you\s*3/u);
+		expect(await row.getAttribute("data-new")).toBe("");
+		await row.click();
+		await page.getByRole("heading", { name: "Shared with you", exact: true }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/shared");
+		expect(await page.title()).toBe("Shared with you · spool");
+		// grouped by the team that shared, the team with the newest change first
+		const groups = page.locator("main section");
+		expect(await groups.evaluateAll((all) => all.map((one) => one.getAttribute("aria-label")))).toEqual([
+			"Tidemark",
+			"Brus",
+		]);
+		const covers = (group: string) =>
+			page.locator(`main section[aria-label=${group}] a`).evaluateAll((links) =>
+				links.map((link) => ({
+					name: link.getAttribute("aria-label"),
+					href: link.getAttribute("href"),
+					line: link.querySelector(".pj-cover-caption > span")?.textContent,
+					fresh: link.querySelector("[data-new]") !== null,
+				})),
+			);
+		expect(await covers("Tidemark")).toEqual([
+			{ name: "Open settle-up", href: "/shared/s1", line: "Elin · today", fresh: true },
+			{ name: "Open booking", href: "/shared/s3", line: "Elin · 5 days ago", fresh: false },
+		]);
+		expect(await covers("Brus")).toEqual([
+			{ name: "Open packaging", href: "/shared/s2", line: "Karin · 2 days ago", fresh: true },
+		]);
+		await page.getByText("A link someone sent you opens without signing in, so it isn’t listed here.").waitFor();
+		// the team stays in its box, none of its pages current
+		expect(await page.locator("nav[aria-label='Home sections'] [aria-current=page]").count()).toBe(0);
+		await shoot(page, "shared-with-you.png");
+
+		// opened elsewhere in this browser, everything is seen once Home is back in front
+		await page.evaluate((at) => {
+			for (const id of ["s1", "s2"])
+				localStorage.setItem(
+					`spool-share-seen:${id}`,
+					JSON.stringify({ pages: [], frames: [], unseenPages: [], unseenFrames: [], opened: at }),
+				);
+			window.dispatchEvent(new Event("focus"));
+		}, Date.now());
+		await expect.poll(() => page.locator("[data-new]").count()).toBe(0);
+
+		await page.goBack();
+		await page.getByRole("link", { name: "Open checkout" }).waitFor();
+	});
+
+	it("opens an account in no team on Shared with you, with no team box", { timeout: 60_000 }, async () => {
+		const { page } = await open("/devosurf", { teams: [], shares: [SHARES[1] as SharedWithYou] });
+		await page.getByRole("link", { name: "Open packaging" }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/shared");
+		expect(await page.locator("[aria-haspopup=menu][data-place]").count()).toBe(0);
+		expect(
+			await page.locator("[data-nav-item]").evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
+		).toEqual(["Shared with you", "Start a team…"]);
+		// the search reaches what is shared
+		await page.getByRole("searchbox", { name: "Search projects" }).first().fill("pack");
+		await page.getByRole("heading", { name: "Search" }).waitFor();
+		await page.getByRole("link", { name: "Open packaging" }).waitFor();
+
+		// with nothing shared, the place is still there, saying so
+		const empty = await open("/", { teams: [] });
+		await empty.page.getByText("Nothing shared with you yet").waitFor();
+		expect(await empty.page.locator("[data-nav-item][title='Shared with you']").isVisible()).toBe(true);
 	});
 });

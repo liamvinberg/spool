@@ -8,6 +8,7 @@ import { ArrowRightIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark }
 import { MovedArt, MovedSheet, movedBy } from "./moved-away";
 import { tilde } from "./paths";
 import { Button, IconButton } from "./primitives/actions";
+import { Dot } from "./primitives/display";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { SearchField } from "./primitives/inputs";
 import { NavItem, NavList } from "./primitives/navigation";
@@ -798,9 +799,10 @@ export function CoverTile({
 	here,
 	line,
 	transition,
-	menuOpen,
-	onToggleMenu,
-	onCloseMenu,
+	fresh,
+	menuOpen = false,
+	onToggleMenu = () => {},
+	onCloseMenu = () => {},
 	menu,
 }: {
 	name: string;
@@ -811,11 +813,16 @@ export function CoverTile({
 	line: ReactNode;
 	/** Its view-transition name, for the grid's reflow when a cover leaves. */
 	transition?: string;
-	menuOpen: boolean;
-	onToggleMenu: () => void;
-	onCloseMenu: () => void;
-	/** The menu's items: `close` closes it, `refocus` gives the dots back the focus first, for an item that opens a sheet. */
-	menu: (manage: { close: () => void; refocus: () => void }) => ReactNode;
+	/** Whether it changed since this browser last opened it: a dot after its name, which shrinks away once it hasn't. */
+	fresh?: boolean | undefined;
+	menuOpen?: boolean;
+	onToggleMenu?: () => void;
+	onCloseMenu?: () => void;
+	/**
+	 * The menu's items: `close` closes it, `refocus` gives the dots back the focus first, for an item that opens a
+	 * sheet. A cover with nothing to manage has none, and no dots.
+	 */
+	menu?: (manage: { close: () => void; refocus: () => void }) => ReactNode;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const tileRef = useRef<HTMLElement>(null);
@@ -864,7 +871,10 @@ export function CoverTile({
 				/>
 			</div>
 			<div className="pj-cover-caption pt-[15px] pr-[32px]">
-				<strong className="block truncate type-title font-[500]">{name}</strong>
+				<strong className="flex min-w-0 items-center gap-[8px] type-title font-[500]">
+					<span className="truncate">{name}</span>
+					{fresh !== undefined && <Dot tone="accent" on={fresh} data-new={fresh ? "" : undefined} />}
+				</strong>
 				{line}
 			</div>
 		</>
@@ -890,22 +900,24 @@ export function CoverTile({
 					{face}
 				</button>
 			)}
-			<IconButton
-				ref={manageRef}
-				icon={<DotsIcon />}
-				label={`Manage ${name}`}
-				pressed={menuOpen}
-				aria-haspopup="menu"
-				aria-expanded={menuOpen}
-				className={cn(
-					"pj-manage absolute right-[-4px] bottom-[6px] transition-[background-color,color,opacity,transform]",
-					menuOpen
-						? "opacity-100"
-						: "opacity-0 focus-visible:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
-				)}
-				onClick={onToggleMenu}
-			/>
-			{menuOpen && (
+			{menu && (
+				<IconButton
+					ref={manageRef}
+					icon={<DotsIcon />}
+					label={`Manage ${name}`}
+					pressed={menuOpen}
+					aria-haspopup="menu"
+					aria-expanded={menuOpen}
+					className={cn(
+						"pj-manage absolute right-[-4px] bottom-[6px] transition-[background-color,color,opacity,transform]",
+						menuOpen
+							? "opacity-100"
+							: "opacity-0 focus-visible:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
+					)}
+					onClick={onToggleMenu}
+				/>
+			)}
+			{menu && menuOpen && (
 				<Menu
 					ref={menuRef}
 					className="fixed z-20"

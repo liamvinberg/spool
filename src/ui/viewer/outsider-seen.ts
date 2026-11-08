@@ -16,6 +16,8 @@ interface SeenRecord {
 	frames: string[];
 	unseenPages: string[];
 	unseenFrames: string[];
+	/** When this browser last opened it, in ms; absent from a record kept before Home said what is new. */
+	opened?: number;
 }
 
 /**
@@ -23,8 +25,19 @@ interface SeenRecord {
  * share's own (a link share's host, a people share's path).
  */
 export function seenKey(config: ViewerConfig, project: ViewerProject): string {
-	const share = project.outsider?.share.id ?? new URL(config.api, window.location.href).href;
-	return `spool-share-seen:${share}`;
+	return shareKey(project.outsider?.share.id ?? new URL(config.api, window.location.href).href);
+}
+
+const shareKey = (share: string) => `spool-share-seen:${share}`;
+
+/**
+ * When this browser last opened the share spool.page names by `id`: undefined when it never has, null when it has
+ * but before the time was kept.
+ */
+export function shareOpenedAt(id: string): number | null | undefined {
+	const record = read(shareKey(id));
+	if (record === undefined) return undefined;
+	return record.opened ?? null;
 }
 
 function read(key: string): SeenRecord | undefined {
@@ -38,6 +51,7 @@ function read(key: string): SeenRecord | undefined {
 			frames: list(record.frames),
 			unseenPages: list(record.unseenPages),
 			unseenFrames: list(record.unseenFrames),
+			...(typeof record.opened === "number" ? { opened: record.opened } : {}),
 		};
 	} catch {
 		return undefined;
@@ -68,7 +82,7 @@ export function openShare(key: string, project: ViewerProject): OutsiderUnseen {
 		pages: unseen(pages, last?.pages, last?.unseenPages),
 		frames: unseen(frames, last?.frames, last?.unseenFrames),
 	};
-	write(key, { pages, frames, unseenPages: [...found.pages], unseenFrames: [...found.frames] });
+	write(key, { pages, frames, unseenPages: [...found.pages], unseenFrames: [...found.frames], opened: Date.now() });
 	return found;
 }
 
