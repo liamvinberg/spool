@@ -643,4 +643,19 @@ describe("Home in a browser", () => {
 		await shared.page.getByRole("heading", { name: "Shared with you", exact: true }).waitFor();
 		expect(new URL(shared.page.url()).pathname).toBe("/shared");
 	});
+
+	it("opens a solo project's share from Home, with its way back, and seen once opened", {
+		timeout: 60_000,
+	}, async () => {
+		const own = { ...share("s4", "portfolio", "Solo", "Ada", { shared: 3 * HOUR }), team: null };
+		const { page } = await open("/shared", { whole: true, shares: [own] });
+		const cover = page.getByRole("link", { name: "Open portfolio" });
+		await cover.waitFor();
+		expect(await cover.locator("[data-new]").count()).toBe(1);
+		await cover.click();
+		await page.locator("[data-path-place]").click();
+		await page.getByRole("heading", { name: "Shared with you", exact: true }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/shared");
+		await expect.poll(() => cover.locator("[data-new]").count()).toBe(0);
+	});
 });

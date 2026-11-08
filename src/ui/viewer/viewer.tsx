@@ -1341,7 +1341,7 @@ function placeOf(project: ViewerProject): PathPlace | undefined {
 					title: `${project.team.name}'s projects`,
 					mark: <TeamMark team={project.team} size={14} />,
 				};
-	if (project.outsider?.share.kind !== "people") return undefined;
+	if ((project.shared.kind ?? project.outsider?.share.kind) !== "people") return undefined;
 	return {
 		name: "shared",
 		href: "/shared",

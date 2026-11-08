@@ -25,7 +25,7 @@ interface SeenRecord {
  * share's own (a link share's host, a people share's path).
  */
 export function seenKey(config: ViewerConfig, project: ViewerProject): string {
-	return shareKey(project.outsider?.share.id ?? new URL(config.api, window.location.href).href);
+	return shareKey(project.shared?.id ?? project.outsider?.share.id ?? new URL(config.api, window.location.href).href);
 }
 
 const shareKey = (share: string) => `spool-share-seen:${share}`;

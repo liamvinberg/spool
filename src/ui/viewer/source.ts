@@ -106,6 +106,12 @@ export type ViewerRole = "admin" | "editor" | "viewer";
 
 /** What an outsider's one line says: who shared, which pages, and when they last changed (seconds), if ever. */
 export interface ViewerShared {
+	/**
+	 * Which share it is, said whether or not it has comments (a solo project's share has none); absent from a
+	 * spool.page from before it said so.
+	 */
+	id?: string;
+	kind?: "people" | "link";
 	by: string;
 	/** The pages it shows; for a whole-project share, every page as the project now stands. */
 	pages: string[];
