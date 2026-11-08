@@ -12,7 +12,7 @@ import type { NamedElement } from "../runtime/frame-shim/named-element";
 import { ASSET_PATH } from "./assets";
 import { type BoothQueue, type BoothReason, keyOf, type Sitting } from "./booth-queue";
 import { frameShims } from "./frame-shims";
-import { type CaptureFailure, type FramePace, SLOW_PER_SECOND } from "./thumbs";
+import { type CaptureFailure, type FramePace, phrasesOf, SLOW_PER_SECOND } from "./thumbs";
 import { VENDOR_REACT_URL } from "./vendor-pins";
 import type { LogEntry } from "./verify-record";
 
@@ -323,9 +323,17 @@ export interface BoothDeps {
 	registered(root: string): boolean;
 	/**
 	 * A cover landed: the bytes, the scheme it depends on when it depends on one,
-	 * and the version of the frame it is of (`CompiledFrameDocument.source`).
+	 * the version of the frame it is of (`CompiledFrameDocument.source`), and what
+	 * the frame said in it, which the frame finder answers by.
 	 */
-	store(root: string, frame: string, bytes: Buffer, scheme: ColorScheme | undefined, source?: string): void;
+	store(
+		root: string,
+		frame: string,
+		bytes: Buffer,
+		scheme: ColorScheme | undefined,
+		source?: string,
+		words?: readonly string[],
+	): void;
 	/**
 	 * How fast an edited frame redraws, timed after its cover landed, or nothing
 	 * when it could not be timed: what `spool check` tells an agent of a frame
@@ -437,7 +445,7 @@ interface Tab {
 
 /** What one sitting saw. */
 type Shot =
-	| { kind: "picture"; bytes: Buffer; etag: string | undefined; scheme: ColorScheme }
+	| { kind: "picture"; bytes: Buffer; etag: string | undefined; scheme: ColorScheme; words: string[] }
 	/** The document answered with something other than itself. */
 	| { kind: "answered"; status: number }
 	/** It threw before it drew anything. */
@@ -1017,7 +1025,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		failedAt.delete(key);
 		lostInARow = 0;
 		const follows = followsColorScheme(now.document);
-		deps.store(root, frame, shot.bytes, follows ? shot.scheme : undefined, now.source);
+		deps.store(root, frame, shot.bytes, follows ? shot.scheme : undefined, now.source, shot.words);
 		// the canvas changed scheme while this frame was in the tab
 		if (follows && shot.scheme !== scheme) owedAgain("stale");
 		// timed only when an edit is what sat it: that is a frame an agent may be
@@ -1099,7 +1107,9 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			optimizeForSpeed: true,
 			clip: { x: 0, y: 0, width: shape.width, height: shape.height, scale: 1 },
 		});
-		return { kind: "picture", bytes, etag, scheme: taken };
+		// what the picture says, read off the same settled document: a frame that will not say is a frame with no words
+		const said = await evaluate(tab, world, "document.getElementById('root')?.innerText ?? ''").catch(() => "");
+		return { kind: "picture", bytes, etag, scheme: taken, words: phrasesOf(typeof said === "string" ? said : "") };
 	}
 
 	async function runShot(slot: number, pending: PendingShot): Promise<ShotResult> {
