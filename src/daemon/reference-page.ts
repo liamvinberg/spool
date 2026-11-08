@@ -13,6 +13,7 @@ import {
 	underMedia,
 	viewportHeightsInPixels,
 } from "./reference-css";
+import { referenceLiveHead, referenceLiveScript } from "./reference-live";
 
 /**
  * A capture made into one page (spool#241): the site's markup and its own stylesheets, class names and all, every
@@ -157,6 +158,7 @@ export async function referencePage(
 		mapMarkupUrls(htmlOpen, pageBase, toLocal, capture.viewport),
 		"<head>",
 		'<meta charset="utf-8">',
+		referenceLiveHead(),
 		`<title>${escapeText(capture.title)}</title>`,
 		`<style data-spool="site">\n${pinned(css)}\n</style>`,
 		capture.animations.trim() === ""
@@ -164,7 +166,10 @@ export async function referencePage(
 			: `<style data-spool="animations">\n${pinned(capture.animations)}\n</style>`,
 		`<style data-spool="reference">\n${referenceRules(capture)}\n</style>`,
 		"</head>",
-		mapMarkupUrls(body, pageBase, toLocal, capture.viewport),
+		mapMarkupUrls(body, pageBase, toLocal, capture.viewport).replace(
+			/<\/body\s*>\s*$/i,
+			() => `${referenceLiveScript()}</body>`,
+		),
 		"</html>",
 		"",
 	]

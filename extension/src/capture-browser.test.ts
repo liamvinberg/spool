@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { build } from "esbuild";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { referencePage } from "../../src/daemon/reference-page";
 import type { ReferenceCapture } from "../../src/reference-wire";
 import { testBrowser } from "../../src/test-browser";
 
@@ -54,7 +55,11 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 
 async function openTab() {
 	const bundle = await build({
-		entryPoints: [new URL("./capture.ts", import.meta.url).pathname],
+		stdin: {
+			contents: 'export * from "./capture"; export * from "./hovers";',
+			resolveDir: new URL(".", import.meta.url).pathname,
+			loader: "ts",
+		},
 		bundle: true,
 		write: false,
 		format: "iife",
@@ -132,7 +137,8 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	// the ancestors, shallow and out of the layout's way, so `.page .pricing` still matches
 	expect(c.html.startsWith('<main class="page" style="display: contents !important">')).toBe(true);
 	expect(c.html.split(" data-spool-reference").length).toBe(2);
-	expect(c.html).toContain('<section class="pricing" id="pick" data-spool-reference>');
+	// a stacking context of its own, for what it draws behind itself, as the ancestors it sat in no longer make one
+	expect(c.html).toContain('<section class="pricing" id="pick" data-spool-reference style="isolation: isolate">');
 	// what the person typed and chose, and the source the browser picked; never a password
 	expect(c.html).toContain('value="liam@example.com"');
 	expect(c.html).toMatch(/id="agree" type="checkbox" checked/);
@@ -154,9 +160,10 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	expect(c.html).toContain(
 		`<video id="clip" src="${at(page)}/clip.mp4#t=4.5" muted style="object-fit: cover; background: url(&quot;${at(page)}/still.jpg&quot;) center / cover no-repeat" preload="auto"></video>`,
 	);
-	// the icons it draws from a sprite elsewhere on the page, and what those draw with, but no more
+	// what stood beside its ancestors, empty and undrawn, so the site's rules on siblings match as they did; then the
+	// icons it draws from a sprite elsewhere on the page, and what those draw with, but no more
 	expect(c.html).toContain(
-		'</section><svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden"><symbol id="arrow"><path fill="url(#ink)" d="M0 0h8v8z"></path></symbol><linearGradient id="ink"></linearGradient></svg></main>',
+		'</section></main><svg class="sprite" style="display: none !important"></svg><svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden"><symbol id="arrow"><path fill="url(#ink)" d="M0 0h8v8z"></path></symbol><linearGradient id="ink"></linearGradient></svg>',
 	);
 	// a canvas as the picture it shows; one that reads back empty (as WebGL does once drawn) left out, with a note
 	expect(c.html).toMatch(
@@ -283,9 +290,9 @@ it("catches a WebGL drawing in the frame it was drawn, though it reads back empt
 		requestAnimationFrame(paint);
 		await new Promise((done) => setTimeout(done, 100));
 		const { readCanvases } = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture;
-		return (await readCanvases(document.body)).get(canvas)?.slice(0, 22) ?? "empty";
+		return (await readCanvases(document.body)).get(canvas)?.slice(0, 23) ?? "empty";
 	});
-	expect(read).toBe("data:image/png;base64,");
+	expect(read).toBe("data:image/webp;base64,");
 });
 
 it("serializes the whole page as its body, marked", { timeout: 60_000 }, async () => {
@@ -294,4 +301,80 @@ it("serializes the whole page as its body, marked", { timeout: 60_000 }, async (
 	expect(c.bodyAttrs["data-spool-reference"]).toBe("");
 	expect(c.html.trimStart().startsWith('<main class="page">')).toBe(true);
 	expect(c.size.w).toBe(1200);
+});
+
+it("brings what the site's script does under the hand, and the frame does it again with no script of the site's", {
+	timeout: 60_000,
+}, async () => {
+	const tab = await openTab();
+	await tab.evaluate(() => {
+		document.body.innerHTML = `
+			<a id="card" href="/plans" style="display: block; width: 300px; height: 200px; margin: 40px">
+				<div id="media" class="still" style="height: 100px">media</div>
+				<div id="bar" style="width: 1px">progress</div>
+			</a>
+			<a id="away" href="/elsewhere">away</a>`;
+		// the site's script: the card lights its media as the hand comes; its bar grows on its own
+		const card = document.getElementById("card") as HTMLElement;
+		const media = document.getElementById("media") as HTMLElement;
+		card.addEventListener("mouseenter", () => media.setAttribute("data-active", ""));
+		card.addEventListener("mouseleave", () => media.removeAttribute("data-active"));
+		const bar = document.getElementById("bar") as HTMLElement;
+		setInterval(() => {
+			bar.style.width = `${Number.parseFloat(bar.style.width) + 1}px`;
+		}, 30);
+		const w = window as unknown as { watch: unknown; spoolCapture: typeof import("./hovers") };
+		w.watch = w.spoolCapture.watchHovers(document);
+	});
+	// the hand comes onto the card, goes, and comes back to rest on it as the page is taken
+	await tab.mouse.move(600, 500, { steps: 4 });
+	await tab.mouse.move(150, 120, { steps: 4 });
+	await tab.waitForTimeout(300);
+	await tab.mouse.move(600, 500, { steps: 4 });
+	await tab.waitForTimeout(300);
+	await tab.mouse.move(150, 120, { steps: 4 });
+	await tab.waitForTimeout(1500);
+	const c = await tab.evaluate(() => {
+		const w = window as unknown as { watch: { read(): unknown }; spoolCapture: typeof import("./capture") };
+		return w.spoolCapture.capture(
+			{ el: document.body, whole: true, label: location.host },
+			{ hovers: w.watch.read() as never },
+		);
+	});
+	// the card is the hover; its media is taken at rest though the hand is on it, its hovered value kept for the frame
+	expect(c.html).toContain('<a id="card" href="');
+	expect(c.html).toMatch(/<a id="card" [^>]*data-spool-hover="h1">/);
+	expect(c.html).toContain(
+		'<div id="media" class="still" style="height: 100px" data-spool-hover-set="[[&quot;h1&quot;,&quot;data-active&quot;,&quot;&quot;]]">',
+	);
+	// what moves on its own is no hover, though it moved as the hand came
+	expect(c.html).toMatch(/<div id="bar" style="width: \d+px;">/);
+
+	// the frame: the reference's page in a sandbox that runs scripts, of which only spool's may
+	const made = await referencePage(c, { fetch: async () => undefined });
+	// as though a script of the site's had slipped through
+	const html = made.html.replace("</body>", '<script>document.title = "ran"</script></body>');
+	const frame = await (await testBrowser()).newPage({ viewport: { width: 1200, height: 800 } });
+	await frame.setContent('<iframe sandbox="allow-scripts" style="width: 1200px; height: 800px; border: 0"></iframe>');
+	await frame.$eval(
+		"iframe",
+		(el, doc) => {
+			(el as HTMLIFrameElement).srcdoc = doc;
+		},
+		html,
+	);
+	const page = frame.frameLocator("iframe");
+	await page.locator("#media").waitFor();
+	const lit = () => page.locator("#media").evaluate((el) => el.hasAttribute("data-active"));
+	expect(await lit()).toBe(false);
+	await frame.mouse.move(150, 120);
+	await expect.poll(lit).toBe(true);
+	await frame.mouse.move(600, 500);
+	await expect.poll(lit).toBe(false);
+	// a link stays put: the site would load in the frame, or refuse to, and leave it white
+	await page.locator("#away").click();
+	await frame.waitForTimeout(300);
+	expect(frame.frames()[1]?.url()).toBe("about:srcdoc");
+	// nothing of the site's runs, should its markup still carry any
+	expect(await frame.frames()[1]?.evaluate(() => document.title)).toBe(c.title);
 });

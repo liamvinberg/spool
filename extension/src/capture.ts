@@ -1,4 +1,5 @@
 import type { ReferenceCapture, ReferenceStyle } from "../../src/reference-wire";
+import type { Hovers } from "./hovers";
 
 /**
  * Serializes what the picker picked into a reference capture (spool#241), in the tab, from the live DOM: pure DOM
@@ -23,6 +24,8 @@ export interface CaptureOptions {
 	closedShadowRoot?: (el: Element) => ShadowRoot | null;
 	/** canvases already read, from {@link readCanvases}, so a WebGL drawing caught mid-frame isn't read again empty */
 	drawn?: ReadonlyMap<HTMLCanvasElement, string>;
+	/** what the site's script changed as the hand moved over it, from {@link watchHovers}, for the frame to do again */
+	hovers?: Hovers;
 }
 
 const VOID = new Set([
@@ -91,10 +94,18 @@ export function capture(target: CaptureTarget, opts: CaptureOptions = {}): Refer
 	else {
 		const chain: Element[] = [];
 		for (let p = el.parentElement; p !== null && p !== body && p !== html; p = p.parentElement) chain.unshift(p);
-		for (const a of chain) out.push(open(a, ctx, { contents: true }));
+		for (const a of chain) {
+			standIns(a, "before", out);
+			out.push(open(a, ctx, { contents: true }));
+		}
+		standIns(el, "before", out);
 		element(el, out, ctx, false, true);
+		standIns(el, "after", out);
+		for (const a of chain.reverse()) {
+			out.push(`</${a.localName}>`);
+			standIns(a, "after", out);
+		}
 		sprites(el, out, ctx);
-		for (const a of chain.reverse()) out.push(`</${a.localName}>`);
 	}
 
 	const bodyAttrs = attributes(body, ctx);
@@ -207,6 +218,32 @@ function sprites(el: Element, out: string[], ctx: Context): void {
 	out.push("</svg>");
 }
 
+/** how many stand-ins one element gets on each side at most, so a pick from a long feed stays small */
+const STAND_INS = 200;
+const STAND_IN_ATTR = /^(class|role|type|name|aria-.+|data-(?!spool-).+)$/;
+
+/**
+ * Empty stand-ins for the elements beside one in the picked element's line, never drawn, so the site's rules that
+ * look at siblings (`:last-child`, `+`, `:has(~ *)`) match in the frame as they did in the tab: without them a
+ * section the site hides once nothing follows it (a carousel waiting for its skeleton to go) hides the whole pick.
+ * They keep what such rules name, the tag and the classes, roles and data, and nothing that loads.
+ */
+function standIns(el: Element, side: "before" | "after", out: string[]): void {
+	const found: Element[] = [];
+	const step = (e: Element) => (side === "before" ? e.previousElementSibling : e.nextElementSibling);
+	for (let e = step(el); e !== null && found.length < STAND_INS; e = step(e)) found.push(e);
+	if (side === "before") found.reverse();
+	for (const e of found) {
+		const tag = DROP.has(e.localName) || SHEETS.has(e.localName) ? "template" : e.localName;
+		let s = `<${tag}`;
+		for (const { name, value } of Array.from(e.attributes)) {
+			if (STAND_IN_ATTR.test(name)) s += value === "" ? ` ${name}` : ` ${name}="${attr(value)}"`;
+		}
+		s += ' style="display: none !important">';
+		out.push(VOID.has(tag) ? s : `${s}</${tag}>`);
+	}
+}
+
 function shadowRoot(root: ShadowRoot, out: string[], ctx: Context): void {
 	out.push(`<template shadowrootmode="open"${root.delegatesFocus ? " shadowrootdelegatesfocus" : ""}>`);
 	const adopted = root.adoptedStyleSheets ?? [];
@@ -222,6 +259,7 @@ function shadowRoot(root: ShadowRoot, out: string[], ctx: Context): void {
 function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boolean }): string {
 	const a = attributes(el, ctx);
 	const tag = el.localName;
+	hovered(el, a, ctx);
 	live(el, a, ctx);
 	if (how.contents === true) addStyle(a, "display: contents !important");
 	else {
@@ -232,6 +270,9 @@ function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boo
 	if (how.picked === true) {
 		a["data-spool-reference"] = "";
 		for (const decl of standAlone(el)) addStyle(a, decl);
+		// what it drew behind itself (a hero's backdrop at z-index -1) sat in a stacking context of an ancestor that
+		// the frame draws as nothing; without one of its own it would go behind the page's background
+		addStyle(a, "isolation: isolate");
 	}
 	// the picked element's parent is an ancestor drawn as nothing: its scroll is none of the frame's
 	if (how.contents !== true) for (const decl of scrollKept(el, how.picked !== true)) addStyle(a, decl);
@@ -245,18 +286,46 @@ function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boo
 function attributes(el: Element, ctx: Context): Record<string, string> {
 	const a: Record<string, string> = {};
 	for (const at of Array.from(el.attributes)) {
-		const name = at.name;
-		const lower = name.toLowerCase();
-		if (lower.startsWith("on")) continue;
-		let value = at.value;
-		if (URL_ATTRS.has(lower)) {
-			if (/^\s*javascript:/i.test(value)) continue;
-			if (value !== "" && !value.startsWith("#")) value = absolute(value, ctx.base);
-		} else if (lower === "style") value = cssUrls(value, ctx.base);
-		else if (lower === "srcset" || lower === "imagesrcset") value = srcset(value, ctx.base);
-		a[name] = value;
+		const value = safe(at.name, at.value, ctx);
+		if (value !== null) a[at.name] = value;
 	}
 	return a;
+}
+
+/** an attribute's value made safe and absolute to leave the page; null for one that would run */
+function safe(name: string, value: string, ctx: Context): string | null {
+	const lower = name.toLowerCase();
+	if (lower.startsWith("on")) return null;
+	if (URL_ATTRS.has(lower)) {
+		if (/^\s*javascript:/i.test(value)) return null;
+		return value !== "" && !value.startsWith("#") ? absolute(value, ctx.base) : value;
+	}
+	if (lower === "style") return cssUrls(value, ctx.base);
+	if (lower === "srcset" || lower === "imagesrcset") return srcset(value, ctx.base);
+	return value;
+}
+
+/**
+ * What the hand changes on the element, for the frame to do again as it hovers: the element at rest when the hand is on
+ * it now, the values it takes on `data-spool-hover-set`, and the box that is hovered on `data-spool-hover`.
+ */
+function hovered(el: Element, a: Record<string, string>, ctx: Context): void {
+	const hovers = ctx.opts.hovers;
+	if (hovers === undefined) return;
+	for (const [name, value] of hovers.rest.get(el) ?? []) {
+		if (name.startsWith(":")) continue;
+		const kept = value === null ? null : safe(name, value, ctx);
+		if (kept === null) delete a[name];
+		else a[name] = kept;
+	}
+	const sets = (hovers.sets.get(el) ?? []).flatMap(([id, name, value]): Array<[string, string, string | null]> => {
+		if (name.startsWith(":")) return [[id, name, value]];
+		const kept = value === null ? null : safe(name, value, ctx);
+		return value !== null && kept === null ? [] : [[id, name, kept]];
+	});
+	if (sets.length > 0) a["data-spool-hover-set"] = JSON.stringify(sets);
+	const id = hovers.triggers.get(el);
+	if (id !== undefined) a["data-spool-hover"] = id;
 }
 
 /**
@@ -374,6 +443,13 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 				break;
 			}
 			if (video.currentSrc) a.src = video.currentSrc;
+			// one playing as it was taken plays in the frame, muted and round; one the hand set playing rests
+			const rest = ctx.opts.hovers?.rest.get(el)?.get(":playing");
+			if (rest === undefined ? !video.paused && !video.ended : rest !== null) {
+				a["data-spool-playing"] = "";
+				a.muted = "";
+				a.loop = "";
+			}
 			// one under way shows the frame it was on: the frame runs no script to play it, so it opens there, the poster
 			// behind it until it loads
 			if (video.currentSrc && video.currentTime > 0) {
@@ -419,6 +495,11 @@ function stream(video: HTMLVideoElement): boolean {
  * frame is on screen, so an empty read is left out with a note rather than sent as a clear picture.
  */
 function drawing(canvas: HTMLCanvasElement, ctx: Context): string | null {
+	return still(canvas, ctx)?.toDataURL() ?? null;
+}
+
+/** a copy of what the canvas shows now, which keeps it when the canvas clears; null for one that shows nothing */
+function still(canvas: HTMLCanvasElement, ctx: Context): HTMLCanvasElement | null {
 	if (canvas.width === 0 || canvas.height === 0) return null;
 	try {
 		// read small, averaged down so a thin stroke still counts
@@ -437,7 +518,13 @@ function drawing(canvas: HTMLCanvasElement, ctx: Context): string | null {
 			ctx.notes.add(NOTE.blank);
 			return null;
 		}
-		return canvas.toDataURL();
+		const copy = canvas.ownerDocument.createElement("canvas");
+		copy.width = canvas.width;
+		copy.height = canvas.height;
+		copy.getContext("2d")?.drawImage(canvas, 0, 0);
+		// a copy of a canvas another site drew can't be read either
+		copy.getContext("2d")?.getImageData(0, 0, 1, 1);
+		return copy;
 	} catch {
 		ctx.notes.add(NOTE.canvas);
 		return null;
@@ -456,15 +543,16 @@ export async function readCanvases(root: Element, ms = 500): Promise<Map<HTMLCan
 	const all = Array.from(root.querySelectorAll("canvas"));
 	if (root instanceof HTMLCanvasElement) all.unshift(root);
 	const pending = new Set(all.filter((c) => c.width > 0 && c.height > 0));
+	const copies = new Map<HTMLCanvasElement, HTMLCanvasElement>();
 	const out = new Map<HTMLCanvasElement, string>();
 	if (view === null) return out;
 	const read = () => {
 		for (const canvas of pending) {
 			const ctx: Context = { base: doc.baseURI, notes: new Set(), anims: new Map(), opts: {} };
-			const url = drawing(canvas, ctx);
+			const copy = still(canvas, ctx);
 			// one another site drew is never readable; only an empty one is worth another frame
-			if (url !== null || ctx.notes.has(NOTE.canvas)) pending.delete(canvas);
-			if (url !== null) out.set(canvas, url);
+			if (copy !== null || ctx.notes.has(NOTE.canvas)) pending.delete(canvas);
+			if (copy !== null) copies.set(canvas, copy);
 		}
 	};
 	read();
@@ -489,6 +577,12 @@ export async function readCanvases(root: Element, ms = 500): Promise<Map<HTMLCan
 			}),
 		);
 	}
+	await Promise.all(
+		Array.from(copies, async ([canvas, copy]) => {
+			const url = await picture(copy);
+			if (url !== null) out.set(canvas, url);
+		}),
+	);
 	return out;
 }
 
@@ -502,6 +596,23 @@ function draw(img: HTMLImageElement, w: number, h: number): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * A canvas as an image to send, made off the page's main thread: WebP, which keeps its transparency at a tenth of a
+ * PNG's weight (a retina hero drawn in WebGL is megabytes as a PNG, and as long to make in the tab), or a PNG where the
+ * browser makes no WebP.
+ */
+async function picture(canvas: HTMLCanvasElement): Promise<string | null> {
+	const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/webp", 0.9));
+	if (blob === null) return null;
+	const url = await new Promise<string | null>((done) => {
+		const reader = new FileReader();
+		reader.onload = () => done(typeof reader.result === "string" ? reader.result : null);
+		reader.onerror = () => done(null);
+		reader.readAsDataURL(blob);
+	});
+	return url?.startsWith("data:image/webp") ? url : canvas.toDataURL();
 }
 
 function text(s: string): string {

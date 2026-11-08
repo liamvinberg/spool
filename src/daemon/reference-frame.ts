@@ -7,8 +7,9 @@ import type { ReferencePage } from "./reference-page";
 /**
  * A reference as a frame (spool#241): a folder under `frames/references/` whose frame.tsx hands the captured page
  * to an iframe of its own. The page keeps the site's CSS, class names and all, so it is isolated from spool's own
- * styles by being its own document, sandboxed with no scripts; it renders at the tab's width, so its media queries
- * resolve as they did, and the frame clips it to the size it was taken at. Its images and fonts sit beside it, and
+ * styles by being its own document, sandboxed with none of the site's scripts (one of spool's own does what they did
+ * that a reference needs, `reference-live.ts`); it renders at the tab's width, so its media queries resolve as they
+ * did, and the frame clips it to the size it was taken at. Its images and fonts sit beside it, and
  * reach the page through the frame's imports, which is how a project serves its files wherever the frame plays.
  */
 
@@ -114,7 +115,7 @@ export default function Reference() {
 			<iframe
 				title=${`{${title}}`}
 				srcDoc={document}
-				sandbox=""
+				sandbox="allow-scripts"
 				style={{ display: "block", width: VIEWPORT.w, height: "100%", border: 0 }}
 			/>
 		</div>
