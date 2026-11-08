@@ -1,8 +1,5 @@
-/**
- * The page and the screen alone, which an exported file (spool#239) wears with
- * no bar: the same screen the player shows, on the same page.
- */
-export const PLAYER_SCREEN_RULES = `/* the page is as tall as its content and the browser scrolls it: no clipped
+/** The page and the screen alone, under the player's bar. */
+const PLAYER_SCREEN_RULES = `/* the page is as tall as its content and the browser scrolls it: no clipped
    body, no scroll container of spool's own (#227) */
 body { margin: 0; background: #0e0e0e; }
 #root, .spool-page { min-height: 100vh; }
