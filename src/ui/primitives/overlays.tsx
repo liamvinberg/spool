@@ -125,7 +125,8 @@ export function MenuItem({
 			{label}
 		</span>,
 		meta === undefined ? null : (
-			<span key="meta" className="shrink-0 truncate text-secondary type-detail">
+			// past three fifths of the row the meta gives way, so the label always keeps room to say what the row does
+			<span key="meta" className="max-w-3/5 shrink-0 truncate text-secondary type-detail">
 				{meta}
 			</span>
 		),
