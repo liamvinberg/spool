@@ -5,7 +5,7 @@ import { builtUi, fixtureAgentExecutor, serveProject, writeDesignFile, writeFram
 /**
  * A frame that stops compiling, as the canvas says it (#390): the photo booth
  * records why, the canvas draws the error over the frame's last picture and
- * marks its row, Ask agent to fix hands the error to a new thread, and the
+ * marks its row, its pin opens on the error, Ask agent to fix hands it to a new thread, and the
  * mark goes the moment the frame is fixed.
  */
 
@@ -37,6 +37,8 @@ it("says a frame is broken, hands the error to the agent, and lets go once it is
 	writeFrame(project.root, "cart", BAD);
 	const broken = page.locator('[data-broken-frame="cart"]');
 	await broken.getByText("failed to compile").waitFor({ timeout: 60_000 });
+	// the pin opens on the toolchain's own words
+	await broken.getByRole("button", { name: "failed to compile: show the error" }).click();
 	expect(await broken.textContent()).toContain("shared/ui/nowhere");
 	// and the Pages list says it on the frame's row
 	await page.getByRole("treeitem", { name: "cart" }).getByRole("img", { name: "broken" }).waitFor();
