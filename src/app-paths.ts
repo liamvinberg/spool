@@ -30,6 +30,7 @@ export const APP_PATH_SEGMENTS: readonly string[] = [
 	"fs",
 	"health",
 	"projects",
+	"references",
 	"session",
 	"settings",
 	"upgrade",

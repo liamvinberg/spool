@@ -1,0 +1,33 @@
+{
+	"manifest_version": 3,
+	"name": "spool",
+	"version": "0.1.0",
+	"description": "Send anything on a web page to the spool canvas on your Mac, as a reference: its markup, styles and motion.",
+	"icons": {
+		"16": "icons/16.png",
+		"32": "icons/32.png",
+		"48": "icons/48.png",
+		"128": "icons/128.png"
+	},
+	"action": {
+		"default_title": "spool  ⌥⇧S",
+		"default_icon": {
+			"16": "icons/16.png",
+			"32": "icons/32.png"
+		}
+	},
+	"commands": {
+		"_execute_action": {
+			"suggested_key": {
+				"default": "Alt+Shift+S",
+				"mac": "Alt+Shift+S"
+			}
+		}
+	},
+	"background": {
+		"service_worker": "background.js"
+	},
+	"permissions": ["activeTab", "scripting", "storage"],
+	"minimum_chrome_version": "114",
+	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv/shDvqP1YsJeBuHCAmPdUjQngqV8YHq6umG0JP2C2gdX26mwusDwfekQgy2pNAyrIAnBgCmbgSOyObv5ONuzcXG3b+8nUskkulmx7qmJ4rm6K98luUnyrmTF+pxxNFuUtX89xIDcA8u8iwsD1WITFVAhw0YyfYS5Piuc3yvPF+JN2lObWn+VXy+qiz6pgV+vljCIKt0c3ue2N+c6sZSI0nu9GnkBRpUK/8WUu3BxYOAO7GUl+v5GDfB9Tc5CjGITi4mLIXzl7s8RPQ05J6v4wTH5D6fJf/rbfvE7o306JXwOhBkXSnGUoXeaql9eDJL5xXQtiMH2N5Hy4as5YPMeQIDAQAB"
+}

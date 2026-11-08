@@ -1,0 +1,9 @@
+/* The picker's sheet, compiled into the content script and laid into its shadow root (main.tsx makes it fit there):
+ * Tailwind over spool's own type roles and theme, scanning only what the picker draws. */
+@import "tailwindcss" source(none);
+@import "../../../src/ui/typography.css";
+@import "../../../src/ui/theme.css";
+
+@source "./";
+@source "../../../src/ui/primitives";
+@source "../../../src/ui/icons.tsx";

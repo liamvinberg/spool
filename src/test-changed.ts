@@ -30,7 +30,7 @@ const everything = [
 	"src/test-setup.ts",
 	"src/test-global-setup.ts",
 ];
-const testDirs = ["src", ".github/scripts", ".agents/skills"];
+const testDirs = ["src", "extension/src", ".github/scripts", ".agents/skills"];
 
 function git(...args: string[]): string {
 	return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();

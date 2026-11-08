@@ -29,10 +29,11 @@ test("the Cloud Account menu offers Sign In while signed out and names the accou
 	assert.deepEqual(clicked, ["sign in", "sign out"]);
 });
 
-test("the menu follows the daemon's account events, and the daemon again after its stream ends", async () => {
+test("the menu follows the daemon's account events, and the daemon again after its stream ends; a reveal raises the window", async () => {
 	let current: CloudAccountState = { state: "signed-out" };
 	const streams: ServerResponse[] = [];
 	const tokens = new Set<unknown>();
+	const windows = new Set<unknown>();
 	const server = createServer((request, response) => {
 		tokens.add(request.headers["x-spool-control"]);
 		if (request.url === "/api/cloud/account") {
@@ -41,6 +42,7 @@ test("the menu follows the daemon's account events, and the daemon again after i
 			return;
 		}
 		if (request.url === "/api/events") {
+			windows.add(request.headers["x-spool-window"]);
 			response.writeHead(200, { "content-type": "text/event-stream" });
 			response.write(`event: hello\ndata: {"name":"spool"}\nid: 0\n\n`);
 			streams.push(response);
@@ -54,6 +56,7 @@ test("the menu follows the daemon's account events, and the daemon again after i
 	assert(address !== null && typeof address !== "string");
 
 	const seen: CloudAccountState[] = [];
+	const revealed: unknown[] = [];
 	let waiting: (() => void) | undefined;
 	const next = () => new Promise<void>((resolve) => (waiting = resolve));
 	const send = (event: object) => streams.at(-1)?.write(`event: app\ndata: ${JSON.stringify(event)}\nid: 1\n\n`);
@@ -66,6 +69,10 @@ test("the menu follows the daemon's account events, and the daemon again after i
 			waiting?.();
 		},
 		10,
+		(reveal) => {
+			revealed.push(reveal);
+			waiting?.();
+		},
 	);
 	try {
 		await arrived;
@@ -78,6 +85,13 @@ test("the menu follows the daemon's account events, and the daemon again after i
 		send({ kind: "account" });
 		await arrived;
 		assert.deepEqual(seen, [{ state: "signed-out" }, ADA]);
+
+		// Open in spool, from the Chrome extension: the stream said it is the app's, so the daemon sends it here
+		arrived = next();
+		send({ kind: "reveal", root: "/Users/ada/tidemark", frame: "references/linear-app-page" });
+		await arrived;
+		assert.deepEqual(revealed, [{ root: "/Users/ada/tidemark", frame: "references/linear-app-page" }]);
+		assert.deepEqual([...windows], ["1"]);
 
 		// the daemon restarted: signed out meanwhile, and the new stream reads it
 		current = { state: "signed-out" };

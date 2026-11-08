@@ -45,7 +45,7 @@ describe("project assets", () => {
 		expect(body).not.toContain("data:image/png");
 	});
 
-	it.each(["txt", "glsl", "wgsl"])(
+	it.each(["txt", "glsl", "wgsl", "html"])(
 		"carries an imported .%s file as text and makes it a cache input",
 		async (extension) => {
 			const { root, document } = project();

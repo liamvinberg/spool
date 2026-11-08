@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
 	app,
 	BrowserWindow,
@@ -16,7 +16,7 @@ import {
 	Tray,
 } from "electron";
 import { LINK, launcherPath, linkAsAdministrator, linkDirectly, linkState, otherSpool } from "./cli-link";
-import { accountItems, type CloudAccountState, followAccount } from "./cloud-account";
+import { accountItems, type CloudAccountState, followAccount, type Reveal } from "./cloud-account";
 import * as daemon from "./daemon";
 import { directoryDialogOptions } from "./directory-dialog";
 import { log, openLog } from "./log";
@@ -1811,14 +1811,39 @@ function follow(origin: string, controlToken: string): void {
 	following?.stop();
 	following = {
 		daemon,
-		...followAccount(origin, controlToken, (next) => {
-			if (JSON.stringify(next) === JSON.stringify(account)) return;
-			account = next;
-			// a submenu is fixed once built, so the menu is built again around the account
-			Menu.setApplicationMenu(buildAppMenu());
-			updateCanvasMenu();
-		}),
+		...followAccount(
+			origin,
+			controlToken,
+			(next) => {
+				if (JSON.stringify(next) === JSON.stringify(account)) return;
+				account = next;
+				// a submenu is fixed once built, so the menu is built again around the account
+				Menu.setApplicationMenu(buildAppMenu());
+				updateCanvasMenu();
+			},
+			undefined,
+			reveal,
+		),
 	};
+}
+
+/**
+ * Open in spool, from the Chrome extension: the window comes forward over Chrome, and the canvas in it, which hears
+ * the same event, opens the project and flies to the frame. With no window, a new one opens on the frame's address.
+ */
+function reveal({ root, frame }: Reveal): void {
+	if (window === undefined || window.isDestroyed()) {
+		resumeWorkspace = {
+			...resumeWorkspace,
+			path: `/p/${encodeURIComponent(basename(root))}?${new URLSearchParams({ frame })}`,
+		};
+		void openCanvas();
+		return;
+	}
+	if (window.isMinimized()) window.restore();
+	window.show();
+	app.focus({ steal: true });
+	window.focus();
 }
 
 async function cloudAccount(command: "login" | "logout"): Promise<void> {

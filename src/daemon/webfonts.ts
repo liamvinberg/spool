@@ -1,13 +1,9 @@
 import { createHash } from "node:crypto";
-import { lookup as dnsLookup } from "node:dns";
-import { lookup as resolveHost } from "node:dns/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { isIP, type LookupFunction } from "node:net";
 import { join } from "node:path";
-import { Agent } from "undici";
 import { writeAtomic } from "../atomic-write";
 import type { WebfontFile, Webfonts } from "./font-faces";
-import { publicResourceAddress } from "./public-address";
+import { type HostLookup, lookupHost, publicFetch, publicGet } from "./public-fetch";
 
 export { inertWebfonts, inlineLocalFonts, type WebfontFile, type Webfonts } from "./font-faces";
 
@@ -38,8 +34,6 @@ const FETCH_TIMEOUT_MS = 5000;
 const RETRY_COOLDOWN_MS = 60_000;
 /** Recursion bound on stylesheets that themselves `@import` (Google's do not). */
 const MAX_IMPORT_DEPTH = 3;
-/** How many redirects one fetch follows, every hop checked like the first. */
-const MAX_REDIRECTS = 4;
 
 /**
  * Foundries serve by user agent: ask as a current Chrome and Google Fonts
@@ -127,8 +121,6 @@ export function webfontType(url: string): string {
 }
 
 /** Every address a host name resolves to. */
-export type HostLookup = (hostname: string) => Promise<{ address: string; family: number }[]>;
-
 export interface WebfontsDeps {
 	/** Where merged stylesheets and font files are cached between runs. */
 	cacheDir: string;
@@ -139,48 +131,6 @@ export interface WebfontsDeps {
 	log?: (line: string) => void;
 	now?: () => number;
 }
-
-/**
- * The font fetch is https-only and public-only (DEV-175). It runs from Node,
- * past every policy a browser keeps, on a stylesheet a teammate may have
- * written: a URL that is not https, or whose host resolves to a loopback,
- * link-local, private or unique-local address, is refused, and so is every
- * redirect that leads to one. A relative `url()` is an asset and never comes
- * here.
- */
-async function refusal(url: URL, lookup: HostLookup): Promise<string | undefined> {
-	if (url.protocol !== "https:") return "not https";
-	const hostname = url.hostname.replace(/^\[|\]$/g, "");
-	const family = isIP(hostname);
-	// A host that does not resolve is the network's failure, not a refusal: the fetch reports it.
-	const addresses = family === 0 ? await lookup(hostname).catch(() => []) : [{ address: hostname, family }];
-	const local = addresses.find(({ address, family }) => !publicResourceAddress(address, family));
-	return local === undefined ? undefined : `${hostname} resolves to the local address ${local.address}`;
-}
-
-/**
- * Node's own fetch, with the connection held to the same rule: a host that
- * resolved to a public address for the check and to a local one for the
- * connect (a rebinding DNS answer) is refused at the socket.
- */
-function publicFetch(): typeof globalThis.fetch {
-	const lookup: LookupFunction = (hostname, options, callback) => {
-		dnsLookup(hostname, { ...options, all: true }, (error, addresses) => {
-			if (error !== null) return callback(error, []);
-			const local = addresses.find((entry) => !publicResourceAddress(entry.address, entry.family));
-			if (local !== undefined)
-				return callback(new Error(`${hostname} resolves to the local address ${local.address}`), []);
-			if (options.all === true) return callback(null, addresses);
-			const [first] = addresses;
-			if (first === undefined) return callback(new Error(`${hostname} did not resolve`), []);
-			callback(null, first.address, first.family);
-		});
-	};
-	const dispatcher = new Agent({ connect: { lookup } });
-	return (input, init) => fetch(input, { ...init, dispatcher } as RequestInit);
-}
-
-const lookupHost: HostLookup = (hostname) => resolveHost(hostname, { all: true });
 
 export function createWebfonts({
 	cacheDir,
@@ -201,32 +151,19 @@ export function createWebfonts({
 	let revision = 0;
 
 	async function get(url: string): Promise<Buffer | undefined> {
-		try {
-			const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-			let hop = new URL(url);
-			for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
-				const reason = await refusal(hop, lookup);
-				if (reason !== undefined) {
-					if (!refused.has(url)) {
-						refused.add(url);
-						const via = hop.href === url ? "" : ` (redirected to ${hop.href})`;
-						log(`fonts.css: refused ${url}${via}: ${reason}`);
-					}
-					return undefined;
-				}
-				const response = await fetch(hop, { headers: { "user-agent": FONT_UA }, redirect: "manual", signal });
-				const location = response.headers.get("location");
-				if (response.status >= 300 && response.status < 400 && location !== null) {
-					hop = new URL(location, hop);
-					continue;
-				}
-				if (!response.ok) return undefined;
-				return Buffer.from(await response.arrayBuffer());
-			}
-			return undefined;
-		} catch {
-			return undefined;
-		}
+		const file = await publicGet(url, {
+			fetch,
+			lookup,
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+			headers: { "user-agent": FONT_UA },
+			refused: (asked, hop, reason) => {
+				if (refused.has(asked)) return;
+				refused.add(asked);
+				const via = hop === asked ? "" : ` (redirected to ${hop})`;
+				log(`fonts.css: refused ${asked}${via}: ${reason}`);
+			},
+		});
+		return file?.bytes;
 	}
 
 	/** The merged sheet for this input, from disk when a previous run fetched it. */

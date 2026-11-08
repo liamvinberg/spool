@@ -61,7 +61,8 @@ export function scan(path: string, source: string): Partial<Record<Rule, number>
 		const old = count(OLD_UTILITY, source) + count(OLD_CONTROL, source) + count(OLD_PROPERTY, source);
 		if (old > 0) found["old-token"] = old;
 	}
-	const chrome = path.startsWith("src/ui/") && /\.tsx?$/.test(path) && !/\.test\.tsx?$|test-/.test(path);
+	const chrome =
+		/^(?:src\/ui|extension\/src\/picker)\//.test(path) && /\.tsx?$/.test(path) && !/\.test\.tsx?$|test-/.test(path);
 	if (chrome) {
 		const body = code(source);
 		const raw = count(RAW_COLOUR, body);
@@ -125,7 +126,7 @@ function* files(dir: string): Generator<string> {
 
 function main(shrink: boolean): number {
 	const scans = new Map<string, Partial<Record<Rule, number>>>();
-	for (const file of files(join(ROOT, "src"))) {
+	for (const file of [...files(join(ROOT, "src")), ...files(join(ROOT, "extension", "src"))]) {
 		const path = relative(ROOT, file).replaceAll("\\", "/");
 		const found = scan(path, readFileSync(file, "utf8"));
 		if (Object.keys(found).length > 0) scans.set(path, found);
