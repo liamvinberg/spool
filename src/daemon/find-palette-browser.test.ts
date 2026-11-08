@@ -7,6 +7,12 @@ it("opens from its door, lands on a row when clicked and still accepts keyboard 
 }, async () => {
 	const { page, finder } = await openFinder();
 	const input = finder.getByRole("textbox", { name: "Find a frame" });
+	// opened from the keys with the path at rest, the field still starts past the path's last name
+	const here = await page.locator('[data-path-kind="here"]').boundingBox();
+	const field = await input.evaluate(
+		(el) => el.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(el).paddingLeft),
+	);
+	expect(field).toBeGreaterThan((here?.x ?? 0) + (here?.width ?? 0) + 16);
 	await input.fill("frame-10");
 	await finder.locator("[data-at]").click();
 	await expect.poll(() => finder.count(), { timeout: 1000 }).toBe(0);
