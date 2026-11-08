@@ -163,7 +163,7 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 		/<canvas id="drawn" width="8" height="8" style="background: url\(&quot;data:image\/png;base64,/,
 	);
 	expect(c.html).toContain('<canvas id="empty" width="8" height="8"></canvas>');
-	expect(c.notes).toEqual(["A canvas read back empty (WebGL keeps no copy of what it drew), so it is left out."]);
+	expect(c.notes).toEqual(["a WebGL canvas, which keeps no copy of what it drew"]);
 
 	// the page's context
 	expect(c.htmlAttrs).toEqual({ class: "dark", "data-theme": "night", lang: "en" });
@@ -235,9 +235,7 @@ it("shows the parts waiting to fade in as they scroll into view as they end, and
 	expect(html[0]).toContain('<p id="off" class="off">');
 	expect(html[0]).toContain('<rect id="shaft" class="shaft" width="8" height="2"></rect>');
 	expect(html[0]).toContain('<p id="slide" style="position: absolute; opacity: 0">');
-	expect(html[1]).toEqual([
-		"Parts the page fades in as they scroll into view, not reached yet, are shown as they end.",
-	]);
+	expect(html[1]).toEqual(["the fade-ins of parts not scrolled to yet (shown as they end)"]);
 });
 
 it("keeps a box scrolled where it was, sticky parts and all, in a frame that runs no script", {

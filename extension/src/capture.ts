@@ -60,13 +60,13 @@ const URL_ATTRS = new Set([
 ]);
 
 const NOTE = {
-	iframe: "Embedded pages (iframes) are left out.",
-	stream: "Video streams are left out; their posters came.",
-	canvas: "A canvas drawn from another site could not be read.",
-	blank: "A canvas read back empty (WebGL keeps no copy of what it drew), so it is left out.",
-	blob: "Images made in the page (blob: URLs) could not come.",
-	closed: "Closed shadow roots are left out.",
-	reveal: "Parts the page fades in as they scroll into view, not reached yet, are shown as they end.",
+	iframe: "embedded pages (iframes)",
+	stream: "video streams (their posters came)",
+	canvas: "a canvas drawn from another site",
+	blank: "a WebGL canvas, which keeps no copy of what it drew",
+	blob: "images made in the page (blob: URLs)",
+	closed: "closed shadow roots",
+	reveal: "the fade-ins of parts not scrolled to yet (shown as they end)",
 } as const;
 
 interface Context {

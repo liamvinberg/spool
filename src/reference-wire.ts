@@ -47,7 +47,7 @@ export const referenceCaptureSchema = z.object({
 	styles: z.array(referenceStyleSchema),
 	/** CSS generated from the Web Animations running in the subtree (JS-started, e.g. Framer Motion) */
 	animations: z.string(),
-	/** what could not come, one short line each (cross-origin iframes, video streams, closed shadow roots…) */
+	/** what could not come, a short lowercase phrase each that reads after "Left out:" (embedded pages (iframes), closed shadow roots…) */
 	notes: z.array(z.string()),
 	/**
 	 * The files of the @font-face rules the page declared and never loaded, absolute: the daemon leaves them on the web
