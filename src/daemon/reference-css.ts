@@ -130,6 +130,16 @@ export function pinViewportHeights(css: string, viewport: { w: number; h: number
 	return mapDeclarations(css, (declaration) => viewportHeightsInPixels(declaration, viewport));
 }
 
+/**
+ * A sheet's `scripting` media queries answered as the page answered them, scripted: the frame runs none, and the
+ * fallback a site keeps for a browser without script (`@media (scripting: none)`) would undo what its script did.
+ */
+export function asScripted(css: string): string {
+	return css.replace(/\(\s*scripting\s*(?::\s*([a-z-]+)\s*)?\)/gi, (_whole, value: string | undefined) =>
+		value === undefined || value.toLowerCase() === "enabled" ? "(width >= 0px)" : "(width < 0px)",
+	);
+}
+
 function round(value: number): number {
 	return Math.round(value * 100) / 100;
 }

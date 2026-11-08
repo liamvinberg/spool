@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { ReferenceCapture } from "../reference-wire";
 import { COVER_PNG, makeApp, makeProject, makeTempDir, sseReader } from "../test-helpers";
-import { pinViewportHeights } from "./reference-css";
+import { asScripted, pinViewportHeights } from "./reference-css";
 import { placeReference } from "./reference-frame";
 import type { ReferenceFetch } from "./reference-page";
 import { chooseReferenceProject } from "./reference-routes";
@@ -277,6 +277,14 @@ describe("where a reference goes", () => {
 		const css = ".h-100vh{height:100vh}@media (min-width:600px){.a:hover{margin-top:-10dvh;width:calc(100vw - 2vh)}}";
 		expect(pinViewportHeights(css, { w: 1000, h: 800 })).toBe(
 			".h-100vh{height:800px}@media (min-width:600px){.a:hover{margin-top:-80px;width:calc(100vw - 16px)}}",
+		);
+	});
+
+	it("answers a sheet's scripting queries as the scripted page did, though the frame runs none", () => {
+		const css =
+			"@media (scripting: none){.a{transform:none}}@media (min-width:1px) and (Scripting:enabled),(scripting){.b{x:y}}";
+		expect(asScripted(css)).toBe(
+			"@media (width < 0px){.a{transform:none}}@media (min-width:1px) and (width >= 0px),(width >= 0px){.b{x:y}}",
 		);
 	});
 });

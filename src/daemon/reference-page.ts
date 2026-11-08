@@ -4,6 +4,7 @@ import { lookupHost, type PublicFile, publicFetch, publicGet } from "./public-fe
 import {
 	absoluteCssUrls,
 	absoluteUrl,
+	asScripted,
 	cssImports,
 	fontFaceSources,
 	mapCssUrls,
@@ -150,7 +151,7 @@ export async function referencePage(
 	const missed = new Set([...wanted].filter((url) => !local.has(url) && /^https?:/i.test(url))).size;
 
 	const toLocal = (url: string) => local.get(url) ?? url;
-	const pinned = (text: string) => pinViewportHeights(mapCssUrls(text, toLocal), capture.viewport);
+	const pinned = (text: string) => asScripted(pinViewportHeights(mapCssUrls(text, toLocal), capture.viewport));
 	const page = [
 		"<!doctype html>",
 		mapMarkupUrls(htmlOpen, pageBase, toLocal, capture.viewport),
@@ -270,7 +271,7 @@ function mapMarkupUrls(
 	});
 	return tags.replace(STYLE_BLOCK, (_whole, open: string, css: string, end: string) => {
 		const urls = mapCssUrls(css, (raw) => resolveCss(raw, base, to));
-		return `${open}${viewport === undefined ? urls : pinViewportHeights(urls, viewport)}${end}`;
+		return `${open}${viewport === undefined ? urls : asScripted(pinViewportHeights(urls, viewport))}${end}`;
 	});
 }
 
