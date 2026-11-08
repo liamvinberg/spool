@@ -288,9 +288,9 @@ it("catches a WebGL drawing in the frame it was drawn, though it reads back empt
 		requestAnimationFrame(paint);
 		await new Promise((done) => setTimeout(done, 100));
 		const { readCanvases } = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture;
-		return (await readCanvases(document.body)).get(canvas)?.slice(0, 22) ?? "empty";
+		return (await readCanvases(document.body)).get(canvas)?.slice(0, 23) ?? "empty";
 	});
-	expect(read).toBe("data:image/png;base64,");
+	expect(read).toBe("data:image/webp;base64,");
 });
 
 it("serializes the whole page as its body, marked", { timeout: 60_000 }, async () => {

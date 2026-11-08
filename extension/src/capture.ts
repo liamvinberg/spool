@@ -458,6 +458,11 @@ function stream(video: HTMLVideoElement): boolean {
  * frame is on screen, so an empty read is left out with a note rather than sent as a clear picture.
  */
 function drawing(canvas: HTMLCanvasElement, ctx: Context): string | null {
+	return still(canvas, ctx)?.toDataURL() ?? null;
+}
+
+/** a copy of what the canvas shows now, which keeps it when the canvas clears; null for one that shows nothing */
+function still(canvas: HTMLCanvasElement, ctx: Context): HTMLCanvasElement | null {
 	if (canvas.width === 0 || canvas.height === 0) return null;
 	try {
 		// read small, averaged down so a thin stroke still counts
@@ -476,7 +481,13 @@ function drawing(canvas: HTMLCanvasElement, ctx: Context): string | null {
 			ctx.notes.add(NOTE.blank);
 			return null;
 		}
-		return canvas.toDataURL();
+		const copy = canvas.ownerDocument.createElement("canvas");
+		copy.width = canvas.width;
+		copy.height = canvas.height;
+		copy.getContext("2d")?.drawImage(canvas, 0, 0);
+		// a copy of a canvas another site drew can't be read either
+		copy.getContext("2d")?.getImageData(0, 0, 1, 1);
+		return copy;
 	} catch {
 		ctx.notes.add(NOTE.canvas);
 		return null;
@@ -495,15 +506,16 @@ export async function readCanvases(root: Element, ms = 500): Promise<Map<HTMLCan
 	const all = Array.from(root.querySelectorAll("canvas"));
 	if (root instanceof HTMLCanvasElement) all.unshift(root);
 	const pending = new Set(all.filter((c) => c.width > 0 && c.height > 0));
+	const copies = new Map<HTMLCanvasElement, HTMLCanvasElement>();
 	const out = new Map<HTMLCanvasElement, string>();
 	if (view === null) return out;
 	const read = () => {
 		for (const canvas of pending) {
 			const ctx: Context = { base: doc.baseURI, notes: new Set(), anims: new Map(), opts: {} };
-			const url = drawing(canvas, ctx);
+			const copy = still(canvas, ctx);
 			// one another site drew is never readable; only an empty one is worth another frame
-			if (url !== null || ctx.notes.has(NOTE.canvas)) pending.delete(canvas);
-			if (url !== null) out.set(canvas, url);
+			if (copy !== null || ctx.notes.has(NOTE.canvas)) pending.delete(canvas);
+			if (copy !== null) copies.set(canvas, copy);
 		}
 	};
 	read();
@@ -528,6 +540,12 @@ export async function readCanvases(root: Element, ms = 500): Promise<Map<HTMLCan
 			}),
 		);
 	}
+	await Promise.all(
+		Array.from(copies, async ([canvas, copy]) => {
+			const url = await picture(copy);
+			if (url !== null) out.set(canvas, url);
+		}),
+	);
 	return out;
 }
 
@@ -541,6 +559,23 @@ function draw(img: HTMLImageElement, w: number, h: number): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * A canvas as an image to send, made off the page's main thread: WebP, which keeps its transparency at a tenth of a
+ * PNG's weight (a retina hero drawn in WebGL is megabytes as a PNG, and as long to make in the tab), or a PNG where the
+ * browser makes no WebP.
+ */
+async function picture(canvas: HTMLCanvasElement): Promise<string | null> {
+	const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/webp", 0.9));
+	if (blob === null) return null;
+	const url = await new Promise<string | null>((done) => {
+		const reader = new FileReader();
+		reader.onload = () => done(typeof reader.result === "string" ? reader.result : null);
+		reader.onerror = () => done(null);
+		reader.readAsDataURL(blob);
+	});
+	return url?.startsWith("data:image/webp") ? url : canvas.toDataURL();
 }
 
 function text(s: string): string {
