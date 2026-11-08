@@ -266,6 +266,44 @@ jobs:
           echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
           NOTARY_KEY="$RUNNER_TEMP/notary.p8" OUT="$RUNNER_TEMP/dist" desktop/scripts/package.sh
           rm -f "$RUNNER_TEMP/notary.p8"
+      # updates.spool.page, the R2 bucket the app reads its feed from and the
+      # site links the dmg from. GitHub's release pages have gone down for hours
+      # while the rest of GitHub stayed up, which stopped every update and every
+      # download at once, so the app no longer asks GitHub anything. Versioned
+      # files go first and the two that name the newest release last, so the
+      # feed never names a zip that is not there yet. A rerun for an older tag
+      # leaves those two alone.
+      - name: Put the release on updates.spool.page
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          # R2 refuses the checksum headers newer AWS CLIs add by default.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ENDPOINT: https://d2b578c66c7297496ef5b60c60895c81.r2.cloudflarestorage.com
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "R2_ACCESS_KEY_ID is not set: an Object Read & Write token on the spool-releases bucket. See desktop/README.md." >&2
+            exit 1
+          fi
+          version="${TAG#v}"
+          dist="$RUNNER_TEMP/dist"
+          put() {
+            aws s3 cp "$1" "s3://spool-releases/$2" --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "$3" --content-type "$4" --no-progress
+          }
+          forever="public, max-age=31536000, immutable"
+          put "$dist/Spool-$version-arm64-mac.zip" "Spool-$version-arm64-mac.zip" "$forever" application/zip
+          put "$dist/Spool-$version-arm64-mac.zip.blockmap" "Spool-$version-arm64-mac.zip.blockmap" "$forever" application/octet-stream
+          put "$dist/Spool-$version.dmg" "Spool-$version.dmg" "$forever" application/x-apple-diskimage
+          current=$(curl -fsS https://updates.spool.page/latest-mac.yml | sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' || true)
+          if [ -n "$current" ] && [ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)" != "$version" ]; then
+            echo "updates.spool.page already names $current, newer than $version: leaving the feed and Spool.dmg alone."
+            exit 0
+          fi
+          put "$dist/Spool-$version.dmg" Spool.dmg "public, max-age=300" application/x-apple-diskimage
+          put "$dist/latest-mac.yml" latest-mac.yml no-cache text/yaml
       - name: Create the release with the dmg on it
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

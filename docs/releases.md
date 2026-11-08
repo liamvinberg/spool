@@ -43,6 +43,6 @@ The next version applies the highest bump among pending changesets: any pending 
 3. The release PR stays open while changes accumulate. Editing the pending changeset files is the editorial pass; merging the PR is the human release gate.
 4. The merge run tags `vX.Y.Z`.
 5. The workflow resolves the tag to a commit and requires that commit’s full Linux CI to pass. The publish job checks out that frozen commit, runs the macOS-only cases, and publishes `spool.page` to npm through trusted publishing.
-6. The dmg job builds the Mac app on that version and creates the GitHub release with the changelog, the dmg and the app's update feed on it, so `releases/latest` never names a version the app cannot install.
+6. The dmg job builds the Mac app on that version, puts it and the app's update feed on `updates.spool.page` (an R2 bucket, where the app updates from and the site links the dmg), then creates the GitHub release with the changelog and the same files. Each feed names a version only once its files are there.
 
 If the publish gates fail, the Git tag may exist while npm remains unpublished and no GitHub release has been created. Fix the failure, then publish that tag by hand with `gh workflow run publish.yml -f tag=vX.Y.Z` rather than creating a new version. Recovery also requires full CI on the tag’s commit. If it has no successful full run, run `gh workflow run ci.yml --ref vX.Y.Z` first; a design-only check does not qualify.
