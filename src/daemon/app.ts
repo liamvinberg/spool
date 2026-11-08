@@ -566,7 +566,6 @@ export function createDaemonApp({
 		version,
 		webfonts,
 		flows: (root) => flowGraph.flows(root),
-		sources: (root) => flowGraph.sources(root),
 		readAsset: (hash, ext) => assetStore.read(hash, ext),
 	});
 	// a shared/ edit wakes the frames whose graph reaches it, not every document

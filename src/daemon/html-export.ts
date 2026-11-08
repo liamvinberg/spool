@@ -1,13 +1,12 @@
 import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { build, type Plugin } from "esbuild";
 import { ASSET_KINDS, ASSET_MEDIA_TYPES } from "./assets";
 import { daemonCompileHost } from "./compile-host";
-import { type CompileHost, describeCompileError, parseImportMap } from "./design-compile";
+import { type CompileHost, describeCompileError } from "./design-compile";
 import { realDesignDir } from "./design-path";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } from "./document";
-import type { FlowEdge, FrameGraph } from "./flows";
+import type { FlowEdge } from "./flows";
 import { chromeFontFile } from "./play";
 import {
 	beginPlayerCompile,
@@ -38,8 +37,6 @@ export type ExportScope = "flow" | "one";
 export interface ExportPlan {
 	/** The frames beyond the start that its links reach, in walk order. */
 	reach: string[];
-	/** Frames among the start and its reach that need the internet to work. */
-	online: string[];
 }
 
 export interface ExportedFile {
@@ -57,9 +54,8 @@ export type ExportAnswer<T> =
 export interface HtmlExportDeps {
 	version: string;
 	webfonts: Webfonts;
-	/** The project's flow map and each frame's source graph. */
+	/** The project's flow map. */
 	flows: (root: string) => Promise<{ edges: readonly Pick<FlowEdge, "from" | "to">[] }>;
-	sources: (root: string) => Promise<ReadonlyMap<string, Pick<FrameGraph, "files">>>;
 	/** An imported image by the hash and extension its /asset/ URL names. */
 	readAsset: (hash: string, ext: string) => Promise<{ bytes: Uint8Array; type: string } | undefined>;
 	host?: CompileHost;
@@ -76,14 +72,7 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 	async function plan(root: string, frame: string): Promise<ExportAnswer<ExportPlan>> {
 		const { frames } = listProjectFrames(root);
 		if (!frames.some((ref) => ref.name === frame)) return { kind: "missing", message: `no frame "${frame}"` };
-		const reach = await reachOf(root, frame, frames);
-		const sources = await deps.sources(root);
-		const offFile = offFileSpecifiers(root);
-		const online = [frame, ...reach].filter((name) => {
-			const texts = (sources.get(name)?.files ?? []).map((file) => readText(file));
-			return needsInternet(texts, offFile);
-		});
-		return { kind: "ok", value: { reach, online } };
+		return { kind: "ok", value: { reach: await reachOf(root, frame, frames) } };
 	}
 
 	async function html(
@@ -215,40 +204,6 @@ export function exportReach(
 	return reach;
 }
 
-/** A URL the page loads, as source writes one: fetched, a src, a CSS url() or @import, an import, a socket. */
-const LOADS_FROM_WEB =
-	/(?:\bfetch\s*\(\s*|\b(?:src|srcSet|srcset|poster)\s*[=:]\s*\{?\s*|\burl\s*\(\s*|@import\s+|\bfrom\s*|\bimport\s*\(\s*|\bnew\s+(?:WebSocket|EventSource|Worker)\s*\(\s*)[`'"]?(?:https?|wss?):\/\//;
-
-/**
- * Whether a frame needs the internet to work, read off its source graph: a
- * plain heuristic, a URL on the web it loads (see LOADS_FROM_WEB) or an import
- * the project's import map sends off the file.
- */
-export function needsInternet(sources: readonly string[], offFile: readonly string[]): boolean {
-	const imports = offFile.map(
-		(specifier) => new RegExp(`["']${escapeRegExp(specifier)}${specifier.endsWith("/") ? "" : "[\"'/]"}`),
-	);
-	return sources.some((text) => LOADS_FROM_WEB.test(text) || imports.some((quoted) => quoted.test(text)));
-}
-
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** The project's import map entries that point at the web: the specifiers a file can't carry. */
-function offFileSpecifiers(root: string): string[] {
-	let map: unknown;
-	try {
-		map = parseImportMap(readText(join(realDesignDir(root), "shared", "importmap.json")));
-	} catch {
-		return [];
-	}
-	const imports = (map as { imports?: Record<string, unknown> } | undefined)?.imports ?? {};
-	return Object.entries(imports)
-		.filter(([, url]) => typeof url === "string" && /^(?:https?:)?\/\//.test(url))
-		.map(([specifier]) => specifier);
-}
-
 /**
  * The file's import map: the composition's, with spool's runtime pins dropped
  * (the module carries the runtime) and every React specifier sent to React as
@@ -265,14 +220,6 @@ function exportImportMap(importMap: object, react: string): object {
 		),
 	);
 	return { ...map, imports: { ...imports, ...Object.fromEntries(REACT_SPECIFIERS.map((spec) => [spec, reactUrl])) } };
-}
-
-function readText(file: string): string {
-	try {
-		return readFileSync(file, "utf8");
-	} catch {
-		return "";
-	}
 }
 
 /** The file's name: `<project>-<frame>.html`, a page's slashes as dashes. */
