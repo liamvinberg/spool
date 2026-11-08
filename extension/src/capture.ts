@@ -94,10 +94,18 @@ export function capture(target: CaptureTarget, opts: CaptureOptions = {}): Refer
 	else {
 		const chain: Element[] = [];
 		for (let p = el.parentElement; p !== null && p !== body && p !== html; p = p.parentElement) chain.unshift(p);
-		for (const a of chain) out.push(open(a, ctx, { contents: true }));
+		for (const a of chain) {
+			standIns(a, "before", out);
+			out.push(open(a, ctx, { contents: true }));
+		}
+		standIns(el, "before", out);
 		element(el, out, ctx, false, true);
+		standIns(el, "after", out);
+		for (const a of chain.reverse()) {
+			out.push(`</${a.localName}>`);
+			standIns(a, "after", out);
+		}
 		sprites(el, out, ctx);
-		for (const a of chain.reverse()) out.push(`</${a.localName}>`);
 	}
 
 	const bodyAttrs = attributes(body, ctx);
@@ -210,6 +218,32 @@ function sprites(el: Element, out: string[], ctx: Context): void {
 	out.push("</svg>");
 }
 
+/** how many stand-ins one element gets on each side at most, so a pick from a long feed stays small */
+const STAND_INS = 200;
+const STAND_IN_ATTR = /^(class|role|type|name|aria-.+|data-(?!spool-).+)$/;
+
+/**
+ * Empty stand-ins for the elements beside one in the picked element's line, never drawn, so the site's rules that
+ * look at siblings (`:last-child`, `+`, `:has(~ *)`) match in the frame as they did in the tab: without them a
+ * section the site hides once nothing follows it (a carousel waiting for its skeleton to go) hides the whole pick.
+ * They keep what such rules name, the tag and the classes, roles and data, and nothing that loads.
+ */
+function standIns(el: Element, side: "before" | "after", out: string[]): void {
+	const found: Element[] = [];
+	const step = (e: Element) => (side === "before" ? e.previousElementSibling : e.nextElementSibling);
+	for (let e = step(el); e !== null && found.length < STAND_INS; e = step(e)) found.push(e);
+	if (side === "before") found.reverse();
+	for (const e of found) {
+		const tag = DROP.has(e.localName) || SHEETS.has(e.localName) ? "template" : e.localName;
+		let s = `<${tag}`;
+		for (const { name, value } of Array.from(e.attributes)) {
+			if (STAND_IN_ATTR.test(name)) s += value === "" ? ` ${name}` : ` ${name}="${attr(value)}"`;
+		}
+		s += ' style="display: none !important">';
+		out.push(VOID.has(tag) ? s : `${s}</${tag}>`);
+	}
+}
+
 function shadowRoot(root: ShadowRoot, out: string[], ctx: Context): void {
 	out.push(`<template shadowrootmode="open"${root.delegatesFocus ? " shadowrootdelegatesfocus" : ""}>`);
 	const adopted = root.adoptedStyleSheets ?? [];
@@ -236,6 +270,9 @@ function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boo
 	if (how.picked === true) {
 		a["data-spool-reference"] = "";
 		for (const decl of standAlone(el)) addStyle(a, decl);
+		// what it drew behind itself (a hero's backdrop at z-index -1) sat in a stacking context of an ancestor that
+		// the frame draws as nothing; without one of its own it would go behind the page's background
+		addStyle(a, "isolation: isolate");
 	}
 	// the picked element's parent is an ancestor drawn as nothing: its scroll is none of the frame's
 	if (how.contents !== true) for (const decl of scrollKept(el, how.picked !== true)) addStyle(a, decl);

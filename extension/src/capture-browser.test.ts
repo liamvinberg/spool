@@ -137,7 +137,8 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	// the ancestors, shallow and out of the layout's way, so `.page .pricing` still matches
 	expect(c.html.startsWith('<main class="page" style="display: contents !important">')).toBe(true);
 	expect(c.html.split(" data-spool-reference").length).toBe(2);
-	expect(c.html).toContain('<section class="pricing" id="pick" data-spool-reference>');
+	// a stacking context of its own, for what it draws behind itself, as the ancestors it sat in no longer make one
+	expect(c.html).toContain('<section class="pricing" id="pick" data-spool-reference style="isolation: isolate">');
 	// what the person typed and chose, and the source the browser picked; never a password
 	expect(c.html).toContain('value="liam@example.com"');
 	expect(c.html).toMatch(/id="agree" type="checkbox" checked/);
@@ -159,9 +160,10 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	expect(c.html).toContain(
 		`<video id="clip" src="${at(page)}/clip.mp4#t=4.5" muted style="object-fit: cover; background: url(&quot;${at(page)}/still.jpg&quot;) center / cover no-repeat" preload="auto"></video>`,
 	);
-	// the icons it draws from a sprite elsewhere on the page, and what those draw with, but no more
+	// what stood beside its ancestors, empty and undrawn, so the site's rules on siblings match as they did; then the
+	// icons it draws from a sprite elsewhere on the page, and what those draw with, but no more
 	expect(c.html).toContain(
-		'</section><svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden"><symbol id="arrow"><path fill="url(#ink)" d="M0 0h8v8z"></path></symbol><linearGradient id="ink"></linearGradient></svg></main>',
+		'</section></main><svg class="sprite" style="display: none !important"></svg><svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden"><symbol id="arrow"><path fill="url(#ink)" d="M0 0h8v8z"></path></symbol><linearGradient id="ink"></linearGradient></svg>',
 	);
 	// a canvas as the picture it shows; one that reads back empty (as WebGL does once drawn) left out, with a note
 	expect(c.html).toMatch(
