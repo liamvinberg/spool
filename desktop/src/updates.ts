@@ -4,21 +4,20 @@ import { compareVersions, parseVersion, type Version } from "./version";
 
 // Is there a newer release than this one, and getting onto it.
 //
-// One source for a packaged app: electron-updater reads `latest-mac.yml` off
-// the newest GitHub release, which is the same file it later installs from, so
-// a version it names is always one it can hand to Squirrel. The GitHub API is
-// asked only by a copy that has no feed — a checkout build — and that copy can
-// only ever be pointed at the download.
+// One source for a packaged app: electron-updater reads `latest-mac.yml` from
+// updates.spool.page, the bucket the release workflow fills, which is also where
+// it installs from, so a version it names is always one it can hand to
+// Squirrel. A copy with no feed, a checkout build, reads the same file and can
+// only ever be pointed at the download. GitHub keeps a copy of every release for
+// people, but the app asks it nothing: its release pages have been down for
+// hours while the rest of GitHub stayed up.
 //
 // The daemon runs its own daily check for the npm package and says so in the
 // canvas. That check is off for the copy this app bundles, because npm does not
 // own it, which is why the app has a clock of its own (`checkCadence`).
 
-/**
- * `releases/latest` and not the tag list, because it already skips drafts and
- * prereleases. Whatever it names is something a person is meant to install.
- */
-const ENDPOINT = "https://api.github.com/repos/liamvinberg/spool/releases/latest";
+/** Where releases live, `latest-mac.yml` at its root. electron-builder.yml names it too. */
+export const UPDATE_HOST = "https://updates.spool.page";
 
 export const RELEASES_PAGE = "https://github.com/liamvinberg/spool/releases/latest";
 
@@ -26,12 +25,10 @@ export const RELEASES_PAGE = "https://github.com/liamvinberg/spool/releases/late
  * The dmg itself, under the name that never moves. What a person is handed when
  * the app cannot update itself: a download that starts, not a page to read.
  */
-export const DOWNLOAD_URL = "https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg";
+export const DOWNLOAD_URL = `${UPDATE_HOST}/Spool.dmg`;
 
 export interface Release {
 	version: Version;
-	/** The release's own page, notes and checksum included. */
-	page: string;
 }
 
 export class UpdateCheckError extends Error {
@@ -53,46 +50,33 @@ export class RestartRequiredError extends UpdateCheckError {
 /**
  * What a person reads when the updater fails. electron-updater's own message
  * carries the request's headers, cookies and a stack, which belong in app.log
- * and not in a dialog. A GitHub outage reads as one, so nobody goes looking for
- * a broken release.
+ * and not in a dialog. An outage reads as one, so nobody goes looking for a
+ * broken release.
  */
 export function plainUpdateError(raw: string): string {
 	const status = /HttpError: (\d{3})/.exec(raw)?.[1];
-	if (status?.startsWith("5"))
-		return `GitHub did not answer (${status}). That is on GitHub's side: try again in a minute.`;
-	if (status !== undefined) return `GitHub answered ${status} instead of naming the latest release.`;
+	if (status?.startsWith("5")) return `The update server did not answer (${status}). Try again in a minute.`;
+	if (status !== undefined) return `The update server answered ${status} instead of naming the latest release.`;
 	if (/net::ERR_|ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ETIMEDOUT/.test(raw))
-		return "Spool could not reach GitHub. Check the connection and try again.";
+		return "Spool could not reach the update server. Check the connection and try again.";
 	const first = raw.split("\n")[0]?.trim() ?? raw;
 	return first.length > 300 ? `${first.slice(0, 300)}…` : first;
 }
 
-/** The GitHub API's answer, for a copy with no feed to read. */
+/** The feed's version, for a copy that cannot install from it. */
 export async function latestRelease(timeoutMs = 10_000): Promise<Release> {
 	let response: Response;
 	try {
-		response = await fetch(ENDPOINT, {
-			headers: { accept: "application/vnd.github+json" },
-			signal: AbortSignal.timeout(timeoutMs),
-		});
-	} catch (error) {
-		throw new UpdateCheckError(`Spool could not reach GitHub: ${(error as Error).message}`);
-	}
-	if (!response.ok) {
-		throw new UpdateCheckError(`GitHub answered ${response.status} instead of naming the latest release.`);
-	}
-	let body: unknown;
-	try {
-		body = await response.json();
+		response = await fetch(`${UPDATE_HOST}/latest-mac.yml`, { signal: AbortSignal.timeout(timeoutMs) });
 	} catch {
-		throw new UpdateCheckError("GitHub named a release this app cannot read.");
+		throw new UpdateCheckError("Spool could not reach the update server. Check the connection and try again.");
 	}
-	const payload = body as { tag_name?: unknown; html_url?: unknown };
-	const version = typeof payload.tag_name === "string" ? parseVersion(payload.tag_name) : undefined;
-	if (version === undefined || typeof payload.html_url !== "string") {
-		throw new UpdateCheckError("GitHub named a release this app cannot compare against its own version.");
-	}
-	return { version, page: payload.html_url };
+	if (!response.ok) throw new UpdateCheckError(plainUpdateError(`HttpError: ${response.status}`));
+	const named = /^version:\s*"?([^"\s]+)"?\s*$/m.exec(await response.text())?.[1];
+	const version = named === undefined ? undefined : parseVersion(named);
+	if (version === undefined)
+		throw new UpdateCheckError("The update server named a release this app cannot compare against its own version.");
+	return { version };
 }
 
 // MARK: - The cadence
@@ -146,9 +130,9 @@ export function nextCheckDelay(cache: CheckCache | undefined, now = Date.now()):
  * The self-update. electron-updater downloads the release's zip, checks it
  * against `latest-mac.yml`'s hash, and hands it to Squirrel.Mac, which verifies
  * the new bundle's code signature against this one's and swaps it on quit. The
- * feed is the GitHub release itself: `app-update.yml`, baked into the bundle by
- * electron-builder, names this repo, and `latest-mac.yml` beside the dmg names
- * the zip. No server of ours is involved.
+ * feed is a bucket: `app-update.yml`, baked into the bundle by electron-builder,
+ * names updates.spool.page, and `latest-mac.yml` there names the zip beside it.
+ * No code of ours runs on that side, only files.
  *
  * Three things about the mac path are worth knowing before changing anything
  * here, because all three are load-bearing and none is obvious from the API.

@@ -35,9 +35,8 @@ asar: true
 # app-update.yml, which is where electron-updater learns the feed lives, and
 # what makes it write latest-mac.yml beside a zip target.
 publish:
-  provider: github
-  owner: liamvinberg
-  repo: spool
+  provider: generic
+  url: https://updates.spool.page
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns
