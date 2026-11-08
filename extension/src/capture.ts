@@ -260,6 +260,14 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 			delete a.srcdoc;
 			ctx.notes.add(NOTE.iframe);
 			break;
+		default: {
+			// a player made as a web component (vimeo-video, mux-player) plays in a frame that cannot come: its poster stands in
+			const poster = a.poster;
+			if (poster === undefined || poster === "" || !el.localName.includes("-")) break;
+			const fit = el.ownerDocument.defaultView?.getComputedStyle(el).objectFit;
+			const size = fit === "cover" ? "cover" : fit === "fill" ? "100% 100%" : "contain";
+			addStyle(a, `background: url("${poster}") center / ${size} no-repeat`);
+		}
 	}
 }
 

@@ -40,6 +40,7 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 			<select><option>one</option><option id="two">two</option></select>
 			<textarea id="note"></textarea>
 			<x-card></x-card>
+			<x-player poster="/poster.jpg" style="object-fit: cover"></x-player>
 			<div class="spinner"></div>
 			<canvas id="drawn" width="8" height="8"></canvas><canvas id="empty" width="8" height="8"></canvas>
 		</section>
@@ -133,6 +134,10 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 		'<x-card><template shadowrootmode="open"><style>:host { display: block; padding: 4px; }</style><style>b { color: blue }</style><b part="price">$12</b><slot></slot></template></x-card>',
 	);
 
+	// a player whose video plays in another site's frame shows its poster
+	expect(c.html).toContain(
+		`<x-player poster="${at(page)}/poster.jpg" style="object-fit: cover; background: url(&quot;${at(page)}/poster.jpg&quot;) center / cover no-repeat"></x-player>`,
+	);
 	// a canvas as the picture it shows; one that reads back empty (as WebGL does once drawn) left out, with a note
 	expect(c.html).toMatch(
 		/<canvas id="drawn" width="8" height="8" style="background: url\(&quot;data:image\/png;base64,/,
