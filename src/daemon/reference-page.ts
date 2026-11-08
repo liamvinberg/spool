@@ -4,6 +4,7 @@ import { lookupHost, type PublicFile, publicFetch, publicGet } from "./public-fe
 import {
 	absoluteCssUrls,
 	absoluteUrl,
+	asScripted,
 	cssImports,
 	fontFaceSources,
 	mapCssUrls,
@@ -117,13 +118,14 @@ export async function referencePage(
 	);
 
 	// what to fetch, in the order it matters: the markup's own images, the faces, then whatever else the sheets name
-	const faces = fontFaceSources(css);
+	// the faces the page never loaded stay on the web, as do the formats a face offers besides the one the browser takes
+	const unused = new Set(capture.unusedFonts ?? []);
+	const faces = fontFaceSources(css).filter((url) => !unused.has(url));
 	const otherFaces = new Set(fontFaceUrls(css).filter((url) => !faces.includes(url)));
 	const wanted = new Set<string>();
 	for (const url of [...markupUrls(htmlOpen), ...markupUrls(body)]) wanted.add(url);
 	for (const url of faces) wanted.add(url);
 	for (const url of [...cssUrls(css), ...cssUrls(capture.animations)]) {
-		// the formats a face offers besides the one the browser takes are never asked for
 		if (!otherFaces.has(url)) wanted.add(url);
 	}
 	const fetchable = [...wanted].filter((url) => /^https?:/i.test(url)).slice(0, limits.files);
@@ -149,7 +151,7 @@ export async function referencePage(
 	const missed = new Set([...wanted].filter((url) => !local.has(url) && /^https?:/i.test(url))).size;
 
 	const toLocal = (url: string) => local.get(url) ?? url;
-	const pinned = (text: string) => pinViewportHeights(mapCssUrls(text, toLocal), capture.viewport);
+	const pinned = (text: string) => asScripted(pinViewportHeights(mapCssUrls(text, toLocal), capture.viewport));
 	const page = [
 		"<!doctype html>",
 		mapMarkupUrls(htmlOpen, pageBase, toLocal, capture.viewport),
@@ -202,13 +204,16 @@ function cssUrls(css: string): string[] {
 	return found;
 }
 
-/** The markup without what can't or mustn't run in a reference: scripts, their fallbacks, and the page's own head. */
+/**
+ * The markup without what can't or mustn't run in a reference: scripts, their fallbacks, and the page's own head.
+ * Templates stay: the extension sends open shadow roots as declarative ones, and a web component (MDN's, a video
+ * player's) draws nothing without its own.
+ */
 function cleanMarkup(html: string): string {
 	return html
 		.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "")
 		.replace(/<noscript\b[\s\S]*?<\/noscript\s*>/gi, "")
-		.replace(/<(?:base|meta|link)\b(?:"[^"]*"|'[^']*'|[^>"'])*>/gi, "")
-		.replace(/<template\b[\s\S]*?<\/template\s*>/gi, "");
+		.replace(/<(?:base|meta|link)\b(?:"[^"]*"|'[^']*'|[^>"'])*>/gi, "");
 }
 
 const TAG = /<([a-zA-Z][\w:-]*)((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)(\s*\/?)>/g;
@@ -266,7 +271,7 @@ function mapMarkupUrls(
 	});
 	return tags.replace(STYLE_BLOCK, (_whole, open: string, css: string, end: string) => {
 		const urls = mapCssUrls(css, (raw) => resolveCss(raw, base, to));
-		return `${open}${viewport === undefined ? urls : pinViewportHeights(urls, viewport)}${end}`;
+		return `${open}${viewport === undefined ? urls : asScripted(pinViewportHeights(urls, viewport))}${end}`;
 	});
 }
 
@@ -308,7 +313,11 @@ function attributes(attrs: Record<string, string>): string {
  * flattened so it stands at the frame's top-left corner. A whole page is the page as it was.
  */
 function referenceRules(capture: ReferenceCapture): string {
-	const rules = ["html { overflow: hidden !important; scrollbar-width: none !important; }"];
+	const rules = [
+		"html { overflow: hidden !important; scrollbar-width: none !important; }",
+		// with no script to run, Chrome neither autoplays a video nor hides its controls: it stands still, as on a poster
+		"video:not([controls])::-webkit-media-controls { display: none !important; }",
+	];
 	const backdrop = capture.backdrop?.trim();
 	if (backdrop !== undefined && backdrop !== "" && !/[;{}<>]/.test(backdrop)) {
 		rules.push(`html { background-color: ${backdrop} !important; }`);

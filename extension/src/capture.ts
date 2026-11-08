@@ -21,6 +21,8 @@ export interface CaptureTarget {
 export interface CaptureOptions {
 	/** a closed shadow root, when the caller can see one (an extension's `chrome.dom`), so it can be noted */
 	closedShadowRoot?: (el: Element) => ShadowRoot | null;
+	/** canvases already read, from {@link readCanvases}, so a WebGL drawing caught mid-frame isn't read again empty */
+	drawn?: ReadonlyMap<HTMLCanvasElement, string>;
 }
 
 const VOID = new Set([
@@ -64,6 +66,7 @@ const NOTE = {
 	blank: "A canvas read back empty (WebGL keeps no copy of what it drew), so it is left out.",
 	blob: "Images made in the page (blob: URLs) could not come.",
 	closed: "Closed shadow roots are left out.",
+	reveal: "Parts the page fades in as they scroll into view, not reached yet, are shown as they end.",
 } as const;
 
 interface Context {
@@ -90,6 +93,7 @@ export function capture(target: CaptureTarget, opts: CaptureOptions = {}): Refer
 		for (let p = el.parentElement; p !== null && p !== body && p !== html; p = p.parentElement) chain.unshift(p);
 		for (const a of chain) out.push(open(a, ctx, { contents: true }));
 		element(el, out, ctx, false, true);
+		sprites(el, out, ctx);
 		for (const a of chain.reverse()) out.push(`</${a.localName}>`);
 	}
 
@@ -117,6 +121,7 @@ export function capture(target: CaptureTarget, opts: CaptureOptions = {}): Refer
 		styles: styles(doc),
 		animations,
 		notes: [...notes],
+		unusedFonts: unusedFonts(doc),
 	};
 }
 
@@ -163,6 +168,45 @@ function element(el: Element, out: string[], ctx: Context, shadow: boolean, pick
 	out.push(`</${tag}>`);
 }
 
+const SVG = "http://www.w3.org/2000/svg";
+const REFERS = ["fill", "stroke", "mask", "clip-path", "filter", "marker-start", "marker-mid", "marker-end", "style"];
+
+/**
+ * The parts of the page outside a picked element that its SVG draws with: the symbols its icons `<use>` from a sprite
+ * at the end of the body, the gradients, masks and filters those name, kept out of sight beside it.
+ */
+function sprites(el: Element, out: string[], ctx: Context): void {
+	const doc = el.ownerDocument;
+	const found: Element[] = [];
+	const seen = new Set<string>();
+	const visit = (root: Element) => {
+		for (const node of [root, ...Array.from(root.querySelectorAll("*"))]) {
+			const ids: string[] = [];
+			const href = node.localName === "use" ? (node.getAttribute("href") ?? node.getAttribute("xlink:href")) : null;
+			if (href?.startsWith("#")) ids.push(href.slice(1));
+			for (const name of REFERS) {
+				for (const m of (node.getAttribute(name) ?? "").matchAll(/url\(\s*['"]?#([^'")\s]+)/g)) {
+					if (m[1] !== undefined) ids.push(m[1]);
+				}
+			}
+			for (const id of ids) {
+				if (seen.has(id)) continue;
+				seen.add(id);
+				const target = doc.getElementById(id);
+				if (target === null || target.namespaceURI !== SVG || el.contains(target)) continue;
+				if (found.some((one) => one.contains(target))) continue;
+				found.push(target);
+				visit(target);
+			}
+		}
+	};
+	visit(el);
+	if (found.length === 0) return;
+	out.push('<svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden">');
+	for (const target of found) element(target, out, ctx, false, false);
+	out.push("</svg>");
+}
+
 function shadowRoot(root: ShadowRoot, out: string[], ctx: Context): void {
 	out.push(`<template shadowrootmode="open"${root.delegatesFocus ? " shadowrootdelegatesfocus" : ""}>`);
 	const adopted = root.adoptedStyleSheets ?? [];
@@ -180,7 +224,17 @@ function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boo
 	const tag = el.localName;
 	live(el, a, ctx);
 	if (how.contents === true) addStyle(a, "display: contents !important");
-	if (how.picked === true) a["data-spool-reference"] = "";
+	else {
+		const shown = waitingToReveal(el);
+		for (const decl of shown) addStyle(a, decl);
+		if (shown.length > 0) ctx.notes.add(NOTE.reveal);
+	}
+	if (how.picked === true) {
+		a["data-spool-reference"] = "";
+		for (const decl of standAlone(el)) addStyle(a, decl);
+	}
+	// the picked element's parent is an ancestor drawn as nothing: its scroll is none of the frame's
+	if (how.contents !== true) for (const decl of scrollKept(el, how.picked !== true)) addStyle(a, decl);
 	const anim = ctx.anims.get(el);
 	if (anim !== undefined) a["data-spool-anim"] = anim;
 	let s = `<${tag}`;
@@ -203,6 +257,74 @@ function attributes(el: Element, ctx: Context): Record<string, string> {
 		a[name] = value;
 	}
 	return a;
+}
+
+/**
+ * A part held invisible until it scrolls into view, and what to show it as it ends. Framer Motion's whileInView and its
+ * like set it transparent inline; a site's own reveal does it with a class that waits for another, a box set off (moved,
+ * shrunk or blurred) and eased in. Either is in the flow and out of view: one hidden where a person can see it is hidden
+ * on purpose, as is one taken out of the flow (a slide, a menu), and an icon's part that only a hover shows (an arrow's
+ * shaft) is no box. Of how it moves in, a shift, a growth or a blur is let go; any other turn stays.
+ */
+function waitingToReveal(el: Element): string[] {
+	const view = el.ownerDocument.defaultView;
+	const style = (el as HTMLElement).style;
+	if (view === null || style === undefined) return [];
+	const computed = view.getComputedStyle(el);
+	if (computed.opacity !== "0" || /^(absolute|fixed)$/.test(computed.position)) return [];
+	const eased = computed.transitionProperty.split(",").some((property, i) => {
+		const duration = computed.transitionDuration.split(",")[i] ?? computed.transitionDuration.split(",")[0] ?? "0s";
+		return /^\s*(opacity|all)\s*$/.test(property) && Number.parseFloat(duration) > 0;
+	});
+	const shifted = /^matrix\([^,]+,\s*0,\s*0,/.test(computed.transform);
+	const blurred = /^(\s*blur\([^)]*\))+\s*$/.test(computed.filter);
+	const boxSetOff = el instanceof view.HTMLElement && eased && (shifted || blurred);
+	if (style.opacity !== "0" && !boxSetOff) return [];
+	const r = el.getBoundingClientRect();
+	if (r.height === 0 || (r.bottom > 0 && r.top < view.innerHeight)) return [];
+	const out = ["opacity: 1 !important"];
+	if (shifted) out.push("transform: none !important");
+	if (blurred) out.push("filter: none !important");
+	return out;
+}
+
+/**
+ * A box a person or the page scrolled (a docs sidebar on its current entry, a carousel on its third card) kept where it
+ * was, though the frame runs no script to scroll it: the box snaps, as it lays out, to one child set to stand where it
+ * stood. Its other children snap nowhere, so theirs can't pull it elsewhere. `inBox` says whether the parent is drawn.
+ */
+export function scrollKept(el: Element, inBox: boolean): string[] {
+	const out: string[] = [];
+	const own = scrolled(el);
+	if (own !== null) {
+		const axis = own.top !== 0 && own.left !== 0 ? "both" : own.top !== 0 ? "y" : "x";
+		out.push(`scroll-snap-type: ${axis} mandatory !important`, "scroll-padding: 0 !important");
+	}
+	const box = inBox ? el.parentElement : null;
+	const plan = box === null ? null : scrolled(box);
+	if (box !== null && plan !== null) {
+		if (plan.at !== el) out.push("scroll-snap-align: none !important");
+		else {
+			const r = el.getBoundingClientRect();
+			const b = box.getBoundingClientRect();
+			const top = round(r.top - b.top - box.clientTop);
+			const left = round(r.left - b.left - box.clientLeft);
+			out.push("scroll-snap-align: start !important", `scroll-margin: ${top}px 0 0 ${left}px !important`);
+		}
+	}
+	return out;
+}
+
+/** how far a box (not the page's own scroll) had scrolled, and the child it snaps to; null for one at its start */
+function scrolled(box: Element): { top: number; left: number; at: Element } | null {
+	const doc = box.ownerDocument;
+	const view = doc.defaultView;
+	if (box === doc.body || box === doc.documentElement || view === null) return null;
+	if (box.scrollTop === 0 && box.scrollLeft === 0) return null;
+	const at = Array.from(box.children).find(
+		(child) => /^(static|relative)$/.test(view.getComputedStyle(child).position) && child.getClientRects().length > 0,
+	);
+	return at === undefined ? null : { top: box.scrollTop, left: box.scrollLeft, at };
 }
 
 /** what the element is now rather than what it was authored as: typed values, chosen sources, drawn canvases */
@@ -240,7 +362,7 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 			break;
 		}
 		case "canvas": {
-			const url = drawing(el as HTMLCanvasElement, ctx);
+			const url = ctx.opts.drawn?.get(el as HTMLCanvasElement) ?? drawing(el as HTMLCanvasElement, ctx);
 			if (url !== null) addStyle(a, `background: url("${url}") 0 0 / 100% 100% no-repeat`);
 			break;
 		}
@@ -249,7 +371,18 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 			if (stream(video)) {
 				delete a.src;
 				ctx.notes.add(NOTE.stream);
-			} else if (video.currentSrc) a.src = video.currentSrc;
+				break;
+			}
+			if (video.currentSrc) a.src = video.currentSrc;
+			// one under way shows the frame it was on: the frame runs no script to play it, so it opens there, the poster
+			// behind it until it loads
+			if (video.currentSrc && video.currentTime > 0) {
+				a.src = `${video.currentSrc.replace(/#.*$/, "")}#t=${Math.round(video.currentTime * 1000) / 1000}`;
+				a.preload = "auto";
+				if (a.poster !== undefined && a.poster !== "")
+					addStyle(a, `background: url("${a.poster}") center / ${fitted(el)} no-repeat`);
+				delete a.poster;
+			}
 			break;
 		}
 		case "iframe":
@@ -257,7 +390,19 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 			delete a.srcdoc;
 			ctx.notes.add(NOTE.iframe);
 			break;
+		default: {
+			// a player made as a web component (vimeo-video, mux-player) plays in a frame that cannot come: its poster stands in
+			const poster = a.poster;
+			if (poster === undefined || poster === "" || !el.localName.includes("-")) break;
+			addStyle(a, `background: url("${poster}") center / ${fitted(el)} no-repeat`);
+		}
 	}
+}
+
+/** A picture's background size that draws it as the element fits its own: `object-fit` in `background-size` words. */
+function fitted(el: Element): string {
+	const fit = el.ownerDocument.defaultView?.getComputedStyle(el).objectFit;
+	return fit === "cover" ? "cover" : fit === "fill" ? "100% 100%" : "contain";
 }
 
 function addStyle(a: Record<string, string>, decl: string): void {
@@ -297,6 +442,54 @@ function drawing(canvas: HTMLCanvasElement, ctx: Context): string | null {
 		ctx.notes.add(NOTE.canvas);
 		return null;
 	}
+}
+
+/**
+ * The canvases in and around a pick that read back drawn, caught over a few frames. A WebGL canvas that keeps no copy of
+ * its drawing (most) reads empty except in the frame it was drawn, after the page's own frame callbacks: a resize
+ * observer's first call, set up from a frame callback, runs there. A page drawing every frame is caught in the first; one
+ * drawing now and then, within `ms`. Only a canvas in sight is waited for: one out of it, a page seldom draws.
+ */
+export async function readCanvases(root: Element, ms = 500): Promise<Map<HTMLCanvasElement, string>> {
+	const doc = root.ownerDocument;
+	const view = doc.defaultView;
+	const all = Array.from(root.querySelectorAll("canvas"));
+	if (root instanceof HTMLCanvasElement) all.unshift(root);
+	const pending = new Set(all.filter((c) => c.width > 0 && c.height > 0));
+	const out = new Map<HTMLCanvasElement, string>();
+	if (view === null) return out;
+	const read = () => {
+		for (const canvas of pending) {
+			const ctx: Context = { base: doc.baseURI, notes: new Set(), anims: new Map(), opts: {} };
+			const url = drawing(canvas, ctx);
+			// one another site drew is never readable; only an empty one is worth another frame
+			if (url !== null || ctx.notes.has(NOTE.canvas)) pending.delete(canvas);
+			if (url !== null) out.set(canvas, url);
+		}
+	};
+	read();
+	for (const canvas of pending) {
+		const r = canvas.getBoundingClientRect();
+		if (r.bottom <= 0 || r.right <= 0 || r.top >= view.innerHeight || r.left >= view.innerWidth)
+			pending.delete(canvas);
+	}
+	const until = view.performance.now() + ms;
+	while (pending.size > 0 && view.performance.now() < until) {
+		await new Promise<void>((done) =>
+			view.requestAnimationFrame(() => {
+				const mark = doc.createElement("spool-frame");
+				doc.documentElement.append(mark);
+				const watch = new view.ResizeObserver(() => {
+					watch.disconnect();
+					mark.remove();
+					read();
+					done();
+				});
+				watch.observe(mark);
+			}),
+		);
+	}
+	return out;
 }
 
 function draw(img: HTMLImageElement, w: number, h: number): string | null {
@@ -385,6 +578,60 @@ export function styles(doc: Document): ReferenceStyle[] {
 	for (const sheet of Array.from(doc.styleSheets)) take(sheet);
 	for (const sheet of doc.adoptedStyleSheets ?? []) take(sheet);
 	return out;
+}
+
+/**
+ * The files of the readable sheets' @font-face rules the page holds unloaded. A face counts only on that evidence: one
+ * the page's font set doesn't show is taken as used, and fetched.
+ */
+export function unusedFonts(doc: Document): string[] {
+	const idle = new Set<string>();
+	const loaded = new Set<string>();
+	doc.fonts.forEach((face) => {
+		const key = faceKey(face.family, face.weight, face.style, face.stretch, face.unicodeRange);
+		(face.status === "unloaded" ? idle : loaded).add(key);
+	});
+	const out = new Set<string>();
+	const seen = new Set<CSSStyleSheet>();
+	const visit = (rules: CSSRuleList, base: string) => {
+		for (const rule of Array.from(rules)) {
+			if ("styleSheet" in rule) {
+				const imported = (rule as CSSImportRule).styleSheet;
+				if (imported !== null) sheet(imported);
+			} else if ("cssRules" in rule) visit((rule as CSSGroupingRule).cssRules, base);
+			else if (/^@font-face\b/i.test(rule.cssText)) {
+				const s = (rule as CSSFontFaceRule).style;
+				const key = faceKey(
+					s.getPropertyValue("font-family"),
+					s.getPropertyValue("font-weight") || "normal",
+					s.getPropertyValue("font-style") || "normal",
+					s.getPropertyValue("font-stretch") || "normal",
+					s.getPropertyValue("unicode-range") || "U+0-10FFFF",
+				);
+				if (!idle.has(key) || loaded.has(key)) continue;
+				for (const m of s.getPropertyValue("src").matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/g)) {
+					if (m[2] !== undefined && m[2] !== "" && !m[2].startsWith("data:")) out.add(absolute(m[2], base));
+				}
+			}
+		}
+	};
+	const sheet = (s: CSSStyleSheet) => {
+		if (s.disabled || seen.has(s)) return;
+		seen.add(s);
+		try {
+			visit(s.cssRules, s.href ?? doc.baseURI);
+		} catch {
+			// a sheet the tab may not read: its faces are fetched
+		}
+	};
+	for (const s of Array.from(doc.styleSheets)) sheet(s);
+	for (const s of doc.adoptedStyleSheets ?? []) sheet(s);
+	return [...out];
+}
+
+function faceKey(family: string, weight: string, style: string, stretch: string, range: string): string {
+	const name = family.replace(/["']/g, "").trim();
+	return [name, weight, style, stretch, range.toUpperCase().replace(/\s+/g, "")].join("|");
 }
 
 /* ------------------------------------------------------------ animations -- */
@@ -483,6 +730,59 @@ const round = (x: number) => Math.round(x * 100) / 100;
 /* -------------------------------------------------------------- backdrop -- */
 
 /** the colour the element sat on, when its own background lets it through */
+/**
+ * What keeps the picked element's top edge where its content starts once its ancestors are flattened in the frame,
+ * which puts it in plain block flow at the top. On the page a first child's top margin either collapsed through the
+ * element and sat above it (taken back here, or it would push the element down the frame) or stayed inside it, as
+ * in a flex or grid item (kept inside, the element made the formatting root it was).
+ */
+export function standAlone(el: Element): string[] {
+	const view = el.ownerDocument.defaultView;
+	const parent = el.parentElement;
+	if (view === null || parent === null) return [];
+	const own = view.getComputedStyle(el);
+	if (own.display !== "block") return [];
+	if (/(?:^|-)(?:flex|grid)$/.test(view.getComputedStyle(parent).display)) return ["display: flow-root !important"];
+	let above = 0;
+	let below = 0;
+	for (let box = el, style = own; letsMarginThrough(style); ) {
+		const child = firstInFlow(box, view);
+		if (child === null) break;
+		box = child;
+		style = view.getComputedStyle(child);
+		const m = Number.parseFloat(style.marginTop) || 0;
+		above = Math.max(above, m);
+		below = Math.min(below, m);
+	}
+	const escaped = above + below;
+	return escaped === 0 ? [] : [`margin-top: ${-Math.round(escaped * 100) / 100}px !important`];
+}
+
+/** a block whose top margin and its first child's are one: no top padding or border, not a formatting root */
+function letsMarginThrough(s: CSSStyleDeclaration): boolean {
+	return (
+		(s.display === "block" || s.display === "list-item") &&
+		(s.overflowY === "visible" || s.overflowY === "clip") &&
+		(Number.parseFloat(s.paddingTop) || 0) === 0 &&
+		(Number.parseFloat(s.borderTopWidth) || 0) === 0 &&
+		!/layout|paint|strict|content/.test(s.contain) &&
+		s.columnCount === "auto"
+	);
+}
+
+/** the first child in the flow, past the ones taken out of it; none when words come first */
+function firstInFlow(box: Element, view: Window): Element | null {
+	for (let n = box.firstChild; n !== null; n = n.nextSibling) {
+		if (n.nodeType === 3 && (n as Text).data.trim() !== "") return null;
+		if (n.nodeType !== 1) continue;
+		const s = view.getComputedStyle(n as Element);
+		if (s.display === "none" || s.position === "absolute" || s.position === "fixed" || s.float !== "none") continue;
+		// a block-level child's margin joins in; a line's does not
+		return /^(?:block|list-item|flex|grid|table|flow-root)$/.test(s.display) ? (n as Element) : null;
+	}
+	return null;
+}
+
 function backdropOf(el: Element): string | undefined {
 	const view = el.ownerDocument.defaultView;
 	if (view === null) return undefined;

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { ReferenceCapture } from "../reference-wire";
 import { COVER_PNG, makeApp, makeProject, makeTempDir, sseReader } from "../test-helpers";
-import { pinViewportHeights } from "./reference-css";
+import { asScripted, pinViewportHeights } from "./reference-css";
 import { placeReference } from "./reference-frame";
 import type { ReferenceFetch } from "./reference-page";
 import { chooseReferenceProject } from "./reference-routes";
@@ -36,15 +36,21 @@ function capture(overrides: Partial<ReferenceCapture> = {}): ReferenceCapture {
 		label: "section.pricing",
 		size: { w: 600, h: 300 },
 		viewport: { w: 1280, h: 800 },
-		html: '<main class="page"><section class="pricing" data-spool-reference=""><img src="https://cdn.example.com/hero.png" loading="lazy" onclick="steal()"><p style="background:url(&quot;/dot.png&quot;)">Plans</p></section></main>',
+		html: '<main class="page"><section class="pricing" data-spool-reference=""><img src="https://cdn.example.com/hero.png" loading="lazy" onclick="steal()"><p style="background:url(&quot;/dot.png&quot;)">Plans</p><x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price></section></main>',
 		htmlAttrs: { class: "dark", lang: "en" },
 		bodyAttrs: { class: "site" },
 		styles: [
 			{ kind: "link", href: "https://cdn.example.com/site.css" },
 			{ kind: "text", text: ".pricing { min-height: 50vh }", base: "https://example.com/pricing", media: "screen" },
+			{
+				kind: "text",
+				text: "@font-face { font-family: Site; src: url(fonts/greek.woff2) }",
+				base: "https://example.com/",
+			},
 		],
 		animations: "",
 		notes: ["a cross-origin iframe"],
+		unusedFonts: ["https://example.com/fonts/greek.woff2"],
 		...overrides,
 	};
 }
@@ -162,7 +168,16 @@ describe("a reference", () => {
 		expect(page).toContain('style="background:url(&quot;https://example.com/dot.png&quot;)"');
 		// a face's other formats are never fetched, and nothing runs
 		expect(asked).not.toContain("https://cdn.example.com/fonts/site.woff");
+		// nor is a face the page never loaded, which stays on the web and isn't counted missing
+		expect(asked).not.toContain("https://example.com/fonts/greek.woff2");
+		expect(page).toContain('url("https://example.com/fonts/greek.woff2")');
 		expect(page).not.toContain("onclick");
+		// a video that showed no controls on the page shows none in the frame, where nothing runs to hide them
+		expect(page).toContain("video:not([controls])::-webkit-media-controls { display: none !important; }");
+		// a web component keeps its shadow root, declared, or it draws nothing
+		expect(page).toContain(
+			'<x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price>',
+		);
 		const tsx = readFileSync(join(folder, "frame.tsx"), "utf8");
 		expect(tsx).toContain("Left out: a cross-origin iframe; 1 file the site would not give.");
 		// in view, and the canvas is told it arrived
@@ -258,10 +273,19 @@ describe("where a reference goes", () => {
 		expect(placeReference([], view, { w: 1440, h: 9000 })).toMatchObject({ x: 80, y: 80 });
 	});
 
-	it("keeps a class named for a height while the height itself is pinned", () => {
-		const css = ".h-100vh{height:100vh}@media (min-width:600px){.a:hover{margin-top:-10dvh;width:calc(100vw - 2vh)}}";
+	it("keeps a class named for a height, and an image whose data reads like one, while the height itself is pinned", () => {
+		const image = 'url(data:image/png;base64,iVBO/7vh+2svh) 0 0 / 100% 50vh, url("data:image/png;base64,Rw/1vh")';
+		const css = `.h-100vh{height:100vh;background:${image}}@media (min-width:600px){.a:hover{margin-top:-10dvh;width:calc(100vw - 2vh)}}`;
 		expect(pinViewportHeights(css, { w: 1000, h: 800 })).toBe(
-			".h-100vh{height:800px}@media (min-width:600px){.a:hover{margin-top:-80px;width:calc(100vw - 16px)}}",
+			`.h-100vh{height:800px;background:${image.replace("50vh", "400px")}}@media (min-width:600px){.a:hover{margin-top:-80px;width:calc(100vw - 16px)}}`,
+		);
+	});
+
+	it("answers a sheet's scripting queries as the scripted page did, though the frame runs none", () => {
+		const css =
+			"@media (scripting: none){.a{transform:none}}@media (min-width:1px) and (Scripting:enabled),(scripting){.b{x:y}}";
+		expect(asScripted(css)).toBe(
+			"@media (width < 0px){.a{transform:none}}@media (min-width:1px) and (width >= 0px),(width >= 0px){.b{x:y}}",
 		);
 	});
 });

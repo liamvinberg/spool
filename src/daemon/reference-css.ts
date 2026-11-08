@@ -61,6 +61,8 @@ export function nestable(css: string): string {
 	return css.replace(/@charset\s+"[^"]*"\s*;/gi, "");
 }
 
+const UNQUOTED_URL = /url\(\s*[^)"'\s][^)]*\)/iy;
+
 /**
  * Each declaration of a sheet handed to `map`, and nothing else: selectors, at-rule preludes and nested rules are
  * passed over, strings and comments kept as they are. A class named `h-100vh` stays a class; `height: 100vh` moves.
@@ -83,6 +85,14 @@ export function mapDeclarations(css: string, map: (declaration: string) => strin
 			const end = close === -1 ? css.length : close + 2;
 			segment += css.slice(at, end);
 			at = end;
+			continue;
+		}
+		// an unquoted url() runs to its `)`, a `;` in it included (`data:image/png;base64,…`)
+		UNQUOTED_URL.lastIndex = at;
+		const url = char === "u" || char === "U" ? UNQUOTED_URL.exec(css) : null;
+		if (url !== null) {
+			segment += url[0];
+			at += url[0].length;
 			continue;
 		}
 		if (char === '"' || char === "'") {
@@ -109,8 +119,18 @@ export function mapDeclarations(css: string, map: (declaration: string) => strin
 	return out;
 }
 
-/** The viewport-relative heights a value names (`vh`, `svh`, `dvh`, `vmin`…), in the pixels they were on the page. */
+/**
+ * The viewport-relative heights a value names (`vh`, `svh`, `dvh`, `vmin`…), in the pixels they were on the page. A
+ * string or a url() is passed over: a canvas read as a data URL can hold `/7vh` as well as any other run of base64.
+ */
 export function viewportHeightsInPixels(value: string, viewport: { w: number; h: number }): string {
+	return value.replace(
+		/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|url\(\s*[^)"'\s][^)]*\))|[^"']+?(?=["']|url\(|$)/gi,
+		(part, kept) => (kept !== undefined ? part : unitsInPixels(part, viewport)),
+	);
+}
+
+function unitsInPixels(value: string, viewport: { w: number; h: number }): string {
 	return value.replace(
 		/(^|[\s:(,*/+]|[\s:(,]-)(\d*\.?\d+)(?:[sld])?(vh|vmin|vmax)(?![\w-])/gi,
 		(_whole, before: string, number: string, unit: string) => {
@@ -128,6 +148,16 @@ export function viewportHeightsInPixels(value: string, viewport: { w: number; h:
 /** A whole sheet's viewport heights pinned, its selectors untouched: the frame is as tall as the capture, not a screen. */
 export function pinViewportHeights(css: string, viewport: { w: number; h: number }): string {
 	return mapDeclarations(css, (declaration) => viewportHeightsInPixels(declaration, viewport));
+}
+
+/**
+ * A sheet's `scripting` media queries answered as the page answered them, scripted: the frame runs none, and the
+ * fallback a site keeps for a browser without script (`@media (scripting: none)`) would undo what its script did.
+ */
+export function asScripted(css: string): string {
+	return css.replace(/\(\s*scripting\s*(?::\s*([a-z-]+)\s*)?\)/gi, (_whole, value: string | undefined) =>
+		value === undefined || value.toLowerCase() === "enabled" ? "(width >= 0px)" : "(width < 0px)",
+	);
 }
 
 function round(value: number): number {

@@ -49,6 +49,11 @@ export const referenceCaptureSchema = z.object({
 	animations: z.string(),
 	/** what could not come, one short line each (cross-origin iframes, video streams, closed shadow roots…) */
 	notes: z.array(z.string()),
+	/**
+	 * The files of the @font-face rules the page declared and never loaded, absolute: the daemon leaves them on the web
+	 * rather than download every weight and script a site offers (a Framer site declares hundreds and uses a few).
+	 */
+	unusedFonts: z.array(z.string()).optional(),
 });
 
 export type ReferenceCapture = z.infer<typeof referenceCaptureSchema>;
