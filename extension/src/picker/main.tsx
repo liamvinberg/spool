@@ -70,8 +70,20 @@ function mount(): void {
 	root.append(at);
 	const handle: PickerHandle = { toggle: () => {} };
 	g[PICKER_GLOBAL] = handle;
-	createRoot(at).render(<Picker host={host} handle={handle} />);
+	const react = createRoot(at);
+	// an extension removed or reloaded leaves this script behind without a runtime: the next touch takes it all away
+	const orphaned = () => {
+		if (chrome.runtime?.id !== undefined) return;
+		for (const type of ORPHAN_WATCH) window.removeEventListener(type, orphaned, true);
+		react.unmount();
+		host.remove();
+		delete g[PICKER_GLOBAL];
+	};
+	for (const type of ORPHAN_WATCH) window.addEventListener(type, orphaned, true);
+	react.render(<Picker host={host} handle={handle} />);
 }
+
+const ORPHAN_WATCH = ["keydown", "pointerdown", "pointermove"] as const;
 
 function Picker({ host, handle }: { host: HTMLElement; handle: PickerHandle }) {
 	const hostRef = useRef<HTMLElement | null>(host);
