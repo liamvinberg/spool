@@ -203,22 +203,29 @@ is no `version.sh 1.2.3` here that bumps and tags.
 So a release is the release described in `docs/releases.md`, with one job on the
 end. `publish.yml` cuts the tag, publishes to npm, and then the `dmg` job checks
 out that tag, builds the app, signs it with the repo's Developer ID certificate,
-sends it to Apple for notarization, staples the ticket, and attaches two files to
-the GitHub release:
+sends it to Apple for notarization, staples the ticket, and puts it in two
+places:
 
-- `Spool-X.Y.Z.dmg`, the one to keep and check a hash against
-- `Spool.dmg`, the same file under a name that does not move, so
-  `releases/latest/download/Spool.dmg` is a link that never needs editing
+- `updates.spool.page`, the `spool-releases` R2 bucket on the Cloudflare account
+  that holds spool.page. The app's update feed (`latest-mac.yml`) and the zip it
+  installs live there, and so does the dmg twice: `Spool-X.Y.Z.dmg`, the one to
+  keep and check a hash against, and `Spool.dmg`, the same file under a name that
+  does not move, so `https://updates.spool.page/Spool.dmg` is a link that never
+  needs editing. The job writes with an Object Read & Write token scoped to that
+  bucket, in the `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` secrets.
+- The GitHub release, with the changelog and the same files, for people. The app
+  asks GitHub nothing: its release pages have gone down for hours while the rest
+  of GitHub stayed up, which stopped updates and downloads at once.
 
 The `dmg` job runs after the npm publish and depends on it, because the app
 installs `spool.page@<version>` from the registry. That ordering is also the
 safety: a DMG failure cannot retract anything, since npm already has the release
-and the GitHub release already exists. Rerun it the way a refused publish is
+and the files are only ever added. Rerun it the way a refused publish is
 rerun, with `gh workflow run publish.yml -f tag=vX.Y.Z`.
 
 The app checks for a release by itself, ten seconds after launch unless it
 checked within the hour, and hourly after that; Check for Updates is the same
-check by hand. The source is the release's own `latest-mac.yml`, read by
+check by hand. The source is `latest-mac.yml` on updates.spool.page, read by
 electron-updater, so a version it names is one it can install. New releases
 download and prepare in the background while the canvas stays usable. Once Squirrel.Mac has verified the
 bundle, a dismissible canvas notice offers Restart to update. Dismissing it leaves
