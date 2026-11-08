@@ -117,13 +117,14 @@ export async function referencePage(
 	);
 
 	// what to fetch, in the order it matters: the markup's own images, the faces, then whatever else the sheets name
-	const faces = fontFaceSources(css);
+	// the faces the page never loaded stay on the web, as do the formats a face offers besides the one the browser takes
+	const unused = new Set(capture.unusedFonts ?? []);
+	const faces = fontFaceSources(css).filter((url) => !unused.has(url));
 	const otherFaces = new Set(fontFaceUrls(css).filter((url) => !faces.includes(url)));
 	const wanted = new Set<string>();
 	for (const url of [...markupUrls(htmlOpen), ...markupUrls(body)]) wanted.add(url);
 	for (const url of faces) wanted.add(url);
 	for (const url of [...cssUrls(css), ...cssUrls(capture.animations)]) {
-		// the formats a face offers besides the one the browser takes are never asked for
 		if (!otherFaces.has(url)) wanted.add(url);
 	}
 	const fetchable = [...wanted].filter((url) => /^https?:/i.test(url)).slice(0, limits.files);

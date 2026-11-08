@@ -23,6 +23,7 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 <html class="dark" data-theme="night" lang="en">
 <head>
 	<link rel="stylesheet" href="/site.css">
+	<link rel="stylesheet" href="/faces.css">
 	<link rel="stylesheet" href="${otherOrigin}/fonts.css" media="screen">
 	<style>@import url("/imported.css"); .pricing .card { color: red; }</style>
 </head>
@@ -101,6 +102,10 @@ beforeAll(async () => {
 		"/": ["text/html", FIXTURE(at(other))],
 		"/site.css": ["text/css", ".page { background: url(bg.png) }"],
 		"/imported.css": ["text/css", ".imported { color: green }"],
+		"/faces.css": [
+			"text/css",
+			"@font-face { font-family: Used; src: url(used.woff2) } @font-face { font-family: Idle; src: url(idle.woff2) } .pricing { font-family: Used }",
+		],
 		"/a.png": ["image/png", ""],
 	});
 });
@@ -154,10 +159,14 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	// every sheet in order: read where the tab may, the other origin's left for the daemon to fetch
 	expect(c.styles).toEqual([
 		{ kind: "text", text: '.page { background: url("bg.png"); }', base: `${at(page)}/site.css` },
+		expect.objectContaining({ kind: "text", base: `${at(page)}/faces.css` }),
 		{ kind: "link", href: `${at(other)}/fonts.css`, media: "screen" },
 		{ kind: "text", text: ".imported { color: green; }", base: `${at(page)}/imported.css` },
 		{ kind: "text", text: ".pricing .card { color: red; }", base: `${at(page)}/` },
 	]);
+
+	// a face the page declared and never loaded, for the daemon to leave on the web
+	expect(c.unusedFonts).toEqual([`${at(page)}/idle.woff2`]);
 
 	// the script-started spin, as keyframes on an attribute the markup carries
 	expect(c.html).toContain('<div class="spinner" data-spool-anim="a1">');

@@ -117,6 +117,7 @@ export function capture(target: CaptureTarget, opts: CaptureOptions = {}): Refer
 		styles: styles(doc),
 		animations,
 		notes: [...notes],
+		unusedFonts: unusedFonts(doc),
 	};
 }
 
@@ -396,6 +397,60 @@ export function styles(doc: Document): ReferenceStyle[] {
 	for (const sheet of Array.from(doc.styleSheets)) take(sheet);
 	for (const sheet of doc.adoptedStyleSheets ?? []) take(sheet);
 	return out;
+}
+
+/**
+ * The files of the readable sheets' @font-face rules the page holds unloaded. A face counts only on that evidence: one
+ * the page's font set doesn't show is taken as used, and fetched.
+ */
+export function unusedFonts(doc: Document): string[] {
+	const idle = new Set<string>();
+	const loaded = new Set<string>();
+	doc.fonts.forEach((face) => {
+		const key = faceKey(face.family, face.weight, face.style, face.stretch, face.unicodeRange);
+		(face.status === "unloaded" ? idle : loaded).add(key);
+	});
+	const out = new Set<string>();
+	const seen = new Set<CSSStyleSheet>();
+	const visit = (rules: CSSRuleList, base: string) => {
+		for (const rule of Array.from(rules)) {
+			if ("styleSheet" in rule) {
+				const imported = (rule as CSSImportRule).styleSheet;
+				if (imported !== null) sheet(imported);
+			} else if ("cssRules" in rule) visit((rule as CSSGroupingRule).cssRules, base);
+			else if (/^@font-face\b/i.test(rule.cssText)) {
+				const s = (rule as CSSFontFaceRule).style;
+				const key = faceKey(
+					s.getPropertyValue("font-family"),
+					s.getPropertyValue("font-weight") || "normal",
+					s.getPropertyValue("font-style") || "normal",
+					s.getPropertyValue("font-stretch") || "normal",
+					s.getPropertyValue("unicode-range") || "U+0-10FFFF",
+				);
+				if (!idle.has(key) || loaded.has(key)) continue;
+				for (const m of s.getPropertyValue("src").matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/g)) {
+					if (m[2] !== undefined && m[2] !== "" && !m[2].startsWith("data:")) out.add(absolute(m[2], base));
+				}
+			}
+		}
+	};
+	const sheet = (s: CSSStyleSheet) => {
+		if (s.disabled || seen.has(s)) return;
+		seen.add(s);
+		try {
+			visit(s.cssRules, s.href ?? doc.baseURI);
+		} catch {
+			// a sheet the tab may not read: its faces are fetched
+		}
+	};
+	for (const s of Array.from(doc.styleSheets)) sheet(s);
+	for (const s of doc.adoptedStyleSheets ?? []) sheet(s);
+	return [...out];
+}
+
+function faceKey(family: string, weight: string, style: string, stretch: string, range: string): string {
+	const name = family.replace(/["']/g, "").trim();
+	return [name, weight, style, stretch, range.toUpperCase().replace(/\s+/g, "")].join("|");
 }
 
 /* ------------------------------------------------------------ animations -- */

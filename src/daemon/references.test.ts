@@ -42,9 +42,15 @@ function capture(overrides: Partial<ReferenceCapture> = {}): ReferenceCapture {
 		styles: [
 			{ kind: "link", href: "https://cdn.example.com/site.css" },
 			{ kind: "text", text: ".pricing { min-height: 50vh }", base: "https://example.com/pricing", media: "screen" },
+			{
+				kind: "text",
+				text: "@font-face { font-family: Site; src: url(fonts/greek.woff2) }",
+				base: "https://example.com/",
+			},
 		],
 		animations: "",
 		notes: ["a cross-origin iframe"],
+		unusedFonts: ["https://example.com/fonts/greek.woff2"],
 		...overrides,
 	};
 }
@@ -162,6 +168,9 @@ describe("a reference", () => {
 		expect(page).toContain('style="background:url(&quot;https://example.com/dot.png&quot;)"');
 		// a face's other formats are never fetched, and nothing runs
 		expect(asked).not.toContain("https://cdn.example.com/fonts/site.woff");
+		// nor is a face the page never loaded, which stays on the web and isn't counted missing
+		expect(asked).not.toContain("https://example.com/fonts/greek.woff2");
+		expect(page).toContain('url("https://example.com/fonts/greek.woff2")');
 		expect(page).not.toContain("onclick");
 		// a video that showed no controls on the page shows none in the frame, where nothing runs to hide them
 		expect(page).toContain("video:not([controls])::-webkit-media-controls { display: none !important; }");
