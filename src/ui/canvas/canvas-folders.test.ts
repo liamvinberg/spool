@@ -117,7 +117,7 @@ describe("the keys between pages", () => {
 		await until(() => on(host) === "explore/loyalty");
 	});
 
-	it("goes down a page of frames into the page its ghost names, and up the path by a name", async () => {
+	it("goes down a page of frames into the page its ghost names, and up the path by a name, out of the finder", async () => {
 		const host = await mountCanvas(KAFFE);
 		await into(host, "explore");
 		await into(host, "explore/checkout");
@@ -129,10 +129,14 @@ describe("the keys between pages", () => {
 		]);
 		await keydown({ key: "ArrowDown", ...ACCEL });
 		await until(() => on(host) === "explore/checkout/tipping");
+		// the names stand over the open finder, and going up by one closes it
+		await keydown({ key: "/" });
+		await until(() => host.querySelector('[role="dialog"][aria-label="Find a frame"]') !== null);
 		await act(async () => {
 			host.querySelector<HTMLElement>('[data-path-page=""]')?.click();
 		});
 		await until(() => on(host) === "");
+		expect(host.querySelector('[role="dialog"][aria-label="Find a frame"]')).toBeNull();
 		// up the path lands with the page you came out of picked, as ⌘↑ does
 		expect(lit(host)).toBe("explore");
 	});
