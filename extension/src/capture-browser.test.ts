@@ -47,7 +47,7 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 </body>
 </html>`;
 
-async function captured(whole: boolean): Promise<ReferenceCapture> {
+async function openTab() {
 	const bundle = await build({
 		entryPoints: [new URL("./capture.ts", import.meta.url).pathname],
 		bundle: true,
@@ -59,7 +59,11 @@ async function captured(whole: boolean): Promise<ReferenceCapture> {
 	const tab = await browser.newPage({ viewport: { width: 1200, height: 800 } });
 	await tab.goto(`${at(page)}/`);
 	await tab.addScriptTag({ content: bundle.outputFiles[0]?.text ?? "" });
-	return tab.evaluate(async (whole) => {
+	return tab;
+}
+
+async function captured(whole: boolean): Promise<ReferenceCapture> {
+	return (await openTab()).evaluate(async (whole) => {
 		// what a person did on the page before picking it
 		(document.querySelector("#email") as HTMLInputElement).value = "liam@example.com";
 		(document.querySelector("#agree") as HTMLInputElement).checked = true;
@@ -158,6 +162,21 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	expect(c.animations).toMatch(
 		/\[data-spool-anim="a1"\] \{ animation: spool-anim-1 800ms ease-in-out -?[\d.]+ms infinite alternate none running !important; \}/,
 	);
+});
+
+it("keeps a picked element's top where its content starts, wherever its first child's margin went", {
+	timeout: 60_000,
+}, async () => {
+	const fixes = await (await openTab()).evaluate(() => {
+		document.body.innerHTML = `
+			<div id="escapes"><div><div style="margin-top: 200px">hero</div></div></div>
+			<div id="padded" style="padding-top: 1px"><p style="margin-top: 40px">a</p></div>
+			<div style="display: flex"><div id="item"><p style="margin-top: 40px">b</p></div></div>
+			<div id="worded">words<p style="margin-top: 40px">c</p></div>`;
+		const { standAlone } = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture;
+		return ["escapes", "padded", "item", "worded"].map((id) => standAlone(document.getElementById(id) as Element));
+	});
+	expect(fixes).toEqual([["margin-top: -200px !important"], [], ["display: flow-root !important"], []]);
 });
 
 it("serializes the whole page as its body, marked", { timeout: 60_000 }, async () => {

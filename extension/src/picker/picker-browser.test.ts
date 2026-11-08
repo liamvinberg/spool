@@ -71,7 +71,7 @@ it("picks, sends to spool and shows the receipt; spool away, says so and tries a
 	expect(page.url()).toBe("http://tidemark.test/");
 	const [sent] = await asks();
 	expect(sent).toMatchObject({ type: "spool:send", capture: { label: "section.pricing", whole: false } });
-	expect(sent?.type === "spool:send" && sent.capture.html).toContain('<section class="pricing" data-spool-reference>');
+	expect(sent?.type === "spool:send" && sent.capture.html).toContain('<section class="pricing" data-spool-reference');
 
 	// ↑ walks out past body to the whole page; spool isn't there; it opens; Try again sends it
 	await page.evaluate(() => {

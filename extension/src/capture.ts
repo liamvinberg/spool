@@ -180,7 +180,10 @@ function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boo
 	const tag = el.localName;
 	live(el, a, ctx);
 	if (how.contents === true) addStyle(a, "display: contents !important");
-	if (how.picked === true) a["data-spool-reference"] = "";
+	if (how.picked === true) {
+		a["data-spool-reference"] = "";
+		for (const decl of standAlone(el)) addStyle(a, decl);
+	}
 	const anim = ctx.anims.get(el);
 	if (anim !== undefined) a["data-spool-anim"] = anim;
 	let s = `<${tag}`;
@@ -483,6 +486,59 @@ const round = (x: number) => Math.round(x * 100) / 100;
 /* -------------------------------------------------------------- backdrop -- */
 
 /** the colour the element sat on, when its own background lets it through */
+/**
+ * What keeps the picked element's top edge where its content starts once its ancestors are flattened in the frame,
+ * which puts it in plain block flow at the top. On the page a first child's top margin either collapsed through the
+ * element and sat above it (taken back here, or it would push the element down the frame) or stayed inside it, as
+ * in a flex or grid item (kept inside, the element made the formatting root it was).
+ */
+export function standAlone(el: Element): string[] {
+	const view = el.ownerDocument.defaultView;
+	const parent = el.parentElement;
+	if (view === null || parent === null) return [];
+	const own = view.getComputedStyle(el);
+	if (own.display !== "block") return [];
+	if (/(?:^|-)(?:flex|grid)$/.test(view.getComputedStyle(parent).display)) return ["display: flow-root !important"];
+	let above = 0;
+	let below = 0;
+	for (let box = el, style = own; letsMarginThrough(style); ) {
+		const child = firstInFlow(box, view);
+		if (child === null) break;
+		box = child;
+		style = view.getComputedStyle(child);
+		const m = Number.parseFloat(style.marginTop) || 0;
+		above = Math.max(above, m);
+		below = Math.min(below, m);
+	}
+	const escaped = above + below;
+	return escaped === 0 ? [] : [`margin-top: ${-Math.round(escaped * 100) / 100}px !important`];
+}
+
+/** a block whose top margin and its first child's are one: no top padding or border, not a formatting root */
+function letsMarginThrough(s: CSSStyleDeclaration): boolean {
+	return (
+		(s.display === "block" || s.display === "list-item") &&
+		(s.overflowY === "visible" || s.overflowY === "clip") &&
+		(Number.parseFloat(s.paddingTop) || 0) === 0 &&
+		(Number.parseFloat(s.borderTopWidth) || 0) === 0 &&
+		!/layout|paint|strict|content/.test(s.contain) &&
+		s.columnCount === "auto"
+	);
+}
+
+/** the first child in the flow, past the ones taken out of it; none when words come first */
+function firstInFlow(box: Element, view: Window): Element | null {
+	for (let n = box.firstChild; n !== null; n = n.nextSibling) {
+		if (n.nodeType === 3 && (n as Text).data.trim() !== "") return null;
+		if (n.nodeType !== 1) continue;
+		const s = view.getComputedStyle(n as Element);
+		if (s.display === "none" || s.position === "absolute" || s.position === "fixed" || s.float !== "none") continue;
+		// a block-level child's margin joins in; a line's does not
+		return /^(?:block|list-item|flex|grid|table|flow-root)$/.test(s.display) ? (n as Element) : null;
+	}
+	return null;
+}
+
 function backdropOf(el: Element): string | undefined {
 	const view = el.ownerDocument.defaultView;
 	if (view === null) return undefined;
