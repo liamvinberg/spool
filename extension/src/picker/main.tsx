@@ -2,7 +2,7 @@ import fragmentMono from "@fontsource/fragment-mono/files/fragment-mono-latin-40
 import instrumentSans from "@fontsource-variable/instrument-sans/files/instrument-sans-latin-wght-normal.woff2?inline";
 import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { capture } from "../capture";
+import { capture, readCanvases } from "../capture";
 import { type Ask, type OpenAnswer, PICKER_GLOBAL, type PickerHandle, type SendAnswer } from "../messages";
 import { MOTION, Overlay } from "./overlay";
 import css from "./overlay.css?inline";
@@ -97,11 +97,17 @@ function Picker({ host, handle }: { host: HTMLElement; handle: PickerHandle }) {
 
 async function deliver(grab: { el: Element; whole: boolean; label: string }): Promise<Delivery> {
 	const started = performance.now();
+	const drawn = await readCanvases(grab.el);
+	const read = performance.now();
 	const taken = capture(grab, {
 		closedShadowRoot: (el) =>
 			el.localName.includes("-") ? chrome.dom.openOrClosedShadowRoot(el as HTMLElement) : null,
+		drawn,
 	});
-	console.debug(`spool: captured ${grab.label} in ${Math.round(performance.now() - started)} ms`);
+	const ms = (from: number, to: number) => Math.round(to - from);
+	console.debug(
+		`spool: captured ${grab.label} in ${ms(started, performance.now())} ms (canvases ${ms(started, read)} ms)`,
+	);
 	const ask: Ask = { type: "spool:send", capture: taken };
 	const answer = await chrome.runtime.sendMessage<SendAnswer>(ask);
 	return answer ?? { ok: false, offline: true };

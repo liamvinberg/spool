@@ -21,6 +21,8 @@ export interface CaptureTarget {
 export interface CaptureOptions {
 	/** a closed shadow root, when the caller can see one (an extension's `chrome.dom`), so it can be noted */
 	closedShadowRoot?: (el: Element) => ShadowRoot | null;
+	/** canvases already read, from {@link readCanvases}, so a WebGL drawing caught mid-frame isn't read again empty */
+	drawn?: ReadonlyMap<HTMLCanvasElement, string>;
 }
 
 const VOID = new Set([
@@ -244,7 +246,7 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 			break;
 		}
 		case "canvas": {
-			const url = drawing(el as HTMLCanvasElement, ctx);
+			const url = ctx.opts.drawn?.get(el as HTMLCanvasElement) ?? drawing(el as HTMLCanvasElement, ctx);
 			if (url !== null) addStyle(a, `background: url("${url}") 0 0 / 100% 100% no-repeat`);
 			break;
 		}
@@ -309,6 +311,53 @@ function drawing(canvas: HTMLCanvasElement, ctx: Context): string | null {
 		ctx.notes.add(NOTE.canvas);
 		return null;
 	}
+}
+
+/**
+ * The canvases in and around a pick that read back drawn, caught over a few frames. A WebGL canvas that keeps no copy of
+ * its drawing (most) reads empty except in the frame it was drawn, after the page's own frame callbacks: a resize
+ * observer's first call, set up from a frame callback, runs there. A page drawing every frame is caught in the first; one
+ * drawing now and then, within `ms`. Only a canvas in sight is waited for: one out of it, a page seldom draws.
+ */
+export async function readCanvases(root: Element, ms = 500): Promise<Map<HTMLCanvasElement, string>> {
+	const doc = root.ownerDocument;
+	const view = doc.defaultView;
+	const all = Array.from(root.querySelectorAll("canvas"));
+	if (root instanceof HTMLCanvasElement) all.unshift(root);
+	const pending = new Set(all.filter((c) => c.width > 0 && c.height > 0));
+	const out = new Map<HTMLCanvasElement, string>();
+	if (view === null) return out;
+	const read = () => {
+		for (const canvas of pending) {
+			const ctx: Context = { base: doc.baseURI, notes: new Set(), anims: new Map(), opts: {} };
+			const url = drawing(canvas, ctx);
+			// one another site drew is never readable; only an empty one is worth another frame
+			if (url !== null || ctx.notes.has(NOTE.canvas)) pending.delete(canvas);
+			if (url !== null) out.set(canvas, url);
+		}
+	};
+	read();
+	for (const canvas of pending) {
+		const r = canvas.getBoundingClientRect();
+		if (r.bottom <= 0 || r.right <= 0 || r.top >= view.innerHeight || r.left >= view.innerWidth) pending.delete(canvas);
+	}
+	const until = view.performance.now() + ms;
+	while (pending.size > 0 && view.performance.now() < until) {
+		await new Promise<void>((done) =>
+			view.requestAnimationFrame(() => {
+				const mark = doc.createElement("spool-frame");
+				doc.documentElement.append(mark);
+				const watch = new view.ResizeObserver(() => {
+					watch.disconnect();
+					mark.remove();
+					read();
+					done();
+				});
+				watch.observe(mark);
+			}),
+		);
+	}
+	return out;
 }
 
 function draw(img: HTMLImageElement, w: number, h: number): string | null {

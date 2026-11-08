@@ -193,6 +193,27 @@ it("keeps a picked element's top where its content starts, wherever its first ch
 	expect(fixes).toEqual([["margin-top: -200px !important"], [], ["display: flow-root !important"], []]);
 });
 
+it("catches a WebGL drawing in the frame it was drawn, though it reads back empty after", {
+	timeout: 60_000,
+}, async () => {
+	const read = await (await openTab()).evaluate(async () => {
+		document.body.innerHTML = `<canvas id="gl" width="8" height="8"></canvas>`;
+		const canvas = document.getElementById("gl") as HTMLCanvasElement;
+		const gl = canvas.getContext("webgl");
+		if (gl === null) return "no webgl";
+		const paint = () => {
+			gl.clearColor(1, 0, 0, 1);
+			gl.clear(gl.COLOR_BUFFER_BIT);
+			requestAnimationFrame(paint);
+		};
+		requestAnimationFrame(paint);
+		await new Promise((done) => setTimeout(done, 100));
+		const { readCanvases } = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture;
+		return (await readCanvases(document.body)).get(canvas)?.slice(0, 22) ?? "empty";
+	});
+	expect(read).toBe("data:image/png;base64,");
+});
+
 it("serializes the whole page as its body, marked", { timeout: 60_000 }, async () => {
 	const c = await captured(true);
 	expect(c.whole).toBe(true);
