@@ -213,7 +213,6 @@ export function TabStrip({
 	onClose,
 	onReorder,
 	onPick,
-	onExport,
 	onChangeIcon,
 	onRemoveIcon,
 	onMatchTeam,
@@ -232,7 +231,6 @@ export function TabStrip({
 	onReorder: (order: readonly string[]) => void;
 	/** the "+" door: open a project folder */
 	onPick: () => void;
-	onExport?: (project: TabProject) => void;
 	/** "Change icon…": choose an image for the project. */
 	onChangeIcon?: (project: TabProject) => void;
 	/** "Remove icon", offered while the icon is the project's own file. */
@@ -682,11 +680,12 @@ export function TabStrip({
 			</nav>
 			{menu && (
 				<ProjectTabMenu
+					// opened anew, on another tab or at another place, it starts at its verbs
+					key={`${menu.project.root} ${menu.x} ${menu.y}`}
 					{...menu}
 					// the tab as it is now: an icon changed while the menu is open shows in its header
 					project={tabs.find((tab) => tab.root === menu.project.root) ?? menu.project}
 					onClose={() => setMenu(null)}
-					onExport={() => onExport?.(menu.project)}
 					onCloseTab={() => onClose(menu.project.root)}
 					{...(onRenaming === undefined ? {} : { onRename: () => onRenaming(menu.project.root) })}
 					{...(onChangeIcon === undefined ? {} : { onChangeIcon: () => onChangeIcon(menu.project) })}

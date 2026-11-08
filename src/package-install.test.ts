@@ -35,6 +35,7 @@ describe("packed install", () => {
 			cpSync(join(repoRoot, file), join(packageRoot, file));
 		}
 		cpSync(join(repoRoot, "src"), join(packageRoot, "src"), { recursive: true });
+		cpSync(join(repoRoot, "skill"), join(packageRoot, "skill"), { recursive: true });
 		symlinkSync(join(repoRoot, "node_modules"), join(packageRoot, "node_modules"), "dir");
 		const tarball = join(makeTempDir(), "spool-page.tgz");
 		run("pnpm", ["pack", "--out", tarball], packageRoot);

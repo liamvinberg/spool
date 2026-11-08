@@ -54,15 +54,17 @@ it("downloads PNGs and a PDF from the canvas export menu", { timeout: 120_000 },
 		.toBe("255,204,0,255");
 	await page.locator('[data-frame-label="home"]').click();
 	await page.locator('[data-frame-label="second"]').click({ modifiers: ["Shift"] });
+	// the menu's Export becomes the choice in the same box, its last row the act
+	const exportRow = page.getByRole("menuitem", { name: /^Export.*↵$/ });
 	const openExport = async () => {
 		await page.locator('[data-frame-label="home"]').click({ button: "right" });
-		await page.getByRole("menuitem", { name: /^Export/ }).click();
-		await page.getByRole("dialog").waitFor();
+		await page.getByRole("menuitem", { name: /^Export 2 frames…/ }).click();
+		await exportRow.waitFor();
 	};
 	await openExport();
 	const pngs: Download[] = [];
 	page.on("download", (download) => pngs.push(download));
-	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await exportRow.click();
 	await expect.poll(() => pngs.length, { timeout: 30_000 }).toBe(2);
 	for (const download of pngs) {
 		const path = await download.path();
@@ -84,11 +86,16 @@ it("downloads PNGs and a PDF from the canvas export menu", { timeout: 120_000 },
 		return Array.from(context?.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data ?? []);
 	}, readFileSync(second).toString("base64"));
 	expect(centre).toEqual([255, 204, 0, 255]);
-	expect(pngs.map((download) => download.suggestedFilename())).toEqual(["home.png", "second.png"]);
+	expect(pngs.map((download) => download.suggestedFilename())).toEqual([
+		`${f.project.name}-home.png`,
+		`${f.project.name}-second.png`,
+	]);
+	await page.getByText("Downloaded", { exact: true }).waitFor();
+	await page.keyboard.press("Escape");
 	await openExport();
-	await page.getByRole("dialog").getByText("PDF document", { exact: true }).click();
+	await page.getByText("pdf", { exact: true }).click();
 	const completed = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await page.keyboard.press("Enter");
 	const download = await completed;
 	const path = await download.path();
 	if (path === null) throw new Error("PDF download failed");

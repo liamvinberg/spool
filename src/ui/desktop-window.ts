@@ -42,9 +42,12 @@ export interface DesktopWindow {
 	setMenuKeys?(keys: Partial<Record<DesktopCommand, string>>): void;
 	/** close the window the canvas is in; an older app has no such call */
 	closeWindow?(): void;
-	onProjectDownload?(
-		listener: (result: { status: "completed"; filename: string } | { status: "failed"; message: string }) => void,
-	): () => void;
+	/** a project (.spool) the app saved to Downloads, or could not; an older app does not say where */
+	onProjectDownload?(listener: (report: ProjectDownload) => void): () => void;
+	/** a canvas export (.png, .pdf, .html) the app saved to Downloads, or could not; `requested` is the name the canvas asked for */
+	onExportDownload?(listener: (report: ExportDownload) => void): () => void;
+	/** Finder, showing a file `onExportDownload` or `onProjectDownload` reported saved */
+	revealDownload?(path: string): unknown;
 	/** the system's open panel: a folder, or for Open… a folder or a .spool file */
 	chooseDirectory?(request: DirectoryRequest): Promise<string | null>;
 	/** a document Finder handed the app, a .spool opened with it say, for Open… to read */
@@ -52,6 +55,14 @@ export interface DesktopWindow {
 	/** where a dropped file or folder lies on this Mac; an older app has no such call */
 	pathForFile?(file: File): string;
 }
+
+export type ProjectDownload =
+	| { status: "completed"; filename: string; path?: string | undefined }
+	| { status: "failed"; message: string };
+
+export type ExportDownload =
+	| { status: "completed"; requested: string; filename: string; path: string }
+	| { status: "failed"; requested: string; message: string };
 
 export interface DirectoryRequest {
 	purpose: "location" | "checkout" | "open" | "export";

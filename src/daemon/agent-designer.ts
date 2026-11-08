@@ -38,11 +38,19 @@ Once the frame renders, look at it with \`spool shot\` and hold it against the b
 
 /** when to use it, which is what each engine shows the main agent beside the name */
 export const DESIGNER_DESCRIPTION =
-	"Draws one design direction as frames on the spool canvas. Use one designer per direction when someone asks for options or several directions. The brief is all it sees, so give it the product, its own frame to write as design/frames/<page>/<name>/frame.tsx, and what sets this direction apart.";
+	"Draws one design direction as frames on the spool canvas, at medium effort unless you ask for more. Good for options or several directions, one designer each. The brief is all it sees, so give it the product, its own frame to write as design/frames/<page>/<name>/frame.tsx, and what sets this direction apart.";
 
-/** the framing's one line about designers, the same in every engine */
-export const DESIGNER_FRAMING =
-	"When someone asks for options or several directions, give each direction to its own designer with a brief. Before it starts, choose each designer's own frame and name it in the brief as design/frames/<page>/<name>/frame.tsx, one new frame per designer: spool puts a placeholder there the moment the designer starts, and the designer draws into it. Make single edits yourself.";
+/**
+ * The effort a designer works at unless the main agent asks for another. Every engine's
+ * sub-agent otherwise takes the parent's, so a thread on xhigh fanned out to three
+ * designers ran all three on xhigh. A direction is drawn and then checked against its
+ * shot, which medium does well for a fraction of the tokens; the model stays the thread's
+ * own, which is where the taste is. The main agent can still raise it for one designer.
+ */
+export const DESIGNER_EFFORT = "medium";
+
+/** the framing's line about designers, the same in every engine */
+export const DESIGNER_FRAMING = `Designers are there when someone asks for options or several directions: each draws one direction from a brief, in parallel, while your own context stays small. Use them when that helps, and make single edits yourself. Before a designer starts, choose its own frame and name it in the brief as design/frames/<page>/<name>/frame.tsx, one new frame per designer: spool puts a placeholder there the moment the designer starts, and the designer draws into it. A designer works at ${DESIGNER_EFFORT} effort; ask for a higher one only for a direction that is hard to get right.`;
 
 export function designerDir(spoolDir: string): string {
 	return join(spoolDir, "designer");
@@ -51,14 +59,19 @@ export function designerDir(spoolDir: string): string {
 /** a TOML basic string: JSON's escapes are a subset TOML reads the same way */
 const toml = (value: string): string => JSON.stringify(value);
 
+/** the definition's effort is a default: the Agent tool's own `effort` on a call outranks it */
 function claudeDesignerFile(): string {
 	return `${JSON.stringify(
-		{ [DESIGNER_NAME]: { description: DESIGNER_DESCRIPTION, prompt: DESIGNER_PROMPT } },
+		{ [DESIGNER_NAME]: { description: DESIGNER_DESCRIPTION, prompt: DESIGNER_PROMPT, effort: DESIGNER_EFFORT } },
 		null,
 		"\t",
 	)}\n`;
 }
 
+/**
+ * No effort here: a role file's own outranks what a spawn asks for, so the designer's
+ * default rides the spawn instead (`planCodexSpawn`), where an explicit one beats it.
+ */
 function codexDesignerFile(): string {
 	return `developer_instructions = ${toml(DESIGNER_PROMPT)}\n`;
 }
@@ -68,7 +81,8 @@ function codexDesignerFile(): string {
  *
  * One `designer` tool. Its call runs the same pi that loaded it (the running script, the
  * way pi's own sub-agent example does), in JSON mode with no session, on the parent's
- * model and thinking level, with the designer prompt appended. The child is the person's
+ * model, at the effort the call asks for or else the designer's own, with the designer prompt
+ * appended. The child is the person's
  * own pi with their login and settings and without this extension, so a designer brings
  * in no designers of its own. Tool calls from one message run in parallel, so a fan-out
  * is one call per direction. Each tool the child starts comes back as the tool's partial
@@ -110,11 +124,14 @@ export default function (pi) {
 		parameters: Type.Object({
 			description: Type.String({ description: "A few words naming this direction" }),
 			prompt: Type.String({ description: "The whole brief for this direction" }),
+			effort: Type.Optional(
+				Type.String({ description: "A thinking level for a direction that is hard to get right; ${DESIGNER_EFFORT} without one" }),
+			),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const args = ["--mode", "json", "-p", "--no-session"];
 			if (ctx?.model) args.push("--model", ctx.model.provider + "/" + ctx.model.id);
-			if (ctx?.thinkingLevel) args.push("--thinking", ctx.thinkingLevel);
+			args.push("--thinking", params.effort || ${JSON.stringify(DESIGNER_EFFORT)});
 			args.push("--append-system-prompt", PROMPT, params.prompt);
 			const run = invocation(args);
 			const child = spawn(run.command, run.args, { cwd: ctx?.cwd ?? process.cwd(), stdio: ["ignore", "pipe", "pipe"] });

@@ -1,6 +1,7 @@
+import type { ExperimentsOn } from "../skill";
 import type { CodexRpc } from "./agent-codex-rpc";
 import type { AgentPermissions } from "./agent-defaults";
-import { DESIGNER_DESCRIPTION, DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
+import { DESIGNER_DESCRIPTION, DESIGNER_EFFORT, DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
 import { framing } from "./agent-framing";
 import type { AgentSpawn } from "./agent-spawn";
 
@@ -93,8 +94,14 @@ others, so neither needs an approval. Anything else may ask the human first: say
 you are about to do outside design/ before you do it.`;
 
 /** Codex's framing (`framing`), led by the bypass line when the project bypasses permissions. */
-export function codexFraming(bypass = false): string {
-	return framing({ asks: ASKS, designer: CODEX_DESIGNER_FRAMING, bypass, memory: false });
+export function codexFraming(bypass = false, experiments?: ExperimentsOn): string {
+	return framing({
+		asks: ASKS,
+		designer: CODEX_DESIGNER_FRAMING,
+		bypass,
+		memory: false,
+		...(experiments ? { experiments } : {}),
+	});
 }
 
 /**
@@ -107,8 +114,12 @@ export function codexFraming(bypass = false): string {
  * `thread/start` or `thread/resume`, a typed field of each rather than a per-thread `config`.
  * Codex's own base instructions and the project's AGENTS.md are separate and untouched.
  */
-export function codexInstructions(own: string | undefined, permissions: AgentPermissions): string {
-	const framed = codexFraming(permissions === "bypass");
+export function codexInstructions(
+	own: string | undefined,
+	permissions: AgentPermissions,
+	experiments?: ExperimentsOn,
+): string {
+	const framed = codexFraming(permissions === "bypass", experiments);
 	return own === undefined || own.trim() === "" ? framed : `${own}\n\n${framed}`;
 }
 
@@ -138,7 +149,9 @@ function toml(value: string): string {
  *
  * A turn's spawn also carries spool's designer (#367) as an agent role: its config layer
  * is the file in spool's state, and its description is the hint the spawn tool shows.
- * Both ride as `-c` flags, so Codex's own config never learns of it.
+ * The designer's effort rides as the default for spawned agents rather than in the role
+ * file, whose own would outrank the one a spawn asks for. All ride as `-c` flags, so
+ * Codex's own config never learns of them.
  */
 export function planCodexSpawn(
 	root: string,
@@ -158,6 +171,8 @@ export function planCodexSpawn(
 						`agents.${DESIGNER_NAME}.config_file=${toml(turn.designer)}`,
 						"-c",
 						`agents.${DESIGNER_NAME}.description=${toml(CODEX_DESIGNER_DESCRIPTION)}`,
+						"-c",
+						`agents.default_subagent_reasoning_effort=${toml(DESIGNER_EFFORT)}`,
 					]),
 		],
 		cwd: root,

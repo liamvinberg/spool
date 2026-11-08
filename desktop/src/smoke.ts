@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { app, BrowserWindow, WebContentsView } from "electron";
 import { status } from "./daemon";
 import { buildAppMenu, buildTrayMenu, trayImage } from "./main";
-import { installProjectDownloads } from "./project-download";
+import { installCanvasDownloads } from "./project-download";
 import { UpdateCover } from "./update-cover";
 import { beginUpdateRestart } from "./update-restart";
 
@@ -43,7 +43,7 @@ async function checkProjectDownloads(directory: string): Promise<void> {
 	const origin = `http://127.0.0.1:${address.port}`;
 	const canvas = new BrowserWindow({ show: false, webPreferences: { partition: `spool-download-${Date.now()}` } });
 	try {
-		installProjectDownloads(
+		installCanvasDownloads(
 			canvas.webContents.session,
 			() => app.getPath("downloads"),
 			(contents, candidate) => contents === canvas.webContents && candidate.startsWith(`blob:${origin}/`),

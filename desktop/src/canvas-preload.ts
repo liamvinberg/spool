@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { DirectoryRequest } from "./directory-dialog";
 import type { CanvasCommand } from "./main";
-import type { ProjectDownloadResult } from "./project-download";
+import type { ExportDownloadResult, ProjectDownloadResult } from "./project-download";
 
 // The canvas window's bridge.
 //
@@ -62,6 +62,14 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 		ipcRenderer.on("spool:project-download", handler);
 		return () => ipcRenderer.removeListener("spool:project-download", handler);
 	},
+	// a frame export (.png, .pdf, .html) saved straight to Downloads, or why it was not
+	onExportDownload: (listener: (result: ExportDownloadResult) => void): (() => void) => {
+		const handler = (_event: unknown, result: ExportDownloadResult) => listener(result);
+		ipcRenderer.on("spool:export-download", handler);
+		return () => ipcRenderer.removeListener("spool:export-download", handler);
+	},
+	// shows a file this app saved in Finder; false for any other path
+	revealDownload: (path: string): Promise<boolean> => ipcRenderer.invoke("spool:reveal-download", path),
 	onCommand: (listener: (command: CanvasCommand) => void): (() => void) => {
 		const handler = (_event: unknown, command: CanvasCommand) => listener(command);
 		ipcRenderer.on("spool:canvas-command", handler);

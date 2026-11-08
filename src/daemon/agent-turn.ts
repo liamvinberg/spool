@@ -1,3 +1,4 @@
+import type { ExperimentsOn } from "../skill";
 import { createBackgroundHold } from "./agent-background";
 import { createClaudeAdapter } from "./agent-claude";
 import {
@@ -56,6 +57,8 @@ export interface AgentTurnOptions {
 	readonly continuing?: boolean;
 	/** spool's designer, as the `--agents` file in spool's state (#367) */
 	readonly designer?: string;
+	/** the experiments this machine has on, for the skill index in the framing */
+	readonly experiments?: ExperimentsOn;
 	/** the environment the binary runs in; the daemon's own when absent */
 	readonly env?: Readonly<Record<string, string | undefined>>;
 }
@@ -105,6 +108,7 @@ export function startAgentTurn({
 	permissions,
 	continuing,
 	designer,
+	experiments,
 	env = process.env,
 }: AgentTurnOptions): AgentTurn {
 	const adapter = createClaudeAdapter();
@@ -225,7 +229,7 @@ export function startAgentTurn({
 	}
 
 	void shell.spawn(
-		() => executor(planAgentSpawn(root, env, session, ask, permissions, designer)),
+		() => executor(planAgentSpawn(root, env, session, ask, permissions, designer, experiments)),
 		(started) => {
 			started.onLine((line) => {
 				for (const event of adapter.read(line)) {

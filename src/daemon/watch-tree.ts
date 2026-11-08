@@ -25,6 +25,8 @@ export interface TreeWatch {
 /** Who is told each time this process starts a folder watch. */
 const starting = new Set<() => void>();
 
+/** Whether a folder watch starting can drop another watch's changes: macOS's alone. */
+const RESCANS_AFTER_WATCH_START = process.platform === "darwin";
 /** When to look again after a folder watch starts, and how long before the start a change counts as maybe dropped. */
 const RESCANS_AFTER_WATCH_MS = [250, 1_000, 3_000];
 const WATCH_GAP_SLACK_MS = 1_000;
@@ -36,6 +38,9 @@ const WATCH_GAP_SLACK_MS = 1_000;
  * have been made, a few times over the seconds after the latest start.
  */
 export function rescanAfterWatchStarts(rescan: (since: number) => void): { close(): void } {
+	// Linux's and Windows' watches don't share a stream, so a new one drops nothing. There, every folder is a watch of its
+	// own, opened as folders appear: rescans on each start kept a busy daemon walking every team project's files.
+	if (!RESCANS_AFTER_WATCH_START) return { close: () => {} };
 	let timers: NodeJS.Timeout[] = [];
 	let since: number | undefined;
 	const started = () => {

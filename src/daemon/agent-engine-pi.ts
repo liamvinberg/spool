@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import type { ExperimentsOn } from "../skill";
 import { agentEnv } from "./agent-cli";
 import { DESIGNER_FRAMING, mountDesigner } from "./agent-designer";
 import { type AgentEngine, type AgentMessage, type EngineDeps, saidText } from "./agent-engine";
@@ -11,6 +12,7 @@ import { startPiTurn } from "./agent-pi-turn";
 import { agentInstalled } from "./agent-preflight";
 import { engineSessions } from "./agent-sessions";
 import type { AgentSpawn } from "./agent-spawn";
+import { experimentsOnHere } from "./settings";
 
 /**
  * The person's own pi, driven through `pi --mode rpc` (#363).
@@ -46,6 +48,7 @@ function planPiSpawn(
 	session: { readonly id: string; readonly file?: string } | null,
 	ask: AgentAsk = {},
 	designer?: string,
+	experiments?: ExperimentsOn,
 ): AgentSpawn {
 	return {
 		command: PI_COMMAND,
@@ -60,7 +63,7 @@ function planPiSpawn(
 			...(ask.value === undefined ? [] : ["--model", ask.value]),
 			...(ask.effort === undefined ? [] : ["--thinking", ask.effort]),
 			...(session === null || designer === undefined ? [] : ["-e", designer]),
-			...(session === null ? [] : ["--append-system-prompt", piFraming()]),
+			...(session === null ? [] : ["--append-system-prompt", piFraming(experiments)]),
 		],
 		cwd: root,
 		env: { ...env },
@@ -90,8 +93,14 @@ before you do it, and make changes outside design/ with the file tools rather th
 shell, so the human can follow them.`;
 
 /** Pi's framing (`framing`): it never asks, so there is no bypass for it to announce. */
-export function piFraming(): string {
-	return framing({ asks: PI_ASKS, designer: DESIGNER_FRAMING, bypass: false, memory: true });
+export function piFraming(experiments?: ExperimentsOn): string {
+	return framing({
+		asks: PI_ASKS,
+		designer: DESIGNER_FRAMING,
+		bypass: false,
+		memory: true,
+		...(experiments ? { experiments } : {}),
+	});
 }
 
 const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|\[?::1\]?|0\.0\.0\.0)$/i;
@@ -251,6 +260,7 @@ export function createPiEngine({ executor, spoolDir, look }: EngineDeps): AgentE
 					file !== undefined && existsSync(file) ? { id: session.id, file } : { id: session.id },
 					ask,
 					mountDesigner(spoolDir, "pi"),
+					experimentsOnHere(spoolDir),
 				),
 				prompt: piPrompt(said),
 				...(ask.value === undefined ? {} : { model: ask.value }),

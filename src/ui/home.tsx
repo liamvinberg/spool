@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HerePerson, type ProjectCard, type TeamProjectOnMac, thumbnailUrl } from "./api";
 import { cn } from "./cn";
 import { FindNav, FoundHead, finds, NARROW_NAV, ProjectsHead, type Sort, useFoundPlace } from "./home-find";
@@ -11,8 +11,9 @@ import { Button, IconButton } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { SearchField } from "./primitives/inputs";
 import { NavItem } from "./primitives/navigation";
-import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
+import { MenuItem, MenuSeparator, StepMenu } from "./primitives/overlays";
 import { ProjectIconView, useMarkTeam } from "./project-icon";
+import { useProjectExport } from "./project-transfer";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
 
@@ -57,7 +58,6 @@ export function Home({
 	onRenameProject,
 	onStart,
 	onOpen,
-	onExportProject,
 	moveItems,
 	onChangeIcon,
 	onRemoveIcon,
@@ -80,7 +80,6 @@ export function Home({
 	onStart: () => void;
 	/** Open…: a folder, a .spool file or a link, through the system's open panel */
 	onOpen: () => void;
-	onExportProject?: (project: ProjectCard) => void;
 	/** The ways each cover's project can move: "Move to team…" and the like. */
 	moveItems?: MoveItems | undefined;
 	/** "Change icon…" on a project's cover. */
@@ -143,7 +142,6 @@ export function Home({
 			onTrashProject={onTrashProject}
 			{...(onDeleteFromTeam === undefined ? {} : { onDeleteFromTeam })}
 			onRenameProject={onRenameProject}
-			{...(onExportProject === undefined ? {} : { onExportProject })}
 			{...(moveItems === undefined ? {} : { moveItems })}
 			{...(onChangeIcon === undefined ? {} : { onChangeIcon })}
 			{...(onRemoveIcon === undefined ? {} : { onRemoveIcon })}
@@ -507,7 +505,6 @@ export function ProjectGrid({
 	onTrashProject,
 	onDeleteFromTeam,
 	onRenameProject,
-	onExportProject,
 	moveItems,
 	onChangeIcon,
 	onRemoveIcon,
@@ -526,7 +523,6 @@ export function ProjectGrid({
 	/** "Delete from <team>…" on a team copy's cover, for the team's admins. */
 	onDeleteFromTeam?: (project: ProjectCard) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
-	onExportProject?: (project: ProjectCard) => void;
 	/** The ways each cover's project can move, as this account may move it. */
 	moveItems?: MoveItems;
 	onChangeIcon?: (project: { root: string; name: string }) => void;
@@ -555,7 +551,6 @@ export function ProjectGrid({
 						onTrash={() => onTrashProject(project)}
 						{...(onDeleteFromTeam === undefined ? {} : { onDeleteFromTeam: () => onDeleteFromTeam(project) })}
 						onRename={() => onRenameProject(project)}
-						onExport={() => onExportProject?.(project)}
 						moves={moveItems?.(project) ?? []}
 						{...(onChangeIcon === undefined ? {} : { onChangeIcon: () => onChangeIcon(project) })}
 						{...(onRemoveIcon === undefined || project.icon?.from !== "file"
@@ -586,7 +581,6 @@ function ProjectTile({
 	onTrash,
 	onDeleteFromTeam,
 	onRename,
-	onExport,
 	moves,
 	onChangeIcon,
 	onRemoveIcon,
@@ -604,7 +598,6 @@ function ProjectTile({
 	onTrash: () => void;
 	onDeleteFromTeam?: () => void;
 	onRename: () => void;
-	onExport: () => void;
 	moves: readonly MoveItem[];
 	onChangeIcon?: () => void;
 	onRemoveIcon?: () => void;
@@ -616,6 +609,12 @@ function ProjectTile({
 	// a project whose design/ moved into a team this account can't edit opens the sheet saying where it went
 	const [movedOpen, setMovedOpen] = useState(false);
 	const moved = project.moved;
+	// Export project… goes on in the menu's own box (spool#240), and starts at the verbs the next time it opens
+	const exporting = useProjectExport(project, onCloseMenu);
+	const { reset } = exporting;
+	useEffect(() => {
+		if (!menuOpen) reset();
+	}, [menuOpen, reset]);
 	return (
 		<>
 			{moved !== undefined && movedOpen && (
@@ -630,6 +629,13 @@ function ProjectTile({
 				menuOpen={menuOpen}
 				onToggleMenu={onToggleMenu}
 				onCloseMenu={onCloseMenu}
+				menuStep={exporting.step?.kind ?? "menu"}
+				onMenuKeyDown={(event) => {
+					if (event.key !== "Enter" || exporting.enter === undefined) return;
+					event.preventDefault();
+					event.stopPropagation();
+					exporting.enter();
+				}}
 				art={
 					<>
 						{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
@@ -657,129 +663,124 @@ function ProjectTile({
 						)}
 					</>
 				}
-				menu={({ close, refocus }) => (
-					<>
-						<MenuItem
-							label="Open"
-							onClick={() => {
-								close();
-								if (moved === undefined) onOpen();
-								else setMovedOpen(true);
-							}}
-						/>
-						{onChangeIcon && (
+				menu={({ close, refocus }) =>
+					exporting.view ?? (
+						<>
 							<MenuItem
-								label="Change icon…"
+								label="Open"
 								onClick={() => {
-									refocus();
 									close();
-									onChangeIcon();
+									if (moved === undefined) onOpen();
+									else setMovedOpen(true);
 								}}
 							/>
-						)}
-						{onRemoveIcon && (
-							<MenuItem
-								label="Remove icon"
-								onClick={() => {
-									refocus();
-									close();
-									onRemoveIcon();
-								}}
-							/>
-						)}
-						{onRemoveThumbnail && (
-							<MenuItem
-								label="Remove thumbnail"
-								onClick={() => {
-									refocus();
-									close();
-									onRemoveThumbnail();
-								}}
-							/>
-						)}
-						<MenuItem
-							label="Export project…"
-							onClick={() => {
-								refocus();
-								close();
-								onExport();
-							}}
-						/>
-						{team?.role !== "viewer" && (
-							<MenuItem
-								label="Rename…"
-								onClick={() => {
-									refocus();
-									close();
-									onRename();
-								}}
-							/>
-						)}
-						{moves
-							.filter((move) => !move.end)
-							.map((move) => (
+							{onChangeIcon && (
 								<MenuItem
-									key={move.label}
-									label={move.label}
+									label="Change icon…"
 									onClick={() => {
 										refocus();
 										close();
-										move.onClick();
+										onChangeIcon();
 									}}
 								/>
-							))}
-						<MenuItem
-							label="Copy path"
-							onClick={() => {
-								close();
-								void navigator.clipboard?.writeText(project.root);
-							}}
-						/>
-						<MenuSeparator />
-						<MenuItem
-							label="Hide from Spool"
-							onClick={() => {
-								close();
-								withViewTransition(onForget);
-							}}
-						/>
-						{moves
-							.filter((move) => move.end)
-							.map((move) => (
+							)}
+							{onRemoveIcon && (
 								<MenuItem
-									key={move.label}
-									label={move.label}
-									destructive
+									label="Remove icon"
 									onClick={() => {
 										refocus();
 										close();
-										move.onClick();
+										onRemoveIcon();
 									}}
 								/>
-							))}
-						<MenuItem
-							// a team copy's folder goes, and the team keeps the project
-							label={team === undefined ? `Move to ${systemTrashName()}…` : "Remove from this Mac…"}
-							destructive
-							onClick={() => {
-								refocus();
-								close();
-								onTrash();
-							}}
-						/>
-						{team?.role === "admin" && onDeleteFromTeam && (
+							)}
+							{onRemoveThumbnail && (
+								<MenuItem
+									label="Remove thumbnail"
+									onClick={() => {
+										refocus();
+										close();
+										onRemoveThumbnail();
+									}}
+								/>
+							)}
+							<MenuItem label="Export project…" onClick={exporting.start} />
+							{team?.role !== "viewer" && (
+								<MenuItem
+									label="Rename…"
+									onClick={() => {
+										refocus();
+										close();
+										onRename();
+									}}
+								/>
+							)}
+							{moves
+								.filter((move) => !move.end)
+								.map((move) => (
+									<MenuItem
+										key={move.label}
+										label={move.label}
+										onClick={() => {
+											refocus();
+											close();
+											move.onClick();
+										}}
+									/>
+								))}
 							<MenuItem
-								label={`Delete from ${team.name}…`}
+								label="Copy path"
+								onClick={() => {
+									close();
+									void navigator.clipboard?.writeText(project.root);
+								}}
+							/>
+							<MenuSeparator />
+							<MenuItem
+								label="Hide from Spool"
+								onClick={() => {
+									close();
+									withViewTransition(onForget);
+								}}
+							/>
+							{moves
+								.filter((move) => move.end)
+								.map((move) => (
+									<MenuItem
+										key={move.label}
+										label={move.label}
+										destructive
+										onClick={() => {
+											refocus();
+											close();
+											move.onClick();
+										}}
+									/>
+								))}
+							<MenuItem
+								// a team copy's folder goes, and the team keeps the project
+								label={team === undefined ? `Move to ${systemTrashName()}…` : "Remove from this Mac…"}
 								destructive
 								onClick={() => {
 									refocus();
 									close();
-									onDeleteFromTeam();
+									onTrash();
 								}}
 							/>
-						)}
-					</>
-				)}
+							{team?.role === "admin" && onDeleteFromTeam && (
+								<MenuItem
+									label={`Delete from ${team.name}…`}
+									destructive
+									onClick={() => {
+										refocus();
+										close();
+										onDeleteFromTeam();
+									}}
+								/>
+							)}
+						</>
+					)
+				}
 			/>
 		</>
 	);
@@ -800,6 +801,8 @@ export function CoverTile({
 	onToggleMenu,
 	onCloseMenu,
 	menu,
+	menuStep = "menu",
+	onMenuKeyDown,
 }: {
 	name: string;
 	/** `external` opens it outside this window: from a Mac, in the system browser. */
@@ -814,6 +817,9 @@ export function CoverTile({
 	onCloseMenu: () => void;
 	/** The menu's items: `close` closes it, `refocus` gives the dots back the focus first, for an item that opens a sheet. */
 	menu: (manage: { close: () => void; refocus: () => void }) => ReactNode;
+	/** The step its menu has gone on into, an export say: the same box becomes what `menu` draws for it. */
+	menuStep?: string;
+	onMenuKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const tileRef = useRef<HTMLElement>(null);
@@ -901,17 +907,21 @@ export function CoverTile({
 				onClick={onToggleMenu}
 			/>
 			{menuOpen && (
-				<Menu
+				<StepMenu
 					ref={menuRef}
+					at={menuAt === null ? { x: 0, y: 0 } : { x: menuAt.left, y: menuAt.top }}
+					step={menuStep}
 					className="fixed z-20"
 					style={
 						menuAt === null
-							? { visibility: "hidden", top: 0, left: 0 }
-							: { top: menuAt.top, left: menuAt.left, transformOrigin: `right ${menuAt.up ? "bottom" : "top"}` }
+							? { visibility: "hidden" }
+							: { transformOrigin: `right ${menuAt.up ? "bottom" : "top"}` }
 					}
+					onClose={onCloseMenu}
+					onKeyDown={onMenuKeyDown}
 				>
 					{menu({ close: onCloseMenu, refocus: () => manageRef.current?.focus() })}
-				</Menu>
+				</StepMenu>
 			)}
 		</article>
 	);
