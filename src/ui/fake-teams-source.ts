@@ -174,6 +174,7 @@ export function fakeTeamsSource(start: {
 			return { address: change.address ?? address, name: change.name ?? teamOf(address).name };
 		},
 		delete: async (address) => ask(`delete ${address}`),
+		purge: async (address) => ask(`purge ${address}`),
 		setLogo: async (address) => ask(`logo ${address}`),
 		removeLogo: async (address) => ask(`remove logo ${address}`),
 		invite: async (address, email, role) => {
