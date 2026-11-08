@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DesignFrame } from "../../daemon/design-projection";
 import type { Unseen } from "../../daemon/seen";
-import { isFramePath, pageChain, pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
+import { isFramePath, pageChain, pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { saidAgo, saidList, sharedPageName } from "../../share-view";
 import type { Camera } from "../api";
 import {
@@ -20,12 +20,13 @@ import {
 	zoomFloor,
 } from "../canvas/camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "../canvas/camera-store";
+import { CanvasPath, PATH_KEYS, type PathPlace, type PathSeg, type PathWay } from "../canvas/canvas-path";
 import { COMMENT_CURSOR } from "../canvas/comment-cursor";
 import { CommentsLayer, clickAway, commentWorld } from "../canvas/comments-layer";
 import { FrameLabel, LabelField } from "../canvas/frame-label";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
 import { type ElementPreview, PreviewIn } from "../canvas/overlays";
-import { type ListWorld, listsPages, pageListRows } from "../canvas/page-list";
+import { chainOf, type ListWorld, listsPages, pageListRows } from "../canvas/page-list";
 import { PageListView } from "../canvas/page-list-view";
 import { PictureClaims } from "../canvas/picture-canvas";
 import type { PictureFrame } from "../canvas/picture-layer";
@@ -35,7 +36,7 @@ import { PresenceLayer } from "../canvas/presence-layer";
 import { railRows } from "../canvas/rail-rows";
 import { useFollow, usePointerHidden, usePresenceSender } from "../canvas/use-presence";
 import { handoverAddress, knock } from "../handover";
-import { FolderIcon, FrameIcon } from "../icons";
+import { FolderIcon, FrameIcon, ShareIcon } from "../icons";
 import { Divider } from "../primitives/display";
 import { TextAction, Toast } from "../primitives/feedback";
 import { Bar, Panel, ScrollArea, StatusLine, TreeRow } from "../primitives/structure";
@@ -444,6 +445,60 @@ function ViewerCanvas({
 		window.addEventListener("popstate", onPop);
 		return () => window.removeEventListener("popstate", onPop);
 	}, [config]);
+
+	// --- the way back (spool#238): the path at the canvas's top left, from where the project lives down to the page
+	const place = useMemo(() => placeOf(project), [project]);
+	/** whether a page is one this person can be on: every page for a member, the shared ones for anyone else */
+	const reachable = useCallback(
+		(each: string) =>
+			each === ROOT_PAGE ? !outsider || (project.shared?.pages.includes(ROOT_PAGE) ?? false) : known.has(each),
+		[outsider, project.shared, known],
+	);
+	/** where ⌘↑ goes: the nearest page holding this one that can be gone to, then the project's top, then its place */
+	const above = useMemo((): string | "place" | null => {
+		if (page === ROOT_PAGE || (outsider && page === opening)) return place === undefined ? null : "place";
+		let up = pageParent(page);
+		while (up !== ROOT_PAGE && !reachable(up)) up = pageParent(up);
+		return up;
+	}, [page, outsider, opening, place, reachable]);
+	const pathSegs = useMemo((): PathSeg[] => {
+		const chain = chainOf(page);
+		return chain
+			.filter((each, at) => each === ROOT_PAGE || at === chain.length - 1 || reachable(each))
+			.map((each, at, all) => ({
+				page: each,
+				name: each === ROOT_PAGE ? project.project : pageName(each),
+				kind: at === all.length - 1 ? "here" : "crumb",
+				keys: each === above ? PATH_KEYS.up() : undefined,
+				href: address(config, each, null),
+			}));
+	}, [page, project.project, reachable, above, config]);
+	const pathWay = useRef<{ from: string; way: PathWay }>({ from: page, way: "side" });
+	if (pathWay.current.from !== page) {
+		const from = pathWay.current.from;
+		const way = pageWithin(page, from) ? "up" : pageWithin(from, page) ? "in" : "side";
+		pathWay.current = { from: page, way };
+	}
+	const [keyMoves, setKeyMoves] = useState(0);
+	const accelDown = useAccelDown();
+	useEffect(() => {
+		if (played !== null) return;
+		const down = (event: KeyboardEvent) => {
+			if (event.key !== "ArrowUp" || !(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
+			const target = event.target;
+			if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === "INPUT")) return;
+			if (target instanceof HTMLElement && target.tagName === "TEXTAREA") return;
+			if (above === null) return;
+			event.preventDefault();
+			if (above === "place" && place !== undefined) window.location.assign(place.href);
+			else if (above !== "place") {
+				setKeyMoves((was) => was + 1);
+				go({ page: above, frame: null });
+			}
+		};
+		window.addEventListener("keydown", down);
+		return () => window.removeEventListener("keydown", down);
+	}, [played, above, place, go]);
 
 	// --- comments (spool#173): a member's, written to spool.page and heard on the presence socket
 	const commentsUrl = useMemo(() => new URL(address(config, ROOT_PAGE, null), window.location.href).href, [config]);
@@ -960,9 +1015,23 @@ function ViewerCanvas({
 						onGo={(next) => go({ page: next, frame: null })}
 					/>
 				)}
+				<CanvasPath
+					segs={pathSegs}
+					way={pathWay.current.way}
+					accelDown={accelDown}
+					moved={keyMoves}
+					trail={NO_TRAIL}
+					viewport={viewport}
+					place={
+						place === undefined ? undefined : { ...place, keys: above === "place" ? PATH_KEYS.up() : undefined }
+					}
+					onGo={(next) => next !== page && go({ page: next, frame: null })}
+				/>
 				{followed !== undefined && <FollowMark mate={followed} />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
-					{project.shared !== undefined && <SharedLine shared={project.shared} project={project.project} />}
+					{project.shared !== undefined && (
+						<SharedLine shared={project.shared} project={project.project} team={project.team} />
+					)}
 					{comments !== null ? (
 						<CommentsButton
 							comments={comments}
@@ -1141,24 +1210,20 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
 }
 
 /**
- * The one line an outsider is shown (DEV-114): who shared these pages, or the whole project, with them and when they
- * last changed. Nobody else is on it, and nothing says the rest of the project exists.
+ * The one line an outsider is shown (DEV-114, spool#238): whose it is, who shared it with them, and what they may do
+ * with it, which is look and comment whoever they are. Nobody else is on it, and nothing says the rest of the project
+ * exists. The whole sentence, what was shared and when it last changed, is its title.
  */
-/** Who shared and when, kept short: the pages rail already names the pages, and the whole sentence is its title. */
-function SharedLine({ shared, project }: { shared: ViewerShared; project: string }) {
+function SharedLine({ shared, project, team }: { shared: ViewerShared; project: string; team: ViewerProject["team"] }) {
 	const what = shared.whole === true ? project : saidList(shared.pages.map(sharedPageName));
-	const ago = shared.updated === null ? "" : ` · ${saidAgo(shared.updated)}`;
 	return (
 		<span
 			data-viewer-shared=""
 			title={`${shared.by} shared ${what} with you${shared.updated === null ? "" : `, updated ${saidAgo(shared.updated)}`}`}
-			className="flex items-center gap-2 rounded-sm border border-line-default bg-surface-window/90 py-1.5 pr-3 pl-1.5 text-secondary backdrop-blur type-detail"
+			className="flex items-center gap-2 text-tertiary type-detail"
 		>
-			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-line-strong bg-surface-panel text-[9px] text-primary">
-				{shared.by[0]?.toUpperCase()}
-			</span>
-			Shared by {shared.by}
-			{ago}
+			{team === null ? null : <TeamMark team={team} size={14} />}
+			<span>{[team?.name, `shared by ${shared.by}`, "look and comment"].filter(Boolean).join(" · ")}</span>
 		</span>
 	);
 }
@@ -1168,6 +1233,54 @@ function ProjectShared({ address, manage }: { address: string; manage: boolean }
 	const source = useMemo(() => viewerShares(address, manage), [address, manage]);
 	const { shares } = useShares(source);
 	return <SharedControl source={source} shares={shares} />;
+}
+
+/** No ⌘[ and ⌘] in a browser, whose own Back and Forward walk the pages. */
+const NO_TRAIL: readonly { keys: string; name: string }[] = [];
+
+/**
+ * Where the path goes back to (spool#238): a member's team Home, or for someone a team shared with by name the
+ * shares made to them. A link share's holder came from nowhere spool.page knows, so has no way back.
+ */
+function placeOf(project: ViewerProject): PathPlace | undefined {
+	if (project.shared === undefined)
+		return project.team === null
+			? undefined
+			: {
+					name: project.team.address,
+					href: `/${project.team.address}`,
+					title: `${project.team.name}'s projects`,
+					mark: <TeamMark team={project.team} size={14} />,
+				};
+	if (project.outsider?.share.kind !== "people") return undefined;
+	return {
+		name: "shared",
+		href: "/shared",
+		title: "Shared with you",
+		mark: (
+			<span aria-hidden="true" className="grid size-3.5 place-items-center [&>svg]:size-full">
+				<ShareIcon />
+			</span>
+		),
+	};
+}
+
+/** Whether ⌘ (ctrl off a Mac) is held, which shows the path's keys under its names. */
+function useAccelDown(): boolean {
+	const [down, setDown] = useState(false);
+	useEffect(() => {
+		const key = (event: KeyboardEvent) => setDown(event.metaKey || event.ctrlKey);
+		const away = () => setDown(false);
+		window.addEventListener("keydown", key);
+		window.addEventListener("keyup", key);
+		window.addEventListener("blur", away);
+		return () => {
+			window.removeEventListener("keydown", key);
+			window.removeEventListener("keyup", key);
+			window.removeEventListener("blur", away);
+		};
+	}, []);
+	return down;
 }
 
 /** A page and every page holding it: what going to it opens in the rail. */
@@ -1230,8 +1343,8 @@ function PagesRail({
 	return (
 		<Panel side="start" width="rail">
 			<Bar
-				icon={project.team === null ? undefined : <TeamMark team={project.team} size={18} />}
-				title={project.project}
+				// the team and the project are the path's, over the canvas
+				title="Pages"
 				actions={
 					!edits(project.role) && project.shared === undefined ? (
 						<span className="pr-2 text-secondary type-detail">view only</span>
