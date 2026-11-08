@@ -2,7 +2,9 @@ import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
-it("lands on a finder row when clicked and still accepts keyboard navigation", { timeout: 180_000 }, async () => {
+it("opens from its door, lands on a row when clicked and still accepts keyboard navigation", {
+	timeout: 180_000,
+}, async () => {
 	const { page, finder } = await openFinder();
 	const input = finder.getByRole("textbox", { name: "Find a frame" });
 	await input.fill("frame-10");
@@ -10,7 +12,10 @@ it("lands on a finder row when clicked and still accepts keyboard navigation", {
 	await expect.poll(() => finder.count(), { timeout: 1000 }).toBe(0);
 	expect(await page.locator('[role="treeitem"][aria-selected="true"]').innerText()).toContain("frame-10");
 
-	await page.keyboard.press("/");
+	// the door at the end of the path, which comes up as the pointer nears the top edge, opens it too
+	const path = await page.locator("[data-page-path]").boundingBox();
+	await page.mouse.move((path?.x ?? 0) + 20, (path?.y ?? 0) + 60);
+	await page.locator("[data-find-door]").click();
 	await input.fill("frame-0");
 	await input.press("ArrowDown");
 	const picked = await finder.locator("[data-at].bg-state-selected-strong").innerText();
@@ -40,7 +45,10 @@ it("scrolls the finder, and keeps wheels, drags and backdrop scrolling out of th
 	expect(await camera()).toBe(resting);
 
 	const backdrop = page.getByRole("button", { name: "Close the finder" });
-	await backdrop.hover({ position: { x: 20, y: 20 } });
+	// the finder stands at the top left, under the path, so the backdrop's own corner is the bottom left
+	const area = await backdrop.boundingBox();
+	const corner = { x: 20, y: (area?.height ?? 0) - 120 };
+	await backdrop.hover({ position: corner });
 	// Wait for the wheel to be delivered before checking that it did nothing.
 	await Promise.all([
 		page.evaluate(
@@ -52,7 +60,7 @@ it("scrolls the finder, and keeps wheels, drags and backdrop scrolling out of th
 		page.mouse.wheel(0, 180),
 	]);
 	expect(await camera()).toBe(resting);
-	await backdrop.click({ position: { x: 20, y: 20 } });
+	await backdrop.click({ position: corner });
 	await expect.poll(() => finder.count()).toBe(0);
 	await page.mouse.wheel(0, 180);
 	await expect.poll(camera).not.toBe(resting);

@@ -79,6 +79,8 @@ export function CanvasPath({
 	lit = null,
 	peeked = null,
 	after,
+	tail,
+	lifted = false,
 	onGo,
 }: {
 	segs: readonly PathSeg[];
@@ -100,6 +102,10 @@ export function CanvasPath({
 	peeked?: string | null;
 	/** what stands right after the path, at full ink whatever the wake: who else is here */
 	after?: ReactNode;
+	/** what ends the row, inside the path so it rides `--wake`: the finder's door (`find-door.tsx`) */
+	tail?: ReactNode;
+	/** the names stand over the finder, which opened under them with its field where the door was */
+	lifted?: boolean;
 	onGo: (page: string) => void;
 }) {
 	const still = useReducedMotion() === true;
@@ -209,7 +215,7 @@ export function CanvasPath({
 			ref={bar}
 			aria-label="Path"
 			data-page-path=""
-			className="absolute top-3 left-3 z-20 flex h-control-sm items-center"
+			className={cn("absolute top-3 left-3 flex h-control-sm items-center", lifted ? "z-50" : "z-20")}
 			style={{ ["--wake" as string]: 0 }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}
@@ -252,8 +258,14 @@ export function CanvasPath({
 					{after}
 				</motion.span>
 			)}
+			{tail === undefined ? null : (
+				// follows the last name and the faces as they come and go, on the same curve
+				<motion.span layout="position" transition={{ duration: dur, ease: EASE }} className="flex items-center">
+					{tail}
+				</motion.span>
+			)}
 			<AnimatePresence>
-				{held && trail.length > 0 ? (
+				{held && !lifted && trail.length > 0 ? (
 					<motion.span
 						key="trail"
 						data-path-trail=""

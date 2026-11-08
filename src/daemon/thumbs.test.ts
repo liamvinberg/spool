@@ -6,6 +6,7 @@ import {
 	carryCover,
 	coverSize,
 	imageSize,
+	phrasesOf,
 	readCaptureError,
 	readCover,
 	readCoverAwaited,
@@ -16,6 +17,7 @@ import {
 	scanPaces,
 	scanPreBoothCovers,
 	scanStills,
+	scanWords,
 	writeCaptureError,
 	writeCover,
 	writePace,
@@ -221,6 +223,24 @@ describe("the version of the frame a still is of", () => {
 		writeCover(root, "home", JPEG, undefined, A);
 		writeCaptureError(root, "home", "too slow", "capture");
 		expect((await scanStills(root)).get("home")).toMatchObject({ source: A, failed: true });
+	});
+});
+
+describe("what a frame said in its still", () => {
+	it("keeps each line once, its spaces collapsed, and no more than a screen's worth", () => {
+		expect(phrasesOf("  Renew   for 2027\n\nYour pass\nRenew   for 2027\n")).toEqual(["Renew for 2027", "Your pass"]);
+		expect(phrasesOf(`${"a".repeat(1000)}\n${"b".repeat(1000)}`)).toEqual(["a".repeat(1000)]);
+	});
+
+	it("is written beside the still, retires with it, and follows a rename", async () => {
+		const root = project();
+		writeCover(root, "home", JPEG, undefined, undefined, ["Renew for 2027", "Your pass"]);
+		writeCover(root, "cart", PNG, undefined, undefined, []);
+		expect(await scanWords(root)).toEqual(new Map([["home", ["Renew for 2027", "Your pass"]]]));
+		carryCover(root, "home", "start");
+		expect((await scanWords(root)).get("start")).toEqual(["Renew for 2027", "Your pass"]);
+		writeCover(root, "start", OTHER_JPEG);
+		expect(await scanWords(root)).toEqual(new Map());
 	});
 });
 

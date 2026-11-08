@@ -13,6 +13,7 @@ import { frameDirectories, frameExists, listProjectFramesAwaited, lookupFrame } 
 import type { createResolvePass } from "./resolve-pass";
 import { markSeen } from "./seen";
 import { type createSelectionStore, parseSelectionPut } from "./selection";
+import { scanWords } from "./thumbs";
 
 /**
  * One project's canvas over HTTP, mounted under `/api/p`: its frames, the arrangement a hand made of them
@@ -53,6 +54,17 @@ export function canvasRoutes(deps: {
 					}
 				});
 			})
+			// what each frame said in its still, which the frame finder answers by when its name and page do not (task 443)
+			.get("/:project/frame-words", (c) =>
+				withProject(c, deps.resolve, async (root) => {
+					try {
+						return c.json({ words: Object.fromEntries(await scanWords(root)) });
+					} catch (error) {
+						if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+						throw error;
+					}
+				}),
+			)
 			.get("/:project/state", (c) =>
 				withProject(c, deps.resolve, (root) => {
 					return c.json(readCanvasState(root));

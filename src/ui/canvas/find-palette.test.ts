@@ -18,11 +18,13 @@ const frame = (name: string, page: string, born: number): ProjectedFrame => ({
 });
 
 describe("FindPalette", () => {
-	it("opens on every frame, newest first, with the order named", () => {
+	it("opens on every frame with its still, newest first, with the order named", () => {
 		const markup = renderToStaticMarkup(
 			createElement(FindPalette, {
+				open: true,
+				project: "shop",
 				frames: [
-					frame("spool-home", "app", Date.now() - 3 * 86_400_000),
+					{ ...frame("spool-home", "app", Date.now() - 3 * 86_400_000), cover: { hash: "a".repeat(32) } },
 					frame("agent-play--ask-drop", "agent", Date.now()),
 				],
 				onPick: () => {},
@@ -34,18 +36,37 @@ describe("FindPalette", () => {
 		expect(markup).toContain("2 frames, newest first");
 		expect(markup.indexOf("agent-play--ask-drop")).toBeLessThan(markup.indexOf("spool-home"));
 		expect(markup).toContain("3d");
-		expect(markup).toContain("type part of a name");
-		expect(markup).toContain("↵ lands there");
+		expect(markup).toContain(`/covers/shop/spool-home/${"a".repeat(32)}`);
+		expect(markup).toContain("↵ goes there");
 		expect(markup).toContain("esc closes");
 	});
 
 	it("says so when nothing answers", () => {
 		const markup = renderToStaticMarkup(
-			createElement(FindPalette, { frames: [], onPick: () => {}, onLand: () => {}, onClose: () => {} }),
+			createElement(FindPalette, {
+				open: true,
+				project: "shop",
+				frames: [],
+				onPick: () => {},
+				onLand: () => {},
+				onClose: () => {},
+			}),
 		);
 
 		expect(markup).toContain("nothing answers to that");
 		expect(markup).toContain("0 frames, newest first");
+	});
+
+	it("answers by what a frame says, read as it opens, and starts empty at each opening", async () => {
+		const loadWords = vi.fn(async () => new Map([["season-pass", ["Renew for 2027"]]]));
+		const { host, render } = await mount({ frames: [frame("season-pass", "travel", Date.now())], loadWords });
+		await type(host, "renew");
+		expect(host.textContent).toContain("says“Renew for 2027”");
+
+		await render({ open: false });
+		await render({ open: true });
+		expect(input(host).value).toBe("");
+		expect(loadWords).toHaveBeenCalledTimes(2);
 	});
 });
 
@@ -57,7 +78,7 @@ describe("FindPalette's commands", () => {
 	];
 
 	it("keeps an empty query to frames, and answers a typed one with the commands it matches too", async () => {
-		const host = await mount({ commands: commands(() => {}) });
+		const { host } = await mount({ commands: commands(() => {}) });
 		expect(host.textContent).not.toContain("Reset layout");
 
 		await type(host, "reset");
@@ -68,7 +89,7 @@ describe("FindPalette's commands", () => {
 	it("runs the picked command on enter and closes", async () => {
 		const run = vi.fn();
 		const onClose = vi.fn();
-		const host = await mount({ commands: commands(run), onClose });
+		const { host } = await mount({ commands: commands(run), onClose });
 		await type(host, "show agent");
 		await act(async () => {
 			input(host).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -79,7 +100,7 @@ describe("FindPalette's commands", () => {
 
 	it("says why a refused command cannot run, and does not run it", async () => {
 		const run = vi.fn();
-		const host = await mount({ commands: commands(run) });
+		const { host } = await mount({ commands: commands(run) });
 		await type(host, "split agent");
 		expect(host.textContent).toContain("no room");
 		await act(async () => {
@@ -87,39 +108,47 @@ describe("FindPalette's commands", () => {
 		});
 		expect(run).not.toHaveBeenCalled();
 	});
-
-	function input(host: HTMLElement): HTMLInputElement {
-		const found = host.querySelector<HTMLInputElement>("input");
-		if (found === null) throw new Error("no input");
-		return found;
-	}
-
-	async function type(host: HTMLElement, value: string) {
-		await act(async () => {
-			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input(host), value);
-			input(host).dispatchEvent(new Event("input", { bubbles: true }));
-		});
-	}
-
-	async function mount(props: { commands: PaletteCommand[]; onClose?: () => void }): Promise<HTMLElement> {
-		const host = document.createElement("div");
-		document.body.append(host);
-		const root = createRoot(host);
-		onTestFinished(() => {
-			act(() => root.unmount());
-			host.remove();
-		});
-		await act(async () => {
-			root.render(
-				createElement(FindPalette, {
-					frames: [frame("spool-home", "app", Date.now())],
-					commands: props.commands,
-					onPick: () => {},
-					onLand: () => {},
-					onClose: props.onClose ?? (() => {}),
-				}),
-			);
-		});
-		return host;
-	}
 });
+
+function input(host: HTMLElement): HTMLInputElement {
+	const found = host.querySelector<HTMLInputElement>("input");
+	if (found === null) throw new Error("no input");
+	return found;
+}
+
+async function type(host: HTMLElement, value: string) {
+	await act(async () => {
+		Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input(host), value);
+		input(host).dispatchEvent(new Event("input", { bubbles: true }));
+	});
+}
+
+type Props = Parameters<typeof FindPalette>[0];
+
+async function mount(props: Partial<Props>) {
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+	});
+	let now: Props = {
+		open: true,
+		project: "shop",
+		frames: [frame("spool-home", "app", Date.now())],
+		loadWords: async () => new Map(),
+		onPick: () => {},
+		onLand: () => {},
+		onClose: () => {},
+		...props,
+	};
+	const render = async (change: Partial<Props> = {}) => {
+		now = { ...now, ...change };
+		await act(async () => {
+			root.render(createElement(FindPalette, now));
+		});
+	};
+	await render();
+	return { host, render };
+}

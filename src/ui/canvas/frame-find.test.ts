@@ -78,6 +78,32 @@ describe("findFrames", () => {
 	});
 });
 
+describe("findFrames, past the name", () => {
+	const on = (name: string, page: string, born: number): ProjectedFrame => ({
+		...frame(`${page}/${name}`, born),
+		page,
+	});
+
+	it("answers by the page a little behind the name, and lights the page it landed on", () => {
+		const rows = newestFirst([on("pass", "travel", 3), on("travel", "booking", 1)]);
+		const hits = findFrames("travel", rows);
+		// the name wins the tie, though the page's frame is newer
+		expect(names(hits)).toEqual(["booking/travel", "travel/pass"]);
+		expect(hits[1]?.matched).toEqual([]);
+		expect(hits[1]?.page).toEqual([0, 1, 2, 3, 4, 5]);
+	});
+
+	it("answers by what a frame says when neither its name nor its page does, from three letters", () => {
+		const rows = newestFirst([on("season-pass", "travel", 2), on("renewals", "admin", 1)]);
+		const words = new Map([["travel/season-pass", ["Your pass", "Renew for 2027"]]]);
+		const hits = findFrames("renew", rows, words);
+		// a name that answers stands above words that do
+		expect(names(hits)).toEqual(["admin/renewals", "travel/season-pass"]);
+		expect(hits[1]?.said).toEqual({ phrase: "Renew for 2027", matched: [0, 1, 2, 3, 4] });
+		expect(findFrames("yo", rows, words)).toEqual([]);
+	});
+});
+
 describe("newestFirst", () => {
 	it("sorts by born, name as the stable fallback", () => {
 		const rows = newestFirst([frame("b"), frame("a"), frame("c", 5)]);
