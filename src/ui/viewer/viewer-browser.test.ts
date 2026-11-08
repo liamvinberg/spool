@@ -402,7 +402,7 @@ describe("the read-only canvas", () => {
 		await home;
 	});
 
-	it("sets several items shared with an outsider side by side as their top, a clash told by its parent", {
+	it("sets several items shared with an outsider side by side as their top, named by their team after the way back, a clash told by its parent", {
 		timeout: 60_000,
 	}, async () => {
 		const shared: ViewerProject = {
@@ -416,6 +416,12 @@ describe("the read-only canvas", () => {
 				],
 			},
 			shared: { by: "ana", pages: ["acme/checkout", "volvo/checkout"], updated: null },
+			outsider: {
+				share: { id: "s-kim", kind: "people", who: ["kim"] },
+				me: { id: "kim", name: "Kim" },
+				comments: "/api/comments",
+				socket: "/api/shares/s-kim/comments/socket",
+			},
 		};
 		const { page } = await open(PATH, { as: shared });
 		const list = page.locator("[data-page-list]");
@@ -427,7 +433,7 @@ describe("the read-only canvas", () => {
 		const path = page.getByRole("navigation", { name: "Path" });
 		expect(
 			await path.locator("[data-path-page]").evaluateAll((names) => names.map((name) => name.ariaLabel)),
-		).toEqual(["Shared with you"]);
+		).toEqual(["Devosurf"]);
 	});
 
 	it("shows a teammate's save in place, with the changed mark and a short toast", { timeout: 60_000 }, async () => {

@@ -526,18 +526,21 @@ function ViewerCanvas({
 		while (up !== top.top && up !== ROOT_PAGE && !reachable(up)) up = pageParent(up);
 		return up;
 	}, [page, top.top, outsider, opening, place, reachable]);
+	// several items side by side under a way back to Shared with you: named by who shared them, not that again
+	const rootedTitle =
+		top.top === ROOT_PAGE && place !== undefined ? (project.team?.name ?? topTitle(top)) : topTitle(top);
 	const pathSegs = useMemo((): PathSeg[] => {
 		const chain = chainOf(page).filter((each) => pageHolds(top.top, each));
 		return chain
 			.filter((each, at) => each === top.top || at === chain.length - 1 || reachable(each))
 			.map((each, at, all) => ({
 				page: each,
-				name: each === top.top ? (rooted ? topTitle(top) : project.project) : pageName(each),
+				name: each === top.top ? (rooted ? rootedTitle : project.project) : pageName(each),
 				kind: at === all.length - 1 ? "here" : "crumb",
 				keys: each === above ? PATH_KEYS.up() : undefined,
 				href: address(config, each, null),
 			}));
-	}, [page, top, rooted, project.project, reachable, above, config]);
+	}, [page, top, rooted, rootedTitle, project.project, reachable, above, config]);
 	const pathWay = useRef<{ from: string; way: PathWay }>({ from: page, way: "side" });
 	if (pathWay.current.from !== page) {
 		const from = pathWay.current.from;
