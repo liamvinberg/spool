@@ -10,7 +10,7 @@ import { tilde } from "./paths";
 import { Button, IconButton } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { SearchField } from "./primitives/inputs";
-import { NavItem } from "./primitives/navigation";
+import { NavItem, NavList } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { ProjectIconView, useMarkTeam } from "./project-icon";
 import { systemTrashName } from "./system-trash";
@@ -410,10 +410,12 @@ export function HomeShell({
 						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-accent" />
 						<span>spool</span>
 					</div>
-					{switcher}
-					<nav className="flex flex-col gap-[4px]" aria-label="Home sections">
-						{nav}
-					</nav>
+					<NavList>
+						{switcher}
+						<nav className="flex flex-col gap-[4px]" aria-label="Home sections">
+							{nav}
+						</nav>
+					</NavList>
 					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-secondary [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
 						{foot}
 					</div>
