@@ -214,7 +214,8 @@ it("keeps a deleted team in its admin's places, marked with the day it goes, and
 	// it is in the team box's menu
 	await act(async () => host.querySelector<HTMLElement>("[aria-haspopup=menu]")?.click());
 	const item = host.querySelector<HTMLElement>('[role=menuitem][data-place="harbour"]');
-	expect(item?.textContent).toContain("Deleted · gone on November 20");
+	expect(item?.textContent).toMatch(/Harbour\s*Deleted$/);
+	expect(item?.title).toBe("Harbour · Deleted · gone on November 20");
 	await act(async () => item?.click());
 	expect(chosen).toEqual(["harbour"]);
 	// an account whose only teams are deleted keeps the box, and the deleted team in it

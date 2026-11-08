@@ -215,7 +215,7 @@ export function HomePlaces({
 	);
 }
 
-/** A deleted team in the box's menu, said with the day it goes. */
+/** A deleted team, said with the day it goes: in full on hover, as one word in the menu, where the name must fit. */
 const goneOn = (team: DeletedTeam) => `Deleted · gone on ${day(team.purgeAfter)}`;
 
 /**
@@ -341,7 +341,7 @@ function TeamBox({
 							icon={<TeamMark team={one} size={16} paused />}
 							label={one.name}
 							title={`${one.name} · ${goneOn(one)}`}
-							meta={goneOn(one)}
+							meta="Deleted"
 							aria-current={one.address === shown.address || undefined}
 							className="aria-[current]:bg-state-selected"
 							onClick={() => pick(() => onTeam(one.address))}
