@@ -86,6 +86,7 @@ import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import type { AgentDeck } from "./agent-stream";
+import { AgentTrail } from "./agent-trail";
 import type { AgentTile } from "./agent-transcript";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
@@ -6086,6 +6087,22 @@ function CanvasField({
 						</>
 					)}
 					{followed !== undefined && <FollowMark mate={followed} />}
+					{/* the agent's own path at the top right (task 443) */}
+					{loaded && (
+						<AgentTrail
+							deck={deck}
+							store={store}
+							camera={camera}
+							viewportRef={viewportRef}
+							page={activePage}
+							project={project}
+							under={followed !== undefined}
+							teammate={following !== null}
+							onFollow={() => setFollowing(null)}
+							toPage={switchToPage}
+							onLand={landOnFrame}
+						/>
+					)}
 					{/* who else is here stands after the path; with no path drawn, where it would start */}
 					{presenceFaces !== null && !(loaded && !projectEmpty) && (
 						<div className="absolute top-3 left-3 z-20">{presenceFaces}</div>
