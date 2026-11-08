@@ -507,7 +507,7 @@ describe("presence in a crowded project (#107)", () => {
 		expect(await bens.heard()).toMatchObject({ person: { accountId: "ana" }, state: at(9, 9) });
 	});
 
-	it("keeps someone on another page from going idle on the tab while the team says they're still about", async () => {
+	it("keeps the tab told how present someone on another page is: still about, and their window hidden", async () => {
 		const { cloud, ben } = await team();
 		const benDaemon = daemon(ben);
 		await canvas(benDaemon, "checkout");
@@ -516,7 +516,10 @@ describe("presence in a crowded project (#107)", () => {
 		const told = async () => {
 			for (;;) {
 				const event = await window.next(8000);
-				const data = event.data as { kind?: string; people?: { person: { name: string }; quiet: number }[] };
+				const data = event.data as {
+					kind?: string;
+					people?: { person: { name: string }; quiet: number; focus?: string }[];
+				};
 				if (event.event === "app" && data.kind === "presence") return data.people ?? [];
 			}
 		};
@@ -526,6 +529,9 @@ describe("presence in a crowded project (#107)", () => {
 		// the same outline again, said as the beat of someone busy elsewhere a second ago
 		cloud.forge("checkout", { type: "presence", person: cy, state: outline, still: 1_000 });
 		expect((await told())[0]?.quiet).toBeLessThan(5_000);
+		// their canvas hidden is news the clock can't give the tab
+		cloud.forge("checkout", { type: "presence", person: cy, state: { ...outline, focus: "hidden" }, still: 1_000 });
+		expect((await told())[0]).toMatchObject({ focus: "hidden" });
 		await window.cancel();
 	});
 });

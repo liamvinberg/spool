@@ -950,7 +950,16 @@ function ViewerCanvas({
 							<PreviewIn camera={camera} frame={hoverFrame} preview={hover} />
 						</div>
 					)}
-					{room !== undefined && <PresenceLayer room={room} camera={camera} frames={frames} page={page} />}
+					{room !== undefined && (
+						<PresenceLayer
+							room={room}
+							camera={camera}
+							frames={frames}
+							page={page}
+							following={following}
+							onFollow={(accountId) => setFollowing((was) => (was === accountId ? null : accountId))}
+						/>
+					)}
 					{comments !== null && (
 						<CommentsLayer
 							context={comments.context}
@@ -972,7 +981,20 @@ function ViewerCanvas({
 						onGo={(next) => go({ page: next, frame: null })}
 					/>
 				)}
-				{followed !== undefined && <FollowMark mate={followed} />}
+				{/* the top right holds the viewer's own controls, so the words hang from the top's middle */}
+				{followed !== undefined && <FollowMark mate={followed} centre />}
+				{/* who else is here, where the Mac's canvas starts its path: the field's top left, beside the pages */}
+				{room !== undefined && (
+					<div className="absolute top-3 left-3 z-20">
+						<PresenceFaces
+							room={room}
+							page={page}
+							project={project.project}
+							following={following}
+							onFollow={setFollowing}
+						/>
+					</div>
+				)}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
 					{project.shared !== undefined && <SharedLine shared={project.shared} project={project.project} />}
 					{comments !== null ? (
@@ -986,9 +1008,6 @@ function ViewerCanvas({
 					) : null}
 					{project.shares !== undefined && <ProjectShared address={project.shares} manage={edits(project.role)} />}
 					{edits(project.role) && <OpenInSpool project={project} onNotice={onNotice} />}
-					{room !== undefined && (
-						<PresenceFaces room={room} page={page} following={following} onFollow={setFollowing} />
-					)}
 				</div>
 				{listing ? null : comments?.writes === true ? (
 					<ViewerTools tool={comments.tool} onTool={comments.setTool} />

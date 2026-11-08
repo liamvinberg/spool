@@ -1,8 +1,8 @@
 import { type RefObject, useEffect, useRef, useSyncExternalStore } from "react";
-import { PRESENCE_DRAGGING, PRESENCE_TICK_MS, type PresenceState } from "../../team-sync-protocol";
+import { PRESENCE_DRAGGING, PRESENCE_TICK_MS, type PresenceFocus, type PresenceState } from "../../team-sync-protocol";
 import { toWorld } from "./camera";
 import type { CameraStore } from "./camera-store";
-import { DRAG_SLOP, followCamera, type PresenceRoom } from "./presence";
+import { DRAG_SLOP, followCamera, look, type PresenceRoom } from "./presence";
 
 /**
  * At most one presence in this many milliseconds is sent: the team tells the others once a tick whatever came
@@ -31,8 +31,9 @@ export interface PresenceSender extends InsideFrame {
 
 /**
  * Say where this canvas's person is on a team canvas, as it changes (DEV-196): the page, the pointer in world
- * coordinates, a press, the frames a drag is moving, the frame they're inside live and the rectangle the
- * camera shows. Inside a live frame the frame tells the pointer, each press as a click, and its scrolling, through
+ * coordinates, a press, the frames a drag is moving, the frame they're inside live, the rectangle the
+ * camera shows, and whether their window has focus or can be seen at all. A pointer that leaves the canvas or the
+ * window stays where it last was on the page; on a new page it is unknown until it is over the canvas again. Inside a live frame the frame tells the pointer, each press as a click, and its scrolling, through
  * the returned `InsideFrame`. Sent no more often than `PRESENCE_SEND_MS`, and only when something changed: to
  * the daemon from the Mac's canvas, to spool.page from the read-only one.
  */
@@ -61,7 +62,11 @@ export function usePresenceSender(options: {
 
 	useEffect(() => {
 		if (!team) return;
+		/** Where the pointer is over the canvas, in its own pixels; null while it is elsewhere. */
 		let pointer: { x: number; y: number } | null = null;
+		/** Where it last was on this page, in world coordinates, once it has left the canvas. */
+		let rest: { x: number; y: number } | null = null;
+		let page = latest.current.page;
 		let pressed = false;
 		// told by the frame they're inside: its pointer already in world coordinates, the presses and the scrolling
 		let framePointer: { x: number; y: number } | null = null;
@@ -74,14 +79,22 @@ export function usePresenceSender(options: {
 		const state = (): PresenceState => {
 			const cam = camera.get();
 			const viewport = viewportRef.current;
-			const { page, inside, dragging, hidden, following } = latest.current;
+			const { inside, dragging, hidden, following } = latest.current;
+			// where the pointer was left on the last page is nowhere on this one: one off the canvas starts unknown here
+			if (latest.current.page !== page) {
+				page = latest.current.page;
+				rest = null;
+			}
 			const followed = following === null || following === undefined ? {} : { following };
+			const focus = focusNow();
+			const focused = focus === "focused" ? {} : { focus };
 			// a hidden pointer goes nowhere, so moving it says nothing at all
 			if (hidden === true)
-				return { page, pointer: null, pressed: false, dragging: [], inside, view: null, ...followed };
-			const world = framePointer ?? (pointer === null || cam === null ? null : toWorld(pointer, cam));
+				return { page, pointer: null, pressed: false, dragging: [], inside, view: null, ...followed, ...focused };
+			const world = framePointer ?? (pointer === null || cam === null ? rest : toWorld(pointer, cam));
 			return {
 				...followed,
+				...focused,
 				clicks,
 				scrolled: inside === null ? null : scrolled,
 				page,
@@ -124,11 +137,18 @@ export function usePresenceSender(options: {
 			if (viewport === null || !(event.target instanceof Node) || !viewport.contains(event.target)) return false;
 			const rect = viewport.getBoundingClientRect();
 			pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+			rest = null;
 			return true;
+		};
+		/** The pointer has left the canvas: it stays on the page where it was, whatever the camera does next. */
+		const leave = () => {
+			const cam = camera.get();
+			if (pointer !== null && cam !== null) rest = toWorld(pointer, cam);
+			pointer = null;
 		};
 		const move = (event: PointerEvent) => {
 			framePointer = null;
-			if (!over(event) && !pressed) pointer = null;
+			if (!over(event) && !pressed) leave();
 			later();
 		};
 		const press = (event: PointerEvent) => {
@@ -165,7 +185,7 @@ export function usePresenceSender(options: {
 		const out = (event: PointerEvent) => {
 			// out of the window, or into a frame's own document: one gone inside a live frame stays where it went in
 			if (event.relatedTarget !== null || pressed || latest.current.inside !== null) return;
-			pointer = null;
+			leave();
 			later();
 		};
 		// heard in the capture phase, so nothing the canvas stops on its way reaches it any less
@@ -174,6 +194,10 @@ export function usePresenceSender(options: {
 		document.addEventListener("pointerout", out, true);
 		window.addEventListener("pointerup", release, true);
 		window.addEventListener("pointercancel", release, true);
+		// focus is read when a state goes, after the event: focus moving into a live frame blurs the window first
+		window.addEventListener("focus", later);
+		window.addEventListener("blur", later);
+		document.addEventListener("visibilitychange", later);
 		const unwatch = camera.subscribe(later);
 		later();
 		return () => {
@@ -187,6 +211,9 @@ export function usePresenceSender(options: {
 			document.removeEventListener("pointerout", out, true);
 			window.removeEventListener("pointerup", release, true);
 			window.removeEventListener("pointercancel", release, true);
+			window.removeEventListener("focus", later);
+			window.removeEventListener("blur", later);
+			document.removeEventListener("visibilitychange", later);
 			unwatch();
 		};
 	}, [say, team, camera, viewportRef]);
@@ -215,7 +242,7 @@ export function usePointerHidden(room: PresenceRoom | undefined): boolean {
 
 /**
  * Follow a teammate's view (DEV-196): this camera eases onto the rectangle theirs shows, onto their page when
- * they change it, until esc, until anything else moves the camera, or until they leave.
+ * they change it, until esc, until anything else moves the camera, or until they leave or are gone.
  */
 export function useFollow(options: {
 	room: PresenceRoom;
@@ -244,7 +271,7 @@ export function useFollow(options: {
 			const mate = room.get(following);
 			const cam = camera.get();
 			const viewport = viewportRef.current;
-			if (mate === undefined || mate.left !== null) return stop();
+			if (mate === undefined || mate.left !== null || look(mate, Date.now()) === "gone") return stop();
 			if (mine !== null && cam !== mine) return stop();
 			if (mate.state.page !== latest.current.page) {
 				// their page first; the camera there is adopted once it has arrived
@@ -288,6 +315,15 @@ export function useFollow(options: {
 			window.removeEventListener("keydown", stopOnEsc, true);
 		};
 	}, [following, camera, room, viewportRef]);
+}
+
+/**
+ * How present this window is: hidden when its canvas can't be seen, blurred when another window has focus, focused
+ * otherwise. A live frame's own document holding focus is this window's: `hasFocus` counts the frames inside it.
+ */
+function focusNow(): PresenceFocus {
+	if (document.visibilityState === "hidden") return "hidden";
+	return document.hasFocus() ? "focused" : "blurred";
 }
 
 function round(value: number): number {

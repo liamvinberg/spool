@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react";
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../cn";
 import { hotkeyKey } from "../hotkeys";
 import { Kbd } from "../primitives/display";
@@ -78,6 +78,7 @@ export function CanvasPath({
 	awake = false,
 	lit = null,
 	peeked = null,
+	after,
 	onGo,
 }: {
 	segs: readonly PathSeg[];
@@ -97,6 +98,8 @@ export function CanvasPath({
 	lit?: string | null;
 	/** the name a peek is showing */
 	peeked?: string | null;
+	/** what stands right after the path, at full ink whatever the wake: who else is here */
+	after?: ReactNode;
 	onGo: (page: string) => void;
 }) {
 	const still = useReducedMotion() === true;
@@ -240,6 +243,15 @@ export function CanvasPath({
 					);
 				})}
 			</AnimatePresence>
+			{after === undefined || after === null ? null : (
+				<motion.span
+					layout="position"
+					transition={{ duration: dur, ease: EASE }}
+					className="ml-1 flex items-center"
+				>
+					{after}
+				</motion.span>
+			)}
 			<AnimatePresence>
 				{held && trail.length > 0 ? (
 					<motion.span

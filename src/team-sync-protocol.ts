@@ -663,7 +663,17 @@ export interface PresenceState {
 	agent?: PresenceAgent;
 	/** The account whose view they follow: that person's pointer is always shown to them (#107). */
 	following?: string;
+	/**
+	 * Whether their spool window has focus: `blurred` while it is on screen behind another window, `hidden` while
+	 * their canvas can't be seen at all (minimised, another tab, another Space). Absent is focused, as from anyone
+	 * whose spool is older or a relay that doesn't carry it yet.
+	 */
+	focus?: PresenceFocus;
 }
+
+/** How present a person's spool window is, as their canvas says it. */
+export type PresenceFocus = "focused" | "blurred" | "hidden";
+const PRESENCE_FOCUS: readonly string[] = ["focused", "blurred", "hidden"] satisfies PresenceFocus[];
 
 /** What a person's agent is doing, small enough to ride every presence message. */
 export interface PresenceAgent {
@@ -741,18 +751,23 @@ export const PRESENCE_TICK_MS = 100;
 export const PRESENCE_SHOWN = 50;
 
 /**
- * How long a person has to change nothing of their own to be idle: an agent of theirs at work doesn't count. Long
- * enough that reading a frame or thinking isn't idle, short enough that someone who walked away reads as gone soon.
+ * How long a person changes nothing of their own (their agent at work and their window's focus don't count) before
+ * they read as unfocused, then away, then gone: long enough that reading a frame or thinking keeps them here, short
+ * enough that someone who walked away from an open spool stops reading as here.
  */
-export const PRESENCE_IDLE_MS = 60_000;
+export const PRESENCE_UNFOCUSED_MS = 2 * 60_000;
+export const PRESENCE_AWAY_MS = 5 * 60_000;
+export const PRESENCE_GONE_MS = 30 * 60_000;
 
 /**
  * Daemon → window: who else is in one team project, for its tab while another is focused. `quiet` is how many
- * milliseconds ago they last did anything of their own, counted to the moment it was said.
+ * milliseconds ago they last did anything of their own, counted to the moment it was said; `focus` is their window's,
+ * absent while focused.
  */
 export interface TabPresence {
 	person: PresencePerson;
 	quiet: number;
+	focus?: PresenceFocus;
 }
 
 /** What a name in a presence message may be: a page or a frame. Small, so a person's whole state stays small. */
@@ -795,7 +810,7 @@ export function readPresenceHidden(message: Record<string, unknown>): boolean | 
 export function readPresenceState(value: unknown): PresenceState | null | undefined {
 	if (value === null) return null;
 	if (!isRecord(value)) return undefined;
-	const { page, pointer, pressed, dragging, inside, view, clicks, scrolled, agent, following } = value;
+	const { page, pointer, pressed, dragging, inside, view, clicks, scrolled, agent, following, focus } = value;
 	if (!isPresenceName(page) || typeof pressed !== "boolean" || !(inside === null || isPresenceName(inside)))
 		return undefined;
 	if (!Array.isArray(dragging) || dragging.length > PRESENCE_DRAGGING || !dragging.every(isPresenceName))
@@ -823,7 +838,12 @@ export function readPresenceState(value: unknown): PresenceState | null | undefi
 			view === null ? null : { x: view.x as number, y: view.y as number, w: view.w as number, h: view.h as number },
 		...withAgent(readPresenceAgent(agent)),
 		...(isPresenceName(following) ? { following } : {}),
+		...(isPresenceFocus(focus) ? { focus } : {}),
 	};
+}
+
+function isPresenceFocus(value: unknown): value is PresenceFocus {
+	return typeof value === "string" && PRESENCE_FOCUS.includes(value);
 }
 
 function withAgent(agent: PresenceAgent | undefined): { agent?: PresenceAgent } {
