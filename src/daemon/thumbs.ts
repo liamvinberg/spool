@@ -159,7 +159,14 @@ function coverFormat(bytes: Buffer): { ext: CoverExt; type: string } | undefined
  * fact a canvas switching to the other can not read off the picture: which of
  * the covers it holds are now of a frame nobody is looking at.
  */
-export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: ColorScheme, source?: string): Cover {
+export function writeCover(
+	root: string,
+	frame: string,
+	bytes: Buffer,
+	scheme?: ColorScheme,
+	source?: string,
+	words?: readonly string[],
+): Cover {
 	const dir = coverDir(root, frame);
 	const format = coverFormat(bytes);
 	if (format === undefined) throw new Error("a cover must be one PNG or JPEG image");
@@ -178,6 +185,7 @@ export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: 
 	}
 	if (scheme !== undefined) writeAtomic(join(dir, SCHEME_NAME), `${scheme}\n`);
 	if (source !== undefined) writeAtomic(join(dir, SOURCE_NAME), `${source}\n`);
+	if (words !== undefined) writeAtomic(join(dir, WORDS_NAME), words.join("\n"));
 	writeAtomic(join(dir, BOOTH_NAME), "");
 	return { hash };
 }
@@ -191,6 +199,45 @@ const SCHEME_NAME = "scheme";
  */
 const SOURCE_NAME = "source";
 const SOURCE_HASH = /^[0-9a-f]{64}$/;
+
+/**
+ * Beside a still the booth took, what the frame said in it, one phrase a line:
+ * the frame finder answers by it when neither a frame's name nor its page does
+ * (finder-wake, task 443). It retires and comes back with the picture, so it is
+ * always of the version the still is of.
+ */
+const WORDS_NAME = "words";
+/** the most of a frame's text kept, in characters: enough to remember a screen by, little enough to send every frame's */
+const WORDS_MOST = 1500;
+
+/** A frame's text as the finder keeps it: each line once, its spaces collapsed, up to `WORDS_MOST` characters. */
+export function phrasesOf(text: string): string[] {
+	const phrases = new Set<string>();
+	let kept = 0;
+	for (const line of text.split("\n")) {
+		const phrase = line.replace(/\s+/g, " ").trim();
+		if (phrase.length === 0 || phrases.has(phrase)) continue;
+		if (kept + phrase.length > WORDS_MOST) break;
+		phrases.add(phrase);
+		kept += phrase.length;
+	}
+	return [...phrases];
+}
+
+/** What every frame with a still said in it, read without holding the event loop. */
+export async function scanWords(root: string): Promise<Map<string, string[]>> {
+	const store = coverStoreDir(root);
+	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+	const scanned = await Promise.all(
+		folders.map(async (folder) => {
+			const frame = segmentFrame(folder);
+			if (frame === undefined) return undefined;
+			const text = await readFile(join(store, folder, WORDS_NAME), "utf8").catch(() => undefined);
+			return text === undefined || text === "" ? undefined : ([frame, text.split("\n")] as const);
+		}),
+	);
+	return new Map(scanned.filter((entry) => entry !== undefined));
+}
 
 /** A frame's stored still, as a later send reads it: its address, the version it is of, and whether the booth failed on it since. */
 export interface StoredStill {

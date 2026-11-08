@@ -28,6 +28,7 @@ import type {
 	FrameCopy,
 	Geometry,
 	HistoryScope,
+	PendingImport,
 	ProjectedFrame,
 	SelectionEntry,
 	SelectionPut,
@@ -43,6 +44,7 @@ import {
 	fetchCloudAccount,
 	fetchFlows,
 	fetchOrder,
+	fetchPendingImports,
 	fetchProjection,
 	postSeen,
 	postTrash,
@@ -84,6 +86,7 @@ import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import type { AgentDeck } from "./agent-stream";
+import { AgentTrail } from "./agent-trail";
 import type { AgentTile } from "./agent-transcript";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
@@ -143,6 +146,7 @@ import { ContextMenu } from "./context-menu";
 import { placeCopies } from "./copy-placement";
 import { type Drop, dropAt } from "./element-move";
 import { deepest, parentOf } from "./element-selection";
+import { FindDoor } from "./find-door";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, createSiteBoxStore, FlowArrows } from "./flow-arrows";
 import { useFrameAgents } from "./frame-agents";
@@ -319,6 +323,8 @@ interface ResizePaint {
 }
 
 const SETTLE_PERSIST_MS = 600;
+/** What a person says, in effect, by dropping another tool's file on Home (spool#242). */
+const IMPORT_ASK = "Rebuild these as frames, with the prototype links as walks.";
 /**
  * How long a Fast Refresh update (the fast-refresh experiment) may take before
  * the frame is reloaded as if it had refused: about what a reload takes, so
@@ -736,6 +742,44 @@ function CanvasField({
 		() => ({ label: fixLabel, run: (marks: readonly ShownSetAside[]) => askToFix(setAsideAsk(marks)) }),
 		[fixLabel, askToFix],
 	);
+	/**
+	 * A project made from another tool's file starts its agent on it as it opens (spool#242): the pane opens on the
+	 * open thread and the import goes out under its chip's words. Where nothing can take it (no agent on this Mac, a
+	 * turn already running) the words wait in the composer instead, naming the import's folder, for the person to send.
+	 */
+	const [imported, setImported] = useState<readonly PendingImport[]>([]);
+	useEffect(() => {
+		let gone = false;
+		void fetchPendingImports(project).then((waiting) => {
+			if (!gone) setImported(waiting);
+		});
+		return () => {
+			gone = true;
+		};
+	}, [project]);
+	useEffect(() => {
+		const first = imported[0];
+		if (first === undefined || deckEngine === undefined || deckOpen === "" || install.looked !== true) return;
+		setImported([]);
+		const turn = deck.get().turn;
+		const took =
+			!install.missing &&
+			!turn.running() &&
+			turn.send(IMPORT_ASK, { context: first.label, imports: imported.map((one) => one.slug) });
+		setAgentRequest({
+			id: crypto.randomUUID(),
+			thread: deckOpen,
+			...(took
+				? {}
+				: {
+						prepared: {
+							intent: "import",
+							text: `${IMPORT_ASK} The ${first.source} file is in imports/${first.slug}/: read its README.md and run \`spool skill import\` first.`,
+							selection: [],
+						},
+					}),
+		});
+	}, [imported, deckEngine, deckOpen, install.looked, install.missing, deck]);
 	const fixBroken = useCallback(
 		(frame: string, broken: BrokenFrameRecord) => askToFix(brokenAsk(frame, broken)),
 		[askToFix],
@@ -5304,6 +5348,16 @@ function CanvasField({
 		goToPage: followPage,
 	});
 	const followed = following === null ? undefined : presenceRoom.get(following);
+	// who else is here, after the path at the canvas's top left rather than in the window's bar (task 503)
+	const presenceFaces = team ? (
+		<PresenceFaces
+			room={presenceRoom}
+			page={activePage}
+			project={project}
+			following={following}
+			onFollow={setFollowing}
+		/>
+	) : null;
 	// read from the frame protocol's handler, which is bound before the sender is
 	const insideFrameRef = useRef(insideFrame);
 	insideFrameRef.current = insideFrame;
@@ -6051,7 +6105,14 @@ function CanvasField({
 							})()}
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
-								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />
+								<PresenceLayer
+									room={presenceRoom}
+									camera={camera}
+									frames={visibleFrames}
+									page={activePage}
+									following={following}
+									onFollow={(accountId) => setFollowing((was) => (was === accountId ? null : accountId))}
+								/>
 							)}
 							{/* comments on a team canvas (spool#169): pins over the field, and the card a pin opens */}
 							{team && (
@@ -6085,16 +6146,25 @@ function CanvasField({
 						</>
 					)}
 					{followed !== undefined && <FollowMark mate={followed} />}
-					{/* who else is here, at the canvas's top right rather than in the window's bar, so the tabs never move for it */}
-					{team && (
-						<div className="absolute top-3 right-3 z-30">
-							<PresenceFaces
-								room={presenceRoom}
-								page={activePage}
-								following={following}
-								onFollow={setFollowing}
-							/>
-						</div>
+					{/* the agent's own path at the top right (task 443) */}
+					{loaded && (
+						<AgentTrail
+							deck={deck}
+							store={store}
+							camera={camera}
+							viewportRef={viewportRef}
+							page={activePage}
+							project={project}
+							under={followed !== undefined}
+							teammate={following !== null}
+							onFollow={() => setFollowing(null)}
+							toPage={switchToPage}
+							onLand={landOnFrame}
+						/>
+					)}
+					{/* who else is here stands after the path; with no path drawn, where it would start */}
+					{presenceFaces !== null && !(loaded && !projectEmpty) && (
+						<div className="absolute top-3 left-3 z-20">{presenceFaces}</div>
 					)}
 
 					{menu !== null && (
@@ -6240,7 +6310,8 @@ function CanvasField({
 					{!projectEmpty && !listing && <CanvasTools tool={effectiveTool} onTool={chooseTool} team={team} />}
 					{loaded && !projectEmpty && (
 						<CanvasPath
-							awake={peeking.carrying !== null || peeking.peek?.from === "path"}
+							awake={finding || peeking.carrying !== null || peeking.peek?.from === "path"}
+							lifted={finding}
 							lit={peeking.target?.at === "path" ? peeking.target.page : null}
 							peeked={peeking.peek?.from === "path" ? peeking.peek.page : null}
 							segs={pathSegs}
@@ -6253,6 +6324,8 @@ function CanvasField({
 								if (pageWithin(page, activePage) || page === ROOT_PAGE) goUpTo(page);
 								else goInsidePage(page);
 							}}
+							after={presenceFaces}
+							tail={<FindDoor hidden={finding} onOpen={() => setFinding(true)} />}
 						/>
 					)}
 					<PagePeekCard
@@ -6275,18 +6348,18 @@ function CanvasField({
 							landOnFrame(name);
 						}}
 					/>
-					{finding ? (
-						<PanePalette
-							frames={navigatorFrames}
-							unseen={unseen}
-							onPick={setFindLit}
-							onClose={() => setFinding(false)}
-							onLand={(name) => {
-								setFinding(false);
-								landOnFrame(name);
-							}}
-						/>
-					) : null}
+					<PanePalette
+						open={finding}
+						project={project}
+						frames={navigatorFrames}
+						unseen={unseen}
+						onPick={setFindLit}
+						onClose={() => setFinding(false)}
+						onLand={(name) => {
+							setFinding(false);
+							landOnFrame(name);
+						}}
+					/>
 				</div>
 			</PaneWindow>
 			{versions.question}

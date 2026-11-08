@@ -3,7 +3,8 @@ import { APP_PATH_SEGMENTS } from "./app-paths";
 /**
  * Where Home is, as its address says: the same paths in the Mac app and at spool.page/<team>. `/<team>`,
  * `/<team>/people`, `/<team>/settings` and `/<team>/settings/billing` are a team's pages and `/account` the
- * account's own; on a Mac `/` is Your projects and `/recent` is Recent, which live on a Mac only.
+ * account's own; on a Mac `/` is Your projects and `/recent` is Recent, which live on a Mac only; `/shared` is Shared
+ * with you, which lives at spool.page only.
  */
 
 /** A team's pages in Home's sidebar, under the team. */
@@ -18,12 +19,14 @@ export type HomePlace =
 			/** Settings' tab; General when absent. */
 			tab?: SettingsTab;
 	  }
-	| { team: null; page: "account" | "recent" | "own" };
+	| { team: null; page: "account" | "recent" | "own" | "shared" };
 
 /** spool.page/account, and on a Mac the account's place. `account` is reserved, so no team stands there. */
 export const ACCOUNT_PLACE: HomePlace = { team: null, page: "account" };
 /** Recent, on a Mac: every project on it, newest opened first. */
 export const RECENT_PLACE: HomePlace = { team: null, page: "recent" };
+/** Shared with you, at spool.page: what people in other teams shared with this account. */
+export const SHARED_PLACE: HomePlace = { team: null, page: "shared" };
 /** Your projects, on a Mac: the projects in no team. */
 export const OWN_PLACE: HomePlace = { team: null, page: "own" };
 
@@ -35,6 +38,7 @@ export function placeOf(path: string): HomePlace | null {
 	if (team === undefined) return OWN_PLACE;
 	if (page === undefined && team === "account") return ACCOUNT_PLACE;
 	if (page === undefined && team === "recent") return RECENT_PLACE;
+	if (page === undefined && team === "shared") return SHARED_PLACE;
 	if (RESERVED.has(team) || rest.length > 0) return null;
 	if (page === undefined) return { team, page: "projects" };
 	if (page === "settings" && tab === "billing") return { team, page, tab };

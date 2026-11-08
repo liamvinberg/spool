@@ -41,7 +41,7 @@ describe("the app's own first path segments", () => {
 	});
 
 	it("are never read as a team's address", () => {
-		for (const segment of APP_PATH_SEGMENTS.filter((segment) => !["recent", "account"].includes(segment)))
+		for (const segment of APP_PATH_SEGMENTS.filter((segment) => !["recent", "account", "shared"].includes(segment)))
 			expect(placeOf(`/${segment}`)).toBeNull();
 	});
 });

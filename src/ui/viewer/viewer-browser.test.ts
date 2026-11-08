@@ -385,9 +385,24 @@ describe("the read-only canvas", () => {
 		await expect.poll(() => new URL(page.url()).pathname).toBe(`${PATH}/app/shop`);
 		await page.frameLocator('iframe[title="app/shop/cart"]').locator("h1").waitFor();
 		expect(await list.count()).toBe(0);
+
+		// the path names the team, the project and the page; ⌘↑ climbs it, and past the project's top leaves for Home
+		const path = page.getByRole("navigation", { name: "Path" });
+		expect(
+			await path.locator("[data-path-page]").evaluateAll((names) => names.map((name) => name.ariaLabel)),
+		).toEqual(["Up to checkout", "Up to app", "shop"]);
+		expect(await path.getByRole("link", { name: "devosurf" }).getAttribute("href")).toBe("/devosurf");
+
+		await path.getByRole("link", { name: "Up to app" }).click();
+		await expect.poll(() => new URL(page.url()).pathname).toBe(`${PATH}/app`);
+		await page.keyboard.press("ControlOrMeta+ArrowUp");
+		await expect.poll(() => new URL(page.url()).pathname).toBe(PATH);
+		const home = page.waitForRequest((request) => new URL(request.url()).pathname === "/devosurf");
+		await page.keyboard.press("ControlOrMeta+ArrowUp");
+		await home;
 	});
 
-	it("sets several items shared with an outsider side by side as their top, a clash told by its parent", {
+	it("sets several items shared with an outsider side by side as their top, named by their team after the way back, a clash told by its parent", {
 		timeout: 60_000,
 	}, async () => {
 		const shared: ViewerProject = {
@@ -401,6 +416,12 @@ describe("the read-only canvas", () => {
 				],
 			},
 			shared: { by: "ana", pages: ["acme/checkout", "volvo/checkout"], updated: null },
+			outsider: {
+				share: { id: "s-kim", kind: "people", who: ["kim"] },
+				me: { id: "kim", name: "Kim" },
+				comments: "/api/comments",
+				socket: "/api/shares/s-kim/comments/socket",
+			},
 		};
 		const { page } = await open(PATH, { as: shared });
 		const list = page.locator("[data-page-list]");
@@ -409,7 +430,10 @@ describe("the read-only canvas", () => {
 			.toEqual(["checkoutacme1 frame", "checkoutvolvo1 frame"]);
 		const rail = page.getByRole("navigation", { name: "Pages" });
 		await rail.getByRole("button", { name: "checkout", exact: true }).first().waitFor();
-		expect(await page.getByText("Shared with you", { exact: true }).count()).toBe(1);
+		const path = page.getByRole("navigation", { name: "Path" });
+		expect(
+			await path.locator("[data-path-page]").evaluateAll((names) => names.map((name) => name.ariaLabel)),
+		).toEqual(["Devosurf"]);
 	});
 
 	it("shows a teammate's save in place, with the changed mark and a short toast", { timeout: 60_000 }, async () => {
@@ -575,11 +599,14 @@ describe("the read-only canvas", () => {
 		await expect
 			.poll(() => page.frameLocator('iframe[title="shop/cart"]').locator("h1").textContent())
 			.toBe("shop/cart");
-		await page.getByText("Shared by ana · 2 min ago").waitFor();
+		await page.getByText("Devosurf · shared by ana · look and comment").waitFor();
 		// the one page shared is their top, called by its own name: no page above it, no project name (spool#230)
 		const rail = page.getByRole("navigation", { name: "Pages" });
 		expect(await rail.getByRole("button", { name: "cart frame" }).count()).toBe(1);
-		expect(await page.getByText("shop", { exact: true }).count()).toBe(1);
+		const path = page.getByRole("navigation", { name: "Path" });
+		expect(
+			await path.locator("[data-path-page]").evaluateAll((names) => names.map((name) => name.ariaLabel)),
+		).toEqual(["shop"]);
 		for (const other of ["home", "menu", "checkout"])
 			expect(await page.getByText(other, { exact: true }).count(), other).toBe(0);
 		expect(await page.getByText("view only").count()).toBe(0);

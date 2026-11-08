@@ -1,12 +1,13 @@
 // Navigation primitives: the ways a person moves between places. Tabs are the
 // switch inside a panel or a sheet, IconRail the vertical strip of
-// glyphs a closed side shrinks to, NavItem a place in a sidebar.
+// glyphs a closed side shrinks to, NavItem a place in a sidebar, NavList the
+// sidebar's places together, under one selected fill that slides between them.
 //
 // Interaction states answer to the real pseudo-class and to a forced
 // `data-state="hover|active|focus"`. App states are attributes: `aria-current`
 // for where you are, `aria-selected` for the chosen tab.
 
-import type { ComponentProps, HTMLAttributes, ReactNode } from "react";
+import { type ComponentProps, type HTMLAttributes, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../cn";
 import { Count } from "./display";
 
@@ -154,9 +155,10 @@ export function NavItem({ icon, label, current = false, meta, className, ...rest
 	return (
 		<button
 			type="button"
+			data-nav-item=""
 			aria-current={current ? "page" : undefined}
 			className={cn(
-				"flex h-row-roomy w-full min-w-0 items-center gap-3 rounded-sm px-3 text-left type-control text-secondary [&>svg]:size-4 [&>svg]:shrink-0",
+				"relative flex h-row-roomy w-full min-w-0 items-center gap-3 rounded-sm px-3 text-left type-control text-secondary [&>svg]:size-4 [&>svg]:shrink-0",
 				FOCUS,
 				EASE_COLORS,
 				"hover:bg-state-hover hover:text-primary data-[state=hover]:bg-state-hover data-[state=hover]:text-primary",
@@ -168,7 +170,88 @@ export function NavItem({ icon, label, current = false, meta, className, ...rest
 		>
 			{icon}
 			<span className="min-w-0 flex-1 truncate">{label}</span>
-			{meta === undefined ? null : <Count value={meta} />}
+			{meta === undefined ? null : <Count value={meta} tick />}
 		</button>
+	);
+}
+
+/* ---------------------------------------------------------------- NavList -- */
+
+interface Spot {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+/**
+ * A sidebar's places, wherever in it they stand: the one selected fill lies
+ * under the NavItem that is `aria-current="page"` and slides from the row you
+ * left to the one you went to. Where no row is current it fades, and comes back
+ * on the next row without travelling there. Still under reduced motion.
+ */
+export function NavList({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
+	const self = useRef<HTMLDivElement>(null);
+	const [spot, setSpot] = useState<Spot | null>(null);
+	// it glides only from a row it already stood on, and never while the sidebar first draws
+	const [glide, setGlide] = useState(false);
+	const last = useRef<Spot | null>(null);
+	useLayoutEffect(() => {
+		const box = self.current;
+		if (box === null) return;
+		const measure = () => {
+			const row = box.querySelector<HTMLElement>("[data-nav-item][aria-current=page]");
+			const was = last.current;
+			if (row === null) {
+				last.current = null;
+				setGlide(false);
+				setSpot(null);
+				return;
+			}
+			const outer = box.getBoundingClientRect();
+			const inner = row.getBoundingClientRect();
+			const next = { x: inner.left - outer.left, y: inner.top - outer.top, w: inner.width, h: inner.height };
+			if (was !== null && was.x === next.x && was.y === next.y && was.w === next.w && was.h === next.h) return;
+			last.current = next;
+			setGlide(was !== null);
+			setSpot(next);
+		};
+		measure();
+		const changes = new MutationObserver(measure);
+		changes.observe(box, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-current"] });
+		const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+		sizes?.observe(box);
+		return () => {
+			changes.disconnect();
+			sizes?.disconnect();
+		};
+	}, []);
+	return (
+		<div
+			ref={self}
+			className={cn(
+				"relative flex flex-col",
+				// the fill below stands in for each row's own
+				"[&_[data-nav-item][aria-current=page]]:bg-transparent",
+				className,
+			)}
+			{...rest}
+		>
+			<span
+				aria-hidden="true"
+				data-nav-fill=""
+				className={cn(
+					"pointer-events-none absolute top-0 left-0 rounded-sm bg-state-selected duration-fast ease-out motion-reduce:transition-none",
+					glide ? "transition-[translate,width,height,opacity]" : "transition-opacity",
+				)}
+				style={{
+					translate: `${spot?.x ?? 0}px ${spot?.y ?? 0}px`,
+					width: spot?.w ?? 0,
+					height: spot?.h ?? 0,
+					opacity: spot === null ? 0 : 1,
+				}}
+			/>
+			{children}
+		</div>
 	);
 }

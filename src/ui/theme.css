@@ -158,6 +158,8 @@
 	--animate-chrome-in: chrome-in var(--transition-duration-fast) var(--ease-out);
 	/* Home's page as you go to another place: it fades up 6px, on the everyday scale */
 	--animate-place-in: place-in var(--transition-duration-base) var(--ease-out);
+	/* a count whose number changed: the new one rises a few pixels into place */
+	--animate-count-tick: count-tick var(--transition-duration-fast) var(--ease-out);
 	/* a canvas page as you go into one of its pages (spool#224): it arrives from the right, deeper
 	 * the way the path reads; going up, from the left */
 	--animate-page-in: page-in var(--transition-duration-base) var(--ease-out);
@@ -805,6 +807,13 @@
 		}
 	}
 
+	@keyframes count-tick {
+		from {
+			opacity: 0;
+			transform: translateY(4px);
+		}
+	}
+
 	@keyframes place-in {
 		from {
 			opacity: 0;
@@ -943,6 +952,7 @@
 	.animate-find-in,
 	.animate-chrome-in,
 	.animate-place-in,
+	.animate-count-tick,
 	.animate-page-in,
 	.animate-page-up,
 	.animate-history-rise,

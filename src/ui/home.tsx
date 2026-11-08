@@ -8,9 +8,10 @@ import { ArrowRightIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark }
 import { MovedArt, MovedSheet, movedBy } from "./moved-away";
 import { tilde } from "./paths";
 import { Button, IconButton } from "./primitives/actions";
+import { Dot } from "./primitives/display";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { SearchField } from "./primitives/inputs";
-import { NavItem } from "./primitives/navigation";
+import { NavItem, NavList } from "./primitives/navigation";
 import { MenuItem, MenuSeparator, StepMenu } from "./primitives/overlays";
 import { ProjectIconView, useMarkTeam } from "./project-icon";
 import { useProjectExport } from "./project-transfer";
@@ -408,10 +409,12 @@ export function HomeShell({
 						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-accent" />
 						<span>spool</span>
 					</div>
-					{switcher}
-					<nav className="flex flex-col gap-[4px]" aria-label="Home sections">
-						{nav}
-					</nav>
+					<NavList>
+						{switcher}
+						<nav className="flex flex-col gap-[4px]" aria-label="Home sections">
+							{nav}
+						</nav>
+					</NavList>
 					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-secondary [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
 						{foot}
 					</div>
@@ -797,9 +800,10 @@ export function CoverTile({
 	here,
 	line,
 	transition,
-	menuOpen,
-	onToggleMenu,
-	onCloseMenu,
+	fresh,
+	menuOpen = false,
+	onToggleMenu = () => {},
+	onCloseMenu = () => {},
 	menu,
 	menuStep = "menu",
 	onMenuKeyDown,
@@ -812,11 +816,16 @@ export function CoverTile({
 	line: ReactNode;
 	/** Its view-transition name, for the grid's reflow when a cover leaves. */
 	transition?: string;
-	menuOpen: boolean;
-	onToggleMenu: () => void;
-	onCloseMenu: () => void;
-	/** The menu's items: `close` closes it, `refocus` gives the dots back the focus first, for an item that opens a sheet. */
-	menu: (manage: { close: () => void; refocus: () => void }) => ReactNode;
+	/** Whether it changed since this browser last opened it: a dot after its name, which shrinks away once it hasn't. */
+	fresh?: boolean | undefined;
+	menuOpen?: boolean;
+	onToggleMenu?: () => void;
+	onCloseMenu?: () => void;
+	/**
+	 * The menu's items: `close` closes it, `refocus` gives the dots back the focus first, for an item that opens a
+	 * sheet. A cover with nothing to manage has none, and no dots.
+	 */
+	menu?: (manage: { close: () => void; refocus: () => void }) => ReactNode;
 	/** The step its menu has gone on into, an export say: the same box becomes what `menu` draws for it. */
 	menuStep?: string;
 	onMenuKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
@@ -851,7 +860,10 @@ export function CoverTile({
 	const face = (
 		<>
 			<div className="pj-cover-art relative grid aspect-[1.82] place-items-center overflow-hidden rounded-[8px] bg-surface-canvas">
-				{art}
+				{/* under the pointer the picture leans in a little and brightens */}
+				<div className="absolute inset-0 grid place-items-center transition-[scale,filter] duration-base ease-out group-hover/project:scale-[1.02] group-hover/project:brightness-110 motion-reduce:transition-none motion-reduce:group-hover/project:scale-100">
+					{art}
+				</div>
 				<HerePill people={here} />
 				{/* the resting edge, so a pale cover still ends on a pale page; it firms under the pointer */}
 				<span
@@ -865,7 +877,10 @@ export function CoverTile({
 				/>
 			</div>
 			<div className="pj-cover-caption pt-[15px] pr-[32px]">
-				<strong className="block truncate type-title font-[500]">{name}</strong>
+				<strong className="flex min-w-0 items-center gap-[8px] type-title font-[500]">
+					<span className="truncate">{name}</span>
+					{fresh !== undefined && <Dot tone="accent" on={fresh} data-new={fresh ? "" : undefined} />}
+				</strong>
 				{line}
 			</div>
 		</>
@@ -891,22 +906,24 @@ export function CoverTile({
 					{face}
 				</button>
 			)}
-			<IconButton
-				ref={manageRef}
-				icon={<DotsIcon />}
-				label={`Manage ${name}`}
-				pressed={menuOpen}
-				aria-haspopup="menu"
-				aria-expanded={menuOpen}
-				className={cn(
-					"pj-manage absolute right-[-4px] bottom-[6px] transition-[background-color,color,opacity,transform]",
-					menuOpen
-						? "opacity-100"
-						: "opacity-0 focus-visible:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
-				)}
-				onClick={onToggleMenu}
-			/>
-			{menuOpen && (
+			{menu && (
+				<IconButton
+					ref={manageRef}
+					icon={<DotsIcon />}
+					label={`Manage ${name}`}
+					pressed={menuOpen}
+					aria-haspopup="menu"
+					aria-expanded={menuOpen}
+					className={cn(
+						"pj-manage absolute right-[-4px] bottom-[6px] transition-[background-color,color,opacity,transform]",
+						menuOpen
+							? "opacity-100"
+							: "opacity-0 focus-visible:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
+					)}
+					onClick={onToggleMenu}
+				/>
+			)}
+			{menu && menuOpen && (
 				<StepMenu
 					ref={menuRef}
 					at={menuAt === null ? { x: 0, y: 0 } : { x: menuAt.left, y: menuAt.top }}

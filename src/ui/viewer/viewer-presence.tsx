@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type HeardComments, hearComments, NO_COMMENTS_HEARD } from "../../team-comments-heard";
 import type { PresenceState } from "../../team-sync-protocol";
-import { createPresenceRoom, idle, type PresenceRoom, type Teammate } from "../canvas/presence";
+import { createPresenceRoom, here as isHere, look, type PresenceRoom, type Teammate } from "../canvas/presence";
 import { Face, useRoomDrawn } from "../canvas/presence-faces";
 import { Count } from "../primitives/display";
 import { joinPresence, type PresenceLink } from "./source";
@@ -59,11 +59,14 @@ export function useViewerPresence(address: string | undefined): ViewerPresence |
 	);
 }
 
-/** The faces of whoever is in one part of the project, a few and then how many more: the phone's navigator's. */
+/**
+ * The faces of whoever is here in one part of the project, a few and then how many more: the phone's navigator's.
+ * The away aren't here, so they aren't drawn.
+ */
 export function PartFaces({ room, part }: { room: PresenceRoom; part: (mate: Teammate) => boolean }) {
 	useRoomDrawn(room);
 	const now = Date.now();
-	const here = room.teammates().filter((mate) => mate.left === null && part(mate));
+	const here = room.teammates().filter((mate) => mate.left === null && isHere(look(mate, now)) && part(mate));
 	if (here.length === 0) return null;
 	const shown = here.length > PART_FACES ? here.slice(0, PART_FACES - 1) : here;
 	return (
@@ -78,7 +81,13 @@ export function PartFaces({ room, part }: { room: PresenceRoom; part: (mate: Tea
 					className="relative h-[18px] shrink-0"
 					style={{ width: i === shown.length - 1 ? 18 : 13, zIndex: shown.length - i }}
 				>
-					<Face mate={mate} away={false} resting={idle(mate, now)} followed={false} size={18} />
+					<Face
+						mate={mate}
+						look={look(mate, now)}
+						elsewhere={false}
+						size={18}
+						edge="var(--color-surface-window)"
+					/>
 				</span>
 			))}
 			{here.length > shown.length && <Count value={`+${here.length - shown.length}`} className="ml-1" />}

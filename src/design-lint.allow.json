@@ -33,11 +33,10 @@
 		"ad-hoc-motion": 1
 	},
 	"src/ui/canvas/presence-faces.tsx": {
-		"ad-hoc-motion": 1,
 		"raw-colour": 1
 	},
 	"src/ui/canvas/presence-layer.tsx": {
-		"ad-hoc-motion": 5,
+		"ad-hoc-motion": 4,
 		"raw-colour": 7
 	},
 	"src/ui/canvas/sidebar.tsx": {

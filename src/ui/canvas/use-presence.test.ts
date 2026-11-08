@@ -59,6 +59,7 @@ function sender(initial: Props) {
 	const viewport = () => host.querySelector<HTMLElement>("[data-viewport]") as HTMLElement;
 	return {
 		sent,
+		camera,
 		render,
 		move(x: number, y: number) {
 			act(() => {
@@ -120,6 +121,55 @@ it("says who it follows, so the team always shows it that person", () => {
 	expect(canvas.sent.at(-1)).not.toHaveProperty("following");
 });
 
+it("keeps the pointer where it last was on the page once it leaves the canvas or the window, and forgets it on a new page", () => {
+	const canvas = sender({ page: "", hidden: false, following: null });
+	canvas.move(10, 10);
+	canvas.settle();
+	expect(canvas.sent.at(-1)?.pointer).toEqual({ x: 10, y: 10 });
+	// over the window's other furniture, then out of the window, with the camera moving meanwhile
+	act(() => {
+		document.body.dispatchEvent(new PointerEvent("pointermove", { clientX: 500, clientY: 5, bubbles: true }));
+	});
+	act(() => canvas.camera.set({ x: 40, y: 40, k: 2 }));
+	act(() => {
+		document.body.dispatchEvent(new PointerEvent("pointerout", { relatedTarget: null, bubbles: true }));
+	});
+	canvas.settle();
+	expect(canvas.sent.at(-1)?.pointer).toEqual({ x: 10, y: 10 });
+	canvas.render({ page: "flows", hidden: false, following: null });
+	canvas.settle();
+	expect(canvas.sent.at(-1)).toMatchObject({ page: "flows", pointer: null });
+});
+
+it("says when its window loses focus or can't be seen, and counts focus inside a live frame as its own", () => {
+	let focused = true;
+	let visibility: DocumentVisibilityState = "visible";
+	vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
+	vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+	onTestFinished(() => {
+		vi.restoreAllMocks();
+	});
+	const canvas = sender({ page: "", hidden: false, following: null });
+	canvas.settle();
+	// focused is said by saying nothing, as from a spool that never said it
+	expect(canvas.sent.at(-1)).not.toHaveProperty("focus");
+	focused = false;
+	act(() => window.dispatchEvent(new Event("blur")));
+	canvas.settle();
+	expect(canvas.sent.at(-1)?.focus).toBe("blurred");
+	// the window blurs as a live frame takes focus, but the document still has it
+	focused = true;
+	act(() => window.dispatchEvent(new Event("focus")));
+	canvas.settle();
+	act(() => window.dispatchEvent(new Event("blur")));
+	canvas.settle();
+	expect(canvas.sent.at(-1)).not.toHaveProperty("focus");
+	visibility = "hidden";
+	act(() => document.dispatchEvent(new Event("visibilitychange")));
+	canvas.settle();
+	expect(canvas.sent.at(-1)?.focus).toBe("hidden");
+});
+
 it("says on the faces that this person's pointer is hidden, until it is shown again or the stream goes", () => {
 	const room = createPresenceRoom();
 	room.hear({
@@ -135,7 +185,11 @@ it("says on the faces that this person's pointer is hidden, until it is shown ag
 		act(() => root.unmount());
 		host.remove();
 	});
-	act(() => root.render(createElement(PresenceFaces, { room, page: "", following: null, onFollow: () => {} })));
+	act(() =>
+		root.render(
+			createElement(PresenceFaces, { room, page: "", project: "checkout", following: null, onFollow: () => {} }),
+		),
+	);
 	const notice = () => host.querySelector("[data-presence-hidden]")?.textContent ?? null;
 	expect(notice()).toBeNull();
 

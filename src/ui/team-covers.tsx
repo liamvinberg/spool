@@ -1,10 +1,16 @@
 import { useContext, useEffect, useState } from "react";
+import { saidAgo } from "../share-view";
 import type { CloudTeam } from "./api";
 import { CoverTile, MenuBackdrop } from "./home";
 import { MenuItem } from "./primitives/overlays";
 import { ProjectIconView } from "./project-icon";
 import type { ListedTeamProject } from "./team-source";
 import { type TeamHere, TeamsSourceContext } from "./teams";
+import { type SharedWithYou, sharerName } from "./viewer/shared-source";
+
+/** Home's covers, three across, two on a narrower window and one below 720 px. */
+const GRID =
+	"pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1";
 
 /**
  * A team's projects as spool.page draws them, each a cover that opens its live, read-only canvas: at spool.page in
@@ -41,7 +47,7 @@ export function CloudCovers({
 	const away = external ? { target: "_blank", rel: "noreferrer" } : {};
 	return (
 		<>
-			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
+			<div className={GRID}>
 				{covers.map(({ team, project }) => {
 					const at = link(team, project);
 					return (
@@ -131,5 +137,63 @@ function CloudCover({ team, project }: { team: string; project: string }) {
 	if (src === null) return <ProjectIconView project={project} name={project} size="md" />;
 	return (
 		<img src={src} alt="" draggable={false} className="h-full w-full object-contain" onError={() => setSrc(null)} />
+	);
+}
+
+/**
+ * Canvases shared with this account, each a cover that opens the share at spool.page: who shared it and when it last
+ * changed, and a dot while it changed since this browser last opened it. Nothing to manage: a share is look and
+ * comment only.
+ */
+export function SharedCovers({
+	shares,
+	fresh,
+	said = false,
+}: {
+	shares: readonly SharedWithYou[];
+	fresh: (share: SharedWithYou) => boolean;
+	/** Each cover names the team that shared it, where the covers come from several. */
+	said?: boolean;
+}) {
+	return (
+		<div className={GRID}>
+			{shares.map((share) => (
+				<CoverTile
+					key={share.id}
+					name={share.project}
+					open={{ href: share.href }}
+					here={undefined}
+					fresh={fresh(share)}
+					art={<SharedCover share={share} />}
+					line={
+						<span className="mt-[5px] block truncate text-secondary type-detail">
+							{[
+								said && share.team?.name,
+								sharerName(share),
+								saidAgo(Date.parse(share.updated ?? share.sharedAt) / 1000),
+							]
+								.filter(Boolean)
+								.join(" · ")}
+						</span>
+					}
+				/>
+			))}
+		</div>
+	);
+}
+
+/** A share's picture of its first frame, or its letter while it has none. */
+function SharedCover({ share }: { share: SharedWithYou }) {
+	const [failed, setFailed] = useState(false);
+	if (share.cover === null || failed)
+		return <ProjectIconView project={share.project} name={share.project} size="md" />;
+	return (
+		<img
+			src={share.cover}
+			alt=""
+			draggable={false}
+			className="h-full w-full object-contain"
+			onError={() => setFailed(true)}
+		/>
 	);
 }

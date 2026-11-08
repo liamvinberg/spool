@@ -73,15 +73,19 @@ it("opens this Mac's local copy of the team project a link handed over, and Home
 	// the team alone, from its setup list's Open in spool: taken, so Home's address is the team's, with no tab opened
 	await page.goto(local(handoverAddress({ team: "devosurf" })));
 	await expect.poll(() => page.url(), { timeout: 30_000 }).toBe(`${daemon.url}/devosurf`);
-	const team = page.locator(".pj-places button[aria-current=true]");
-	await expect.poll(() => team.getAttribute("title"), { timeout: 30_000 }).toBe("Devosurf");
+	// the team box stands on the team, and its Projects is where Home is
+	const here = () =>
+		page
+			.locator(".pj-team-box [aria-haspopup=menu], .pj-places [aria-current=page]")
+			.evaluateAll((rows) => rows.map((row) => row.getAttribute("title")));
+	await expect.poll(here, { timeout: 30_000 }).toEqual(["Devosurf", "Projects"]);
 
 	// Home keeps showing the team it was on through a reload, and Your projects once that is chosen
 	await page.reload();
-	await expect.poll(() => team.getAttribute("title"), { timeout: 30_000 }).toBe("Devosurf");
+	await expect.poll(here, { timeout: 30_000 }).toEqual(["Devosurf", "Projects"]);
 	await page.getByRole("button", { name: "Your projects" }).click();
 	await expect.poll(() => page.url()).toBe(`${daemon.url}/`);
 	await page.reload();
 	await page.getByRole("heading", { name: "Your projects" }).waitFor({ timeout: 30_000 });
-	expect(await team.count()).toBe(0);
+	expect(await here()).toEqual(["Your projects", "Devosurf"]);
 });

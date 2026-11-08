@@ -6,6 +6,8 @@ import type { BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "../../clo
 import { testBrowser } from "../../test-browser";
 import { builtViewer } from "../../test-helpers";
 import { buildEntry } from "./build-entry";
+import type { SharedWithYou } from "./shared-source";
+import type { ViewerProject } from "./source";
 
 /**
  * Home as spool.page serves it at /<team>: the package's own build, a page that says who is signed in, and the team
@@ -43,23 +45,85 @@ const BILLING: BillingSummary = {
 	lapsesAt: null,
 };
 
+const HOUR = 3_600_000;
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+const share = (id: string, project: string, team: string, by: string, at: { shared: number; updated?: number }) =>
+	({
+		id,
+		href: `/shared/${id}`,
+		project,
+		team: { name: team, address: team.toLowerCase(), logo: null },
+		by: { name: by, email: `${by.toLowerCase()}@${team.toLowerCase()}.com` },
+		sharedAt: ago(at.shared),
+		updated: at.updated === undefined ? null : ago(at.updated),
+		cover: null,
+	}) satisfies SharedWithYou;
+
+/** Shared with vic by two teams vic isn't in, newest change first, as spool.page orders them. */
+const SHARES: SharedWithYou[] = [
+	share("s1", "settle-up", "Tidemark", "Elin", { shared: 72 * HOUR, updated: 2 * HOUR }),
+	share("s2", "packaging", "Brus", "Karin", { shared: 48 * HOUR }),
+	share("s3", "booking", "Tidemark", "Elin", { shared: 200 * HOUR, updated: 120 * HOUR }),
+];
+
+/** A member's project as its canvas reads it: two frames, one with a picture. */
+const CHECKOUT: ViewerProject = {
+	team: { address: "devosurf", name: "Devosurf", logo: null },
+	project: "checkout",
+	account: "vic@devosurf.com",
+	canvas: {
+		pages: [],
+		order: {},
+		frames: [
+			{ name: "cart", x: 0, y: 0, w: 800, h: 600 },
+			{ name: "pay", x: 1000, y: 0, w: 800, h: 600 },
+		],
+	},
+	frames: `${APP}/frames/`,
+	covers: { cart: "/api/teams/devosurf/projects/checkout/cover" },
+	role: "viewer",
+};
+
 let built: string;
 let entry: { file: string; css: string[] };
+let app: { file: string; css: string[] };
 
 beforeAll(async () => {
 	built = await builtViewer();
-	entry = buildEntry(JSON.parse(readFileSync(join(built, "manifest.json"), "utf8")), "home.html");
+	const manifest = JSON.parse(readFileSync(join(built, "manifest.json"), "utf8"));
+	entry = buildEntry(manifest, "home.html");
+	app = buildEntry(manifest, "app.html");
 }, 120_000);
 
 async function open(
 	path: string,
-	given: { teams?: CloudTeam[]; billing?: BillingSummary; setup?: TeamSetup } = {},
-): Promise<{ page: Page; asked: string[]; left: string[] }> {
-	const { teams = TEAMS, billing = BILLING } = given;
+	given: {
+		teams?: CloudTeam[];
+		billing?: BillingSummary;
+		setup?: TeamSetup;
+		shares?: SharedWithYou[];
+		/** When this browser last opened each share, by its id. */
+		opened?: Record<string, number>;
+		/** Served as the one document holding Home and the canvas, as spool.page does once its package has it. */
+		whole?: boolean;
+		/** Holds the canvas's read until it settles. */
+		reading?: Promise<void>;
+	} = {},
+): Promise<{ page: Page; asked: string[]; left: string[]; loads: string[] }> {
+	const { teams = TEAMS, billing = BILLING, shares = [] } = given;
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
+	await page.addInitScript((opened) => {
+		for (const [id, at] of Object.entries(opened))
+			localStorage.setItem(
+				`spool-share-seen:${id}`,
+				JSON.stringify({ pages: [], frames: [], unseenPages: [], unseenFrames: [], opened: at }),
+			);
+	}, given.opened ?? {});
 	const asked: string[] = [];
 	const left: string[] = [];
+	/** Every document the tab loaded, by its path. */
+	const loads: string[] = [];
 	let name: string | null = null;
 	let commentEmails = "for-you";
 	const macs = [
@@ -118,6 +182,7 @@ async function open(
 				return route.fulfill({ json: { ...given.setup, done: true } });
 			if (request.method() !== "GET") return route.fulfill({ json: {} });
 			if (url.pathname === "/api/teams/devosurf/billing") return route.fulfill({ json: billing });
+			if (url.pathname === "/api/shared") return route.fulfill({ json: { shares } });
 			if (url.pathname === "/api/teams")
 				return route.fulfill({ json: { teams, invites: [], mayCreateTeam: false } });
 			if (url.pathname === "/api/teams/devosurf/projects")
@@ -134,6 +199,37 @@ async function open(
 					json: { projects: [{ name: "checkout", url: "", people: [{ name: "sam", color: "#7fd1b9" }] }] },
 				});
 			if (url.pathname === "/api/teams/devosurf/people") return route.fulfill({ json: PEOPLE });
+			const member = url.pathname.match(/^\/api\/teams\/([^/]+)\/projects\/checkout\/canvas$/u)?.[1];
+			const team = teams.find((each) => each.address === member);
+			if (team !== undefined) {
+				await given.reading;
+				return route.fulfill({
+					json: { ...CHECKOUT, team: { address: team.address, name: team.name, logo: null } },
+				});
+			}
+			// a people share as its outsider reads it, a solo project's with no comments to name it
+			const outsider = shares.find((each) => url.pathname === `/api/shares/${each.id}/canvas`);
+			if (outsider !== undefined)
+				return route.fulfill({
+					json: {
+						team: outsider.team,
+						project: outsider.project,
+						account: CHECKOUT.account,
+						canvas: CHECKOUT.canvas,
+						frames: CHECKOUT.frames,
+						shared: { id: outsider.id, kind: "people", by: outsider.by.name, pages: [""], updated: null },
+						...(outsider.team === null
+							? {}
+							: {
+									outsider: {
+										share: { id: outsider.id, kind: "people", who: ["Vic"] },
+										me: { id: "a1", name: "Vic" },
+										comments: `/api/shares/${outsider.id}/comments`,
+										socket: `/api/shares/${outsider.id}/comments/socket`,
+									},
+								}),
+					} satisfies ViewerProject,
+				});
 			if (url.pathname === "/api/teams/devosurf/projects/checkout/cover")
 				return route.fulfill({
 					body: readFileSync(join(process.cwd(), "src/ui/agent-app-assets/claude.png")),
@@ -141,16 +237,30 @@ async function open(
 				});
 			return route.fulfill({ status: 404, json: { error: "not_found" } });
 		}
+		if (url.pathname.startsWith("/frames/"))
+			return route.fulfill({ contentType: "text/html", body: "<!doctype html><body>frame</body>" });
+		loads.push(url.pathname);
+		const served = given.whole ? app : entry;
+		// the canvas's own address says where its project is read, as spool.page's page for it does
+		const [, first, second] = url.pathname.split("/");
+		const canvas = !given.whole
+			? null
+			: first === "shared" && second
+				? { api: `/api/shares/${second}/canvas`, path: `/shared/${second}` }
+				: second === "checkout"
+					? { api: `/api/teams/${first}/projects/checkout/canvas`, path: `/${first}/checkout` }
+					: null;
 		return route.fulfill({
 			contentType: "text/html",
-			body: `<!doctype html><html><head>${entry.css.map((css) => `<link rel="stylesheet" href="/_viewer/${css}">`).join("")}
-<script type="module" src="/_viewer/${entry.file}"></script></head><body>
+			body: `<!doctype html><html><head>${served.css.map((css) => `<link rel="stylesheet" href="/_viewer/${css}">`).join("")}
+<script type="module" src="/_viewer/${served.file}"></script></head><body>
 <script id="spool-home" type="application/json">${JSON.stringify({ account: "vic@devosurf.com" })}</script>
+${canvas ? `<script id="spool-viewer" type="application/json">${JSON.stringify(canvas)}</script>` : ""}
 <div id="root"></div></body></html>`,
 		});
 	});
 	await page.goto(`${APP}${path}`);
-	return { page, asked, left };
+	return { page, asked, left, loads };
 }
 
 /** A picture of the page in `SPOOL_TEST_SHOTS`, when it names a folder. */
@@ -160,23 +270,22 @@ async function shoot(page: Page, name: string) {
 }
 
 describe("Home in a browser", () => {
-	it("draws the app's Home for the team: switcher, nav, covers and who is inside", { timeout: 60_000 }, async () => {
+	it("draws the app's Home for the team: team box, nav, covers and who is inside", { timeout: 60_000 }, async () => {
 		const { page } = await open("/devosurf");
 		const checkout = page.getByRole("link", { name: "Open checkout" });
 		await checkout.waitFor();
 		expect(await checkout.getAttribute("href")).toBe("/devosurf/checkout");
 		await page.getByRole("link", { name: "Open onboarding" }).waitFor();
 		expect(await page.getByRole("heading", { name: "Devosurf" }).count()).toBe(1);
-		// every team is a place, the one you're in open to its pages; Your projects and Recent are a Mac's
+		// the team you're in is the box, its pages under it; Your projects and Recent are a Mac's, and Shared with you
+		// is gone while nothing is shared with a member of a team
 		expect(
 			await page
 				.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
 				.evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
-		).toEqual(["Devosurf", "Projects", "People", "Settings", "Client Co", "New team…"]);
+		).toEqual(["Devosurf", "Projects", "People", "Settings"]);
 		expect(await page.getByText("Recent", { exact: true }).count()).toBe(0);
-		// a team you only watch wears the eye here too
-		expect(await page.locator("[data-place=client] [data-watch]").isVisible()).toBe(true);
-		expect(await page.locator("[data-place=devosurf] [data-watch]").count()).toBe(0);
+		expect(await page.getByText("Shared with you", { exact: true }).count()).toBe(0);
 		// each cover is the still spool.page keeps
 		await expect
 			.poll(() => checkout.locator("img").evaluate((node) => (node as HTMLImageElement).naturalWidth))
@@ -198,14 +307,16 @@ describe("Home in a browser", () => {
 		await page.getByRole("link", { name: "Open checkout" }).waitFor();
 		expect(new URL(page.url()).pathname).toBe("/devosurf");
 		// a viewer's team is a place in a browser, not a link away
-		await page.getByRole("button", { name: "Client Co" }).click();
+		await page.getByRole("button", { name: "Devosurf", exact: true }).click();
+		await shoot(page, "team-box.png");
+		await page.getByRole("menuitem", { name: /Client Co/u }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/client");
 		await page.getByText("Client Co has no projects yet").waitFor();
 		expect(
 			await page
 				.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
 				.evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
-		).toEqual(["Devosurf", "Client Co", "Projects", "People", "New team…"]);
+		).toEqual(["Client Co", "Projects", "People"]);
 		expect(asked).toContain("GET /api/teams/devosurf/people");
 	});
 
@@ -235,15 +346,12 @@ describe("Home in a browser", () => {
 		await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
 	});
 
-	it("takes an account in no team to Account, with the way to start one, and names the account there, everywhere at once, saying the rule when spool.page refuses a name", {
+	it("names the account on its page, everywhere at once, saying the rule when spool.page refuses a name", {
 		timeout: 60_000,
 	}, async () => {
-		const { page, asked } = await open("/devosurf", { teams: [] });
+		const { page, asked } = await open("/account", { teams: [] });
 		const main = page.locator("main");
 		await main.getByText("Not in a team yet.", { exact: true }).waitFor();
-		expect(new URL(page.url()).pathname).toBe("/account");
-		expect(await page.locator("aside").textContent()).toContain("You’re not in a team yet.");
-		await page.getByRole("button", { name: "Start a team…" }).waitFor();
 		// no name yet: everyone sees the address before the @, which the field offers as its placeholder
 		const field = main.getByRole("textbox", { name: "Name" });
 		expect(await field.inputValue()).toBe("");
@@ -389,5 +497,165 @@ describe("Home in a browser", () => {
 		await viewer.page.getByText("Client Co has no projects yet").waitFor();
 		expect(await viewer.page.locator(".pj-billing-failing").count()).toBe(0);
 		expect(viewer.asked.filter((line) => line.includes("/billing"))).toEqual([]);
+	});
+
+	it("lists what other teams shared with a member under Shared with you, by team, newest first, with what's new to this browser", {
+		timeout: 60_000,
+	}, async () => {
+		const now = Date.now();
+		// settle-up changed since it was last opened here, booking hasn't, packaging never was
+		// and one from a person's own project, in no team
+		const own = { ...share("s4", "portfolio", "Solo", "Ada", { shared: 300 * HOUR }), team: null };
+		const { page } = await open("/devosurf", {
+			shares: [...SHARES, own],
+			opened: { s1: now - 3 * HOUR, s3: now - 100 * HOUR, s4: now },
+		});
+		const row = page.locator("[data-nav-item][title='Shared with you']");
+		await row.waitFor();
+		expect(await row.innerText()).toMatch(/Shared with you\s*4/u);
+		expect(await row.getAttribute("data-new")).toBe("");
+		await row.click();
+		await page.getByRole("heading", { name: "Shared with you", exact: true }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/shared");
+		expect(await page.title()).toBe("Shared with you · spool");
+		// grouped by the team that shared, the team with the newest change first, and by whoever shared from no team
+		const groups = page.locator("main section");
+		expect(await groups.evaluateAll((all) => all.map((one) => one.getAttribute("aria-label")))).toEqual([
+			"Tidemark",
+			"Brus",
+			"Ada",
+		]);
+		const covers = (group: string) =>
+			page.locator(`main section[aria-label=${group}] a`).evaluateAll((links) =>
+				links.map((link) => ({
+					name: link.getAttribute("aria-label"),
+					href: link.getAttribute("href"),
+					line: link.querySelector(".pj-cover-caption > span")?.textContent,
+					fresh: link.querySelector("[data-new]") !== null,
+				})),
+			);
+		expect(await covers("Tidemark")).toEqual([
+			{ name: "Open settle-up", href: "/shared/s1", line: "Elin · 2 hours ago", fresh: true },
+			{ name: "Open booking", href: "/shared/s3", line: "Elin · 5 days ago", fresh: false },
+		]);
+		expect(await covers("Brus")).toEqual([
+			{ name: "Open packaging", href: "/shared/s2", line: "Karin · 2 days ago", fresh: true },
+		]);
+		expect(await covers("Ada")).toEqual([
+			{ name: "Open portfolio", href: "/shared/s4", line: "Ada · last week", fresh: false },
+		]);
+		await page.getByText("A link someone sent you opens without signing in, so it isn’t listed here.").waitFor();
+		// the team stays in its box, none of its pages current
+		expect(await page.locator("nav[aria-label='Home sections'] [aria-current=page]").count()).toBe(0);
+		await shoot(page, "shared-with-you.png");
+
+		// opened elsewhere in this browser, everything is seen once Home is back in front
+		await page.evaluate((at) => {
+			for (const id of ["s1", "s2"])
+				localStorage.setItem(
+					`spool-share-seen:${id}`,
+					JSON.stringify({ pages: [], frames: [], unseenPages: [], unseenFrames: [], opened: at }),
+				);
+			window.dispatchEvent(new Event("focus"));
+		}, Date.now());
+		await expect.poll(() => page.locator("[data-new]").count()).toBe(0);
+
+		await page.goBack();
+		await page.getByRole("link", { name: "Open checkout" }).waitFor();
+	});
+
+	it("opens an account in no team on Shared with you, with no team box", { timeout: 60_000 }, async () => {
+		const { page } = await open("/devosurf", { teams: [], shares: [SHARES[1] as SharedWithYou] });
+		await page.getByRole("link", { name: "Open packaging" }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/shared");
+		expect(await page.locator("[aria-haspopup=menu][data-place]").count()).toBe(0);
+		expect(
+			await page.locator("[data-nav-item]").evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
+		).toEqual(["Shared with you", "Start a team…"]);
+		// the search reaches what is shared
+		await page.getByRole("searchbox", { name: "Search projects" }).first().fill("pack");
+		await page.getByRole("heading", { name: "Search" }).waitFor();
+		await page.getByRole("link", { name: "Open packaging" }).waitFor();
+
+		// with nothing shared, the place is still there, saying so
+		const empty = await open("/", { teams: [] });
+		await empty.page.getByText("Nothing shared with you yet").waitFor();
+		expect(await empty.page.locator("[data-nav-item][title='Shared with you']").isVisible()).toBe(true);
+	});
+
+	it("goes between Home and a canvas in place, with no page load, and back at once", { timeout: 60_000 }, async () => {
+		let read = () => {};
+		const reading = new Promise<void>((done) => {
+			read = done;
+		});
+		const { page, loads } = await open("/devosurf", { whole: true, reading });
+		const checkout = page.getByRole("link", { name: "Open checkout" });
+		await checkout.waitFor();
+		// held, or opened in a new tab, the cover is a link like any
+		const [tab] = await Promise.all([
+			page.context().waitForEvent("page"),
+			checkout.click({ modifiers: ["ControlOrMeta"] }),
+		]);
+		await tab?.close();
+		expect(new URL(page.url()).pathname).toBe("/devosurf");
+
+		await checkout.click();
+		expect(new URL(page.url()).pathname).toBe("/devosurf/checkout");
+		// only while the project is on its way, a hairline runs along the top
+		const line = page.getByRole("progressbar", { name: "Opening" });
+		await line.waitFor();
+		read();
+		await page.locator("[data-path-place]").waitFor();
+		expect(await line.count()).toBe(0);
+		expect(await page.title()).toBe("checkout · Devosurf · spool");
+
+		// the path's first crumb is Home again, as it was left
+		await page.locator("[data-path-place]").click();
+		await checkout.waitFor();
+		expect(new URL(page.url()).pathname).toBe("/devosurf");
+		expect(await page.title()).toBe("Devosurf · spool");
+
+		// Back and Forward swap the two in place, and ⌘↑ from the project's top goes up to its team
+		await page.goBack();
+		await page.locator("[data-path-place]").waitFor();
+		expect(await checkout.isVisible()).toBe(false);
+		await page.keyboard.press("ControlOrMeta+ArrowUp");
+		await checkout.waitFor();
+		expect(new URL(page.url()).pathname).toBe("/devosurf");
+		await page.goBack();
+		await page.locator("[data-path-place]").waitFor();
+		await page.goForward();
+		await checkout.waitFor();
+
+		// one document all along; a canvas opened by its own address loads once, Home behind it
+		expect(loads).toEqual(["/devosurf"]);
+		const direct = await open("/devosurf/checkout", { whole: true });
+		await direct.page.locator("[data-path-place]").click();
+		await direct.page.getByRole("link", { name: "Open checkout" }).waitFor();
+		expect(direct.loads).toEqual(["/devosurf/checkout"]);
+		// back to where the canvas belongs, never the first team: a second team's, and Shared with you from a share
+		const client = await open("/client/checkout", { whole: true });
+		await client.page.locator("[data-path-place]").click();
+		await expect.poll(() => client.page.title()).toBe("Client Co · spool");
+		expect(new URL(client.page.url()).pathname).toBe("/client");
+		const shared = await open("/shared/s1", { whole: true, shares: SHARES });
+		await shared.page.locator("[data-path-place]").click();
+		await shared.page.getByRole("heading", { name: "Shared with you", exact: true }).waitFor();
+		expect(new URL(shared.page.url()).pathname).toBe("/shared");
+	});
+
+	it("opens a solo project's share from Home, with its way back, and seen once opened", {
+		timeout: 60_000,
+	}, async () => {
+		const own = { ...share("s4", "portfolio", "Solo", "Ada", { shared: 3 * HOUR }), team: null };
+		const { page } = await open("/shared", { whole: true, shares: [own] });
+		const cover = page.getByRole("link", { name: "Open portfolio" });
+		await cover.waitFor();
+		expect(await cover.locator("[data-new]").count()).toBe(1);
+		await cover.click();
+		await page.locator("[data-path-place]").click();
+		await page.getByRole("heading", { name: "Shared with you", exact: true }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/shared");
+		await expect.poll(() => cover.locator("[data-new]").count()).toBe(0);
 	});
 });

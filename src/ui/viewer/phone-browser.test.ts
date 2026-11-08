@@ -253,7 +253,7 @@ describe("a shared link on a phone", () => {
 		timeout: 60_000,
 	}, async () => {
 		const { page, requests } = await onPhone("/", {
-			as: outsider,
+			as: { ...outsider, shared: { by: "ana", pages: ["shop"], updated: ago(150), id: "s9", kind: "people" } },
 			config: LINK,
 			storage: { "spool-link:told": "1" },
 		});
@@ -279,6 +279,10 @@ describe("a shared link on a phone", () => {
 		await expect.poll(() => frame.locator("h1").textContent()).toBe("shop/pay");
 		expect(new URL(page.url()).searchParams.get("frame")).toBe("shop/pay");
 		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+		// opened here, as on a desktop: Home's dot for it clears
+		expect(
+			await page.evaluate(() => JSON.parse(localStorage.getItem("spool-share-seen:s9") ?? "{}").opened),
+		).toBeTypeOf("number");
 	});
 
 	it("says once in the phone's browser who shared it and how to keep it, never in the way", {

@@ -8,6 +8,8 @@ export const APP_PATH_SEGMENTS: readonly string[] = [
 	// Home's own places in the Mac app
 	"recent",
 	"account",
+	// Shared with you, Home's place at spool.page
+	"shared",
 	// a project's canvas, and the daemon's own routes
 	"p",
 	"api",

@@ -34,6 +34,7 @@ import {
 } from "./agent-threads";
 import type { CommentPrompt } from "./comment-prompt";
 import type { createChangeHub } from "./events";
+import { importLabel, importPrompt, readImports } from "./import/imports";
 import { type ResolveProject, withProject } from "./project-route";
 import { discoverFrames } from "./projection";
 import { type createSelectionStore, parseSelectionEntries, type SelectionEntry } from "./selection";
@@ -243,6 +244,19 @@ export function agentRoutes(deps: {
 						return c.json({ preferred: choice.engine ?? null, mode: choice.mode });
 					}),
 			)
+			/*
+			 * The work brought in from another tool that no turn has been told of yet (spool#242): the canvas starts
+			 * the agent on it as the project opens, with its chip's words, and once a turn carries it it is gone from here.
+			 */
+			.get("/:project/agent/imports", (c) =>
+				withProject(c, deps.resolve, (root) =>
+					c.json(
+						readImports(root)
+							.filter((one) => !one.sent)
+							.map((one) => ({ slug: one.slug, source: one.source, label: importLabel(one) })),
+					),
+				),
+			)
 			.get("/:project/agent-app", (c) =>
 				withProject(c, deps.resolve, () => {
 					return c.json({ available: agentAppLauncher.available() });
@@ -322,6 +336,7 @@ export function agentRoutes(deps: {
 						selection?: SelectionEntry[];
 						attachments?: readonly Attachment[];
 						comments?: string[];
+						imports?: string[];
 					}[] = [];
 					for (const raw of body.said) {
 						const one = (typeof raw === "object" && raw !== null ? raw : {}) as {
@@ -329,6 +344,7 @@ export function agentRoutes(deps: {
 							selection?: unknown;
 							attachments?: unknown;
 							comments?: unknown;
+							imports?: unknown;
 						};
 						if (typeof one.prompt !== "string" || one.prompt.trim() === "") {
 							return c.text('a turn is { "said": [{ "prompt": "…" }] }', 400);
@@ -359,11 +375,25 @@ export function agentRoutes(deps: {
 						) {
 							return c.text('"comments" is a list of the ids of comments sent to the agent', 400);
 						}
+						// work brought in from another tool rides by its folder's name, which the daemon points the agent at (spool#242)
+						const { imports } = one;
+						if (
+							imports !== undefined &&
+							!(
+								Array.isArray(imports) &&
+								imports.every(
+									(slug): slug is string => typeof slug === "string" && /^[a-z0-9-]{1,80}$/.test(slug),
+								)
+							)
+						) {
+							return c.text('"imports" is a list of the names of this project\'s imports', 400);
+						}
 						said.push({
 							prompt: one.prompt,
 							...(captured === undefined ? {} : { selection: captured }),
 							...(attached === undefined ? {} : { attachments: attached }),
 							...(comments === undefined || comments.length === 0 ? {} : { comments }),
+							...(imports === undefined || imports.length === 0 ? {} : { imports }),
 						});
 					}
 					if (body.recovery !== undefined && typeof body.recovery !== "string")
@@ -460,11 +490,14 @@ export function agentRoutes(deps: {
 							said: said.map((one, at) => {
 								const comments = commented[at];
 								const selection = selectionBlock(one.selection ?? selections.get(root));
+								const imported = (one.imports ?? []).flatMap((slug) => importPrompt(root, slug) ?? []);
 								const attachments = [...(one.attachments ?? []), ...(comments?.attachments ?? [])];
 								return {
 									prompt: one.prompt,
-									// the comment blocks lead, then what the hands point at, then the words
-									selection: [comments?.text ?? "", selection].filter((block) => block !== "").join("\n\n"),
+									// the comment blocks lead, then what was brought in, then what the hands point at, then the words
+									selection: [comments?.text ?? "", ...imported, selection]
+										.filter((block) => block !== "")
+										.join("\n\n"),
 									...(attachments.length === 0 ? {} : { attachments }),
 								};
 							}),

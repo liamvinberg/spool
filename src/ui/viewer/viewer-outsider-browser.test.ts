@@ -208,6 +208,12 @@ it("signed out on a link share: frames, no pins and no count, and everything ask
 	expect(await page.locator("[data-comment-pin]").count()).toBe(0);
 	expect(await page.locator("[data-comments-count]").count()).toBe(0);
 	expect(opened.socket()).toBeUndefined();
+	// a link's holder came from nowhere spool.page knows: the path names their top alone, and leads nowhere back
+	const path = page.getByRole("navigation", { name: "Path" });
+	expect(await path.locator("[data-path-page]").evaluateAll((names) => names.map((name) => name.ariaLabel))).toEqual([
+		"Shared with you",
+	]);
+	expect(await page.locator("[data-path-place]").count()).toBe(0);
 	expect(await page.locator("[data-viewer-sign-in]").count()).toBe(0);
 	// the rail's foot
 	expect(await page.getByText("not signed in").count()).toBe(1);
@@ -239,7 +245,7 @@ it("says at its foot who shared the whole project with them, by the project's na
 	const opened = await open({ shared: { by: "bo", pages: ["", "menu"], updated: null, whole: true } });
 	await opened.go();
 	const line = opened.page.locator("[data-viewer-shared]");
-	await line.getByText("Shared by bo").waitFor();
+	await line.getByText("kaffe · shared by bo · look and comment").waitFor();
 	expect(await line.getAttribute("title")).toBe("bo shared checkout with you");
 });
 
@@ -442,6 +448,13 @@ it("gives a signed-in outsider a composer with no picker, no element's tag and n
 		body: { body: "Bigger @", mentions: [] },
 	});
 	expect(written[0]?.body).not.toHaveProperty("audience");
+
+	// shared with them by name, the path's first name goes back to everything shared with them
+	const back = page.getByRole("navigation", { name: "Path" }).getByRole("link", { name: "shared" });
+	expect(await back.getAttribute("href")).toBe("/shared");
+	const shared = page.waitForRequest((request) => new URL(request.url()).pathname === "/shared");
+	await back.click();
+	await shared;
 });
 
 /** A member's canvas, with the project's shares. */

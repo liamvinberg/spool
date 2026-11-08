@@ -8,7 +8,8 @@ const licenses = viteLicenses();
 
 // spool in a browser (src/ui/viewer), shipped as `spool.page/viewer/*` for
 // Spool Cloud to serve: the read-only canvas of a team project (index.html)
-// and Home at spool.page/<team> (home.html), sharing their chunks. Every URL
+// and Home at spool.page/<team> (home.html), and both in one document at
+// spool.page (app.html), going between them in place, sharing their chunks. Every URL
 // inside the build is relative, so the cloud mounts it wherever it likes, and
 // the manifest says which files are each entry's script and stylesheet.
 export default defineConfig({
@@ -24,6 +25,7 @@ export default defineConfig({
 			input: {
 				index: fileURLToPath(new URL("src/ui/viewer/index.html", import.meta.url)),
 				home: fileURLToPath(new URL("src/ui/viewer/home.html", import.meta.url)),
+				app: fileURLToPath(new URL("src/ui/viewer/app.html", import.meta.url)),
 			},
 		},
 	},
