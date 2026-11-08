@@ -179,7 +179,8 @@ export function HomePlaces({
 	const at = current ?? last;
 	const team = teams.find((one) => one.address === at) ?? null;
 	const gone = team === null ? (deleted.find((one) => one.address === at) ?? null) : null;
-	const shown = team ?? gone ?? teams[0] ?? null;
+	// none left but deleted ones: the box still holds them, each to export from until its purge
+	const shown = team ?? gone ?? teams[0] ?? deleted[0] ?? null;
 	return (
 		<div className="pj-places flex flex-col gap-[4px]">
 			{lead}
