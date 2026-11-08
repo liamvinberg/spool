@@ -198,6 +198,18 @@ export async function fetchProjection(project: string): Promise<Projection | und
 	return (await res.json()) as Projection;
 }
 
+/** What each frame said in its still, by name: the finder's last way to answer (task 443). Empty when it cannot say. */
+export async function fetchFrameWords(project: string): Promise<ReadonlyMap<string, readonly string[]>> {
+	try {
+		const res = await client.api.p[":project"]["frame-words"].$get({ param: { project } });
+		if (!res.ok) return new Map();
+		const { words } = (await res.json()) as { words: Record<string, string[]> };
+		return new Map(Object.entries(words));
+	} catch {
+		return new Map();
+	}
+}
+
 export async function fetchCanvasState(project: string): Promise<CanvasState | undefined> {
 	const res = await client.api.p[":project"].state.$get({ param: { project } });
 	if (!res.ok) return undefined;

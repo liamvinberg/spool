@@ -145,6 +145,7 @@ import { ContextMenu } from "./context-menu";
 import { placeCopies } from "./copy-placement";
 import { type Drop, dropAt } from "./element-move";
 import { deepest, parentOf } from "./element-selection";
+import { FindDoor } from "./find-door";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, createSiteBoxStore, FlowArrows } from "./flow-arrows";
 import { useFrameAgents } from "./frame-agents";
@@ -6234,7 +6235,8 @@ function CanvasField({
 					{!projectEmpty && !listing && <CanvasTools tool={effectiveTool} onTool={chooseTool} team={team} />}
 					{loaded && !projectEmpty && (
 						<CanvasPath
-							awake={peeking.carrying !== null || peeking.peek?.from === "path"}
+							awake={finding || peeking.carrying !== null || peeking.peek?.from === "path"}
+							lifted={finding}
 							lit={peeking.target?.at === "path" ? peeking.target.page : null}
 							peeked={peeking.peek?.from === "path" ? peeking.peek.page : null}
 							segs={pathSegs}
@@ -6248,6 +6250,7 @@ function CanvasField({
 								else goInsidePage(page);
 							}}
 							after={presenceFaces}
+							tail={<FindDoor hidden={finding} onOpen={() => setFinding(true)} />}
 						/>
 					)}
 					<PagePeekCard
@@ -6270,18 +6273,18 @@ function CanvasField({
 							landOnFrame(name);
 						}}
 					/>
-					{finding ? (
-						<PanePalette
-							frames={navigatorFrames}
-							unseen={unseen}
-							onPick={setFindLit}
-							onClose={() => setFinding(false)}
-							onLand={(name) => {
-								setFinding(false);
-								landOnFrame(name);
-							}}
-						/>
-					) : null}
+					<PanePalette
+						open={finding}
+						project={project}
+						frames={navigatorFrames}
+						unseen={unseen}
+						onPick={setFindLit}
+						onClose={() => setFinding(false)}
+						onLand={(name) => {
+							setFinding(false);
+							landOnFrame(name);
+						}}
+					/>
 				</div>
 			</PaneWindow>
 			{versions.question}
