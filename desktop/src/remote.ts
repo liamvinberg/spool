@@ -130,7 +130,8 @@ export function failureReason(stderr: string, config: Pick<RemoteConfig, "ssh" |
 	const lines = stderr
 		.split("\n")
 		.map((line) => line.trim())
-		.filter((line) => line !== "");
+		// a RemoteForward from ~/.ssh/config the far end refused is not why the tunnel stopped
+		.filter((line) => line !== "" && !/^warning: remote port forwarding failed/i.test(line));
 	// a refused channel ("channel 2: open failed: connect failed: Connection refused") is the far end's
 	// port, said by a tunnel that is up; everything else is about reaching the machine at all
 	const channel = (line: string) => /open failed|connect failed/i.test(line);

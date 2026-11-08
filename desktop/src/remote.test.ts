@@ -75,6 +75,7 @@ test("ssh's stderr is said as what went wrong", () => {
 		"no spool daemon is running on port 7768 there",
 	);
 	assert.equal(says("something new\n"), "something new");
+	assert.equal(says("Warning: remote port forwarding failed for listen port 18339\n"), "ssh stopped");
 });
 
 class FakeChild extends EventEmitter implements TunnelChild {
