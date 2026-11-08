@@ -1,4 +1,14 @@
-import { createContext, Fragment, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+	createContext,
+	Fragment,
+	type KeyboardEvent as ReactKeyboardEvent,
+	type ReactNode,
+	useCallback,
+	useContext,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import {
 	type HomePlace,
 	OWN_PLACE,
@@ -132,9 +142,10 @@ export function TeamMark({
 }
 
 /**
- * Home's sidebar of places: every team you're in, in spool.page's order (by name), the one you're in open to its
- * pages beneath it. On a Mac a rule follows, then Your projects; New team… comes last. A team you only watch is a
- * place like any other, marked with an eye. Below 720 px each place is its mark, its name on its title.
+ * Home's sidebar of places: whatever comes before the team (Your projects on a Mac), then the team box with the
+ * team's pages under it. The box shows the team you're in, or the one you were last in while you stand outside every
+ * team, and opens a menu of every team this account is in, with its role, a deleted one an admin can still export
+ * from, and New team…. An account in no team has no box, only New team…. Below 720 px the box is the team's mark.
  */
 export function HomePlaces({
 	teams,
@@ -143,99 +154,206 @@ export function HomePlaces({
 	page,
 	onTeam,
 	onPage,
-	own,
+	lead,
 	onNewTeam,
 }: {
 	teams: readonly CloudTeam[];
 	/** Deleted teams this account is an admin of, each kept until its purge to export from. */
 	deleted?: readonly DeletedTeam[] | undefined;
-	/** The team you're in, by its address; null in Your projects or Recent. */
+	/** The team you're in, by its address; null outside every team, as in Your projects or Account. */
 	current: string | null;
 	/** Its page; null while a place outside the team, such as the search or Account, stands in the page. */
 	page: TeamPage | null;
 	onTeam: (address: string) => void;
-	onPage: (page: TeamPage) => void;
-	/** Your projects, on a Mac. */
-	own?: { current: boolean; onOwn: () => void } | undefined;
+	/** A page of the team the box shows. */
+	onPage: (page: TeamPage, team: string) => void;
+	/** Places before the team: Your projects, on a Mac. */
+	lead?: ReactNode;
 	onNewTeam: () => void;
 }) {
+	// outside every team, the box keeps the team you were last in
+	const [last, setLast] = useState<string | null>(current);
+	useEffect(() => {
+		if (current !== null) setLast(current);
+	}, [current]);
+	const at = current ?? last;
+	const team = teams.find((one) => one.address === at) ?? null;
+	const gone = team === null ? (deleted.find((one) => one.address === at) ?? null) : null;
+	const shown = team ?? gone ?? teams[0] ?? null;
 	return (
-		<div className="pj-places flex flex-col gap-[2px]">
-			{teams.map((team) => {
-				const chosen = team.address === current;
-				return (
-					<div key={team.id} className="flex flex-col gap-[2px]" data-place={team.address}>
-						<button
-							type="button"
-							title={team.name}
-							aria-current={chosen || undefined}
-							className={cn(PLACE, "aria-[current]:text-primary")}
-							onClick={() => onTeam(team.address)}
-						>
-							<TeamMark team={team} />
-							<span className={cn("min-w-0 flex-1 truncate", NARROW_HIDDEN)}>{team.name}</span>
-							{team.role === "viewer" && (
-								<span data-watch="" title="You watch this team" className={cn("shrink-0", NARROW_HIDDEN)}>
-									<EyeIcon className="size-[14px] text-secondary" />
-								</span>
-							)}
-						</button>
-						{/* the team you're in opens to its pages: rows grow from 0fr, so the places below slide down, never jump */}
-						<div
-							className={cn(
-								"pj-place-pages grid transition-[grid-template-rows,opacity] duration-base ease-out motion-reduce:transition-none",
-								chosen ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0",
-							)}
-							aria-hidden={!chosen || undefined}
-							inert={!chosen}
-						>
-							<div className="flex min-h-0 flex-col gap-[2px] overflow-hidden">
-								<div className="mb-[8px] flex flex-col gap-[2px]">
-									<TeamNav team={team} page={chosen ? page : null} onPage={onPage} indent />
-								</div>
-							</div>
-						</div>
-					</div>
-				);
-			})}
-			{deleted.map((team) => (
-				<button
-					key={team.address}
-					type="button"
-					title={`${team.name} · Deleted · gone on ${day(team.purgeAfter)}`}
-					data-place={team.address}
-					aria-current={team.address === current || undefined}
-					className={cn(PLACE, "aria-[current]:text-primary")}
-					onClick={() => onTeam(team.address)}
-				>
-					<TeamMark team={team} paused />
-					<span className={cn("min-w-0 flex-1 truncate", NARROW_HIDDEN)}>
-						{team.name}
-						<span className="block truncate text-tertiary type-detail">
-							Deleted · gone on {day(team.purgeAfter)}
-						</span>
-					</span>
-				</button>
-			))}
-			{(own || teams.length > 0 || deleted.length > 0) && <hr className="mx-3 my-2 border-line-default border-t" />}
-			{own && (
+		<div className="pj-places flex flex-col gap-[4px]">
+			{lead}
+			{shown === null ? (
 				<NavItem
-					icon={<FrameIcon />}
-					label="Your projects"
-					title="Your projects"
-					current={own.current}
+					icon={<PlusIcon />}
+					label="New team…"
+					title="New team…"
 					className={NARROW_NAV}
-					onClick={own.onOwn}
+					onClick={onNewTeam}
 				/>
+			) : (
+				<>
+					<TeamBox
+						shown={shown}
+						teams={teams}
+						deleted={deleted}
+						onTeam={onTeam}
+						onNewTeam={onNewTeam}
+						className={lead ? "mt-[14px]" : undefined}
+					/>
+					{"role" in shown && (
+						<TeamNav
+							team={shown}
+							page={shown.address === current ? page : null}
+							onPage={(to) => onPage(to, shown.address)}
+						/>
+					)}
+				</>
 			)}
-			<NavItem icon={<PlusIcon />} label="New team…" title="New team…" className={NARROW_NAV} onClick={onNewTeam} />
 		</div>
 	);
 }
 
-/** A team's row in the sidebar: its mark and name, primary ink while you're in it. */
-const PLACE =
-	"focus-ring flex h-row-roomy w-full min-w-0 items-center gap-3 rounded-sm px-[10px] text-left text-secondary type-control transition-colors duration-fast ease-out hover:bg-state-hover hover:text-primary motion-reduce:transition-none [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0";
+/** A deleted team in the box's menu, said with the day it goes. */
+const goneOn = (team: DeletedTeam) => `Deleted · gone on ${day(team.purgeAfter)}`;
+
+/**
+ * The team box: the team's mark, its name and a chevron, which opens the menu of teams. The menu drops a few pixels
+ * from the box's edge and the chevron turns with it; arrow keys walk it, and Escape, Tab or a press anywhere else
+ * close it.
+ */
+function TeamBox({
+	shown,
+	teams,
+	deleted,
+	onTeam,
+	onNewTeam,
+	className,
+}: {
+	shown: CloudTeam | DeletedTeam;
+	teams: readonly CloudTeam[];
+	deleted: readonly DeletedTeam[];
+	onTeam: (address: string) => void;
+	onNewTeam: () => void;
+	className?: string | undefined;
+}) {
+	const [open, setOpen] = useState(false);
+	const root = useRef<HTMLDivElement>(null);
+	const box = useRef<HTMLButtonElement>(null);
+	const items = () => [...(root.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+	const paused = !("role" in shown);
+	useEffect(() => {
+		if (!open) return;
+		const away = (event: PointerEvent) => {
+			if (!root.current?.contains(event.target as Node)) setOpen(false);
+		};
+		window.addEventListener("pointerdown", away);
+		return () => window.removeEventListener("pointerdown", away);
+	}, [open]);
+	const keys = (event: ReactKeyboardEvent) => {
+		const list = items();
+		const now = list.indexOf(document.activeElement as HTMLElement);
+		const move = (to: (length: number) => number) => {
+			event.preventDefault();
+			if (!open) setOpen(true);
+			requestAnimationFrame(() => {
+				const all = items();
+				all[(to(all.length) + all.length) % Math.max(all.length, 1)]?.focus();
+			});
+		};
+		if (event.key === "ArrowDown") return move(() => now + 1);
+		if (event.key === "ArrowUp") return move((length) => (now === -1 ? length - 1 : now - 1));
+		if (!open) return;
+		if (event.key === "Home") return move(() => 0);
+		if (event.key === "End") return move((length) => length - 1);
+		if (event.key === "Escape") {
+			event.preventDefault();
+			setOpen(false);
+			box.current?.focus();
+		}
+		if (event.key === "Tab") setOpen(false);
+	};
+	const pick = (then: () => void) => {
+		setOpen(false);
+		box.current?.focus();
+		then();
+	};
+	return (
+		<div ref={root} className={cn("pj-team-box relative mb-[6px]", className)}>
+			<button
+				ref={box}
+				type="button"
+				title={"purgeAfter" in shown ? `${shown.name} · ${goneOn(shown)}` : shown.name}
+				aria-haspopup="menu"
+				aria-expanded={open}
+				data-place={shown.address}
+				onKeyDown={keys}
+				className={cn(
+					"focus-ring flex h-control-lg w-full min-w-0 items-center gap-[10px] rounded-md border border-line-strong px-[10px] text-left type-control",
+					"transition-colors duration-fast ease-out hover:bg-state-hover aria-expanded:bg-state-hover motion-reduce:transition-none",
+					"[@media(max-width:720px)]:justify-center [@media(max-width:720px)]:border-transparent [@media(max-width:720px)]:px-0",
+				)}
+				onClick={(event) => {
+					setOpen(!open);
+					// opened from the keyboard, the menu takes the focus on the team the box shows
+					if (!open && event.detail === 0)
+						requestAnimationFrame(() =>
+							root.current?.querySelector<HTMLElement>("[role=menuitem][aria-current]")?.focus(),
+						);
+				}}
+			>
+				<TeamMark team={shown} paused={paused} />
+				<span className={cn("min-w-0 flex-1 truncate", NARROW_HIDDEN)}>{shown.name}</span>
+				<span
+					className={cn(
+						"grid size-[10px] shrink-0 place-items-center text-secondary transition-transform duration-fast ease-out motion-reduce:transition-none",
+						open ? "-rotate-90" : "rotate-90",
+						NARROW_HIDDEN,
+					)}
+				>
+					<ChevronIcon />
+				</span>
+			</button>
+			{open && (
+				<Menu
+					aria-label="Teams"
+					onKeyDown={keys}
+					className="absolute top-[calc(100%+6px)] left-0 z-30 w-[236px] origin-top-left"
+				>
+					{teams.map((one) => (
+						<MenuItem
+							key={one.id}
+							data-place={one.address}
+							icon={<TeamMark team={one} size={16} />}
+							label={one.name}
+							title={one.name}
+							meta={one.role}
+							aria-current={one.address === shown.address || undefined}
+							className="aria-[current]:bg-state-selected"
+							onClick={() => pick(() => onTeam(one.address))}
+						/>
+					))}
+					{deleted.map((one) => (
+						<MenuItem
+							key={one.address}
+							data-place={one.address}
+							icon={<TeamMark team={one} size={16} paused />}
+							label={one.name}
+							title={`${one.name} · ${goneOn(one)}`}
+							meta={goneOn(one)}
+							aria-current={one.address === shown.address || undefined}
+							className="aria-[current]:bg-state-selected"
+							onClick={() => pick(() => onTeam(one.address))}
+						/>
+					))}
+					<MenuSeparator />
+					<MenuItem icon={<PlusIcon />} label="New team…" title="New team…" onClick={() => pick(onNewTeam)} />
+				</Menu>
+			)}
+		</div>
+	);
+}
+
 const NARROW_HIDDEN = "[@media(max-width:720px)]:hidden";
 
 /** An invite is news, so it is one quiet line where you already look: above the covers. */
@@ -293,18 +411,15 @@ function WatchLine({ team }: { team: CloudTeam }) {
 	);
 }
 
-/** A team's pages under it in the sidebar: Projects, People, and Settings for admins. `page` null while none stands. */
+/** A team's pages under its box in the sidebar: Projects, People, and Settings for admins. `page` null while none stands. */
 export function TeamNav({
 	team,
 	page,
 	onPage,
-	indent = false,
 }: {
 	team: CloudTeam;
 	page: TeamPage | null;
 	onPage: (page: TeamPage) => void;
-	/** Set in under the team's row. */
-	indent?: boolean;
 }) {
 	const item = (to: TeamPage, icon: ReactNode, label: string, count?: number) => (
 		<NavItem
@@ -313,7 +428,7 @@ export function TeamNav({
 			title={label}
 			meta={count}
 			current={page === to}
-			className={cn(NARROW_NAV, indent && "pl-[30px]")}
+			className={NARROW_NAV}
 			onClick={() => onPage(to)}
 		/>
 	);
@@ -1387,8 +1502,17 @@ export function useTeamHome(
 				current={current?.address ?? deleted?.address ?? null}
 				page={page}
 				onTeam={(address) => go({ team: address, page: "projects" })}
-				onPage={(to) => current && go({ team: current.address, page: to })}
-				own={{ current: place.page === "own" && !searching, onOwn: () => go(OWN_PLACE) }}
+				onPage={(to, address) => go({ team: address, page: to })}
+				lead={
+					<NavItem
+						icon={<FrameIcon />}
+						label="Your projects"
+						title="Your projects"
+						current={place.page === "own" && !searching}
+						className={NARROW_NAV}
+						onClick={() => go(OWN_PLACE)}
+					/>
+				}
 				onNewTeam={() => setCreating(true)}
 			/>
 			{creating && (

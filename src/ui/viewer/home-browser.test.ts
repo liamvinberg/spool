@@ -160,23 +160,20 @@ async function shoot(page: Page, name: string) {
 }
 
 describe("Home in a browser", () => {
-	it("draws the app's Home for the team: switcher, nav, covers and who is inside", { timeout: 60_000 }, async () => {
+	it("draws the app's Home for the team: team box, nav, covers and who is inside", { timeout: 60_000 }, async () => {
 		const { page } = await open("/devosurf");
 		const checkout = page.getByRole("link", { name: "Open checkout" });
 		await checkout.waitFor();
 		expect(await checkout.getAttribute("href")).toBe("/devosurf/checkout");
 		await page.getByRole("link", { name: "Open onboarding" }).waitFor();
 		expect(await page.getByRole("heading", { name: "Devosurf" }).count()).toBe(1);
-		// every team is a place, the one you're in open to its pages; Your projects and Recent are a Mac's
+		// the team you're in is the box, its pages under it; Your projects and Recent are a Mac's
 		expect(
 			await page
 				.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
 				.evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
-		).toEqual(["Devosurf", "Projects", "People", "Settings", "Client Co", "New team…"]);
+		).toEqual(["Devosurf", "Projects", "People", "Settings"]);
 		expect(await page.getByText("Recent", { exact: true }).count()).toBe(0);
-		// a team you only watch wears the eye here too
-		expect(await page.locator("[data-place=client] [data-watch]").isVisible()).toBe(true);
-		expect(await page.locator("[data-place=devosurf] [data-watch]").count()).toBe(0);
 		// each cover is the still spool.page keeps
 		await expect
 			.poll(() => checkout.locator("img").evaluate((node) => (node as HTMLImageElement).naturalWidth))
@@ -198,14 +195,16 @@ describe("Home in a browser", () => {
 		await page.getByRole("link", { name: "Open checkout" }).waitFor();
 		expect(new URL(page.url()).pathname).toBe("/devosurf");
 		// a viewer's team is a place in a browser, not a link away
-		await page.getByRole("button", { name: "Client Co" }).click();
+		await page.getByRole("button", { name: "Devosurf", exact: true }).click();
+		await shoot(page, "team-box.png");
+		await page.getByRole("menuitem", { name: /Client Co/u }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/client");
 		await page.getByText("Client Co has no projects yet").waitFor();
 		expect(
 			await page
 				.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
 				.evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
-		).toEqual(["Devosurf", "Client Co", "Projects", "People", "New team…"]);
+		).toEqual(["Client Co", "Projects", "People"]);
 		expect(asked).toContain("GET /api/teams/devosurf/people");
 	});
 

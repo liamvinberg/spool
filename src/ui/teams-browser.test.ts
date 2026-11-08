@@ -21,6 +21,8 @@ async function home(
 				import { createRoot } from "react-dom/client";
 				import { Home } from "./src/ui/home";
 				import { HomePlaces, InviteLine, TeamProjects } from "./src/ui/teams";
+				import { NavItem } from "./src/ui/primitives/navigation";
+				import { NARROW_NAV } from "./src/ui/home-find";
 				const teams = {
 					state: "ready",
 					origin: "https://spool.page",
@@ -56,8 +58,8 @@ async function home(
 							current: scope,
 							page,
 							onTeam: (address) => { setScope(address); setPage("projects"); },
-							onPage: setPage,
-							own: { current: scope === null, onOwn: () => setScope(null) },
+							onPage: (to, address) => { setScope(address); setPage(to); },
+							lead: createElement(NavItem, { label: "Your projects", title: "Your projects", className: NARROW_NAV, current: scope === null, onClick: () => setScope(null) }),
 							onNewTeam: () => said("new"),
 						}),
 						place: scope ?? "/",
@@ -98,51 +100,80 @@ const places = (page: Page) =>
 		.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
 		.evaluateAll((rows) => rows.map((row) => row.getAttribute("title")));
 
-it("lists every place in the sidebar, a watched team marked with an eye, and opens the team you're in to its pages", async () => {
+/** The team box's menu, as its items read: each team's name and role, then New team…. */
+const teamMenu = (page: Page) =>
+	page
+		.getByRole("menu", { name: "Teams" })
+		.getByRole("menuitem")
+		.evaluateAll((items) =>
+			items.map((item) =>
+				[...item.children]
+					.slice(1)
+					.map((part) => part.textContent)
+					.join(" "),
+			),
+		);
+
+it("shows the team in one box, its pages under it, and switches teams from the box's menu", async () => {
 	const page = await home();
-	expect(await places(page)).toEqual(["Harbour Bank", "Northlight", "Tidemark", "Your projects", "New team…"]);
-	expect(await page.locator("[aria-haspopup=menu]", { hasText: "Your projects" }).count()).toBe(0);
-	expect(await page.locator("[data-place=harbour-bank] [data-watch]").isVisible()).toBe(true);
-	expect(await page.locator("[data-place=tidemark] [data-watch]").count()).toBe(0);
+	// outside every team the box still stands on one, none of its pages current
+	expect(await places(page)).toEqual(["Your projects", "Harbour Bank", "Projects", "People"]);
+	expect(await page.locator(".pj-places [aria-current=page]").allInnerTexts()).toEqual(["Your projects"]);
 
-	await page.getByRole("button", { name: "Tidemark" }).click();
+	await page.getByRole("button", { name: "Harbour Bank" }).click();
+	expect(await teamMenu(page)).toEqual(["Harbour Bank viewer", "Northlight editor", "Tidemark admin", "New team…"]);
+	await page.getByRole("menuitem", { name: /Tidemark/u }).click();
 	await page.getByRole("heading", { name: "Tidemark", exact: true }).waitFor();
-	expect(await places(page)).toEqual([
-		"Harbour Bank",
-		"Northlight",
-		"Tidemark",
-		"Projects",
-		"People",
-		"Settings",
-		"Your projects",
-		"New team…",
-	]);
-	// the pages sit under the team's row, set in from it
-	const team = await page.getByRole("button", { name: "Tidemark" }).boundingBox();
-	const people = await page.getByRole("button", { name: "People" }).boundingBox();
-	if (!team || !people) throw new Error("missing layout");
-	expect(people.y).toBeGreaterThan(team.y);
+	expect(await page.getByRole("menu").count()).toBe(0);
+	expect(await places(page)).toEqual(["Your projects", "Tidemark", "Projects", "People", "Settings"]);
 	expect(await page.getByText("Tidemark has no projects on this Mac yet").isVisible()).toBe(true);
-	expect(await page.getByRole("button", { name: "Open kaffe" }).count()).toBe(0);
 
-	await page.getByRole("button", { name: "Northlight" }).click();
-	await expect
-		.poll(() => places(page))
-		.toEqual(["Harbour Bank", "Northlight", "Projects", "People", "Tidemark", "Your projects", "New team…"]);
-	await page.getByRole("button", { name: "New team…" }).click();
+	// from the keyboard: the arrow opens it on the team it shows, Escape closes it back to the box
+	const box = page.getByRole("button", { name: "Tidemark" });
+	await box.focus();
+	await page.keyboard.press("ArrowDown");
+	await expect.poll(() => page.evaluate(() => document.activeElement?.textContent)).toContain("Harbour Bank");
+	await page.keyboard.press("ArrowDown");
+	await expect.poll(() => page.evaluate(() => document.activeElement?.textContent)).toContain("Northlight");
+	await page.keyboard.press("Escape");
+	expect(await page.getByRole("menu").count()).toBe(0);
+	expect(await box.evaluate((node) => node === document.activeElement)).toBe(true);
+
+	// a press anywhere else closes it
+	await box.click();
+	await page.getByRole("menu", { name: "Teams" }).waitFor();
+	await page.getByRole("heading", { name: "Tidemark", exact: true }).click();
+	expect(await page.getByRole("menu").count()).toBe(0);
+
+	await box.click();
+	await page.getByRole("menuitem", { name: "New team…" }).click();
 	expect(await page.locator("body").getAttribute("data-said")).toBe("new;");
 	await page.getByRole("button", { name: "Your projects" }).click();
 	await page.getByRole("button", { name: "Open kaffe" }).waitFor();
 });
 
+it("slides the one selected fill to the place you go to", async () => {
+	const page = await home("no-preference");
+	const fill = page.locator("[data-nav-fill]");
+	const under = async (name: string) => {
+		const row = await page.locator(`[data-nav-item][title="${name}"]`).boundingBox();
+		const box = await fill.boundingBox();
+		return row !== null && box !== null && Math.abs(row.y - box.y) < 1 && Math.abs(row.height - box.height) < 1;
+	};
+	await expect.poll(() => under("Your projects")).toBe(true);
+	await page.getByRole("button", { name: "People" }).click();
+	await expect.poll(() => under("People")).toBe(true);
+	await page.getByRole("button", { name: "Your projects" }).click();
+	await expect.poll(() => under("Your projects")).toBe(true);
+});
+
 it("moves nothing under reduced motion", async () => {
 	const page = await home("reduce");
-	await page.getByRole("button", { name: "Tidemark" }).click();
-	const pages = page.locator("[data-place=tidemark] .pj-place-pages");
-	expect(await pages.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0s/u);
+	await page.getByRole("button", { name: "Harbour Bank" }).click();
+	await page.getByRole("menuitem", { name: /Tidemark/u }).click();
 	expect(await page.locator(".pj-place-in").evaluate((node) => getComputedStyle(node).animationName)).toBe("none");
-	const row = page.getByRole("button", { name: "Northlight" });
-	expect(await row.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0s/u);
+	for (const moving of [page.locator("[data-nav-fill]"), page.getByRole("button", { name: "People" })])
+		expect(await moving.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0s/u);
 });
 
 it("shows an invite as one line above Home's covers, with Decline and Join", async () => {
@@ -172,20 +203,18 @@ it("declines an invite from the line", async () => {
 describe("the narrow column, below 720 px", () => {
 	it("makes every place its mark, each with its name as a title, the pages as icons under the team", async () => {
 		const page = await home("reduce", { width: 719, everywhere: true });
-		await page.getByRole("button", { name: "Tidemark" }).click();
+		await page.getByRole("button", { name: "Harbour Bank" }).click();
+		await page.getByRole("menuitem", { name: /Tidemark/u }).click();
 		const aside = await page.locator("aside").boundingBox();
 		if (!aside) throw new Error("no sidebar");
 		expect(aside.width).toBe(64);
 		const rows = page.locator(".pj-places :is(button, a):not([aria-hidden=true] *)");
 		expect(await rows.evaluateAll((all) => all.map((row) => row.getAttribute("title")))).toEqual([
-			"Harbour Bank",
-			"Northlight",
+			"Your projects",
 			"Tidemark",
 			"Projects",
 			"People",
 			"Settings",
-			"Your projects",
-			"New team…",
 		]);
 		for (const row of await rows.all()) {
 			expect(await row.isVisible()).toBe(true);

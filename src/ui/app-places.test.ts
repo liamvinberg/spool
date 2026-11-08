@@ -107,7 +107,15 @@ async function launch(path: string, teams: CloudTeam[] = TEAMS) {
 			.filter((element) => element.closest("[aria-hidden=true]") === null)
 			.map((element) => element.getAttribute("title"));
 	const heading = () => host.querySelector("main h1")?.textContent;
-	return { host, press, places, heading, unmount };
+	/** Goes to a team from the team box's menu. */
+	const team = async (name: string) => {
+		await act(async () => host.querySelector<HTMLElement>(".pj-team-box [aria-haspopup=menu]")?.click());
+		const item = host.querySelector<HTMLElement>(`.pj-team-box [role=menuitem][title="${name}"]`);
+		if (item === null) throw new Error(`no ${name} in the team box`);
+		await act(async () => item.click());
+		await settle();
+	};
+	return { host, press, places, heading, team, unmount };
 }
 
 async function settle() {
@@ -126,58 +134,43 @@ async function travel(to: "back" | "forward") {
 beforeEach(() => localStorage.clear());
 
 describe("Home's sidebar of places", () => {
-	it("lists every team in spool.page's order, then Your projects below a rule, and New team… last", async () => {
+	it("shows Your projects, then the team in one box with its pages, every team and New team… in the box's menu", async () => {
 		const app = await launch("/");
-		expect(app.places()).toEqual(["Harbour Bank", "Northlight", "Tidemark", "Your projects", "New team…"]);
-		expect(app.host.querySelectorAll(".pj-places hr")).toHaveLength(1);
-		expect(app.host.querySelector("[aria-haspopup=menu].pj-team-switch, .pj-team-switch")).toBeNull();
+		// outside every team the box stands on the first, none of its pages current
+		expect(app.places()).toEqual(["Your projects", "Harbour Bank", "Projects", "People"]);
+		await act(async () => app.host.querySelector<HTMLElement>(".pj-team-box [aria-haspopup=menu]")?.click());
+		expect(
+			[...app.host.querySelectorAll(".pj-team-box [role=menuitem]")].map((item) => [
+				item.getAttribute("title"),
+				item.lastElementChild?.textContent,
+			]),
+		).toEqual([
+			["Harbour Bank", "viewer"],
+			["Northlight", "editor"],
+			["Tidemark", "admin"],
+			["New team…", "New team…"],
+		]);
 	});
 
-	it("opens the team you're in to its pages, Settings for admins only, and titles the page with its name", async () => {
+	it("opens the team you pick to its pages, Settings for admins only, and titles the page with its name", async () => {
 		const app = await launch("/");
-		await app.press("Tidemark");
-		expect(app.places()).toEqual([
-			"Harbour Bank",
-			"Northlight",
-			"Tidemark",
-			"Projects",
-			"People",
-			"Settings",
-			"Your projects",
-			"New team…",
-		]);
+		await app.team("Tidemark");
+		expect(app.places()).toEqual(["Your projects", "Tidemark", "Projects", "People", "Settings"]);
 		expect(app.heading()).toBe("Tidemark");
-		await app.press("Northlight");
-		expect(app.places()).toEqual([
-			"Harbour Bank",
-			"Northlight",
-			"Projects",
-			"People",
-			"Tidemark",
-			"Your projects",
-			"New team…",
-		]);
+		await app.team("Northlight");
+		expect(app.places()).toEqual(["Your projects", "Northlight", "Projects", "People"]);
 		expect(app.heading()).toBe("Northlight");
 	});
 
-	it("makes a team you only watch a place, marked with an eye, its projects opening live in the browser", async () => {
+	it("makes a team you only watch a place, its projects opening live in the browser", async () => {
 		const opened = vi.fn();
 		const app = await launch("/");
 		vi.stubGlobal("open", opened);
-		expect(app.host.querySelector("[data-place=harbour-bank] [data-watch]")).not.toBeNull();
-		await app.press("Harbour Bank");
+		await app.team("Harbour Bank");
 		expect(opened).not.toHaveBeenCalled();
 		expect(window.location.pathname).toBe("/harbour-bank");
 		expect(app.heading()).toBe("Harbour Bank");
-		expect(app.places()).toEqual([
-			"Harbour Bank",
-			"Projects",
-			"People",
-			"Northlight",
-			"Tidemark",
-			"Your projects",
-			"New team…",
-		]);
+		expect(app.places()).toEqual(["Your projects", "Harbour Bank", "Projects", "People"]);
 		const main = app.host.querySelector("main");
 		expect(main?.textContent).toContain(
 			"You watch Harbour Bank. A project opens live in your browser, and nothing comes to this Mac.",
@@ -213,7 +206,7 @@ describe("Home's places at their own addresses", () => {
 		const app = await launch("/");
 		expect(window.location.pathname).toBe("/recent");
 		expect(app.heading()).toBe("Recent");
-		await app.press("Tidemark");
+		await app.team("Tidemark");
 		expect(window.location.pathname).toBe("/tidemark");
 		await app.press("People");
 		expect(window.location.pathname).toBe("/tidemark/people");
@@ -238,7 +231,7 @@ describe("Home's places at their own addresses", () => {
 
 	it("moves between the places visited with back and forward", async () => {
 		const app = await launch("/");
-		await app.press("Tidemark");
+		await app.team("Tidemark");
 		await app.press("People");
 		await travel("back");
 		expect(window.location.pathname).toBe("/tidemark");
@@ -253,7 +246,7 @@ describe("Home's places at their own addresses", () => {
 	it("opens a fresh launch where you last were, Recent the first time", async () => {
 		const first = await launch("/");
 		expect(first.heading()).toBe("Recent");
-		await first.press("Northlight");
+		await first.team("Northlight");
 		await first.press("People");
 		first.unmount();
 		const next = await launch("/");
@@ -273,7 +266,7 @@ describe("Home's places at their own addresses", () => {
 
 	it("falls back to Recent from a team you've since left", async () => {
 		const first = await launch("/");
-		await first.press("Tidemark");
+		await first.team("Tidemark");
 		first.unmount();
 		const after = await launch(
 			"/",

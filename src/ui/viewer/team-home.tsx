@@ -210,7 +210,7 @@ function Home({
 						current={current?.address ?? deleted?.address ?? null}
 						page={needle === "" ? page : null}
 						onTeam={(address) => go({ team: address, page: "projects" })}
-						onPage={(to) => current && go({ team: current.address, page: to })}
+						onPage={(to, address) => go({ team: address, page: to })}
 						onNewTeam={() => setCreating(true)}
 					/>
 				)
