@@ -50,6 +50,23 @@ export class RestartRequiredError extends UpdateCheckError {
 	}
 }
 
+/**
+ * What a person reads when the updater fails. electron-updater's own message
+ * carries the request's headers, cookies and a stack, which belong in app.log
+ * and not in a dialog. A GitHub outage reads as one, so nobody goes looking for
+ * a broken release.
+ */
+export function plainUpdateError(raw: string): string {
+	const status = /HttpError: (\d{3})/.exec(raw)?.[1];
+	if (status?.startsWith("5"))
+		return `GitHub did not answer (${status}). That is on GitHub's side: try again in a minute.`;
+	if (status !== undefined) return `GitHub answered ${status} instead of naming the latest release.`;
+	if (/net::ERR_|ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ETIMEDOUT/.test(raw))
+		return "Spool could not reach GitHub. Check the connection and try again.";
+	const first = raw.split("\n")[0]?.trim() ?? raw;
+	return first.length > 300 ? `${first.slice(0, 300)}…` : first;
+}
+
 /** The GitHub API's answer, for a copy with no feed to read. */
 export async function latestRelease(timeoutMs = 10_000): Promise<Release> {
 	let response: Response;
@@ -208,7 +225,7 @@ async function configureUpdater(report: (line: string) => void): Promise<Updater
 		error: (message) => report(`updater FAIL ${String(message)}`),
 	};
 	instance.on("error", (error) => {
-		lastError = error.message;
+		lastError = plainUpdateError(error.message);
 		report(`updater FAIL ${error.message}`);
 	});
 
@@ -240,7 +257,7 @@ export async function checkForUpdate(
 	try {
 		found = await withDeadline(instance.checkForUpdates(), timeoutMs, "Checking for updates timed out. Try again.");
 	} catch (error) {
-		throw new UpdateCheckError(lastError ?? String(error));
+		throw new UpdateCheckError(lastError ?? plainUpdateError(String(error)));
 	}
 	if (found === null) {
 		throw new UpdateCheckError("This copy of Spool cannot update itself: it was not packaged as a release.");
@@ -330,7 +347,9 @@ export async function installUpdate(
 	try {
 		return await downloadAndPrepare(report, progress, options);
 	} catch (error) {
-		throw error instanceof UpdateCheckError ? error : new UpdateCheckError(lastError ?? String(error));
+		throw error instanceof UpdateCheckError
+			? error
+			: new UpdateCheckError(lastError ?? plainUpdateError(String(error)));
 	} finally {
 		installing = false;
 	}
@@ -474,7 +493,7 @@ async function downloadAndPrepare(
 		}
 		// The message on the rejection is often `Error: net::ERR_…` with nothing
 		// in it; the one the updater emitted usually says which step failed.
-		const detail = error instanceof UpdateCheckError ? error.message : (lastError ?? String(error));
+		const detail = error instanceof UpdateCheckError ? error.message : (lastError ?? plainUpdateError(String(error)));
 		report(
 			`failed version=${version} phase=${preparing ? "preparing" : "downloading"} elapsed=${elapsed()} ${detail}`,
 		);
