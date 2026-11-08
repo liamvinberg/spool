@@ -6,7 +6,7 @@
 // sheet can force one. Every root spreads `...rest`, so a layer above can add
 // `data-*`, `aria-*` and `className`.
 
-import type { ComponentProps, CSSProperties } from "react";
+import { type ComponentProps, type CSSProperties, useRef } from "react";
 import { cn } from "../cn";
 import { FrameIcon } from "../icons";
 
@@ -60,20 +60,40 @@ const COUNT_TONE: Record<CountTone, string> = {
 
 /**
  * A number the machine keeps. Mono detail, tabular so it never shifts. `pill`
- * sits on an image; `accent` is the one count that asks to be read.
+ * sits on an image; `accent` is the one count that asks to be read. A count
+ * that `tick`s rises a few pixels into place each time its number changes,
+ * never on its first draw.
  */
 export function Count({
 	value,
 	tone = "secondary",
+	tick = false,
 	className,
 	...rest
-}: ComponentProps<"span"> & { value: number | string; tone?: CountTone | undefined }) {
+}: ComponentProps<"span"> & { value: number | string; tone?: CountTone | undefined; tick?: boolean | undefined }) {
+	const shown = useRef(value);
+	const changed = useRef(false);
+	if (shown.current !== value) {
+		shown.current = value;
+		changed.current = true;
+	}
 	return (
 		<span
-			className={cn("inline-flex shrink-0 items-center tabular-nums type-detail", COUNT_TONE[tone], className)}
+			className={cn(
+				"inline-flex shrink-0 items-center tabular-nums type-detail",
+				tick && "overflow-hidden",
+				COUNT_TONE[tone],
+				className,
+			)}
 			{...rest}
 		>
-			{value}
+			{tick ? (
+				<span key={value} className={cn(changed.current && "animate-count-tick")}>
+					{value}
+				</span>
+			) : (
+				value
+			)}
 		</span>
 	);
 }
@@ -90,19 +110,25 @@ const DOT_TONE: Record<DotTone, string> = {
 	danger: "bg-danger",
 };
 
-/** A disc that says one thing without words. `sm` 6, `md` 8. Arrives with a pop. */
+/**
+ * A disc that says one thing without words. `sm` 6, `md` 8. Arrives with a pop;
+ * once what it said is no longer so (`on` false), it shrinks away where it stood.
+ */
 export function Dot({
 	tone = "primary",
 	size = "sm",
+	on = true,
 	className,
 	...rest
-}: ComponentProps<"span"> & { tone?: DotTone | undefined; size?: DotSize | undefined }) {
+}: ComponentProps<"span"> & { tone?: DotTone | undefined; size?: DotSize | undefined; on?: boolean | undefined }) {
 	return (
 		<span
 			aria-hidden="true"
+			data-on={on ? "" : undefined}
 			className={cn(
-				"block shrink-0 rounded-full animate-unseen-in motion-reduce:animate-none",
+				"block shrink-0 rounded-full animate-unseen-in transition-[scale,opacity] duration-fast ease-out motion-reduce:animate-none motion-reduce:transition-none",
 				size === "sm" ? "size-1.5" : "size-2",
+				on ? "scale-100 opacity-100" : "scale-0 opacity-0",
 				DOT_TONE[tone],
 				className,
 			)}
