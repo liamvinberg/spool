@@ -134,6 +134,7 @@ export function cloudTeamRoutes(options: {
 				(c) => act(c, () => client().update(c.req.param("team"), c.req.valid("json"))),
 			)
 			.delete("/teams/:team", (c) => act(c, () => client().delete(c.req.param("team"))))
+			.post("/teams/:team/purge", (c) => act(c, () => client().purge(c.req.param("team"))))
 			.put(
 				"/teams/:team/logo",
 				validator("json", (value, c) => {

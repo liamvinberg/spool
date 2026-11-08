@@ -9,6 +9,7 @@
  */
 
 import { type ReactNode, useCallback, useRef, useState } from "react";
+import { pageName } from "../../page-path";
 import { type ExportPlan, fetchExportHtml } from "../api";
 import { desktopWindow } from "../desktop-window";
 import { CheckIcon } from "../icons";
@@ -305,7 +306,8 @@ export function ExportChoice({
 			) : null}
 			{html && online.length > 0 ? (
 				<p className="animate-step-in pt-0.5 pr-3 pb-1.5 pl-8 text-secondary type-label">
-					<span className="text-primary type-value">{online.join(", ")}</span>{" "}
+					{/* by name, as the canvas labels them: the page each sits on would only push the line long */}
+					<span className="text-primary type-value">{online.map(pageName).join(", ")}</span>{" "}
 					{online.length === 1 ? "needs" : "need"} the internet to work
 				</p>
 			) : null}

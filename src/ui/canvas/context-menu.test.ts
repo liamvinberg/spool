@@ -22,7 +22,7 @@ const callbacks = {
 };
 
 const PLANS: Record<string, { reach: string[]; online: string[] }> = {
-	checkout: { reach: ["cart", "card", "receipt", "map"], online: ["card"] },
+	checkout: { reach: ["cart", "pay/card", "receipt", "map"], online: ["pay/card"] },
 	a: { reach: [], online: [] },
 	b: { reach: [], online: ["b"] },
 };
@@ -137,7 +137,9 @@ describe("the right-click menu's export", () => {
 		await choose(host, "html");
 		await settle(() => row(host, "This frame and the 4 it links to") !== undefined);
 		expect(row(host, "This frame and the 4 it links to")?.getAttribute("aria-checked")).toBe("true");
+		// by its name, as the canvas labels it: the page it sits on would only push the line long
 		expect(host.textContent).toContain("card needs the internet to work");
+		expect(host.textContent).not.toContain("pay/card");
 		expect(host.textContent).toContain("demo-checkout.html");
 		await act(async () => row(host, "Only this frame")?.click());
 		// alone, it takes nothing that needs the internet

@@ -50,6 +50,7 @@ import { BILLING_STATES, day, money, TeamBilling } from "./team-billing";
 import { type TeamExporter, useTeamExport } from "./team-export";
 import { TeamFailing } from "./team-failing";
 import { TeamLapsed } from "./team-lapsed";
+import { useMovedToast } from "./team-move";
 import { TeamRemoved } from "./team-removed";
 import { type OwnProject, type SetupHost, TeamSetupList, useSetUpToast } from "./team-setup";
 import { TeamActionRefused, type TeamsSource, teamSays } from "./team-source";
@@ -1163,11 +1164,21 @@ function ExportAllRow({
 }
 
 /**
- * A deleted team, as its admins see it until its purge: what happened, the day it goes for good, and Export all,
- * which is all that is left to do with it.
+ * A deleted team, as its admins see it until its purge: what happened, the day it goes for good, Export all, and
+ * Delete now, which erases it for every admin today instead.
  */
-export function DeletedTeamPage({ team, onExport }: { team: DeletedTeam; onExport: TeamExporter }) {
+export function DeletedTeamPage({
+	team,
+	onExport,
+	onDeleted,
+}: {
+	team: DeletedTeam;
+	onExport: TeamExporter;
+	onDeleted: () => void;
+}) {
+	const teamActions = useContext(TeamsSourceContext);
 	const [note, setNote] = useState<ReactNode>(null);
+	const [deleting, setDeleting] = useState(false);
 	return (
 		<div className="pj-team-deleted max-w-[720px]">
 			<header className="pj-heading mb-[28px] flex h-[35px] items-center gap-[10px]">
@@ -1181,16 +1192,36 @@ export function DeletedTeamPage({ team, onExport }: { team: DeletedTeam; onExpor
 				Until then, export it: every project as a git repository with its history, and a file of the team’s people
 				and shares.
 			</p>
-			<Button
-				variant="primary"
-				onClick={async () => {
-					setNote(null);
-					setNote(await onExport(team.address));
-				}}
-			>
-				Export all…
-			</Button>
+			<div className="flex gap-[8px]">
+				<Button
+					variant="primary"
+					onClick={async () => {
+						setNote(null);
+						setNote(await onExport(team.address));
+					}}
+				>
+					Export all…
+				</Button>
+				<Button onClick={() => setDeleting(true)}>Delete now…</Button>
+			</div>
 			{note && <p className="mt-[12px] text-secondary type-label">{note}</p>}
+			{deleting && (
+				<ConfirmDialog
+					title={`Delete ${team.name} now?`}
+					description={`It goes for good today instead of on ${day(team.purgeAfter)}, for every admin. Its projects, history and people can’t be exported or brought back after.`}
+					confirmLabel="Delete for good"
+					danger
+					onConfirm={async () => {
+						try {
+							await teamActions.purge(team.address);
+						} catch (error) {
+							throw new Error(teamSays(error));
+						}
+						onDeleted();
+					}}
+					onClose={() => setDeleting(false)}
+				/>
+			)}
 		</div>
 	);
 }
@@ -1450,6 +1481,7 @@ export function useTeamHome(
 		return () => window.removeEventListener("popstate", moved);
 	}, []);
 	const { toast, onSetUp } = useSetUpToast((team) => go({ team: team.address, page: "people" }));
+	const gone = useMovedToast();
 	const current = place.team === null ? null : (ready?.teams.find((team) => team.address === place.team) ?? null);
 	// a deleted team its admin is looking at, until its purge: its page is Export all alone
 	const deleted =
@@ -1629,7 +1661,20 @@ export function useTeamHome(
 						),
 				}
 			: deleted
-				? { main: <DeletedTeamPage key={deleted.address} team={deleted} onExport={exporting.start} /> }
+				? {
+						main: (
+							<DeletedTeamPage
+								key={deleted.address}
+								team={deleted}
+								onExport={exporting.start}
+								onDeleted={() => {
+									gone.say(`${deleted.name} is deleted for good.`);
+									go(OWN_PLACE, true);
+									void refresh();
+								}}
+							/>
+						),
+					}
 				: undefined;
 	/** The teams this Mac edits in: their projects are on their own pages, not among this Mac's own. */
 	const editing = ready.teams.filter((team) => team.role !== "viewer");
@@ -1641,7 +1686,12 @@ export function useTeamHome(
 		teams: new Set(editing.map((team) => team.address)),
 		editing,
 		all: ready.teams,
-		toast,
+		toast: (
+			<>
+				{toast}
+				{gone.toast}
+			</>
+		),
 		/** Home shows a team's page, by its address, or Your projects. */
 		show,
 		/** Every team's projects as spool.page lists them, by address, and a way to read them again. */
