@@ -373,7 +373,7 @@ function HeldKey({ keys, held, fade, after }: { keys: string; held: boolean; fad
 }
 
 /** a hairline chevron between names: one step deeper, to the right */
-function Sep() {
+export function Sep() {
 	return (
 		<svg viewBox="0 0 8 12" className="h-2.5 w-1.5 text-disabled" fill="none" aria-hidden="true">
 			<path
