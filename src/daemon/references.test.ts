@@ -273,10 +273,11 @@ describe("where a reference goes", () => {
 		expect(placeReference([], view, { w: 1440, h: 9000 })).toMatchObject({ x: 80, y: 80 });
 	});
 
-	it("keeps a class named for a height while the height itself is pinned", () => {
-		const css = ".h-100vh{height:100vh}@media (min-width:600px){.a:hover{margin-top:-10dvh;width:calc(100vw - 2vh)}}";
+	it("keeps a class named for a height, and an image whose data reads like one, while the height itself is pinned", () => {
+		const image = 'url(data:image/png;base64,iVBO/7vh+2svh) 0 0 / 100% 50vh, url("data:image/png;base64,Rw/1vh")';
+		const css = `.h-100vh{height:100vh;background:${image}}@media (min-width:600px){.a:hover{margin-top:-10dvh;width:calc(100vw - 2vh)}}`;
 		expect(pinViewportHeights(css, { w: 1000, h: 800 })).toBe(
-			".h-100vh{height:800px}@media (min-width:600px){.a:hover{margin-top:-80px;width:calc(100vw - 16px)}}",
+			`.h-100vh{height:800px;background:${image.replace("50vh", "400px")}}@media (min-width:600px){.a:hover{margin-top:-80px;width:calc(100vw - 16px)}}`,
 		);
 	});
 
