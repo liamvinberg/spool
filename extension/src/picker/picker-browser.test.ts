@@ -46,6 +46,7 @@ it("picks, sends to spool and shows the receipt; spool away, says so and tries a
 		w.answer = { ok: true, sent: { project: "tidemark", name: "Tidemark", frame: "references/pricing" } };
 		w.chrome = {
 			runtime: {
+				id: "ajdldgfdhejgjjmmjcalpgffidppnoae",
 				sendMessage: async (ask: Ask) => {
 					w.asks.push(ask);
 					return ask.type === "spool:send" ? w.answer : { ok: true, opened: { shown: true, url: "" } };
@@ -92,6 +93,12 @@ it("picks, sends to spool and shows the receipt; spool away, says so and tries a
 	await tab.getByText("Try again", { exact: true }).click();
 	await expect.poll(() => tab.textContent()).toBe("In references/ on TidemarkOpen in spool");
 	expect((await asks()).map((a) => a.type === "spool:send" && a.capture.whole)).toEqual([false, true, true]);
+	// the receipt holds while the hand stays near where it pressed Try again, off the tab too
+	const at = await tab.getByText("Open in spool", { exact: true }).boundingBox();
+	if (at === null) throw new Error("no receipt");
+	await page.mouse.move(at.x + at.width / 2, at.y + at.height + 60, { steps: 3 });
+	await page.waitForTimeout(200);
+	expect(await tab.textContent()).toBe("In references/ on TidemarkOpen in spool");
 
 	// Open in spool asks for that frame
 	await tab.getByText("Open in spool", { exact: true }).click();

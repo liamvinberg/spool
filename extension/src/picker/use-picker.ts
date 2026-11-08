@@ -286,8 +286,9 @@ export function usePicker(o: PickerOptions) {
 			return host !== null && e.composedPath().includes(host);
 		};
 		const move = (e: PointerEvent) => {
-			if (ours(e)) return;
+			// the hand over the tab still counts as where it is: a send from Try again holds the receipt from there
 			ptr.current = { x: e.clientX, y: e.clientY };
+			if (ours(e)) return;
 			const { open: on, phase: p } = live.current;
 			if (!on || p === "sending" || p === "failed") return;
 			const d = Math.hypot(e.clientX - anchor.current.x, e.clientY - anchor.current.y);
