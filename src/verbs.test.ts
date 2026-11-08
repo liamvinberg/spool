@@ -214,7 +214,17 @@ describe("skill", () => {
 	});
 
 	it("prints every listed topic", () => {
-		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "knobs", "verbs", "comments", "references"]) {
+		for (const topic of [
+			"frames",
+			"flows",
+			"sharing",
+			"scenarios",
+			"styling",
+			"knobs",
+			"verbs",
+			"comments",
+			"references",
+		]) {
 			expect(skillText([topic]).length).toBeGreaterThan(100);
 		}
 	});
