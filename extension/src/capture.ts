@@ -66,6 +66,7 @@ const NOTE = {
 	blank: "A canvas read back empty (WebGL keeps no copy of what it drew), so it is left out.",
 	blob: "Images made in the page (blob: URLs) could not come.",
 	closed: "Closed shadow roots are left out.",
+	reveal: "Parts the page fades in as they scroll into view, not reached yet, are shown as they end.",
 } as const;
 
 interface Context {
@@ -183,6 +184,11 @@ function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boo
 	const tag = el.localName;
 	live(el, a, ctx);
 	if (how.contents === true) addStyle(a, "display: contents !important");
+	else {
+		const shown = waitingToReveal(el);
+		for (const decl of shown) addStyle(a, decl);
+		if (shown.length > 0) ctx.notes.add(NOTE.reveal);
+	}
 	if (how.picked === true) {
 		a["data-spool-reference"] = "";
 		for (const decl of standAlone(el)) addStyle(a, decl);
@@ -209,6 +215,35 @@ function attributes(el: Element, ctx: Context): Record<string, string> {
 		a[name] = value;
 	}
 	return a;
+}
+
+/**
+ * A part held invisible until it scrolls into view, and what to show it as it ends. Framer Motion's whileInView and its
+ * like set it transparent inline; a site's own reveal does it with a class that waits for another, a box set off (moved,
+ * shrunk or blurred) and eased in. Either is in the flow and out of view: one hidden where a person can see it is hidden
+ * on purpose, as is one taken out of the flow (a slide, a menu), and an icon's part that only a hover shows (an arrow's
+ * shaft) is no box. Of how it moves in, a shift, a growth or a blur is let go; any other turn stays.
+ */
+function waitingToReveal(el: Element): string[] {
+	const view = el.ownerDocument.defaultView;
+	const style = (el as HTMLElement).style;
+	if (view === null || style === undefined) return [];
+	const computed = view.getComputedStyle(el);
+	if (computed.opacity !== "0" || /^(absolute|fixed)$/.test(computed.position)) return [];
+	const eased = computed.transitionProperty.split(",").some((property, i) => {
+		const duration = computed.transitionDuration.split(",")[i] ?? computed.transitionDuration.split(",")[0] ?? "0s";
+		return /^\s*(opacity|all)\s*$/.test(property) && Number.parseFloat(duration) > 0;
+	});
+	const shifted = /^matrix\([^,]+,\s*0,\s*0,/.test(computed.transform);
+	const blurred = /^(\s*blur\([^)]*\))+\s*$/.test(computed.filter);
+	const boxSetOff = el instanceof view.HTMLElement && eased && (shifted || blurred);
+	if (style.opacity !== "0" && !boxSetOff) return [];
+	const r = el.getBoundingClientRect();
+	if (r.height === 0 || (r.bottom > 0 && r.top < view.innerHeight)) return [];
+	const out = ["opacity: 1 !important"];
+	if (shifted) out.push("transform: none !important");
+	if (blurred) out.push("filter: none !important");
+	return out;
 }
 
 /** what the element is now rather than what it was authored as: typed values, chosen sources, drawn canvases */

@@ -193,6 +193,38 @@ it("keeps a picked element's top where its content starts, wherever its first ch
 	expect(fixes).toEqual([["margin-top: -200px !important"], [], ["display: flow-root !important"], []]);
 });
 
+it("shows the parts waiting to fade in as they scroll into view as they end, and nothing hidden in sight", {
+	timeout: 60_000,
+}, async () => {
+	const html = await (await openTab()).evaluate(() => {
+		document.body.innerHTML = `
+			<p id="seen" style="opacity: 0">hidden in sight</p>
+			<div style="height: 2000px"></div>
+			<p id="later" style="opacity: 0; transform: translateY(32px)">fades in</p>
+			<style>.reveal { opacity: 0; transform: translateY(14px); filter: blur(6px); transition: opacity 0.7s, transform 0.9s } .reveal[data-on] { opacity: 1 } .off { opacity: 0 }</style>
+			<p id="classed" class="reveal">fades in when a class comes</p>
+			<p id="off" class="off">hidden for good</p>
+			<svg><style>.shaft { opacity: 0; transition: opacity 0.2s } a:hover .shaft { opacity: 1 }</style><rect id="shaft" class="shaft" width="8" height="2"></rect></svg>
+			<p id="slide" style="position: absolute; opacity: 0">a slide</p>`;
+		const { capture } = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture;
+		const c = capture({ el: document.body, whole: true, label: location.host });
+		return [c.html, c.notes];
+	});
+	expect(html[0]).toContain('<p id="seen" style="opacity: 0">');
+	expect(html[0]).toContain(
+		'<p id="later" style="opacity: 0; transform: translateY(32px); opacity: 1 !important; transform: none !important">',
+	);
+	expect(html[0]).toContain(
+		'<p id="classed" class="reveal" style="opacity: 1 !important; transform: none !important; filter: none !important">',
+	);
+	expect(html[0]).toContain('<p id="off" class="off">');
+	expect(html[0]).toContain('<rect id="shaft" class="shaft" width="8" height="2"></rect>');
+	expect(html[0]).toContain('<p id="slide" style="position: absolute; opacity: 0">');
+	expect(html[1]).toEqual([
+		"Parts the page fades in as they scroll into view, not reached yet, are shown as they end.",
+	]);
+});
+
 it("catches a WebGL drawing in the frame it was drawn, though it reads back empty after", {
 	timeout: 60_000,
 }, async () => {
