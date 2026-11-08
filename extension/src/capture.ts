@@ -1,4 +1,5 @@
 import type { ReferenceCapture, ReferenceStyle } from "../../src/reference-wire";
+import type { Hovers } from "./hovers";
 
 /**
  * Serializes what the picker picked into a reference capture (spool#241), in the tab, from the live DOM: pure DOM
@@ -23,6 +24,8 @@ export interface CaptureOptions {
 	closedShadowRoot?: (el: Element) => ShadowRoot | null;
 	/** canvases already read, from {@link readCanvases}, so a WebGL drawing caught mid-frame isn't read again empty */
 	drawn?: ReadonlyMap<HTMLCanvasElement, string>;
+	/** what the site's script changed as the hand moved over it, from {@link watchHovers}, for the frame to do again */
+	hovers?: Hovers;
 }
 
 const VOID = new Set([
@@ -222,6 +225,7 @@ function shadowRoot(root: ShadowRoot, out: string[], ctx: Context): void {
 function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boolean }): string {
 	const a = attributes(el, ctx);
 	const tag = el.localName;
+	hovered(el, a, ctx);
 	live(el, a, ctx);
 	if (how.contents === true) addStyle(a, "display: contents !important");
 	else {
@@ -245,18 +249,46 @@ function open(el: Element, ctx: Context, how: { contents?: boolean; picked?: boo
 function attributes(el: Element, ctx: Context): Record<string, string> {
 	const a: Record<string, string> = {};
 	for (const at of Array.from(el.attributes)) {
-		const name = at.name;
-		const lower = name.toLowerCase();
-		if (lower.startsWith("on")) continue;
-		let value = at.value;
-		if (URL_ATTRS.has(lower)) {
-			if (/^\s*javascript:/i.test(value)) continue;
-			if (value !== "" && !value.startsWith("#")) value = absolute(value, ctx.base);
-		} else if (lower === "style") value = cssUrls(value, ctx.base);
-		else if (lower === "srcset" || lower === "imagesrcset") value = srcset(value, ctx.base);
-		a[name] = value;
+		const value = safe(at.name, at.value, ctx);
+		if (value !== null) a[at.name] = value;
 	}
 	return a;
+}
+
+/** an attribute's value made safe and absolute to leave the page; null for one that would run */
+function safe(name: string, value: string, ctx: Context): string | null {
+	const lower = name.toLowerCase();
+	if (lower.startsWith("on")) return null;
+	if (URL_ATTRS.has(lower)) {
+		if (/^\s*javascript:/i.test(value)) return null;
+		return value !== "" && !value.startsWith("#") ? absolute(value, ctx.base) : value;
+	}
+	if (lower === "style") return cssUrls(value, ctx.base);
+	if (lower === "srcset" || lower === "imagesrcset") return srcset(value, ctx.base);
+	return value;
+}
+
+/**
+ * What the hand changes on the element, for the frame to do again as it hovers: the element at rest when the hand is on
+ * it now, the values it takes on `data-spool-hover-set`, and the box that is hovered on `data-spool-hover`.
+ */
+function hovered(el: Element, a: Record<string, string>, ctx: Context): void {
+	const hovers = ctx.opts.hovers;
+	if (hovers === undefined) return;
+	for (const [name, value] of hovers.rest.get(el) ?? []) {
+		if (name.startsWith(":")) continue;
+		const kept = value === null ? null : safe(name, value, ctx);
+		if (kept === null) delete a[name];
+		else a[name] = kept;
+	}
+	const sets = (hovers.sets.get(el) ?? []).flatMap(([id, name, value]): Array<[string, string, string | null]> => {
+		if (name.startsWith(":")) return [[id, name, value]];
+		const kept = value === null ? null : safe(name, value, ctx);
+		return value !== null && kept === null ? [] : [[id, name, kept]];
+	});
+	if (sets.length > 0) a["data-spool-hover-set"] = JSON.stringify(sets);
+	const id = hovers.triggers.get(el);
+	if (id !== undefined) a["data-spool-hover"] = id;
 }
 
 /**
@@ -374,6 +406,13 @@ function live(el: Element, a: Record<string, string>, ctx: Context): void {
 				break;
 			}
 			if (video.currentSrc) a.src = video.currentSrc;
+			// one playing as it was taken plays in the frame, muted and round; one the hand set playing rests
+			const rest = ctx.opts.hovers?.rest.get(el)?.get(":playing");
+			if (rest === undefined ? !video.paused && !video.ended : rest !== null) {
+				a["data-spool-playing"] = "";
+				a.muted = "";
+				a.loop = "";
+			}
 			// one under way shows the frame it was on: the frame runs no script to play it, so it opens there, the poster
 			// behind it until it loads
 			if (video.currentSrc && video.currentTime > 0) {

@@ -3,6 +3,7 @@ import instrumentSans from "@fontsource-variable/instrument-sans/files/instrumen
 import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { capture, readCanvases } from "../capture";
+import { type HoverWatch, watchHovers } from "../hovers";
 import { type Ask, type OpenAnswer, PICKER_GLOBAL, type PickerHandle, type SendAnswer } from "../messages";
 import { MOTION, Overlay } from "./overlay";
 import css from "./overlay.css?inline";
@@ -70,12 +71,15 @@ function mount(): void {
 	root.append(at);
 	const handle: PickerHandle = { toggle: () => {} };
 	g[PICKER_GLOBAL] = handle;
+	// from here on, what the site does as the hand moves over it is watched, for the reference to do again
+	hovers = watchHovers(document, (el) => el === host || el.getRootNode() === root);
 	const react = createRoot(at);
 	// an extension removed or reloaded leaves this script behind without a runtime: the next touch takes it all away
 	const orphaned = () => {
 		if (chrome.runtime?.id !== undefined) return;
 		for (const type of ORPHAN_WATCH) window.removeEventListener(type, orphaned, true);
 		react.unmount();
+		hovers?.stop();
 		host.remove();
 		delete g[PICKER_GLOBAL];
 	};
@@ -84,6 +88,8 @@ function mount(): void {
 }
 
 const ORPHAN_WATCH = ["keydown", "pointerdown", "pointermove"] as const;
+
+let hovers: HoverWatch | undefined;
 
 function Picker({ host, handle }: { host: HTMLElement; handle: PickerHandle }) {
 	const hostRef = useRef<HTMLElement | null>(host);
@@ -115,6 +121,7 @@ async function deliver(grab: { el: Element; whole: boolean; label: string }): Pr
 		closedShadowRoot: (el) =>
 			el.localName.includes("-") ? chrome.dom.openOrClosedShadowRoot(el as HTMLElement) : null,
 		drawn,
+		...(hovers === undefined ? {} : { hovers: hovers.read() }),
 	});
 	const ms = (from: number, to: number) => Math.round(to - from);
 	console.debug(
