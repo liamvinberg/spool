@@ -10,6 +10,7 @@ import {
 	Menu,
 	type MenuItemConstructorOptions,
 	nativeImage,
+	powerMonitor,
 	screen,
 	session,
 	shell,
@@ -43,6 +44,15 @@ import {
 	writeRect,
 } from "./play-window";
 import { type CanvasDownloads, installCanvasDownloads } from "./project-download";
+import {
+	type RemoteConfig,
+	readRemote,
+	readRemoteChoice,
+	reclaimTunnel,
+	Tunnel,
+	type TunnelStatus,
+	writeRemoteChoice,
+} from "./remote";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import { UpdateCover } from "./update-cover";
 import {
@@ -205,6 +215,20 @@ let following: { daemon: string; stop(): void } | undefined;
 let shuttingDown = false;
 
 /**
+ * Another machine's daemon, when remote.json names one (see src/remote.ts), and the
+ * tunnel to it while the window is on it. Hidden entirely without the file.
+ *
+ * While the window is on the remote, this Mac's daemon is neither started nor
+ * adopted for it: one this app already started keeps running until quit, and the
+ * CLI starts its own when it needs one. Everything that hands the page a path on
+ * this Mac, or reads with this Mac's control token, is off, so the page behaves
+ * as it does in a browser tab on the tunnel.
+ */
+let remote: RemoteConfig | undefined;
+let tunnel: Tunnel | undefined;
+const TUNNEL_PID = join(DIRECTORY, "remote-tunnel.pid");
+
+/**
  * What this copy calls its version. A packaged app reads the bundle's, which
  * scripts/version.sh stamped from the repo. An unpackaged run (`pnpm dev app`)
  * would get Electron's own number from the same call, and then say it was up to
@@ -286,6 +310,12 @@ function createWindow(): BrowserWindow {
 	created.on("leave-full-screen", fullscreen);
 	created.on("focus", updateCanvasMenu);
 	created.on("blur", updateCanvasMenu);
+	// which daemon the window is on, in the title the Window menu and Mission Control show
+	created.on("page-title-updated", (event, title) => {
+		if (remote === undefined || tunnel === undefined) return;
+		event.preventDefault();
+		created.setTitle(`${title} (${remote.name})`);
+	});
 	created.webContents.on("did-start-navigation", (details) => {
 		if (!details.isMainFrame || details.isSameDocument) return;
 		canvasReady = false;
@@ -410,6 +440,11 @@ async function showCanvas(raise: boolean): Promise<void> {
 		showing.focus();
 	}
 
+	if (tunnel !== undefined) {
+		showRemote(showing);
+		return;
+	}
+
 	const current = await daemon.status(DIRECTORY);
 	if (shuttingDown || showing.isDestroyed()) return;
 	if (current.running && (current.pid === startedPid || !daemon.behind(current.version, version()))) {
@@ -465,7 +500,8 @@ function point(
 	daemonVersion: string,
 	controlToken: string,
 ): void {
-	if (showing.isDestroyed()) return;
+	// a local start that finished after the window went to the remote
+	if (showing.isDestroyed() || tunnel !== undefined) return;
 	daemonPort = Number(new URL(url).port);
 	daemonControlToken = controlToken;
 	daemonInfo = { version: daemonVersion, adopted: verdict === "adopted" };
@@ -476,6 +512,11 @@ function point(
 	// reload it out from under whatever was on screen, nor while it is still on
 	// its way there, as when a file opened from Finder at launch asks again.
 	if (isDaemonUrl(showing.webContents.getURL())) return;
+	loadCanvas(showing, url);
+}
+
+/** Point the window at a daemon's canvas, where the person was if a restart kept it, unless it is on its way there. */
+function loadCanvas(showing: BrowserWindow, url: string): void {
 	if (pointing?.window === showing && isDaemonUrl(pointing.url)) return;
 	const loadingAt = performance.now();
 	const destination = resumeWorkspace.path === undefined ? url : new URL(resumeWorkspace.path, url).href;
@@ -551,6 +592,7 @@ async function startBundled(): Promise<
 }
 
 function fallback(heading: string, detail: string): void {
+	if (tunnel !== undefined) return;
 	void window?.loadURL(holdingPage(heading, detail));
 }
 
@@ -576,6 +618,11 @@ let bringing = false;
  */
 function watchCanvas(): void {
 	setInterval(() => {
+		if (tunnel !== undefined) {
+			missed = 0;
+			if (!shuttingDown && !cover && window !== undefined && !window.isDestroyed()) showRemote(window);
+			return;
+		}
 		if (
 			shuttingDown ||
 			gaveUp ||
@@ -615,6 +662,135 @@ async function bringBack(showing: BrowserWindow): Promise<void> {
 	} finally {
 		bringing = false;
 	}
+}
+
+// MARK: - Another machine's daemon
+
+let switchingRemote = false;
+
+/** The window to the remote's canvas, or back to this Mac's: the menu's checkbox, remembered for the next launch. */
+async function connectRemote(on: boolean): Promise<void> {
+	if (remote === undefined || switchingRemote || shuttingDown || on === (tunnel !== undefined)) {
+		rebuildMenus();
+		return;
+	}
+	switchingRemote = true;
+	try {
+		writeRemoteChoice(DIRECTORY, on);
+		const showing = window;
+		// the drafts the page keeps outlive it; where it was means nothing on the other daemon
+		if (showing !== undefined && canvasReady && isDaemonUrl(showing.webContents.getURL()))
+			await saveWorkspace(true).catch(() => {});
+		delete resumeWorkspace.path;
+		if (on) startRemote();
+		else stopRemote();
+		rebuildMenus();
+		if (showing === undefined || showing.isDestroyed()) {
+			void openCanvas();
+			return;
+		}
+		if (on) {
+			showRemote(showing);
+			return;
+		}
+		showing.setTitle(NAME);
+		await showing
+			.loadURL(holdingPage("Opening Spool", "The canvas on this Mac opens as soon as its daemon answers."))
+			.catch(() => {});
+		gaveUp = false;
+		await openCanvas(false);
+	} finally {
+		switchingRemote = false;
+	}
+}
+
+function startRemote(): void {
+	if (remote === undefined || tunnel !== undefined) return;
+	// this Mac's daemon's account, token and Chrome extension are not the remote's
+	following?.stop();
+	following = undefined;
+	account = undefined;
+	daemonPort = remote.port;
+	daemonControlToken = undefined;
+	daemonInfo = undefined;
+	log("remote", "on", remote.name, `port=${remote.port}`);
+	tunnel = new Tunnel(remote, { pidFile: TUNNEL_PID, log, onStatus: remoteStatus });
+	tunnel.start();
+	tray?.setToolTip(`${NAME} (${remote.name})`);
+}
+
+function stopRemote(): void {
+	if (tunnel === undefined) return;
+	log("remote", "off");
+	tunnel.stop();
+	tunnel = undefined;
+	daemonPort = undefined;
+	tray?.setToolTip(NAME);
+}
+
+function remoteStatus(status: TunnelStatus): void {
+	log("remote", status.state, ...(status.state === "failed" ? [status.reason] : []));
+	tray?.setContextMenu(buildTrayMenu());
+	if (window !== undefined && !cover) showRemote(window);
+}
+
+/**
+ * The window, on the remote: its canvas once spool answers through the tunnel,
+ * the holding page until then. A canvas already up is left alone when the tunnel
+ * drops: the page's own event stream reconnects once the port answers again,
+ * and a daemon that restarted there sends the page its own reload.
+ */
+function showRemote(showing: BrowserWindow): void {
+	if (remote === undefined || tunnel === undefined || showing.isDestroyed() || shuttingDown) return;
+	if (isDaemonUrl(showing.webContents.getURL()) && !canvasLost) return;
+	if (pointing?.window === showing && isDaemonUrl(pointing.url)) return;
+	const status = tunnel.status;
+	if (status.state === "connected" && !canvasLost) {
+		log("remote", "opening the canvas", remote.name);
+		loadCanvas(showing, `http://127.0.0.1:${remote.port}`);
+		return;
+	}
+	// a canvas that failed to load gives way to the holding page, and the next watch opens it again
+	canvasLost = false;
+	const page =
+		status.state === "failed"
+			? holdingPage(`Can't reach ${remote.name}`, `${sentence(status.reason)}. Trying again.`)
+			: holdingPage(`Connecting to ${remote.name}`, "The canvas opens as soon as it answers.");
+	if (showing.webContents.getURL() !== page) void showing.loadURL(page).catch(() => {});
+}
+
+function sentence(text: string): string {
+	return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The checkbox, in the app menu and the menu bar, and only when remote.json names a machine. */
+function remoteItems(withStatus: boolean): MenuItemConstructorOptions[] {
+	if (remote === undefined) return [];
+	const items: MenuItemConstructorOptions[] = [
+		{
+			label: `Connect to ${remote.name}`,
+			type: "checkbox",
+			checked: tunnel !== undefined,
+			click: (item) => void connectRemote(item.checked),
+		},
+	];
+	if (withStatus && tunnel !== undefined) {
+		const status = tunnel.status;
+		const label =
+			status.state === "connected"
+				? `On ${remote.name}`
+				: status.state === "connecting"
+					? `Connecting to ${remote.name}…`
+					: `Can't reach ${remote.name}: ${status.reason}`;
+		items.push({ label, enabled: false });
+	}
+	return items;
+}
+
+function rebuildMenus(): void {
+	Menu.setApplicationMenu(buildAppMenu());
+	updateCanvasMenu();
+	tray?.setContextMenu(buildTrayMenu());
 }
 
 // MARK: - The play window
@@ -688,7 +864,11 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 	if (authored === undefined) log("play", "no geometry", request.project, request.frame ?? "(first)");
 	const size = authored ?? UNKNOWN_AUTHORED;
 
-	const key = rectKey(request.project, size.w);
+	// the remote's projects are not this Mac's, though they may share a name
+	const key = rectKey(
+		tunnel !== undefined && remote !== undefined ? `${remote.name}:${request.project}` : request.project,
+		size.w,
+	);
 	const stored = readRect(DIRECTORY, key);
 	// A rect stored on a display that has since been unplugged is a window
 	// nobody can see, so it is not a preference any more.
@@ -854,6 +1034,15 @@ function openPath(path: string): void {
 
 function handOpenedPaths(): void {
 	if (!canvasReady || window === undefined) return;
+	if (tunnel !== undefined && remote !== undefined) {
+		if (openedPaths.splice(0).length > 0)
+			tell(
+				`Spool is on ${remote.name}.`,
+				`A file on this Mac can't be opened there. Uncheck Connect to ${remote.name} to open it here.`,
+				"info",
+			);
+		return;
+	}
 	for (const path of openedPaths.splice(0)) window.webContents.send("spool:canvas-open-path", path);
 }
 
@@ -929,6 +1118,8 @@ function installCanvasChannels(): void {
 	ipcMain.handle("spool:choose-directory", (event, request: unknown) => {
 		if (window === undefined || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame)
 			throw new Error("Only the canvas can choose a folder.");
+		// a folder on this Mac means nothing to a daemon on another machine
+		if (tunnel !== undefined) throw new Error("The canvas is on another machine.");
 		const options = directoryDialogOptions(request);
 		if (choosingDirectory) return null;
 		choosingDirectory = dialog
@@ -938,6 +1129,10 @@ function installCanvasChannels(): void {
 				choosingDirectory = undefined;
 			});
 		return choosingDirectory;
+	});
+	// the preload leaves out what hands the page this Mac's paths: the open panel, Finder's documents, drops
+	ipcMain.on("spool:canvas-remote", (event) => {
+		event.returnValue = tunnel !== undefined;
 	});
 	ipcMain.on("spool:canvas-fullscreen", (event) => {
 		event.returnValue = window?.isFullScreen() ?? false;
@@ -986,14 +1181,20 @@ export function buildAppMenu(): Menu {
 					accelerator: menuKey("app.settings", menuKeys),
 					click: () => sendCanvasCommand("app.settings"),
 				},
-				{
-					label: "Cloud Account",
-					submenu: accountItems(account, {
-						signIn: () => void cloudAccount("login"),
-						signOut: () => void cloudAccount("logout"),
-					}),
-				},
+				// this Mac's account; on the remote, the canvas's own Home shows that machine's
+				...(tunnel === undefined
+					? [
+							{
+								label: "Cloud Account",
+								submenu: accountItems(account, {
+									signIn: () => void cloudAccount("login"),
+									signOut: () => void cloudAccount("logout"),
+								}),
+							},
+						]
+					: []),
 				{ label: "Install Command Line Tool…", click: () => void installCommand() },
+				...remoteItems(false),
 				{ type: "separator" },
 				{ ...updateItem(), id: "app-update" },
 				{ type: "separator" },
@@ -1140,6 +1341,7 @@ export function buildTrayMenu(): Menu {
 			? [{ label: `daemon ${daemonInfo.version}, started by the cli`, enabled: false }]
 			: []),
 		updateItem(),
+		...(remote === undefined ? [] : [{ type: "separator" as const }, ...remoteItems(true)]),
 		{ type: "separator" },
 		{ label: `Quit ${NAME}`, accelerator: "Command+Q", click: () => app.quit() },
 	]);
@@ -1784,6 +1986,7 @@ async function restartUpdate(relaunch = true): Promise<void> {
 		clearTimeout(deadline);
 		clearUpdateRestart(DIRECTORY);
 		shuttingDown = false;
+		tunnel?.start();
 		log("updates", "FAIL", String(error));
 		uncover();
 		setUpdate({ kind: "ready", version: target });
@@ -1884,6 +2087,8 @@ async function cloudAccount(command: "login" | "logout"): Promise<void> {
  */
 export async function shutdown(requireStopped = false): Promise<void> {
 	const started = performance.now();
+	// the remote daemon is never stopped from here, only the tunnel to it
+	tunnel?.stop();
 	if (startedPid === undefined) {
 		log("quit", "left the daemon running");
 		return;
@@ -1941,6 +2146,17 @@ export function boot(): void {
 	}
 	app.on("second-instance", () => void openCanvas());
 
+	// After the lock, so a second launch never ends the first one's tunnel.
+	const configured = readRemote(DIRECTORY);
+	if (configured.error !== undefined) log("remote", "FAIL", configured.error, "no remote until it is fixed");
+	remote = configured.config;
+	if (remote !== undefined) {
+		const reclaimed = reclaimTunnel(TUNNEL_PID, remote.port);
+		if (reclaimed !== undefined) log("remote", "ended the ssh a previous run left", `pid=${reclaimed}`);
+		// a quit that never reaches will-quit still takes its ssh with it
+		process.once("exit", () => tunnel?.stop());
+	}
+
 	installPlayChannels();
 	installUpdateChannels();
 	installCanvasChannels();
@@ -1985,6 +2201,17 @@ export function boot(): void {
 		);
 		Menu.setApplicationMenu(buildAppMenu());
 		installDockIcon();
+		if (remote !== undefined) {
+			if (readRemoteChoice(DIRECTORY)) {
+				startRemote();
+				Menu.setApplicationMenu(buildAppMenu());
+			}
+			// sleep leaves a tunnel that only looks alive; a screen lock alone does not, so it restarts only a broken one
+			powerMonitor.on("resume", () => tunnel?.restart());
+			powerMonitor.on("unlock-screen", () => {
+				if (tunnel !== undefined && tunnel.status.state !== "connected") tunnel.restart();
+			});
+		}
 		installTray();
 		scheduleChecks();
 		await openCanvas();

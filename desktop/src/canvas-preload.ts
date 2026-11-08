@@ -14,6 +14,8 @@ const DISMISS = "spool:app-update-dismiss";
 
 // Read before the page runs so the desktop bridge is available at first paint.
 const state: unknown = ipcRenderer.sendSync(STATE);
+// on another machine's daemon a path on this Mac means nothing there, so the page gets a browser tab's open and drop
+const local = ipcRenderer.sendSync("spool:canvas-remote") !== true;
 let fullscreen = ipcRenderer.sendSync("spool:canvas-fullscreen") === true;
 const markWindow = () => {
 	if (document.documentElement === null) return;
@@ -75,17 +77,21 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 		ipcRenderer.on("spool:canvas-command", handler);
 		return () => ipcRenderer.removeListener("spool:canvas-command", handler);
 	},
-	// a document Finder handed the app, for the canvas's Open… to read
-	onOpenPath: (listener: (path: string) => void): (() => void) => {
-		const handler = (_event: unknown, path: string) => listener(path);
-		ipcRenderer.on("spool:canvas-open-path", handler);
-		return () => ipcRenderer.removeListener("spool:canvas-open-path", handler);
-	},
 	setCanvasActive: (active: boolean) => ipcRenderer.send("spool:canvas-active", active),
 	setMenuKeys: (keys: Partial<Record<CanvasCommand, string>>) => ipcRenderer.send("spool:canvas-menu-keys", keys),
 	closeWindow: () => ipcRenderer.send("spool:canvas-close-window"),
-	chooseDirectory: (request: DirectoryRequest): Promise<string | null> =>
-		ipcRenderer.invoke("spool:choose-directory", request),
-	// where a file or folder dropped on the window lies, which a page is never told
-	pathForFile: (file: File): string => webUtils.getPathForFile(file),
+	...(local
+		? {
+				// a document Finder handed the app, for the canvas's Open… to read
+				onOpenPath: (listener: (path: string) => void): (() => void) => {
+					const handler = (_event: unknown, path: string) => listener(path);
+					ipcRenderer.on("spool:canvas-open-path", handler);
+					return () => ipcRenderer.removeListener("spool:canvas-open-path", handler);
+				},
+				chooseDirectory: (request: DirectoryRequest): Promise<string | null> =>
+					ipcRenderer.invoke("spool:choose-directory", request),
+				// where a file or folder dropped on the window lies, which a page is never told
+				pathForFile: (file: File): string => webUtils.getPathForFile(file),
+			}
+		: {}),
 });
