@@ -1,6 +1,7 @@
 {
-	"through": "0.51.2",
+	"through": "0.52.0",
 	"headlines": {
+		"78ee723": "Export frames as HTML",
 		"2b96f16": "Experimental settings",
 		"3042dde": "Pages as lists",
 		"0109d88": "Record",
