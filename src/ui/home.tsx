@@ -847,7 +847,10 @@ export function CoverTile({
 	const face = (
 		<>
 			<div className="pj-cover-art relative grid aspect-[1.82] place-items-center overflow-hidden rounded-[8px] bg-surface-canvas">
-				{art}
+				{/* under the pointer the picture leans in a little and brightens */}
+				<div className="absolute inset-0 grid place-items-center transition-[scale,filter] duration-base ease-out group-hover/project:scale-[1.02] group-hover/project:brightness-110 motion-reduce:transition-none motion-reduce:group-hover/project:scale-100">
+					{art}
+				</div>
 				<HerePill people={here} />
 				{/* the resting edge, so a pale cover still ends on a pale page; it firms under the pointer */}
 				<span
