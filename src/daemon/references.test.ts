@@ -163,6 +163,8 @@ describe("a reference", () => {
 		// a face's other formats are never fetched, and nothing runs
 		expect(asked).not.toContain("https://cdn.example.com/fonts/site.woff");
 		expect(page).not.toContain("onclick");
+		// a video that showed no controls on the page shows none in the frame, where nothing runs to hide them
+		expect(page).toContain("video:not([controls])::-webkit-media-controls { display: none !important; }");
 		// a web component keeps its shadow root, declared, or it draws nothing
 		expect(page).toContain(
 			'<x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price>',

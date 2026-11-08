@@ -311,7 +311,11 @@ function attributes(attrs: Record<string, string>): string {
  * flattened so it stands at the frame's top-left corner. A whole page is the page as it was.
  */
 function referenceRules(capture: ReferenceCapture): string {
-	const rules = ["html { overflow: hidden !important; scrollbar-width: none !important; }"];
+	const rules = [
+		"html { overflow: hidden !important; scrollbar-width: none !important; }",
+		// with no script to run, Chrome neither autoplays a video nor hides its controls: it stands still, as on a poster
+		"video:not([controls])::-webkit-media-controls { display: none !important; }",
+	];
 	const backdrop = capture.backdrop?.trim();
 	if (backdrop !== undefined && backdrop !== "" && !/[;{}<>]/.test(backdrop)) {
 		rules.push(`html { background-color: ${backdrop} !important; }`);
