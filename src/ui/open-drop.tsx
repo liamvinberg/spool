@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from "react";
+import { importSourceOf } from "../daemon/import/kinds";
 import { desktopWindow } from "./desktop-window";
 import { FolderIcon } from "./icons";
 import "./open-drop.css";
 
-/** What a drop handed Open…: a path or a link to read, a .spool file's bytes in a browser, or why it can't. */
+/**
+ * What a drop handed Open…: a path or a link to read, a .spool file's bytes in a browser, another design tool's file's
+ * bytes in a browser (spool#242), or why it can't.
+ */
 export type Dropped =
 	| { kind: "given"; given: string }
 	| { kind: "bytes"; file: File }
+	| { kind: "design"; file: File }
 	| { kind: "refused"; says: string };
 
 const isSpool = (name: string) => name.toLowerCase().endsWith(".spool");
@@ -29,7 +34,8 @@ export function droppedOf(
 		if ([...data.items][0]?.webkitGetAsEntry?.()?.isDirectory)
 			return { kind: "refused", says: "A browser can't open a dropped folder. Use Open… instead." };
 		if (isSpool(file.name)) return { kind: "bytes", file };
-		return { kind: "refused", says: "spool opens a folder, a .spool file or a link to a project." };
+		if (importSourceOf(file.name) !== undefined) return { kind: "design", file };
+		return { kind: "refused", says: "spool opens a folder, a .spool file, a Figma file or a link to a project." };
 	}
 	const link = (data.getData("text/uri-list") || data.getData("text/plain"))
 		.split(/\r?\n/u)

@@ -92,6 +92,22 @@ it("asks before designing in a code folder, and makes nothing until asked", asyn
 	expect(host.querySelector("dialog")).toBeNull();
 });
 
+it("makes another tool's file a project without asking, since letting go of it already said so (spool#242)", async () => {
+	const path = "/u/Downloads/Tidemark app v3.fig";
+	const writes = daemon(
+		{ [path]: { kind: "import", path, name: "Tidemark app v3.fig", source: "Figma", bytes: 9 } },
+		{
+			"/api/projects/import/design/path": () =>
+				Response.json({ root: "/u/spool/Tidemark app v3", name: "Tidemark app v3" }),
+		},
+	);
+	const { host, take, onOpened } = mount();
+	await take(path);
+	expect(writes).toEqual([{ path: "/api/projects/import/design/path", body: { path } }]);
+	expect(onOpened).toHaveBeenCalledWith({ root: "/u/spool/Tidemark app v3", name: "Tidemark app v3" });
+	expect(host.querySelector("dialog")).toBeNull();
+});
+
 it("clones a repo, then reads the clone again and asks to design in it", async () => {
 	const writes = daemon(
 		{
@@ -171,7 +187,7 @@ it("leaves a paste alone while a project is in front", async () => {
 	expect(writes).toEqual([]);
 });
 
-it("reads a drop: the Mac app's path, a browser's .spool bytes, a link, and what a browser can't open", () => {
+it("reads a drop: the Mac app's path, a browser's .spool or Figma bytes, a link, and what a browser can't open", () => {
 	const file = new File(["zip"], "kaffe-menu.spool");
 	const data = (files: File[], entry?: { isDirectory: boolean }, text = "") => ({
 		files: files as unknown as FileList,
@@ -183,6 +199,8 @@ it("reads a drop: the Mac app's path, a browser's .spool bytes, a link, and what
 		given: "/u/Downloads/kaffe-menu.spool",
 	});
 	expect(droppedOf(data([file]))).toEqual({ kind: "bytes", file });
+	const fig = new File(["fig"], "Tidemark app v3.fig");
+	expect(droppedOf(data([fig]))).toEqual({ kind: "design", file: fig });
 	expect(droppedOf(data([new File([], "kvitt")], { isDirectory: true }))?.kind).toBe("refused");
 	expect(droppedOf(data([file, file]))).toEqual({ kind: "refused", says: "Drop one folder or one .spool file." });
 	expect(droppedOf(data([], undefined, "# comment\r\nhttps://github.com/t/tides\r\n"))).toEqual({

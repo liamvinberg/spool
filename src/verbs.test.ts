@@ -247,7 +247,7 @@ describe("skill", () => {
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText(["vibes"])).toThrowError(SpoolError);
 		expect(() => skillText(["vibes"])).toThrowError(
-			/comments, flows, frames, history, knobs, projects, scenarios, shaders, sharing, styling, team, verbs/,
+			/comments, flows, frames, history, import, knobs, projects, scenarios, shaders, sharing, styling, team, verbs/,
 		);
 		expect(() => skillText(["frames", "vibes"])).toThrowError(/no skill topic "vibes"/);
 	});

@@ -305,6 +305,47 @@ export async function importProjectFrom(path: string, signal?: AbortSignal): Pro
 	return (await response.json()) as { root: string; name: string };
 }
 
+/** Another design tool's file at `path`, made a project of its own whose agent starts on it (spool#242). */
+export async function importDesignFrom(path: string, signal?: AbortSignal): Promise<{ root: string; name: string }> {
+	const response = await controlFetch("/api/projects/import/design/path", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ path }),
+		...(signal === undefined ? {} : { signal }),
+	});
+	if (!response.ok) throw new Error(await errorText(response));
+	return (await response.json()) as { root: string; name: string };
+}
+
+/** The same, from a browser's drop, which has the file's bytes and name and no path. */
+export async function importDesign(file: File, signal?: AbortSignal): Promise<{ root: string; name: string }> {
+	const response = await controlFetch(`/api/projects/import/design?${new URLSearchParams({ name: file.name })}`, {
+		method: "POST",
+		headers: { "content-type": "application/octet-stream" },
+		body: file,
+		...(signal === undefined ? {} : { signal }),
+	});
+	if (!response.ok) throw new Error(await errorText(response));
+	return (await response.json()) as { root: string; name: string };
+}
+
+/** An import no turn has been told of yet: its folder's name, its tool, and the words its chip says. */
+export interface PendingImport {
+	readonly slug: string;
+	readonly source: string;
+	readonly label: string;
+}
+
+/** The project's imports waiting for the agent, none when spool can't say. */
+export async function fetchPendingImports(project: string): Promise<PendingImport[]> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/agent/imports`);
+		return response.ok ? ((await response.json()) as PendingImport[]) : [];
+	} catch {
+		return [];
+	}
+}
+
 export type OpenOutcome = { kind: "opened"; root: string; name: string } | { kind: "error"; message: string };
 
 export async function openProjectAt(path: string): Promise<OpenOutcome> {
@@ -1210,6 +1251,8 @@ export interface AgentSaying {
 	readonly attached?: readonly Attachment[] | undefined;
 	/** Comments sent to the agent (spool#172), by id, which the daemon renders from its own snapshot. */
 	readonly comments?: readonly string[] | undefined;
+	/** Work brought in from another tool (spool#242), by its folder's name under imports/. */
+	readonly imports?: readonly string[] | undefined;
 }
 
 /**
@@ -1336,6 +1379,7 @@ function sayTurn(
 					...(one.selection === undefined ? {} : { selection: [...one.selection] }),
 					...(one.attached === undefined ? {} : { attachments: one.attached }),
 					...(one.comments === undefined ? {} : { comments: [...one.comments] }),
+					...(one.imports === undefined ? {} : { imports: [...one.imports] }),
 				})),
 			},
 		},
