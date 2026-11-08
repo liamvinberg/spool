@@ -261,13 +261,16 @@ describe("where a reference goes", () => {
 		expect(chooseReferenceProject([], new Map())).toBeUndefined();
 	});
 
-	it("stands in the view, clear of what is there, and beside the page when the view has no room or no camera", () => {
+	it("stands in the view, clear of what is there, near the view when it has no room, and beside the page with no camera", () => {
 		const view = { x: 0, y: 0, w: 2000, h: 1200 };
 		const field = [{ x: 80, y: 80, w: 600, h: 400 }];
 		const placed = placeReference(field, view, { w: 500, h: 300 });
 		expect(placed).toEqual({ x: 760, y: 80, w: 500, h: 300 });
 		const crowded = [{ x: 0, y: 0, w: 2000, h: 1200 }];
-		expect(placeReference(crowded, view, { w: 500, h: 300 })).toEqual({ x: 2080, y: 0, w: 500, h: 300 });
+		expect(placeReference(crowded, view, { w: 500, h: 300 })).toEqual({ x: 0, y: 1280, w: 500, h: 300 });
+		// a frame far off on the page does not pull it there
+		const far = [...crowded, { x: 20000, y: 0, w: 1000, h: 1000 }];
+		expect(placeReference(far, view, { w: 500, h: 300 })).toEqual({ x: 0, y: 1280, w: 500, h: 300 });
 		expect(placeReference(field, undefined, { w: 500, h: 300 })).toEqual({ x: 760, y: 80, w: 500, h: 300 });
 		// a page taller than the view still starts in it
 		expect(placeReference([], view, { w: 1440, h: 9000 })).toMatchObject({ x: 80, y: 80 });

@@ -154,15 +154,48 @@ export function writeReferenceFolder(
 
 /**
  * Where a reference lands: inside the part of its page the canvas last showed, at the first place in reading order
- * that touches nothing already there, a gutter clear of it; beside everything on the page when the view has no room
- * or nobody has looked at the page yet.
+ * that touches nothing already there, a gutter clear of it; when the view has no room, at the free place nearest it,
+ * so the canvas only has a short way to fly; beside everything on the page when nobody has looked at the page yet.
  */
 export function placeReference(field: readonly Rect[], view: Rect | undefined, size: { w: number; h: number }): Rect {
 	const w = Math.round(size.w);
 	const h = Math.round(size.h);
-	const spot = view === undefined ? undefined : spotInView(field, view, { w, h });
+	const spot = view === undefined ? undefined : (spotInView(field, view, { w, h }) ?? spotNear(field, view, { w, h }));
 	const { x, y } = spot ?? besideField(field);
 	return { x: Math.round(x), y: Math.round(y), w, h };
+}
+
+/** The free place nearest the view's middle, right of or below what is on the page: where the canvas flies least. */
+function spotNear(
+	field: readonly Rect[],
+	view: Rect,
+	size: { w: number; h: number },
+): { x: number; y: number } | undefined {
+	const xs = [view.x, ...field.flatMap((one) => [one.x, one.x + one.w + GUTTER])];
+	const ys = [view.y, ...field.flatMap((one) => [one.y, one.y + one.h + GUTTER])];
+	const mx = view.x + view.w / 2;
+	const my = view.y + view.h / 2;
+	const half = GUTTER / 2;
+	let best: { x: number; y: number; d: number } | undefined;
+	for (const y of ys) {
+		for (const x of xs) {
+			const free = !field.some((one) =>
+				overlaps(
+					{ x: x - half, y: y - half, w: size.w + GUTTER, h: size.h + GUTTER },
+					{ x: one.x - half, y: one.y - half, w: one.w + GUTTER, h: one.h + GUTTER },
+				),
+			);
+			if (!free) continue;
+			// how far its nearest point is from the view's middle
+			const dx = Math.max(x - mx, 0, mx - (x + size.w));
+			const dy = Math.max(y - my, 0, my - (y + size.h));
+			const d = dx * dx + dy * dy;
+			if (best === undefined || d < best.d || (d === best.d && (y < best.y || (y === best.y && x < best.x)))) {
+				best = { x, y, d };
+			}
+		}
+	}
+	return best;
 }
 
 function spotInView(
