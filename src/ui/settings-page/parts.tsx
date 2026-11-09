@@ -44,12 +44,15 @@ export function SettingLine({
 	says,
 	reason,
 	control,
+	below,
 	className,
 }: {
 	label: ReactNode;
 	says?: ReactNode;
 	reason?: string | undefined;
 	control: ReactNode;
+	/** Something the line holds across its whole width, under what it says. */
+	below?: ReactNode;
 	className?: string | undefined;
 }) {
 	return (
@@ -60,6 +63,7 @@ export function SettingLine({
 			</span>
 			{says === undefined ? null : <span className="max-w-dialog text-secondary type-label">{says}</span>}
 			{reason === undefined ? null : <Reason className="col-span-2">{reason}</Reason>}
+			{below === undefined ? null : <div className="col-span-2 pt-2">{below}</div>}
 		</div>
 	);
 }

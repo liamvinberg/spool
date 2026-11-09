@@ -70,11 +70,22 @@ describe("which frames agents are at", () => {
 		expect(at.get("ideas/split")?.[0]?.says).toBe("Split home");
 	});
 
-	it("waits on you where your agent stopped to ask", () => {
-		const at = frameAgents([companion({ act: "ask" })], []);
+	it("waits on you where your agent stopped to ask, the rail's or one in your terminal", () => {
+		const at = frameAgents(
+			[companion({ act: "ask" })],
+			[],
+			[
+				{ frame: "app/cart", who: "claude", act: "editing", waiting: false },
+				{ frame: "app/menu", who: "claude", act: "reading", waiting: true },
+			],
+		);
 		expect(at.get("app/home")).toEqual([
 			{ color: null, own: true, waiting: true, says: "Your agent · waiting on you" },
 		]);
+		expect(at.get("app/cart")).toEqual([
+			{ color: null, own: true, waiting: false, says: "claude editing", word: "claude editing" },
+		]);
+		expect(at.get("app/menu")?.[0]?.waiting).toBe(true);
 	});
 
 	it("puts a teammate's agents where their presence says, in their colour, with what each is doing", () => {

@@ -29,6 +29,8 @@ export const APP_PATH_SEGMENTS: readonly string[] = [
 	"events",
 	"fs",
 	"health",
+	"hook",
+	"outside",
 	"projects",
 	"references",
 	"session",

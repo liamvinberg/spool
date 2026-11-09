@@ -12,6 +12,7 @@ import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
+import type { OutsideView } from "../../daemon/outside";
 import type { BrokenFrame as BrokenFrameRecord } from "../../daemon/thumbs";
 import { pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
@@ -149,7 +150,7 @@ import { deepest, parentOf } from "./element-selection";
 import { FindDoor } from "./find-door";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, createSiteBoxStore, FlowArrows } from "./flow-arrows";
-import { useFrameAgents } from "./frame-agents";
+import { type OutsideHandAt, useFrameAgents } from "./frame-agents";
 import { type CapturedFrame, framesInCanvasOrder, pngBytesFromImageBlob } from "./frame-export";
 import { FrameLabel, LabelField, type OverviewRole } from "./frame-label";
 import { createFrameReads } from "./frame-reads";
@@ -187,6 +188,14 @@ import { overviewNeighbours, stepDirection } from "./live-moves";
 import { watchMotionStrain } from "./motion-strain";
 import { isMovedEntry, MOVED_UNDO_MS, MovedToast, movedLine } from "./moved-toast";
 import { NoticeStack } from "./notice-stack";
+import {
+	createOutsideStore,
+	OutsideAskCard,
+	OutsideAskOnFrame,
+	OutsideLines,
+	useOutside,
+	useOutsideAsk,
+} from "./outside";
 import {
 	type ElementPreview,
 	type FrameHover,
@@ -1493,8 +1502,29 @@ function CanvasField({
 			),
 		[ownCompanions, reach],
 	);
-	/** the agents at each frame and placeholder, this canvas's and teammates', said on its name row */
-	const agentsAt = useFrameAgents(presenceRoom, companions, team);
+	// agents working here from a terminal (task 531): their sessions, their hands, and the offer to connect one
+	const outsideStore = useMemo(() => createOutsideStore(project), [project]);
+	const outside = useOutside(outsideStore);
+	const outsideHandsKey = JSON.stringify(
+		(outside?.sessions ?? []).flatMap((session) =>
+			session.state === "done"
+				? []
+				: session.hands.map((hand) => [hand.frame, hand.who, hand.act, session.state === "waiting"]),
+		),
+	);
+	const outsideHands = useMemo(
+		() =>
+			(JSON.parse(outsideHandsKey) as [string, string, "reading" | "editing", boolean][]).map(
+				([frame, who, act, waiting]): OutsideHandAt => ({ frame, who, act, waiting }),
+			),
+		[outsideHandsKey],
+	);
+	const outsideAsk = useOutsideAsk(outside, turnPhase === "playing" || turnPhase === "asking");
+	/** the frame the offer hangs under, on this page; none and it stands in the corner */
+	const outsideAskFrame =
+		outsideAsk.shown?.frame == null ? undefined : visibleFrames.find((one) => one.name === outsideAsk.shown?.frame);
+	/** the agents at each frame and placeholder, this canvas's, teammates' and the terminal's, said on its name row */
+	const agentsAt = useFrameAgents(presenceRoom, companions, team, outsideHands);
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
 	/** whether the Comments tab is on screen, so its dot says news only while it isn't */
@@ -3274,6 +3304,7 @@ function CanvasField({
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
 		let opened = false;
+		const { refresh: refreshOutside, set: setOutside } = outsideStore;
 		return subscribeSse(
 			`/api/p/${encodeURIComponent(project)}/events`,
 			{
@@ -3291,6 +3322,7 @@ function CanvasField({
 					// asked now (a stream that comes back resyncs the same way)
 					if (!opened) void refetchFrames();
 					opened = true;
+					refreshOutside();
 				},
 				presence: (data) => presenceRoom.hear(data as Presence),
 				"presence-hidden": (data) => presenceRoom.hide((data as { hidden?: unknown }).hidden === true),
@@ -3302,6 +3334,7 @@ function CanvasField({
 						cover?: Cover;
 						message?: string;
 					};
+					if (event.kind === "outside") return setOutside((data as { view: OutsideView }).view);
 					if (event.kind === "set-aside") window.dispatchEvent(new CustomEvent("spool-set-aside-change"));
 					// a reference from the Chrome extension (spool#241) arrives as it is placed, in view
 					if (event.kind === "reference" && event.frame !== undefined) {
@@ -3379,6 +3412,7 @@ function CanvasField({
 		tellView,
 		presenceRoom,
 		store,
+		outsideStore,
 	]);
 
 	/**
@@ -6106,6 +6140,18 @@ function CanvasField({
 									/>
 								);
 							})()}
+							{outsideAsk.shown !== null && outsideAskFrame !== undefined ? (
+								<OutsideAskOnFrame camera={camera} frame={outsideAskFrame}>
+									<OutsideAskCard
+										key={outsideAsk.shown.harness}
+										shown={outsideAsk.shown}
+										notch
+										onAnswer={outsideAsk.answer}
+										onHeld={outsideAsk.setHeld}
+										onClose={outsideAsk.close}
+									/>
+								</OutsideAskOnFrame>
+							) : null}
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
 								<PresenceLayer
@@ -6163,7 +6209,25 @@ function CanvasField({
 							onFollow={() => setFollowing(null)}
 							toPage={switchToPage}
 							onLand={landOnFrame}
-						/>
+						>
+							<OutsideLines
+								sessions={outside?.sessions ?? []}
+								project={project}
+								unseen={unseen}
+								onLand={landOnFrame}
+							>
+								{outsideAsk.shown !== null && outsideAskFrame === undefined ? (
+									<OutsideAskCard
+										key={outsideAsk.shown.harness}
+										shown={outsideAsk.shown}
+										notch={false}
+										onAnswer={outsideAsk.answer}
+										onHeld={outsideAsk.setHeld}
+										onClose={outsideAsk.close}
+									/>
+								) : null}
+							</OutsideLines>
+						</AgentTrail>
 					)}
 					{/* who else is here stands after the path; with no path drawn, where it would start */}
 					{presenceFaces !== null && !(loaded && !projectEmpty) && (

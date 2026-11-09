@@ -53,6 +53,15 @@ import { historyAt, historyMoment, historyPath, listHistory } from "./history-ve
 import { checkInitTarget, chooseInitTarget, initDestination, initProject, initTeamProject } from "./init";
 import { runMove } from "./move-verb";
 import { fetchLocalCopy, openProject } from "./open";
+import {
+	harnessesNamed,
+	hookUrl,
+	installLines,
+	noticeOutside,
+	removeLines,
+	statusLines,
+	tellHooksChanged,
+} from "./outside/cli";
 import { isFramePath, isSafeName } from "./page-path";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
@@ -95,6 +104,12 @@ const program = new Command("spool")
 	.description("the live prototyping canvas")
 	.version(pkg.version, "-v, --version")
 	.option(NO_OPEN, "print the canvas url without opening a browser");
+
+// an agent in a terminal running a verb here is how the canvas learns it is used (task 531)
+program.hook("preAction", async (_program, action) => {
+	if (["hooks", "serve", "stop"].includes(action.parent?.name() === "hooks" ? "hooks" : action.name())) return;
+	await noticeOutside(spoolDir, process.env, process.cwd());
+});
 
 /** A running daemon holds the account it last read: tell it, so Home and the Mac app's menu follow. */
 async function accountChanged(): Promise<void> {
@@ -775,6 +790,40 @@ for (const on of [true, false]) {
 			process.stdout.write(`${switchExperiment(createSettingsStore(spoolDir), id, on)}\n`);
 		});
 }
+
+const hooks = program
+	.command("hooks")
+	.description("connect Claude Code, Codex or pi in your terminal to the canvas, or take spool's hooks out again");
+
+hooks
+	.command("status", { isDefault: true })
+	.description("say which agents spool listens to, and the file each one's hooks live in")
+	.action(() => {
+		for (const line of statusLines(spoolDir)) process.stdout.write(`${line}\n`);
+	});
+
+hooks
+	.command("install")
+	.description("add spool's listen-only hooks to an agent's own settings, for every project")
+	.argument("[agent]", "claude, codex, pi or all", "all")
+	.action(async (agent: string) => {
+		const url = hookUrl(spoolDir, resolveServeConfig(spoolDir, process.env).port);
+		for (const harness of harnessesNamed(agent)) {
+			for (const line of installLines(harness, spoolDir, url)) process.stdout.write(`${line}\n`);
+			await tellHooksChanged(spoolDir, harness);
+		}
+	});
+
+hooks
+	.command("remove")
+	.description("take spool's hooks out of an agent's settings, leaving everything else as it was")
+	.argument("[agent]", "claude, codex, pi or all", "all")
+	.action(async (agent: string) => {
+		for (const harness of harnessesNamed(agent)) {
+			for (const line of removeLines(harness, spoolDir)) process.stdout.write(`${line}\n`);
+			await tellHooksChanged(spoolDir, harness);
+		}
+	});
 
 program
 	.command("serve")

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { OWN_TURN_ENV } from "../outside/harness";
 import type { AgentSpawn } from "./agent-spawn";
 
 /**
@@ -110,7 +111,8 @@ export function claudeExecutor(): AgentExecutor {
 	return async ({ command, args, cwd, env }) => {
 		const child = spawn(command, [...args], {
 			cwd,
-			env,
+			// marked as spool's own, so its `spool` calls and hooks don't read as an agent outside spool (task 531)
+			env: { ...env, [OWN_TURN_ENV]: "1" },
 			stdio: ["pipe", "pipe", "pipe"],
 			detached: process.platform !== "win32",
 		});

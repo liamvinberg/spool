@@ -17,6 +17,7 @@ import { placeOf } from "../home-places";
 import { mutateMachineState } from "../machine-state";
 import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
+import { hooksMade, readHookToken, writeHookTarget } from "../outside/install";
 import { isFramePath, isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "../runtime/record-protocol";
@@ -32,7 +33,7 @@ import {
 	type TeamMoveOptions,
 } from "../team-moves";
 import type { ProjectLink } from "../team-project";
-import { type Presence, readPresenceState } from "../team-sync-protocol";
+import { PRESENCE_AGENT_WORK, type Presence, type PresenceAgent, readPresenceState } from "../team-sync-protocol";
 import { type UpdateHow, updateLine } from "../update-how";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
@@ -90,6 +91,8 @@ import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
 import { movedAwayRoots } from "./moved-away";
 import { watchForMoves } from "./moved-in";
 import { openRoutes } from "./open-routes";
+import { createOutside, outsidePresence } from "./outside";
+import { outsideRoutes } from "./outside-routes";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
@@ -433,6 +436,8 @@ export function createDaemonApp({
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
+	/** the secret a connected harness's hooks carry, read once it exists */
+	let hookSecret: string | undefined;
 	let controlOrigin = `http://${controlHostname.includes(":") ? `[${controlHostname}]` : controlHostname}`;
 	let renderOrigin = renderOriginFor(controlOrigin);
 	let captureOrigin = captureOriginFor(controlOrigin);
@@ -745,7 +750,39 @@ export function createDaemonApp({
 	};
 	teamSync.keeping(registeredRoots());
 	// what this machine's agent is doing on a team project, said to the team with its person's presence (#378)
-	const agentPresence = createAgentPresence({ publish: (root, agent) => teamSync.copy(root)?.agent(agent) });
+	// and its agents working from a terminal (task 531), said with them: the turn's and theirs together
+	const presenceTurns = new Map<string, PresenceAgent | null>();
+	const presenceOutside = new Map<string, PresenceAgent | null>();
+	const sayAgents = (root: string) => {
+		const agents = [presenceTurns.get(root), presenceOutside.get(root)].filter(
+			(one): one is PresenceAgent => one != null,
+		);
+		teamSync.copy(root)?.agent(
+			agents.length === 0
+				? null
+				: {
+						running: agents.some((one) => one.running),
+						status: agents.find((one) => one.status !== null)?.status ?? null,
+						work: agents.flatMap((one) => one.work).slice(0, PRESENCE_AGENT_WORK),
+					},
+		);
+	};
+	const agentPresence = createAgentPresence({
+		publish: (root, agent) => {
+			presenceTurns.set(root, agent);
+			sayAgents(root);
+		},
+	});
+	const outside = createOutside({
+		spoolDir,
+		roots: registeredRoots,
+		publish: (root, view) => {
+			hub.publish(root, { kind: "outside", view });
+			if (teamSync.copy(root) === undefined) return;
+			presenceOutside.set(root, outsidePresence(view));
+			sayAgents(root);
+		},
+	});
 	// DEV-190: a project a teammate moved into the team arrives here with the move commit's pull, and is refilled
 	const movedIn = watchForMoves({
 		refill: async (root) => {
@@ -1340,6 +1377,15 @@ export function createDaemonApp({
 				await next();
 				return;
 			}
+			// a connected harness's hooks (task 531), by the secret only spool's own hook script carries: never a page
+			if (path.startsWith("/api/hook/")) {
+				if (c.req.method !== "POST" || c.req.header("origin") !== undefined) return c.text("forbidden", 403);
+				hookSecret ??= readHookToken(spoolDir);
+				if (hookSecret === undefined || !matchesCapability(hookSecret, c.req.header("x-spool-hook")))
+					return c.text("unauthenticated", 401);
+				await next();
+				return;
+			}
 			if (c.req.method === "OPTIONS") return c.text("forbidden", 403);
 			if (!matchesCapability(controlToken, c.req.header(CONTROL_HEADER))) {
 				return c.text("unauthenticated", 401);
@@ -1516,6 +1562,7 @@ export function createDaemonApp({
 			}),
 		)
 		.route("/api/p", exportRoutes({ resolve: resolveProject, htmlExport }))
+		.route("/api", outsideRoutes({ outside, resolve: resolveProject, spoolDir, origin: () => controlOrigin }))
 		.get("/covers/:project/:frame/:hash", async (c) => {
 			const name = c.req.param("project");
 			return withProject(c, resolveProject, async (root) => {
@@ -2600,6 +2647,12 @@ export function createDaemonApp({
 			selfOrigin = renderOrigin;
 			boothKeeping(registeredRoots());
 			iconKeeping();
+			// a harness connected before keeps reaching this daemon wherever it listens now
+			if (hooksMade(spoolDir)) {
+				try {
+					writeHookTarget(spoolDir, controlOrigin);
+				} catch {}
+			}
 		},
 		/** Begin the daily phone-home — post-listen only, and only when opted in. */
 		startUpdateCheck: () => {
@@ -2642,6 +2695,7 @@ export function createDaemonApp({
 			thumbnailWatch.close();
 			assetStore.close();
 			hub.close();
+			outside.close();
 			updateChecker.stop();
 			const closed = await Promise.allSettled([compiled, booth.close(), goReader.close()]);
 			const errors: unknown[] = [];
