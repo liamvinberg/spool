@@ -33,8 +33,15 @@ async function toggle(tabId: number): Promise<void> {
 	}
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+chrome.runtime.onMessage.addListener((message, sender, respond) => {
 	const ask = message as Ask;
+	if (ask.type === "spool:shot") {
+		void chrome.tabs
+			.captureVisibleTab(sender.tab?.windowId, { format: "png" })
+			.catch(() => null)
+			.then(respond);
+		return true;
+	}
 	if (ask.type === "spool:send") {
 		void send(JSON.stringify(ask.capture)).then(respond);
 		return true;

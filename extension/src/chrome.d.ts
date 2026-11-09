@@ -24,9 +24,12 @@ declare namespace chrome {
 		interface Tab {
 			id?: number;
 			url?: string;
+			windowId?: number;
 		}
 		function create(options: { url: string; active?: boolean }): Promise<Tab>;
 		function query(filter: { url?: string }): Promise<Tab[]>;
+		/** what the window's visible tab shows, as a data URL; `activeTab` allows it once the picker is opened */
+		function captureVisibleTab(windowId: number | undefined, options: { format: "png" }): Promise<string>;
 	}
 	namespace action {
 		const onClicked: { addListener(listener: (tab: tabs.Tab) => void): void };

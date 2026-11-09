@@ -2,9 +2,16 @@ import fragmentMono from "@fontsource/fragment-mono/files/fragment-mono-latin-40
 import instrumentSans from "@fontsource-variable/instrument-sans/files/instrument-sans-latin-wght-normal.woff2?inline";
 import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { capture, readCanvases } from "../capture";
+import { capture, readCanvases, shotCanvases, unread } from "../capture";
 import { type HoverWatch, hoverables, watchHovers } from "../hovers";
-import { type Ask, type OpenAnswer, PICKER_GLOBAL, type PickerHandle, type SendAnswer } from "../messages";
+import {
+	type Ask,
+	type OpenAnswer,
+	PICKER_GLOBAL,
+	type PickerHandle,
+	type SendAnswer,
+	type ShotAnswer,
+} from "../messages";
 import { MOTION, Overlay } from "./overlay";
 import css from "./overlay.css?inline";
 import { shadowCss } from "./shadow-css";
@@ -122,6 +129,17 @@ async function deliver(grab: { el: Element; whole: boolean; label: string }): Pr
 	if (hovers !== undefined) await hovers.probe(hoverables(grab.el, ours), PROBE_MS);
 	const probed = performance.now();
 	const drawn = await readCanvases(grab.el);
+	const missing = unread(grab.el, drawn);
+	if (missing.length > 0) {
+		// the picker too is out of the shot: its inline `all: initial !important` outranks the sheet that hides the page
+		const host = document.querySelector<HTMLElement>("spool-picker");
+		const style = host?.getAttribute("style") ?? "";
+		host?.style.setProperty("visibility", "hidden", "important");
+		const shot = await shotCanvases(missing, () =>
+			chrome.runtime.sendMessage<ShotAnswer>({ type: "spool:shot" } satisfies Ask).catch(() => null),
+		).finally(() => host?.setAttribute("style", style));
+		for (const [canvas, url] of shot) drawn.set(canvas, url);
+	}
 	const read = performance.now();
 	const taken = capture(grab, {
 		closedShadowRoot: (el) =>

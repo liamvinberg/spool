@@ -274,12 +274,17 @@ it("keeps a box scrolled where it was, sticky parts and all, in a frame that run
 	expect(kept).toEqual([120, 0]);
 });
 
-it("catches a WebGL drawing in the frame it was drawn, though it reads back empty after", {
+it("catches a WebGL drawing in the frame it was drawn, or one drawn once from the tab's picture", {
 	timeout: 60_000,
 }, async () => {
 	const read = await (await openTab()).evaluate(async () => {
-		document.body.innerHTML = `<canvas id="gl" width="8" height="8"></canvas>`;
+		document.body.innerHTML = `<canvas id="gl" width="8" height="8"></canvas>
+			<canvas id="once" width="40" height="40" style="position: absolute; left: 0; top: 0"></canvas>
+			<p id="over" style="position: absolute; left: 0; top: 0">over</p>`;
 		const canvas = document.getElementById("gl") as HTMLCanvasElement;
+		const once = document.getElementById("once") as HTMLCanvasElement;
+		const over = document.getElementById("over") as HTMLElement;
+		once.getContext("webgl");
 		const gl = canvas.getContext("webgl");
 		if (gl === null) return "no webgl";
 		const paint = () => {
@@ -289,10 +294,32 @@ it("catches a WebGL drawing in the frame it was drawn, though it reads back empt
 		};
 		requestAnimationFrame(paint);
 		await new Promise((done) => setTimeout(done, 100));
-		const { readCanvases } = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture;
-		return (await readCanvases(document.body)).get(canvas)?.slice(0, 23) ?? "empty";
+		const { readCanvases, shotCanvases, unread } = (
+			globalThis as unknown as { spoolCapture: typeof import("./capture") }
+		).spoolCapture;
+		const drawn = await readCanvases(document.body);
+		const missing = unread(document.body, drawn);
+		// the tab's picture, taken with only the canvas showing: what lies over it isn't baked in
+		let shown = true;
+		const shot = await shotCanvases(missing, async () => {
+			shown = over.checkVisibility({ visibilityProperty: true });
+			const tab = document.createElement("canvas");
+			tab.width = innerWidth;
+			tab.height = innerHeight;
+			const pen = tab.getContext("2d");
+			if (pen !== null) pen.fillStyle = "lime";
+			pen?.fillRect(0, 0, tab.width, tab.height);
+			return tab.toDataURL();
+		});
+		return [
+			drawn.get(canvas)?.slice(0, 23) ?? "empty",
+			missing.map((c) => c.id),
+			shown,
+			over.checkVisibility({ visibilityProperty: true }),
+			shot.get(once)?.slice(0, 23) ?? "empty",
+		];
 	});
-	expect(read).toBe("data:image/webp;base64,");
+	expect(read).toEqual(["data:image/webp;base64,", ["once"], false, true, "data:image/webp;base64,"]);
 });
 
 it("serializes the whole page as its body, marked", { timeout: 60_000 }, async () => {

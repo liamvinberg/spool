@@ -1,7 +1,13 @@
 import type { ReferenceCapture, ReferenceOpen, ReferenceOpened, ReferenceSent } from "../../src/reference-wire";
 
 /** what the picker asks the service worker, which alone may reach the daemon (its origin is what the daemon trusts) */
-export type Ask = { type: "spool:send"; capture: ReferenceCapture } | { type: "spool:open"; open: ReferenceOpen };
+export type Ask =
+	| { type: "spool:send"; capture: ReferenceCapture }
+	| { type: "spool:open"; open: ReferenceOpen }
+	| { type: "spool:shot" };
+
+/** what the tab shows, as a PNG data URL, or null where Chrome won't say */
+export type ShotAnswer = string | null;
 
 /** the daemon took it; it isn't there (nothing answered on any port); or it answered with an error */
 export type SendAnswer =
