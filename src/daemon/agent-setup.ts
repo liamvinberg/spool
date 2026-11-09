@@ -1,0 +1,478 @@
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
+import { withPathFirst } from "./agent-cli";
+import { AGENT_ENGINE_IDS, type AgentEngine, type AgentEngineId } from "./agent-engine";
+
+/**
+ * Putting an agent on this machine from spool's first run (spool#250): install it with its
+ * vendor's own installer, start its own sign-in, and say where each one stands.
+ *
+ * Everything here is the machine's, never a project's: the first run has no project open,
+ * and an agent installed or signed in is so for every project at once. Spool still owns no
+ * login. A sign-in is the agent's own command, which opens the browser itself and writes
+ * its own credentials; spool only starts it and asks the agent again once it ends.
+ *
+ * Where a step can't run unattended (no npm for pi, no curl, a sign-in that only happens
+ * inside the agent) the plan has no command and the row shows the line to copy instead.
+ */
+
+/** One command spool runs, and the line a person would type for it. */
+export interface SetupCommand {
+	readonly command: string;
+	readonly args: readonly string[];
+	/** what it adds to the environment, beside the daemon's own */
+	readonly env?: Readonly<Record<string, string>>;
+}
+
+export interface AgentSetupPlan {
+	/** the installer spool runs; null where it can't run here */
+	readonly install: SetupCommand | null;
+	/** the install as a person types it, always said */
+	readonly installLine: string;
+	/** the agent's own sign-in, which opens the browser; null where it only happens inside the agent */
+	readonly signIn: SetupCommand | null;
+	readonly signInLine: string;
+	/** where the installer puts the binary, which a GUI-launched daemon's PATH may not hold yet */
+	readonly bin?: string;
+}
+
+export type AgentSetupPlans = Readonly<Record<AgentEngineId, AgentSetupPlan>>;
+
+/** The machine an install is planned for: its platform, home, and whether a command is on it. */
+export interface SetupMachine {
+	readonly platform: NodeJS.Platform;
+	readonly home: string;
+	readonly has: (command: string) => boolean;
+}
+
+const PI_PACKAGE = "@earendil-works/pi-coding-agent";
+
+/**
+ * The official installers as their vendors document them (checked for spool#250): Claude
+ * Code's native installer and Codex's standalone one need no Node and put the binary in
+ * `~/.local/bin`; pi is an npm package. Codex's installer asks whether to start Codex at
+ * the end, which `CODEX_NON_INTERACTIVE` answers.
+ */
+export function agentSetupPlans({ platform, home, has }: SetupMachine): AgentSetupPlans {
+	const windows = platform === "win32";
+	const localBin = join(home, ".local", "bin");
+	const powershell = (script: string): SetupCommand => ({
+		command: "powershell",
+		args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+	});
+	const sh = (shell: "bash" | "sh", url: string): SetupCommand | null =>
+		has("curl") && has(shell) ? { command: shell, args: ["-c", `curl -fsSL ${url} | ${shell}`] } : null;
+	const claudeScript = "irm https://claude.ai/install.ps1 | iex";
+	const codexScript = "irm https://chatgpt.com/codex/install.ps1 | iex";
+	const npm = windows ? "npm.cmd" : "npm";
+	return {
+		claude: {
+			install: windows ? powershell(claudeScript) : sh("bash", "https://claude.ai/install.sh"),
+			installLine: windows ? claudeScript : "curl -fsSL https://claude.ai/install.sh | bash",
+			signIn: { command: "claude", args: ["auth", "login"] },
+			signInLine: "claude auth login",
+			bin: localBin,
+		},
+		codex: {
+			install: (() => {
+				const plan = windows ? powershell(codexScript) : sh("sh", "https://chatgpt.com/codex/install.sh");
+				return plan && { ...plan, env: { CODEX_NON_INTERACTIVE: "1" } };
+			})(),
+			installLine: windows
+				? `powershell -ExecutionPolicy ByPass -c "${codexScript}"`
+				: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+			signIn: { command: "codex", args: ["login"] },
+			signInLine: "codex login",
+			bin: localBin,
+		},
+		pi: {
+			install: has(npm) ? { command: npm, args: ["install", "-g", PI_PACKAGE] } : null,
+			installLine: `npm install -g ${PI_PACKAGE}`,
+			// pi signs in with a plan only from inside its own session
+			signIn: null,
+			signInLine: "pi, then type /login",
+		},
+	};
+}
+
+/** What is running for an agent now, or what the last run left to say. */
+export type SetupJob =
+	| {
+			readonly kind: "install";
+			readonly state: "running" | "failed";
+			/** the installer's last lines, newest last */
+			readonly lines: readonly string[];
+	  }
+	| {
+			readonly kind: "sign-in";
+			readonly state: "running" | "failed";
+			readonly lines: readonly string[];
+			/** the page the agent opened, for when the browser didn't come up */
+			readonly url: string | null;
+			/** the agent printed that it takes a pasted code */
+			readonly asksCode: boolean;
+	  };
+
+/** One agent as the first run's row draws it. */
+export interface MachineAgent {
+	readonly id: AgentEngineId;
+	readonly installed: boolean;
+	/** on this machine but older than spool runs */
+	readonly outdated: boolean;
+	readonly signedIn: boolean;
+	/** who it is signed in as, in the agent's own words; null where it named nobody */
+	readonly account: string | null;
+	/** the install, typed; `unattended` when spool can run it from here */
+	readonly install: { readonly line: string; readonly unattended: boolean };
+	readonly signIn: { readonly line: string; readonly unattended: boolean };
+	readonly job: SetupJob | null;
+}
+
+/** A provider pi takes a pasted key for, by pi's own id. */
+export const PI_KEY_PROVIDERS = [
+	{ id: "anthropic", name: "Anthropic" },
+	{ id: "openai", name: "OpenAI" },
+	{ id: "google", name: "Google Gemini" },
+	{ id: "openrouter", name: "OpenRouter" },
+	{ id: "deepseek", name: "DeepSeek" },
+	{ id: "xai", name: "xAI" },
+	{ id: "mistral", name: "Mistral" },
+	{ id: "groq", name: "Groq" },
+	{ id: "kimi-coding", name: "Kimi" },
+	{ id: "minimax", name: "MiniMax" },
+	{ id: "zai", name: "Z.ai" },
+] as const;
+export type PiKeyProvider = (typeof PI_KEY_PROVIDERS)[number]["id"];
+
+export function isPiKeyProvider(value: unknown): value is PiKeyProvider {
+	return PI_KEY_PROVIDERS.some((provider) => provider.id === value);
+}
+
+export type PiKeyResult =
+	| { readonly ok: true; readonly models: number }
+	| { readonly ok: false; readonly reason: string };
+
+/** A running setup command: its lines, its input, its end. */
+export interface SetupProcess {
+	onLine(listener: (line: string) => void): void;
+	write(text: string): void;
+	kill(): void;
+	/** its exit code, null when it never started or died on a signal */
+	readonly exited: Promise<number | null>;
+}
+
+export type SetupRunner = (command: SetupCommand, env: Readonly<Record<string, string | undefined>>) => SetupProcess;
+
+/** Escapes a terminal reads and a row does not: colours, cursor moves, OSC 8 links. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the escapes are the point
+const ESCAPES = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b[@-_]/g;
+
+export function plainLine(line: string): string {
+	return line.replace(ESCAPES, "").replace(/\r/g, "").trimEnd();
+}
+
+const PROMPT = /[>:?]\s*$/;
+
+/** Every line a command prints, from stdout and stderr alike: an installer's progress goes either way. */
+export const spawnSetup: SetupRunner = (command, env) => {
+	const child = spawn(command.command, [...command.args], {
+		env: { ...env, ...command.env },
+		cwd: homedir(),
+		stdio: ["pipe", "pipe", "pipe"],
+		// Windows runs a .cmd (npm's) only through its shell; the arguments are spool's own
+		shell: process.platform === "win32" && command.command.endsWith(".cmd"),
+		windowsHide: true,
+	});
+	const listeners: ((line: string) => void)[] = [];
+	const read = (stream: NodeJS.ReadableStream) => {
+		let buffer = "";
+		stream.setEncoding("utf8");
+		stream.on("data", (chunk: string) => {
+			buffer += chunk;
+			const lines = buffer.split(/\n/);
+			buffer = lines.pop() ?? "";
+			// a prompt waits on its own line, unended: `Paste code here if prompted > `
+			if (PROMPT.test(buffer)) {
+				lines.push(buffer);
+				buffer = "";
+			}
+			for (const line of lines) for (const listener of listeners) listener(line);
+		});
+		stream.on("end", () => {
+			if (buffer !== "") for (const listener of listeners) listener(buffer);
+			buffer = "";
+		});
+		stream.on("error", () => {});
+	};
+	read(child.stdout);
+	read(child.stderr);
+	child.stdin.on("error", () => {});
+	const exited = new Promise<number | null>((resolve) => {
+		child.on("error", () => resolve(null));
+		child.on("close", (code) => resolve(code));
+	});
+	return {
+		onLine: (listener) => listeners.push(listener),
+		write: (text) => child.stdin.write(text),
+		kill: () => child.kill(),
+		exited,
+	};
+};
+
+const KEPT_LINES = 40;
+const URL_IN_LINE = /https:\/\/[^\s"'<>]+/;
+/** how Claude Code says it takes the code its page shows, when its own callback can't reach it */
+const ASKS_CODE = /paste (?:the )?code/i;
+
+export interface AgentSetupDeps {
+	readonly engines: ReadonlyMap<AgentEngineId, AgentEngine>;
+	readonly plans: AgentSetupPlans;
+	/** where an agent's account is asked from: no project, so the home folder */
+	readonly home: string;
+	/** pi's agent directory, where its `auth.json` lives */
+	readonly piDir: string;
+	readonly run?: SetupRunner;
+	/** the environment every setup command runs in, and whose PATH an install adds to */
+	readonly env?: Record<string, string | undefined>;
+	/** every change, whole, for the pages to draw */
+	readonly emit: (agents: readonly MachineAgent[]) => void;
+}
+
+interface Known {
+	installed: boolean;
+	outdated: boolean;
+	signedIn: boolean;
+	account: string | null;
+}
+
+/** The machine's agents and the setup runs on them. */
+export function createAgentSetup(deps: AgentSetupDeps) {
+	const { engines, plans, home, emit } = deps;
+	const run = deps.run ?? spawnSetup;
+	const env = deps.env ?? process.env;
+	const known = new Map<AgentEngineId, Known>();
+	const jobs = new Map<AgentEngineId, SetupJob>();
+	const running = new Map<AgentEngineId, SetupProcess>();
+	const ids = AGENT_ENGINE_IDS.filter((id) => engines.has(id));
+
+	function snapshot(): MachineAgent[] {
+		return ids.map((id) => {
+			const plan = plans[id];
+			const at = known.get(id) ?? { installed: false, outdated: false, signedIn: false, account: null };
+			return {
+				id,
+				...at,
+				install: { line: plan.installLine, unattended: plan.install !== null },
+				signIn: { line: plan.signInLine, unattended: plan.signIn !== null },
+				job: jobs.get(id) ?? null,
+			};
+		});
+	}
+	const changed = () => emit(snapshot());
+
+	/** Ask one agent again: is it here, and who is it signed in as. */
+	async function check(id: AgentEngineId, signal?: AbortSignal): Promise<void> {
+		const engine = engines.get(id);
+		if (engine === undefined) return;
+		const installed = engine.installed();
+		const outdated = engine.outdated?.() === true;
+		const login = installed ? await engine.account(home, signal) : { signedIn: false, account: null };
+		known.set(id, { installed, outdated, ...login });
+	}
+
+	function setJob(id: AgentEngineId, job: SetupJob | null): void {
+		if (job === null) jobs.delete(id);
+		else jobs.set(id, job);
+		changed();
+	}
+
+	/** Run one command for an agent, its lines kept on its job as it goes. */
+	function start(id: AgentEngineId, kind: SetupJob["kind"], command: SetupCommand): SetupProcess {
+		const proc = run(command, env);
+		running.set(id, proc);
+		setJob(
+			id,
+			kind === "install"
+				? { kind, state: "running", lines: [] }
+				: { kind, state: "running", lines: [], url: null, asksCode: false },
+		);
+		proc.onLine((raw) => {
+			const line = plainLine(raw);
+			const job = jobs.get(id);
+			if (line === "" || job === undefined || running.get(id) !== proc) return;
+			const lines = [...job.lines, line].slice(-KEPT_LINES);
+			if (job.kind === "install") return setJob(id, { ...job, lines });
+			setJob(id, {
+				...job,
+				lines,
+				url: job.url ?? line.match(URL_IN_LINE)?.[0] ?? null,
+				asksCode: job.asksCode || ASKS_CODE.test(line),
+			});
+		});
+		return proc;
+	}
+
+	/** The installer's bin on the daemon's PATH, so the `which` and the spawns find what it put there. */
+	function onPath(dir: string | undefined): void {
+		if (dir === undefined || !existsSync(dir)) return;
+		if ((env.PATH ?? "").split(delimiter).includes(dir)) return;
+		Object.assign(env, withPathFirst(env, dir));
+	}
+
+	async function signIn(id: AgentEngineId): Promise<void> {
+		const command = plans[id].signIn;
+		if (command === null) return;
+		const proc = start(id, "sign-in", command);
+		const code = await proc.exited;
+		if (running.get(id) !== proc) return;
+		running.delete(id);
+		await check(id);
+		const job = jobs.get(id);
+		if (known.get(id)?.signedIn === true || job === undefined) return setJob(id, null);
+		setJob(id, {
+			...job,
+			state: "failed",
+			lines: [...job.lines, code === null ? "The sign-in was stopped." : "The sign-in didn’t finish."],
+		});
+	}
+
+	async function install(id: AgentEngineId): Promise<void> {
+		const plan = plans[id];
+		if (plan.install === null) return;
+		const proc = start(id, "install", plan.install);
+		const code = await proc.exited;
+		if (running.get(id) !== proc) return;
+		running.delete(id);
+		if (code === 0) onPath(plan.bin);
+		await check(id);
+		const at = known.get(id);
+		const job = jobs.get(id);
+		if (at?.installed === true) {
+			setJob(id, null);
+			// installed and not signed in: its own sign-in comes next, as a person in a terminal would go on
+			if (!at.signedIn && plan.signIn !== null) await signIn(id);
+			return;
+		}
+		if (job === undefined) return;
+		setJob(id, {
+			...job,
+			state: "failed",
+			lines: [
+				...job.lines,
+				code === 0
+					? "It installed, but spool can’t find it yet. Open a new terminal and try again."
+					: "The install didn’t finish.",
+			],
+		});
+	}
+
+	type Refusal = { readonly refused: string; readonly status: 404 | 409 };
+	function refuse(id: AgentEngineId, kind: SetupJob["kind"]): Refusal | undefined {
+		if (!engines.has(id)) return { refused: `spool doesn't run ${id} here`, status: 404 };
+		if (running.has(id)) return { refused: `${id} is already being set up`, status: 409 };
+		const plan = plans[id];
+		if ((kind === "install" ? plan.install : plan.signIn) === null)
+			return {
+				refused: `spool can't run this here: ${kind === "install" ? plan.installLine : plan.signInLine}`,
+				status: 409,
+			};
+		// one install at a time, as two installers writing one PATH profile would fight
+		if (kind === "install" && [...jobs.values()].some((job) => job.kind === "install" && job.state === "running"))
+			return { refused: "another agent is installing", status: 409 };
+		return undefined;
+	}
+
+	return {
+		snapshot,
+		/** Every agent asked again, then the snapshot. */
+		async read(signal?: AbortSignal): Promise<MachineAgent[]> {
+			await Promise.all(ids.map((id) => check(id, signal)));
+			return snapshot();
+		},
+		/** Start the installer; refused while one runs or where it can't run. */
+		install(id: AgentEngineId): Refusal | undefined {
+			const refused = refuse(id, "install");
+			if (refused === undefined) void install(id);
+			return refused;
+		},
+		signIn(id: AgentEngineId): Refusal | undefined {
+			const refused = refuse(id, "sign-in");
+			if (refused === undefined) void signIn(id);
+			return refused;
+		},
+		/** The code a sign-in's page showed, handed to the agent that asked for it. */
+		code(id: AgentEngineId, code: string): boolean {
+			const job = jobs.get(id);
+			const proc = running.get(id);
+			if (job?.kind !== "sign-in" || proc === undefined) return false;
+			proc.write(`${code.trim()}\n`);
+			return true;
+		},
+		/** Stop what runs for an agent, and forget what it said. */
+		cancel(id: AgentEngineId): void {
+			const proc = running.get(id);
+			running.delete(id);
+			proc?.kill();
+			setJob(id, null);
+		},
+		/**
+		 * A provider key saved where pi reads it (`auth.json` in its agent directory, the
+		 * format pi documents), then asked of pi with `pi auth check`. A key pi doesn't take
+		 * is taken back out, so a typo leaves pi as it was.
+		 */
+		async piKey(provider: PiKeyProvider, key: string): Promise<PiKeyResult> {
+			const file = join(deps.piDir, "auth.json");
+			let stored: Record<string, unknown> = {};
+			try {
+				const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+					return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
+				stored = parsed as Record<string, unknown>;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+					return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
+			}
+			const write = (next: Record<string, unknown>) => {
+				mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+				const temp = `${file}.spool-${process.pid}`;
+				writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+				renameSync(temp, file);
+			};
+			write({ ...stored, [provider]: { type: "api_key", key: key.trim() } });
+			const said: string[] = [];
+			const checking = run({ command: "pi", args: ["auth", "check", "--provider", provider, "--json"] }, env);
+			checking.onLine((line) => said.push(line));
+			await checking.exited;
+			let status: unknown;
+			try {
+				status = (JSON.parse(said.join("\n")) as { status?: unknown }).status;
+			} catch {
+				status = undefined;
+			}
+			if (status !== "ready") {
+				write(stored);
+				return {
+					ok: false,
+					reason: status === undefined ? "pi couldn't check the key." : "pi didn't take that key.",
+				};
+			}
+			const listed: string[] = [];
+			const listing = run({ command: "pi", args: ["--offline", "--list-models"] }, env);
+			listing.onLine((line) => listed.push(line));
+			await listing.exited;
+			await check("pi");
+			changed();
+			return { ok: true, models: listed.filter((line) => line.split(/\s+/)[0] === provider).length };
+		},
+	};
+}
+
+export type AgentSetup = ReturnType<typeof createAgentSetup>;
+
+/** pi's agent directory, as pi finds it. */
+export function piAgentDir(env: Readonly<Record<string, string | undefined>>, home: string): string {
+	const set = env.PI_CODING_AGENT_DIR?.trim();
+	return set !== undefined && set !== "" ? set : join(home, ".pi", "agent");
+}

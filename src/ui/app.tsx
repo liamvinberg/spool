@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MachineAgent } from "../daemon/agent-setup";
 import { placeOf } from "../home-places";
 import { accelPressed } from "../runtime/platform-keys";
 import type { TabPresence } from "../team-sync-protocol";
@@ -10,6 +11,8 @@ import {
 	daemonShares,
 	fetchCloudAccount,
 	fetchDaemonIdentity,
+	fetchFirstRunDue,
+	fetchMachineAgents,
 	fetchProjects,
 	fetchSession,
 	postForgetProject,
@@ -18,6 +21,7 @@ import {
 	putReopenedTab,
 	putSession,
 	putSessionOrder,
+	putSetting,
 	reloadForNewBundle,
 	renameProject,
 	reopenCloudSignIn,
@@ -33,6 +37,7 @@ import { matchTheTeam } from "./canvas/sync-state";
 import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow, menuAccelerators, TAB_COMMANDS } from "./desktop-window";
+import { FirstRun } from "./first-run/first-run";
 import { keep, letGo } from "./gone-projects";
 import { handedOver } from "./handover";
 import { coversOf, Home, type MoveItems, ProjectGrid } from "./home";
@@ -159,6 +164,25 @@ export function App() {
 	const bridge = useMemo(() => desktopBridge(), []);
 	const appWindow = useMemo(() => desktopWindow(), []);
 	useEffect(() => bridge?.onPrepareUpdate?.(prepareForUpdate), [bridge]);
+	/**
+	 * The first run (spool#250): once per machine, ahead of Home, and again from Help. A window
+	 * the Mac app opened small for it grows straight back when the daemon says it isn't due.
+	 */
+	const [firstRun, setFirstRun] = useState(false);
+	const [machineAgents, setMachineAgents] = useState<readonly MachineAgent[] | null>(null);
+	const readMachineAgents = useCallback(async () => {
+		const read = await fetchMachineAgents();
+		if (read !== undefined) setMachineAgents(read);
+	}, []);
+	useEffect(() => {
+		void fetchFirstRunDue().then((due) => {
+			if (due) setFirstRun(true);
+			else void appWindow?.setupWindow?.("grow").catch(() => false);
+		});
+	}, [appWindow]);
+	useEffect(() => {
+		if (firstRun) void readMachineAgents();
+	}, [firstRun, readMachineAgents]);
 	useEffect(() => {
 		if (booted && focused === null && projectsLoaded) bridge?.ready?.();
 	}, [bridge, booted, focused, projectsLoaded]);
@@ -371,6 +395,7 @@ export function App() {
 					// and a theme has to land on this page without a reload
 					if (event.kind === "settings") return settingsMoved();
 					if (event.kind === "account") return void readAccount();
+					if (event.kind === "agents") return setMachineAgents((data as { agents: MachineAgent[] }).agents);
 					// Open in spool, from the Chrome extension: the Mac app's window takes it whatever it shows, and a
 					// browser page only when it is on that project's canvas
 					if (event.kind === "reveal" && typeof event.root === "string") {
@@ -1002,6 +1027,10 @@ export function App() {
 							}}
 							onUseAgent={focusedTab === undefined ? undefined : chrome?.useAgent}
 							whatsNew={whatsNew.row}
+							onSetup={() => {
+								setSettingsOpen(false);
+								setFirstRun(true);
+							}}
 						/>
 					</div>
 				</header>
@@ -1128,6 +1157,7 @@ export function App() {
 				{icons.surface}
 				{focusedTab === undefined && teamHome.toast}
 				{teamHome.exportSurface}
+				{teamHome.newTeam}
 				{focusedTab === undefined && movedToast.toast}
 				{whatsNew.surface}
 				{/* What's new is the update pill come back: while it has the foot, an offer waits */}
@@ -1194,6 +1224,27 @@ export function App() {
 							void refetch();
 						}}
 						onClose={() => setMoving(null)}
+					/>
+				)}
+
+				{/* the first run, over everything until it grows onto Home (spool#250) */}
+				{firstRun && (
+					<FirstRun
+						agents={machineAgents}
+						onRecheck={() => void readMachineAgents()}
+						account={account}
+						onSignIn={() => {
+							setAccount({ state: "signing-in" });
+							void signInCloudAccount();
+						}}
+						onCancelSignIn={() => void cancelCloudSignIn()}
+						onDone={(then) => {
+							void putSetting("onboarding.done", true).then((written) => written.ok && settingsMoved());
+							setFirstRun(false);
+							focusProject(null);
+							if (then.team) teamHome.startTeam();
+						}}
+						appWindow={appWindow}
 					/>
 				)}
 			</div>

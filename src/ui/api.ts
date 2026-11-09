@@ -19,6 +19,7 @@ import { AGENT_PERMISSIONS, type AgentEngineId, type AgentPermissions, isAgentEn
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AgentAsk } from "../daemon/agent-offer";
 import type { AgentLogin } from "../daemon/agent-preflight";
+import type { MachineAgent, PiKeyProvider, PiKeyResult } from "../daemon/agent-setup";
 import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { CanvasOrder } from "../daemon/canvas-order";
@@ -575,6 +576,59 @@ export async function fetchWhatsNew(): Promise<WhatsNewAnswer | undefined> {
 /** The card has been shown: remember this version, so it unfolds by itself no more. */
 export function postWhatsNewSeen(): void {
 	void controlFetch("/api/whats-new/seen", { method: "POST" }).catch(() => {});
+}
+
+/** Whether this window opens on the first run (spool#250); never, when the daemon can't say. */
+export async function fetchFirstRunDue(): Promise<boolean> {
+	try {
+		const res = await controlFetch("/api/first-run");
+		return res.ok && ((await res.json()) as { due?: unknown }).due === true;
+	} catch {
+		return false;
+	}
+}
+
+/** The machine's agents as the first run draws them, each asked again. */
+export async function fetchMachineAgents(): Promise<MachineAgent[] | undefined> {
+	try {
+		const res = await controlFetch("/api/agents");
+		return res.ok ? ((await res.json()) as MachineAgent[]) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Install an agent, start its sign-in, or stop what runs for it; what refused it, in the daemon's words. */
+export async function postAgentSetup(
+	engine: AgentEngineId,
+	action: "install" | "sign-in" | "cancel",
+): Promise<string | undefined> {
+	const res = await controlFetch(`/api/agents/${engine}/${action}`, { method: "POST" });
+	return res.ok ? undefined : await errorText(res);
+}
+
+/** The code a sign-in's page showed, for the agent that asked for it. */
+export async function postAgentCode(engine: AgentEngineId, code: string): Promise<string | undefined> {
+	const res = await controlFetch(`/api/agents/${engine}/code`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ code }),
+	});
+	return res.ok ? undefined : await errorText(res);
+}
+
+/** A provider key for pi, saved where pi reads it once pi takes it. */
+export async function postPiKey(provider: PiKeyProvider, key: string): Promise<PiKeyResult> {
+	try {
+		const res = await controlFetch("/api/agents/pi/key", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ provider, key }),
+		});
+		return res.ok ? ((await res.json()) as PiKeyResult) : { ok: false, reason: await errorText(res) };
+	} catch {
+		return { ok: false, reason: "spool couldn't reach pi." };
+	}
 }
 
 async function errorText(res: { text(): Promise<string> }): Promise<string> {

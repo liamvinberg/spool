@@ -1434,6 +1434,7 @@ export function useTeamHome(
 	const listed = teams.state === "ready" ? teams.teams : NO_TEAMS;
 	const { lists, refresh: refreshLists } = useTeamLists(listed, projects?.copies ?? "");
 	const [creating, setCreating] = useState(false);
+	const startTeam = useCallback(() => setCreating(true), []);
 	const signedIn = account.state === "signed-in" ? account.email : null;
 	const refresh = useCallback(async () => setTeams(await teamActions.list()), [teamActions]);
 	useEffect(() => {
@@ -1525,6 +1526,8 @@ export function useTeamHome(
 			path,
 			exportTeam: exporting.start,
 			exportSurface: exporting.surface,
+			newTeam: undefined,
+			startTeam,
 		};
 	const page = current && !searching && place.team !== null ? place.page : null;
 	const places = (
@@ -1548,21 +1551,22 @@ export function useTeamHome(
 				}
 				onNewTeam={() => setCreating(true)}
 			/>
-			{creating && (
-				<NewTeamDialog
-					allowed={ready.mayCreateTeam}
-					starts={ready.newTeam}
-					origin={ready.origin}
-					onCreate={async (name) => {
-						const created = await teamActions.create(name, true);
-						await refresh();
-						go({ team: created.address, page: "projects" });
-					}}
-					onClose={() => setCreating(false)}
-				/>
-			)}
 		</>
 	);
+	// New team…, from the sidebar or from the first run's Start free trial before there is any sidebar (spool#250)
+	const newTeam = creating ? (
+		<NewTeamDialog
+			allowed={ready.mayCreateTeam}
+			starts={ready.newTeam}
+			origin={ready.origin}
+			onCreate={async (name) => {
+				const created = await teamActions.create(name, true);
+				await refresh();
+				go({ team: created.address, page: "projects" });
+			}}
+			onClose={() => setCreating(false)}
+		/>
+	) : undefined;
 	const notice =
 		ready.invites.length > 0 ? (
 			<div className="pj-invites -mt-[8px] mb-[22px] flex flex-col">
@@ -1705,6 +1709,10 @@ export function useTeamHome(
 		exportTeam: exporting.start,
 		/** The export's progress and what it ended in, shown wherever the window is. */
 		exportSurface: exporting.surface,
+		/** New team…'s dialog, while it is open. */
+		newTeam,
+		/** Opens New team…; once the account's teams are read, if they aren't yet. */
+		startTeam,
 		/** Search and Recent across every place, once this account is in a team. */
 		everywhere: furnished
 			? {

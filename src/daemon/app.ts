@@ -47,9 +47,11 @@ import { createPlaceholderLedger } from "./agent-frames";
 import { createAgentTurns } from "./agent-live";
 import { createAgentModelPreferences } from "./agent-model-preferences";
 import type { Namings } from "./agent-naming";
-import type { Look } from "./agent-preflight";
+import { agentInstalled, type Look } from "./agent-preflight";
 import { createAgentPresence } from "./agent-presence";
 import { agentRoutes } from "./agent-routes";
+import { type AgentSetupDeps, agentSetupPlans, createAgentSetup, piAgentDir } from "./agent-setup";
+import { agentSetupRoutes } from "./agent-setup-routes";
 import { createAssetStore } from "./asset-store";
 import { ASSET_MEDIA_TYPES, ASSET_PATH } from "./assets";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
@@ -196,6 +198,10 @@ export interface DaemonOptions {
 	history?: boolean | undefined;
 	/** What's new: on in a packaged build, absent in tests and a checkout unless SPOOL_WHATS_NEW asks. */
 	whatsNew?: WhatsNewOptions | undefined;
+	/** The first run (spool#250): on in a packaged build, absent in tests and a checkout unless SPOOL_FIRST_RUN asks. */
+	firstRun?: boolean | undefined;
+	/** The first run's installers and sign-ins, swapped so a test runs fake commands rather than a vendor's. */
+	agentSetup?: Partial<Pick<AgentSetupDeps, "plans" | "run" | "env" | "piDir">> | undefined;
 	/** The registry probe — swapped out by seam tests. */
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
@@ -408,6 +414,8 @@ export function createDaemonApp({
 	updateCheck,
 	history: historyAllowed,
 	whatsNew,
+	firstRun = false,
+	agentSetup: agentSetupSeams,
 	fetchLatest,
 	upgrade,
 	agentExecutor,
@@ -1063,6 +1071,23 @@ export function createDaemonApp({
 		).map((engine) => [engine.id, engine]),
 	);
 
+	// the first run's agents (spool#250): the machine's own, installed and signed in from no project
+	const agentSetup = createAgentSetup({
+		engines,
+		home: fsIndex.home,
+		plans:
+			agentSetupSeams?.plans ??
+			agentSetupPlans({
+				platform: process.platform,
+				home: fsIndex.home,
+				has: (command) => agentInstalled(process.env, command),
+			}),
+		piDir: agentSetupSeams?.piDir ?? piAgentDir(process.env, fsIndex.home),
+		...(agentSetupSeams?.run === undefined ? {} : { run: agentSetupSeams.run }),
+		...(agentSetupSeams?.env === undefined ? {} : { env: agentSetupSeams.env }),
+		emit: (agents) => emitAppEvent({ kind: "agents", agents }),
+	});
+
 	// the agent, model, effort and mode a new thread starts on, one choice per machine (#361)
 	const agentDefaults = createAgentDefaults(spoolDir, () => engines.values());
 	const projectRenames = new Set<string>();
@@ -1429,8 +1454,10 @@ export function createDaemonApp({
 				machineStateWatch,
 				emitAppEvent,
 				historyChanged: () => history.keeping(registeredRoots()),
+				firstRun,
 			}),
 		)
+		.route("/api", agentSetupRoutes(agentSetup))
 		.route("/api", whatsNewRoutes({ settings, options: whatsNew, spoolDir }))
 		.route(
 			"/api",

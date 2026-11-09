@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { mutateMachineState, type SessionMutationResult, type VisitResult } from "../machine-state";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "../machine-state-files";
 import type { TabPresence } from "../team-sync-protocol";
+import type { MachineAgent } from "./agent-setup";
 import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
 import { watchFolder } from "./watch-tree";
@@ -43,6 +44,8 @@ export type AppEvent =
 	| { kind: "naming"; root: string; thread: string | null }
 	/** bring a project's canvas forward on one of its frames: Open in spool, from the Chrome extension (spool#241) */
 	| { kind: "reveal"; root: string; frame: string }
+	/** an agent's install or sign-in moved, or it was asked again (spool#250): the first run's rows, whole */
+	| { kind: "agents"; agents: readonly MachineAgent[] }
 	// the checkout rebuilt its UI bundle under the pages already running the old
 	// one. Only `pnpm dev serve --foreground` can say this; a published daemon
 	// serves a bundle that never moves and emits it never.

@@ -23,6 +23,10 @@ export interface ServeDaemonOptions {
 	updateCheck?: boolean | undefined;
 	/** What's new — absent means off, so tests and a checkout stay quiet. */
 	whatsNew?: WhatsNewOptions | undefined;
+	/** The first run (spool#250) — absent means off, so tests and a checkout stay quiet. */
+	firstRun?: boolean | undefined;
+	/** The first run's installers and sign-ins, as fake commands a browser test runs. */
+	agentSetup?: Parameters<typeof createDaemonApp>[0]["agentSetup"];
 	/** #158 the per-user history switch — absent means on, since only `false` is a refusal. */
 	history?: boolean | undefined;
 	/** A stand-in for the agent binary, so a browser test can drive a whole turn. */
@@ -65,6 +69,8 @@ export function serveDaemon({
 	development,
 	updateCheck,
 	whatsNew,
+	firstRun,
+	agentSetup,
 	history,
 	agentExecutor,
 	agentEngines,
@@ -84,6 +90,8 @@ export function serveDaemon({
 		development,
 		updateCheck,
 		whatsNew,
+		firstRun,
+		agentSetup,
 		history,
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
 		...(agentEngines === undefined ? {} : { agentEngines }),

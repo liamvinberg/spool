@@ -54,6 +54,7 @@ import {
 	writeRemoteChoice,
 } from "./remote";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
+import { FULL, firstRunLikely, grownRect, MINIMUM, SMALL, setupSize, smallRect } from "./setup-window";
 import { UpdateCover } from "./update-cover";
 import {
 	beginUpdateRestart,
@@ -136,6 +137,13 @@ let saveSequence = 0;
 let saving: { id: number; resolve: () => void; reject: (error: Error) => void } | undefined;
 
 let canvasDownloads: CanvasDownloads | undefined;
+
+/**
+ * The first run's small window (spool#250): where the window stood before it went small, to
+ * grow back to, while it is small. undefined when it is not small; null when it opened small
+ * and so stood nowhere yet.
+ */
+let setupFrom: WindowRect | null | undefined;
 
 function canvasSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): boolean {
 	return window !== undefined && event.sender === window.webContents && event.senderFrame === event.sender.mainFrame;
@@ -283,18 +291,28 @@ function createWindow(): BrowserWindow {
 		)
 			? restored
 			: undefined;
+	// a first launch opens small at once rather than big and then shrinking; the page still decides
+	const small = rect === undefined && tunnel === undefined && firstRunLikely(DIRECTORY);
+	setupFrom = small ? null : undefined;
 	const created = new BrowserWindow({
 		show: false,
 		...(rect ? { x: rect.x, y: rect.y } : {}),
-		width: rect?.w ?? 1440,
-		height: rect?.h ?? 900,
-		minWidth: 720,
-		minHeight: 480,
+		width: small ? SMALL.w : (rect?.w ?? FULL.w),
+		height: small ? SMALL.h : (rect?.h ?? FULL.h),
+		minWidth: small ? SMALL.w : MINIMUM.w,
+		minHeight: small ? SMALL.h : MINIMUM.h,
+		resizable: !small,
+		...(small ? { center: true } : {}),
 		title: NAME,
 		backgroundColor: "#0e0e0e",
 		titleBarStyle: "hiddenInset",
 		trafficLightPosition: { x: 14, y: 16 },
-		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js") },
+		webPreferences: {
+			spellcheck: false,
+			preload: join(__dirname, "canvas-preload.js"),
+			// the first run's open plays its sound as the window shows, before any press (spool#250)
+			autoplayPolicy: "no-user-gesture-required",
+		},
 	});
 
 	if (resumeWorkspace.maximized) created.maximize();
@@ -1142,6 +1160,37 @@ function installCanvasChannels(): void {
 	});
 	ipcMain.on("spool:canvas-close-window", (event) => {
 		if (canvasSender(event)) window?.close();
+	});
+	// the first run (spool#250): one ordinary window that goes small for the setup and grows into spool's.
+	// It answers whether the window changed, so a page in a window that can't (full screen) draws its own box.
+	ipcMain.handle("spool:setup-window", (event, size: unknown) => {
+		if (!canvasSender(event) || window === undefined) return false;
+		const showing = window;
+		const areas = screen.getAllDisplays().map((display) => display.workArea);
+		const area = screen.getDisplayMatching(showing.getBounds()).workArea;
+		if (size === "grow") {
+			if (setupFrom === undefined) return false;
+			const to = grownRect(setupFrom ?? undefined, area, areas);
+			setupFrom = undefined;
+			showing.setResizable(true);
+			// macOS animates the frame; elsewhere it is one step, and the page's own fade covers it
+			showing.setBounds({ x: to.x, y: to.y, width: to.w, height: to.h }, true);
+			showing.setMinimumSize(MINIMUM.w, MINIMUM.h);
+			return true;
+		}
+		const step = setupSize(size);
+		if (step === undefined) return false;
+		if (setupFrom === undefined) {
+			// full screen or maximised has no small window in it: the page draws its own box there
+			if (showing.isFullScreen() || showing.isMaximized()) return false;
+			const { x, y, width, height } = showing.getBounds();
+			setupFrom = { x, y, w: width, h: height };
+		}
+		showing.setMinimumSize(Math.min(SMALL.w, step.w), Math.min(SMALL.h, step.h));
+		const to = smallRect(area, step);
+		showing.setBounds({ x: to.x, y: to.y, width: to.w, height: to.h }, true);
+		showing.setResizable(false);
+		return true;
 	});
 	ipcMain.on("spool:canvas-active", (event, active: unknown) => {
 		if (window === undefined || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame)
