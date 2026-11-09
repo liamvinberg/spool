@@ -35,6 +35,7 @@ const { values } = parseArgs({
 		only: { type: "string" },
 		out: { type: "string", default: "/tmp/spool-bench" },
 		"no-gpu": { type: "boolean", default: false },
+		headed: { type: "boolean", default: false },
 	},
 });
 const out = values.out;
@@ -148,12 +149,13 @@ async function main(): Promise<void> {
 		if (alive && ctx !== undefined && sw !== undefined) return [ctx, sw];
 		await ctx?.close().catch(() => {});
 		ctx = await chromium.launchPersistentContext(join(out, "profile"), {
-			headless: true,
+			headless: !values.headed,
 			channel: "chromium",
 			viewport: VIEW,
-			userAgent: UA,
+			// a Mac's own browser says so already; Linux's is told to, so sites serve what a Mac gets
+			...(process.platform === "linux" ? { userAgent: UA } : {}),
 			args: [
-				...(values["no-gpu"]
+				...(values["no-gpu"] || process.platform !== "linux"
 					? []
 					: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=vulkan", "--enable-features=Vulkan"]),
 				`--disable-extensions-except=${ext}`,
