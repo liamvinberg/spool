@@ -118,7 +118,7 @@ beforeAll(async () => {
 		"/imported.css": ["text/css", ".imported { color: green }"],
 		"/faces.css": [
 			"text/css",
-			"@font-face { font-family: Used; src: url(used.woff2) } @font-face { font-family: Idle; src: url(idle.woff2) } .pricing { font-family: Used }",
+			"@font-face { font-family: Used; src: url(used.woff2) } @font-face { font-family: Idle; src: url(idle.woff2) } @font-face { font-family: Alias; src: url(used.woff2) } .pricing { font-family: Used }",
 		],
 		"/lossy.css": ["text/css", ".lead { font: var(--type); font-weight: 700 }"],
 		"/a.png": ["image/png", ""],
@@ -193,7 +193,7 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 		{ kind: "text", text: ".lead { font: var(--type); font-weight: 700 }", base: `${at(page)}/` },
 	]);
 
-	// a face the page declared and never loaded, for the daemon to leave on the web
+	// a face the page declared and never loaded, for the daemon to leave on the web, unless a face it used shares the file
 	expect(c.unusedFonts).toEqual([`${at(page)}/idle.woff2`]);
 
 	// the script-started spin, as keyframes on an attribute the markup carries

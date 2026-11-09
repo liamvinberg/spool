@@ -800,6 +800,8 @@ export function unusedFonts(doc: Document): string[] {
 		(face.status === "unloaded" ? idle : loaded).add(key);
 	});
 	const out = new Set<string>();
+	// a file two faces share (one family under two names) is needed when either is used
+	const needed = new Set<string>();
 	const seen = new Set<CSSStyleSheet>();
 	const visit = (rules: CSSRuleList, base: string) => {
 		for (const rule of Array.from(rules)) {
@@ -816,9 +818,9 @@ export function unusedFonts(doc: Document): string[] {
 					s.getPropertyValue("font-stretch") || "normal",
 					s.getPropertyValue("unicode-range") || "U+0-10FFFF",
 				);
-				if (!idle.has(key) || loaded.has(key)) continue;
+				const into = !idle.has(key) || loaded.has(key) ? needed : out;
 				for (const m of s.getPropertyValue("src").matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/g)) {
-					if (m[2] !== undefined && m[2] !== "" && !m[2].startsWith("data:")) out.add(absolute(m[2], base));
+					if (m[2] !== undefined && m[2] !== "" && !m[2].startsWith("data:")) into.add(absolute(m[2], base));
 				}
 			}
 		}
@@ -834,7 +836,7 @@ export function unusedFonts(doc: Document): string[] {
 	};
 	for (const s of Array.from(doc.styleSheets)) sheet(s);
 	for (const s of doc.adoptedStyleSheets ?? []) sheet(s);
-	return [...out];
+	return [...out].filter((url) => !needed.has(url));
 }
 
 function faceKey(family: string, weight: string, style: string, stretch: string, range: string): string {
