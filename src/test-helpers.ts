@@ -7,8 +7,9 @@ import { expect, inject, onTestFinished } from "vitest";
 import { createClaudeAdapter } from "./daemon/agent-claude";
 import type { AgentPermissions } from "./daemon/agent-defaults";
 import { createAgentDefaults } from "./daemon/agent-defaults";
-import type { AgentEngineId } from "./daemon/agent-engine";
+import type { AgentEngine, AgentEngineId } from "./daemon/agent-engine";
 import type { AgentExecutor, AgentProcess } from "./daemon/agent-exec";
+import type { AgentSetupPlan, AgentSetupPlans, SetupCommand } from "./daemon/agent-setup";
 import type { AgentSpawn } from "./daemon/agent-spawn";
 import { createDaemonApp } from "./daemon/app";
 import { renderOrigin } from "./daemon/lifecycle";
@@ -788,4 +789,56 @@ export function writeOldProjectSetting(spoolDir: string, root: string, path: rea
 	if (project === undefined) throw new Error(`not a registered project root: ${root}`);
 	project.settings = setNested(project.settings ?? {}, path, value);
 	writeFileSync(file, JSON.stringify(registry, null, "\t"));
+}
+
+/**
+ * A machine's agents for the first run's setup (spool#250), as files in one folder: an agent
+ * is installed once `<id>-installed` is there and signed in once `<id>-signed-in` is. The
+ * plans run real processes, `node -e`, standing in for the vendors' installers and sign-ins:
+ * an install prints its progress and makes its marker and a bin folder, and a sign-in prints
+ * its page wrapped in a terminal link, asks for a pasted code, and signs in on `good-code`.
+ */
+export function machineAgents(installed: readonly AgentEngineId[] = [], signedIn: readonly AgentEngineId[] = []) {
+	const dir = makeTempDir();
+	const mark = (id: AgentEngineId, what: "installed" | "signed-in") => join(dir, `${id}-${what}`);
+	for (const id of installed) writeFileSync(mark(id, "installed"), "");
+	for (const id of signedIn) writeFileSync(mark(id, "signed-in"), "");
+	const engine = (id: AgentEngineId): AgentEngine => ({
+		id,
+		installed: () => existsSync(mark(id, "installed")),
+		account: async () =>
+			existsSync(mark(id, "signed-in"))
+				? { signedIn: true, account: "ada@kaffe.se" }
+				: { signedIn: false, account: null },
+		offer: async () => ({
+			models: [],
+			current: { value: null, resolved: null, name: null, effort: null, pin: null },
+			modes: false,
+		}),
+		choice: (_offer, wanted) => wanted,
+		start: () => {
+			throw new Error("no turns here");
+		},
+		continuable: () => false,
+		name: async () => null,
+	});
+	const node = (script: string): SetupCommand => ({ command: process.execPath, args: ["-e", script] });
+	const bin = join(dir, "bin");
+	const plan = (id: AgentEngineId): AgentSetupPlan => ({
+		install: node(
+			`console.log("==> Downloading ${id}");const f=require("node:fs");f.mkdirSync(${JSON.stringify(bin)},{recursive:true});f.writeFileSync(${JSON.stringify(mark(id, "installed"))},"");console.log("\\u001b[32m✓ installed\\u001b[0m")`,
+		),
+		installLine: `install ${id}`,
+		signIn: node(
+			`console.log("If the browser didn't open, visit: \\u001b]8;;https://example.com/${id}/login\\u0007https://example.com/${id}/login\\u001b]8;;\\u0007");process.stdout.write("Paste code here if prompted > ");process.stdin.once("data",(d)=>{if(String(d).trim()==="good-code"){require("node:fs").writeFileSync(${JSON.stringify(mark(id, "signed-in"))},"");process.exit(0)}process.exit(1)})`,
+		),
+		signInLine: `${id} login`,
+		bin,
+	});
+	return {
+		dir,
+		bin,
+		engines: (["claude", "codex", "pi"] as const).map(engine),
+		plans: { claude: plan("claude"), codex: plan("codex"), pi: plan("pi") } satisfies AgentSetupPlans,
+	};
 }
