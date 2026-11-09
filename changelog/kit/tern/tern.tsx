@@ -284,8 +284,8 @@ function Seat({ go }: { go: TernGo }) {
 
 			<div className="tern-cabin">
 				<div className="tern-cols">
-					{["A", "B", "C", "", "D", "E", "F"].map((c, i) => (
-						<span key={i}>{c}</span>
+					{["A", "B", "C", "aisle", "D", "E", "F"].map((c) => (
+						<span key={c}>{c === "aisle" ? "" : c}</span>
 					))}
 				</div>
 				<div className="tern-rows">
@@ -475,7 +475,7 @@ function Code() {
 
 function Plane({ size = 18 }: { size?: number }) {
 	return (
-		<svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+		<svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 			<path d="M21.5 12.6c0-.6-.5-1-1.1-1H15l-4.6-7.3a.9.9 0 0 0-.8-.4H8.3l2.4 7.7H5.9L4.2 9.4H2.8l1 3.2-1 3.2h1.4l1.7-2.2h4.8l-2.4 7.7h1.3c.3 0 .6-.2.8-.4l4.6-7.3h5.4c.6 0 1.1-.5 1.1-1Z" />
 		</svg>
 	);
@@ -492,7 +492,7 @@ function Chevron() {
 			strokeWidth={2.2}
 			strokeLinecap="round"
 			strokeLinejoin="round"
-			aria-hidden
+			aria-hidden="true"
 		>
 			<path d="M14.5 5.5 8 12l6.5 6.5" />
 		</svg>
@@ -504,13 +504,13 @@ function StatusBar() {
 		<div className="tern-status">
 			<span>05:43</span>
 			<span className="tern-status-icons">
-				<svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor" aria-hidden>
+				<svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor" aria-hidden="true">
 					<rect x="0" y="8" width="3" height="4" rx="1" />
 					<rect x="5" y="5.5" width="3" height="6.5" rx="1" />
 					<rect x="10" y="3" width="3" height="9" rx="1" />
 					<rect x="15" y="0" width="3" height="12" rx="1" />
 				</svg>
-				<svg width="27" height="13" viewBox="0 0 27 13" fill="none" aria-hidden>
+				<svg width="27" height="13" viewBox="0 0 27 13" fill="none" aria-hidden="true">
 					<rect x="0.5" y="0.5" width="23" height="12" rx="3.8" stroke="currentColor" opacity="0.4" />
 					<rect x="2" y="2" width="15" height="9" rx="2.5" fill="currentColor" />
 					<path d="M25 4.5v4c.8-.3 1.3-1.1 1.3-2s-.5-1.7-1.3-2Z" fill="currentColor" opacity="0.5" />
