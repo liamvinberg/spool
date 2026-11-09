@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { isAgentEngineId } from "./agent-engine";
-import { type AgentSetup, isPiKeyProvider } from "./agent-setup";
+import type { AgentSetup } from "./agent-setup";
+import { isPiKeyProvider } from "./pi-providers";
 
 /**
  * The machine's agents over HTTP, mounted under `/api` (spool#250): what the first run's

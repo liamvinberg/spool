@@ -6,6 +6,7 @@ import { withPathFirst } from "./agent-cli";
 import { AGENT_ENGINE_IDS, type AgentEngine, type AgentEngineId } from "./agent-engine";
 import { agentPath } from "./agent-preflight";
 import { checkProviderKey, literalKeyRefusal, readPiAuth, withPiAuthLock, writePiAuth } from "./pi-auth";
+import { PI_KEY_PROVIDERS, type PiKeyProvider } from "./pi-providers";
 
 /**
  * Putting an agent on this machine from spool's first run (spool#250): install it with its
@@ -143,26 +144,6 @@ export interface MachineAgent {
 	readonly install: { readonly line: string; readonly unattended: boolean };
 	readonly signIn: { readonly line: string; readonly unattended: boolean };
 	readonly job: SetupJob | null;
-}
-
-/** A provider pi takes a pasted key for, by pi's own id. */
-export const PI_KEY_PROVIDERS = [
-	{ id: "anthropic", name: "Anthropic" },
-	{ id: "openai", name: "OpenAI" },
-	{ id: "google", name: "Google Gemini" },
-	{ id: "openrouter", name: "OpenRouter" },
-	{ id: "deepseek", name: "DeepSeek" },
-	{ id: "xai", name: "xAI" },
-	{ id: "mistral", name: "Mistral" },
-	{ id: "groq", name: "Groq" },
-	{ id: "kimi-coding", name: "Kimi" },
-	{ id: "minimax", name: "MiniMax" },
-	{ id: "zai", name: "Z.ai" },
-] as const;
-export type PiKeyProvider = (typeof PI_KEY_PROVIDERS)[number]["id"];
-
-export function isPiKeyProvider(value: unknown): value is PiKeyProvider {
-	return PI_KEY_PROVIDERS.some((provider) => provider.id === value);
 }
 
 export type PiKeyResult =

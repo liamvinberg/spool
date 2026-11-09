@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
-import type { PiKeyProvider } from "./agent-setup";
+import type { PiKeyProvider } from "./pi-providers";
 
 /**
  * pi's `auth.json`, as the first run writes a pasted key into it (spool#250).

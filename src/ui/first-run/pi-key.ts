@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { PI_KEY_PROVIDERS, type PiKeyProvider, type PiKeyResult } from "../../daemon/agent-setup";
+import type { PiKeyResult } from "../../daemon/agent-setup";
+import { PI_KEY_PROVIDERS, type PiKeyProvider } from "../../daemon/pi-providers";
 import { postPiKey } from "../api";
 
 /** The key on pi's page, and what became of it: `unsure` is a key spool couldn't check that would replace pi's. */
