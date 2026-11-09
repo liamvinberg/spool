@@ -1,0 +1,60 @@
+.tern {
+	--tern-ink: #121316;
+	--tern-dim: rgba(18, 19, 22, 0.52);
+	--tern-faint: rgba(18, 19, 22, 0.08);
+	--tern-ground: #efede8;
+	--tern-night: #101114;
+	font-family: "Geist", "Inter", system-ui, sans-serif;
+	font-feature-settings: "tnum";
+	-webkit-font-smoothing: antialiased;
+}
+
+@keyframes tern-rise {
+	from {
+		opacity: 0;
+		transform: translateY(14px);
+	}
+}
+.tern-rise {
+	animation: tern-rise 640ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes tern-draw {
+	from {
+		stroke-dashoffset: 1;
+	}
+}
+.tern-draw {
+	stroke-dasharray: 1;
+	animation: tern-draw 1400ms cubic-bezier(0.65, 0, 0.35, 1) 200ms both;
+}
+
+@keyframes tern-shine {
+	from {
+		transform: translateX(-120%) skewX(-18deg);
+	}
+	to {
+		transform: translateX(260%) skewX(-18deg);
+	}
+}
+.tern-shine {
+	animation: tern-shine 1400ms cubic-bezier(0.65, 0, 0.35, 1) 450ms both;
+}
+
+@keyframes tern-blink {
+	50% {
+		opacity: 0.35;
+	}
+}
+.tern-blink {
+	animation: tern-blink 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tern-rise,
+	.tern-draw,
+	.tern-shine,
+	.tern-blink {
+		animation: none;
+	}
+}
