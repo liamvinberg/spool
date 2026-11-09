@@ -302,7 +302,7 @@ export function Home({
 					/>
 				)
 			}
-			foot={<>{account ?? <span>On this Mac</span>}</>}
+			foot={account ?? <span>On this Mac</span>}
 		>
 			{place === undefined ? shown : <PlaceIn key={searching ? "search" : place}>{shown}</PlaceIn>}
 		</HomeShell>
