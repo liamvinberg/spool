@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.52.2
+
+### Patch Changes
+
+- 22c15c2: A frame that fails to compile or throws on boot now shows one small pin at its centre instead of a panel whose words reflowed and got cut off as you zoomed. The pin keeps its size on screen, says less as the frame gets smaller, down to a dot, and opens the full error with Ask agent to fix when you press it.
+- 7485d2c: A deleted team's page has Delete now… beside Export all. It erases the team for every admin today instead of waiting for its date, after asking first.
+- ae13434: An exported HTML file now plays live when its frames use a package from the web, such as motion. Before, the page stopped at the frame's still picture because that package could not find React.
+- 9f42615: An exported HTML file now shows a frame the way the canvas does. A frame that scrolls inside itself scrolls under the mouse again, and a frame keeps its own light or dark look instead of turning light.
+- d644045: The export menu no longer lists frames that need the internet under the html choice. It showed for nearly every frame, and there was nothing to do about it from the menu.
+- 84201e2: A long file name in the export menu no longer runs out of its box: it now shortens, keeps its extension, and leaves Export readable beside it.
+- cb211c6: The frame finder's search field no longer sits on top of the page path when you open it with ⌘K or `/`, and going to a page by its name on the path now closes the finder.
+- 971e158: A reference now shows the site's own fonts where the site lets a late font be skipped (it came out in a fallback font before). Its videos play from the site instead of being copied into the project, and its note says how many, rather than counting them as files the site would not give.
+- 94b49ca: A reference sent from the Chrome extension now does more of what the site did: videos that were playing keep playing, what the site's script changed as you hovered a part (a card lighting up, its video starting) happens again under the pointer, and clicking a link leaves the reference as it is instead of turning it white. A part picked from a page no longer comes out blank when the site hid it by what stood beside it, and what it drew behind itself stays in sight. A page with a large WebGL hero sends far less.
+- ccfea17: The dots on a tab for teammates in that project no longer pop open into name tags when you point at them. A teammate coming in now grows in as a dot with a soft ring, and one leaving shrinks away.
+
 ## 0.52.1
 
 ### Patch Changes

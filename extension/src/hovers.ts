@@ -38,6 +38,11 @@ export interface Hovers {
 
 export interface HoverWatch {
 	read(): Hovers;
+	/**
+	 * Hovers each of these in turn as the hand would, with the events a site listens for, and lets go: what the site
+	 * does then is read as though the hand had done it. A budget in ms bounds it all.
+	 */
+	probe(els: readonly Element[], budget: number): Promise<void>;
 	stop(): void;
 }
 
@@ -54,7 +59,14 @@ const MOST = 2000;
 
 export function watchHovers(doc: Document, ignore: (el: Element) => boolean = () => false): HoverWatch {
 	const view = doc.defaultView;
+	/** where the hand is now; null once it left the page */
 	let at: Element | null = null;
+	/** what it last came onto, which what changes just after is the doing of, though it left since */
+	let from: Element | null = null;
+	/** the last change that counted, so a probe knows when the site has settled */
+	let lastChange = Number.NEGATIVE_INFINITY;
+	/** a probe reads what media do itself: their events come late, often after the probe let go */
+	let probing = false;
 	let came = Number.NEGATIVE_INFINITY;
 	let moved = Number.NEGATIVE_INFINITY;
 	let scrolled = Number.NEGATIVE_INFINITY;
@@ -86,8 +98,9 @@ export function watchHovers(doc: Document, ignore: (el: Element) => boolean = ()
 		}
 		const under = pending.get(el)?.get(name);
 		if (under === undefined) {
-			if (at === null || t - came > SOON_MS || t - scrolled < SCROLL_MS || pending.size + known.size >= MOST) return;
-			let trigger = common(at, el);
+			if (from === null || t - came > SOON_MS || t - scrolled < SCROLL_MS || pending.size + known.size >= MOST)
+				return;
+			let trigger = common(from, el);
 			if (trigger === null || !small(trigger, view)) return;
 			const together = [...pending.values()].flatMap((of) => [...of.values()]).filter((one) => one.came === came);
 			for (const one of together) {
@@ -95,9 +108,11 @@ export function watchHovers(doc: Document, ignore: (el: Element) => boolean = ()
 				if (both !== null && small(both, view)) trigger = both;
 			}
 			for (const one of together) if (holds(trigger, one.trigger)) one.trigger = trigger;
-			put(pending, { el, name, rest: was, hover: now, trigger, came, left: false });
+			put(pending, { el, name, rest: was, hover: now, trigger, came, left: at === null || !holds(trigger, at) });
+			lastChange = t;
 			return;
 		}
+		lastChange = t;
 		if (same(name, now, under.rest)) {
 			take(pending, el, name);
 			if (under.left) put(known, under);
@@ -126,6 +141,7 @@ export function watchHovers(doc: Document, ignore: (el: Element) => boolean = ()
 		const target = e.composedPath()[0];
 		if (!(target instanceof Element) || ignore(target)) return;
 		at = target;
+		from = target;
 		came = performance.now();
 		moved = came;
 		for (const of of pending.values())
@@ -144,11 +160,22 @@ export function watchHovers(doc: Document, ignore: (el: Element) => boolean = ()
 	const scroll = () => {
 		scrolled = performance.now();
 	};
+	// an event that no longer says what the media does (a play that was paused again since) is stale
 	const play = (e: Event) => {
-		if (e.target instanceof HTMLMediaElement) changed(e.target, ":playing", null, "1");
+		if (!probing && e.target instanceof HTMLMediaElement && !e.target.paused)
+			changed(e.target, ":playing", null, "1");
 	};
 	const pause = (e: Event) => {
-		if (e.target instanceof HTMLMediaElement) changed(e.target, ":playing", "1", null);
+		if (!probing && e.target instanceof HTMLMediaElement && e.target.paused) changed(e.target, ":playing", "1", null);
+	};
+	const media = () =>
+		new Map(Array.from(doc.querySelectorAll("video, audio"), (m) => [m, (m as HTMLMediaElement).paused]));
+	const mediaChanged = (was: Map<Element, boolean>) => {
+		for (const [m, paused] of media()) {
+			const before = was.get(m);
+			if (before !== undefined && before !== paused)
+				changed(m, ":playing", before ? null : "1", paused ? null : "1");
+		}
 	};
 	const listeners: Array<[EventTarget, string, (e: Event) => void]> = [
 		[doc, "pointerover", over],
@@ -161,6 +188,38 @@ export function watchHovers(doc: Document, ignore: (el: Element) => boolean = ()
 	for (const [target, type, fn] of listeners) target.addEventListener(type, fn, { capture: true, passive: true });
 
 	return {
+		async probe(els, budget) {
+			const end = performance.now() + budget;
+			probing = true;
+			try {
+				for (const el of els) {
+					if (performance.now() > end) break;
+					if (!el.isConnected) continue;
+					const was = media();
+					const hand = enter(el);
+					const entered = performance.now();
+					await frame(view);
+					mediaChanged(was);
+					// a site that answers goes on changing a while (a fade, a spring): its last value is the hover
+					while (performance.now() - entered < SETTLE_MS && performance.now() - lastChange < QUIET_MS) {
+						await frame(view);
+						mediaChanged(was);
+					}
+					const held = media();
+					leave(el, hand);
+					await frame(view);
+					mediaChanged(held);
+				}
+				// a site may answer the hand going only after a while (a menu with a close delay): what it opened gets that while to close
+				const left = performance.now();
+				const last = came;
+				const open = () => [...pending.values()].some((of) => [...of.values()].some((one) => one.came === last));
+				while (open() && performance.now() - left < CLOSE_MS) await frame(view);
+				await frame(view);
+			} finally {
+				probing = false;
+			}
+		},
 		read() {
 			const triggers = new Map<Element, string>();
 			const sets = new Map<Element, Array<[string, string, Value]>>();
@@ -188,6 +247,97 @@ export function watchHovers(doc: Document, ignore: (el: Element) => boolean = ()
 			for (const [target, type, fn] of listeners) target.removeEventListener(type, fn, { capture: true });
 		},
 	};
+}
+
+/** how long a probe waits at most for the site to settle under the hand */
+const SETTLE_MS = 400;
+/** how long a probe waits at most, once done, for what the hand opened to close */
+const CLOSE_MS = 600;
+/** how long the site keeps still before a probe takes it as settled */
+const QUIET_MS = 60;
+
+/**
+ * What the hand may hover in a picked element, the things that show they answer it, those a pointer becomes a hand
+ * over, outermost first, the largest first (a card before the links in it), so a probe's budget goes where it counts.
+ */
+export function hoverables(root: Element, ignore: (el: Element) => boolean = () => false, most = 80): Element[] {
+	const view = root.ownerDocument.defaultView;
+	if (view === null) return [];
+	const found: Array<[Element, number]> = [];
+	const all = [root, ...Array.from(root.querySelectorAll("*")).slice(0, 20_000)];
+	for (const el of all) {
+		if (ignore(el) || (el.closest("svg") !== null && el.localName !== "svg")) continue;
+		if (view.getComputedStyle(el).cursor !== "pointer") continue;
+		const parent = el.parentElement;
+		if (parent !== null && parent !== root.parentElement && view.getComputedStyle(parent).cursor === "pointer")
+			continue;
+		const r = el.getBoundingClientRect();
+		if (r.width < 8 || r.height < 8) continue;
+		found.push([el, r.width * r.height]);
+	}
+	return found
+		.sort((a, b) => b[1] - a[1])
+		.slice(0, most)
+		.map(([el]) => el);
+}
+
+/** the hand coming onto an element, at its middle, with what the site may listen for; the element under it is returned */
+function enter(el: Element): Element {
+	const r = el.getBoundingClientRect();
+	const x = r.left + r.width / 2;
+	const y = r.top + r.height / 2;
+	const doc = el.ownerDocument;
+	const atPoint = doc.elementFromPoint(x, y);
+	const hand = atPoint !== null && holds(el, atPoint) ? atPoint : el;
+	const at = { clientX: x, clientY: y, view: doc.defaultView, composed: true, relatedTarget: null };
+	hand.dispatchEvent(new PointerEvent("pointerover", { ...at, bubbles: true, pointerType: "mouse", isPrimary: true }));
+	for (const one of chain(el, hand)) {
+		one.dispatchEvent(new PointerEvent("pointerenter", { ...at, pointerType: "mouse", isPrimary: true }));
+	}
+	hand.dispatchEvent(new MouseEvent("mouseover", { ...at, bubbles: true }));
+	for (const one of chain(el, hand)) one.dispatchEvent(new MouseEvent("mouseenter", at));
+	hand.dispatchEvent(new PointerEvent("pointermove", { ...at, bubbles: true, pointerType: "mouse", isPrimary: true }));
+	hand.dispatchEvent(new MouseEvent("mousemove", { ...at, bubbles: true }));
+	return hand;
+}
+
+/** the hand going off the element and out of the page, so nothing else is entered */
+function leave(el: Element, hand: Element): void {
+	const r = el.getBoundingClientRect();
+	const at = {
+		clientX: r.left + r.width / 2,
+		clientY: r.top + r.height / 2,
+		view: el.ownerDocument.defaultView,
+		composed: true,
+		relatedTarget: null,
+	};
+	hand.dispatchEvent(new PointerEvent("pointerout", { ...at, bubbles: true, pointerType: "mouse", isPrimary: true }));
+	for (const one of chain(el, hand).reverse()) {
+		one.dispatchEvent(new PointerEvent("pointerleave", { ...at, pointerType: "mouse", isPrimary: true }));
+	}
+	hand.dispatchEvent(new MouseEvent("mouseout", { ...at, bubbles: true }));
+	for (const one of chain(el, hand).reverse()) one.dispatchEvent(new MouseEvent("mouseleave", at));
+}
+
+/** from the element down to the one under the hand, both included */
+function chain(top: Element, hand: Element): Element[] {
+	const out: Element[] = [];
+	for (let n: Element | null = hand; n !== null; n = up(n)) {
+		out.unshift(n);
+		if (n === top) break;
+	}
+	return out;
+}
+
+/** the next frame, or a short wait where the tab draws none */
+function frame(view: Window | null): Promise<void> {
+	return new Promise((done) => {
+		const t = setTimeout(done, 50);
+		view?.requestAnimationFrame(() => {
+			clearTimeout(t);
+			done();
+		});
+	});
 }
 
 /** what a map holds for a key, put there first when it holds nothing */

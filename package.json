@@ -1,6 +1,6 @@
 {
 	"name": "spool.page",
-	"version": "0.52.1",
+	"version": "0.52.2",
 	"description": "Live prototyping canvas: agent-authored TSX frames on an infinite canvas, repo-native.",
 	"repository": "github:liamvinberg/spool",
 	"homepage": "https://spool.page",
@@ -51,6 +51,7 @@
 		"build:ui": "vite build",
 		"extension:build": "tsx extension/build.ts",
 		"extension:pack": "tsx extension/pack.ts",
+		"extension:bench": "tsx extension/bench.ts",
 		"extension:icons": "tsx extension/icons.ts"
 	},
 	"devDependencies": {
