@@ -9,7 +9,6 @@ import {
 	createAgentSetup,
 	type MachineAgent,
 	type SetupProcess,
-	spawnSetup,
 	windowsLaunch,
 } from "./agent-setup";
 import { checkProviderKey, withPiAuthLock } from "./pi-auth";
@@ -113,6 +112,7 @@ function heldProcess() {
 		write: () => {},
 		kill: () => {
 			killed = true;
+			return exited.then(() => {});
 		},
 		exited,
 	};
@@ -120,28 +120,65 @@ function heldProcess() {
 }
 
 describe("stopping a setup", () => {
-	it.skipIf(process.platform === "win32")("takes back everything the command started", async () => {
-		const dir = makeTempDir();
-		const pidFile = join(dir, "grandchild");
-		// a shell piping into a shell, as `curl … | bash` is: the grandchild outlives a signal to the one pid
-		const script = `const c=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"inherit"});require("node:fs").writeFileSync(${JSON.stringify(pidFile)},String(c.pid));console.log("started");setInterval(()=>{},1000)`;
-		const proc = spawnSetup({ command: process.execPath, args: ["-e", script] }, process.env);
-		await new Promise<void>((resolve) => proc.onLine((line) => line === "started" && resolve()));
-		const grandchild = Number(readFileSync(pidFile, "utf8"));
+	it.skipIf(process.platform === "win32")(
+		"holds the slot until everything the command started has gone, a descendant that let go of its output and ignores SIGTERM included",
+		async () => {
+			const machine = machineAgents();
+			const dir = makeTempDir();
+			const marker = join(dir, "marker");
+			// `curl … | bash`, as an installer is: a descendant that closed its output and shrugs off SIGTERM,
+			// which outlives the shell (the shell's close) and writes once its delay is up
+			const script = `(trap '' TERM; sleep 5; touch '${marker}') </dev/null >/dev/null 2>&1 & echo "started $!"; wait`;
+			const plans: AgentSetupPlans = {
+				...machine.plans,
+				claude: { ...machine.plans.claude, install: { command: "sh", args: ["-c", script] } },
+			};
+			let descendant = 0;
+			const alive = () => {
+				try {
+					process.kill(descendant, 0);
+					return true;
+				} catch {
+					return false;
+				}
+			};
+			let freed: { at: number; descendantAlive: boolean } | undefined;
+			let stopping = false;
+			const setup = createAgentSetup({
+				engines: new Map(machine.engines.map((engine) => [engine.id, engine])),
+				plans,
+				home: dir,
+				piDir: join(dir, "pi"),
+				emit: (agents) => {
+					const job = agents.find((agent) => agent.id === "claude")?.job;
+					if (job?.kind === "install")
+						descendant ||= Number(job.lines.find((line) => line.startsWith("started "))?.slice(8) ?? 0);
+					if (stopping && job === null && freed === undefined)
+						freed = { at: Date.now(), descendantAlive: alive() };
+				},
+			});
+			const started = Date.now();
+			expect(setup.install("claude")).toBeUndefined();
+			await expect.poll(() => descendant, POLL).toBeGreaterThan(0);
 
-		proc.kill();
-		await proc.exited;
-		const alive = () => {
-			try {
-				process.kill(grandchild, 0);
-				return true;
-			} catch {
-				return false;
-			}
-		};
-		// a killed process lingers until whoever adopted it reaps it
-		await expect.poll(alive, { timeout: 2000 }).toBe(false);
-	});
+			stopping = true;
+			const asked = Date.now();
+			setup.cancel("claude");
+			// the shell has gone; its descendant hasn't, so no other installer may start
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			expect(alive()).toBe(true);
+			expect(setup.install("codex")).toMatchObject({ status: 409 });
+
+			await expect.poll(() => freed, POLL).toBeDefined();
+			// freed only once SIGKILL had taken the descendant, and not before it had gone
+			expect(freed?.at).toBeGreaterThanOrEqual(asked + 3000);
+			expect(freed?.descendantAlive).toBe(false);
+			// past the moment it would have written
+			await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 6500 - Date.now())));
+			expect(existsSync(marker)).toBe(false);
+		},
+		15_000,
+	);
 
 	it("keeps the install slot until a stopped installer has gone, and starts nothing after a stop", async () => {
 		const machine = machineAgents();
@@ -275,7 +312,7 @@ function piModels(): SetupProcess {
 		for (const line of lines) for (const listener of listeners) listener(line);
 		return 0;
 	});
-	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
+	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: async () => {}, exited };
 }
 
 /** The providers as they answer a key: `sk-` keys are good, `down` can't be reached, the rest are refused. */

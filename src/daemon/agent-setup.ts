@@ -186,8 +186,8 @@ export type PiKeyResult =
 export interface SetupProcess {
 	onLine(listener: (line: string) => void): void;
 	write(text: string): void;
-	/** stop it and everything it started; `exited` says when they have gone */
-	kill(): void;
+	/** stop it and everything it started, resolving once they have all gone */
+	kill(): Promise<void>;
 	/** its exit code, null when it never started or died on a signal */
 	readonly exited: Promise<number | null>;
 }
@@ -233,11 +233,23 @@ function refusedProcess(reason: string): SetupProcess {
 		for (const listener of listeners) listener(reason);
 		return null;
 	});
-	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
+	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: async () => {}, exited };
 }
 
 /** how long a stopped command has to end before it is killed outright */
 const STOP_GRACE_MS = 3000;
+/** how often a stopping process group is asked whether anything in it is left */
+const GROUP_POLL_MS = 50;
+
+/** Whether anything is left in a process group, a process not yet reaped included: only ESRCH says none is. */
+function groupAlive(pgid: number): boolean {
+	try {
+		process.kill(-pgid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code !== "ESRCH";
+	}
+}
 
 /**
  * Every line a command prints, from stdout and stderr alike: an installer's progress goes either way.
@@ -245,7 +257,9 @@ const STOP_GRACE_MS = 3000;
  * An installer is never one process (a shell piping curl into another shell, which starts
  * the vendor's own binary), so a stop takes back the whole tree: on POSIX the command
  * leads its own process group and the group is signalled, on Windows `taskkill /T` walks
- * the tree. It counts as ended once every process holding its output has let go.
+ * the tree. It counts as ended once every process holding its output has let go; a stop
+ * counts as done only once the whole group has gone, as a descendant that let go of the
+ * output, or ignores SIGTERM, outlives the command itself.
  */
 export const spawnSetup: SetupRunner = (command, env) => {
 	const windows = process.platform === "win32";
@@ -292,30 +306,48 @@ export const spawnSetup: SetupRunner = (command, env) => {
 	}).finally(() => {
 		ended = true;
 	});
-	const signal = (name: NodeJS.Signals) => {
+	/** Stop the tree and wait it out: SIGTERM to the group, SIGKILL after the grace, until nothing in it is left. */
+	const stop = async (): Promise<void> => {
 		const pid = child.pid;
-		if (ended || pid === undefined) return;
+		if (pid === undefined) return void (await exited);
 		if (windows) {
-			spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () =>
-				child.kill(),
-			);
-			return;
+			if (!ended)
+				await new Promise<void>((resolve) => {
+					const taskkill = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+						stdio: "ignore",
+						windowsHide: true,
+					});
+					taskkill.on("error", () => {
+						child.kill();
+						resolve();
+					});
+					taskkill.on("close", () => resolve());
+				});
+			return void (await exited);
 		}
-		try {
-			process.kill(-pid, name);
-		} catch {
-			// the group is gone, or never was: the child alone
-			child.kill(name);
+		const send = (name: NodeJS.Signals) => {
+			try {
+				process.kill(-pid, name);
+			} catch {
+				// no group: the child alone, if it is still here
+				if (!ended) child.kill(name);
+			}
+		};
+		send("SIGTERM");
+		const hardAt = Date.now() + STOP_GRACE_MS;
+		while (groupAlive(pid)) {
+			if (Date.now() >= hardAt) send("SIGKILL");
+			await new Promise((resolve) => setTimeout(resolve, GROUP_POLL_MS));
 		}
+		await exited;
 	};
+	let stopping: Promise<void> | undefined;
 	return {
 		onLine: (listener) => listeners.push(listener),
 		write: (text) => child.stdin.write(text),
 		kill: () => {
-			signal("SIGTERM");
-			if (windows) return;
-			const hard = setTimeout(() => signal("SIGKILL"), STOP_GRACE_MS);
-			void exited.then(() => clearTimeout(hard));
+			stopping ??= stop();
+			return stopping;
 		},
 		exited,
 	};
@@ -361,6 +393,8 @@ interface SetupRun {
 	/** what that command is */
 	step: SetupJob["kind"] | null;
 	stopped: boolean;
+	/** once stopped, when everything the command started has gone */
+	gone: Promise<void> | null;
 }
 
 /** The machine's agents and the setup runs on them. */
@@ -441,10 +475,11 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 			});
 		});
 		const code = await proc.exited;
+		// stopped: its slots are free only once everything it started has gone, not only the command
+		if (setup.stopped) await setup.gone;
 		setup.proc = null;
 		setup.step = null;
 		if (!setup.stopped) return code;
-		// stopped: the slot is free only now, with everything it started gone
 		end(id, setup);
 		setJob(id, null);
 		return undefined;
@@ -524,7 +559,7 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 	function begin(id: AgentEngineId, kind: SetupJob["kind"]): Refusal | undefined {
 		const refused = refuse(id, kind);
 		if (refused !== undefined) return refused;
-		const setup: SetupRun = { proc: null, step: null, stopped: false };
+		const setup: SetupRun = { proc: null, step: null, stopped: false, gone: null };
 		runs.set(id, setup);
 		void (kind === "install" ? install(id, setup) : signIn(id, setup));
 		return undefined;
@@ -568,7 +603,7 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 			}
 			const job = jobs.get(id);
 			if (job !== undefined) setJob(id, { ...job, lines: [...job.lines, "Stopping…"].slice(-KEPT_LINES) });
-			setup.proc.kill();
+			setup.gone = setup.proc.kill();
 		},
 		/**
 		 * A provider key saved where pi reads it (`auth.json` in its agent directory, the
