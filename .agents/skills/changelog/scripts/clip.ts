@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -19,6 +19,8 @@ import type { RecordedInput } from "../../../../src/runtime/record-protocol";
 export interface Clip {
 	/** Files over a fresh `spool init` project, path to content: design/frames/…/frame.tsx and its frame.json. */
 	files: Readonly<Record<string, string>>;
+	/** Demo products from changelog/kit/ the frames import, each copied to design/shared/kit/<name>/ (`import { Lope } from "shared/kit/lope/lope"`). */
+	kit?: readonly string[];
 	/** The window's size in CSS pixels; 1440×900 by default, the page's 16:10. */
 	viewport?: { w: number; h: number };
 	/** What the replayed take does; a live clip walks its own. */
@@ -273,6 +275,8 @@ const free = () =>
 const CHECKOUT = resolve(dirname(new URL(import.meta.url).pathname), "../../../..");
 
 const SCRIPTS = dirname(new URL(import.meta.url).pathname);
+/** the demo products clips draw their frames from */
+const KIT = join(CHECKOUT, "changelog/kit");
 
 /** this checkout's spool, in its own lane so the shared daemon is never touched; run from the checkout, which its daemon builds the window from */
 function spool(args: string[], env: NodeJS.ProcessEnv) {
@@ -312,6 +316,7 @@ async function withLane<T>(
 		spawnSync("git", ["init", "-q", project]);
 		const made = spool(["init", "--local", "--history", project], env);
 		if (made.status !== 0) throw new Error(`spool init failed: ${made.stdout}${made.stderr}`);
+		for (const name of clip.kit ?? []) cpSync(join(KIT, name), join(project, "design/shared/kit", name), { recursive: true });
 		for (const [path, content] of Object.entries(clip.files)) {
 			mkdirSync(dirname(join(project, path)), { recursive: true });
 			writeFileSync(join(project, path), content);
