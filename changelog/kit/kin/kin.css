@@ -1,0 +1,35 @@
+.kin {
+	--kin-ink: #111214;
+	--kin-dim: rgba(17, 18, 20, 0.52);
+	--kin-ground: #f4f3f0;
+	font-family: "Inter Tight", "Inter", system-ui, sans-serif;
+	font-feature-settings: "tnum", "ss01";
+	-webkit-font-smoothing: antialiased;
+	transition: background-color 420ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.kin-key {
+	transition:
+		transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+		background-color 160ms ease-out;
+}
+.kin-key:active {
+	transform: scale(0.88);
+	background-color: rgba(255, 255, 255, 0.16);
+}
+
+@keyframes kin-rise {
+	from {
+		opacity: 0;
+		transform: translateY(16px);
+	}
+}
+.kin-rise {
+	animation: kin-rise 640ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.kin-rise {
+		animation: none;
+	}
+}
