@@ -38,9 +38,11 @@ export interface WorkArea {
  * The first time: the frame's own size, with the screen as the only thing
  * allowed to overrule it.
  *
- * Height is the authored height or everything the screen has, whichever is
- * smaller — a 1200x2400 landing is judged on how many rows a screen can hold,
- * so it takes the full height; a 390x844 phone frame takes 844 and stops.
+ * Height is the authored height under spool's 30px bar, or everything the
+ * screen has, whichever is smaller — a 1200x2400 landing is judged on how many
+ * rows a screen can hold, so it takes the full height; a 390x844 phone frame
+ * takes 844 below the bar and stops. A window only the frame's height tall
+ * hid the frame's bottom 30px under its edge.
  * Stretching that one to the screen would invent a device nobody has, which is
  * the same lie as scaling and the thing the player took out.
  *
@@ -52,7 +54,7 @@ export function fitRect(authored: { w: number; h: number }, area: WorkArea): Win
 	// A frame authored wider than the screen is the one case where the authored
 	// width cannot be honoured: a window hanging off the left edge is unreachable.
 	const w = Math.min(authored.w, area.width);
-	const h = Math.min(authored.h, area.height);
+	const h = Math.min(authored.h + BAR_PX, area.height);
 	return {
 		x: area.x + area.width - w,
 		y: area.y + Math.round((area.height - h) / 2),

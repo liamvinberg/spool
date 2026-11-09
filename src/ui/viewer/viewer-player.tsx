@@ -4,6 +4,7 @@ import { isFramePath } from "../../page-path";
 import { fulfillClipboardCopy } from "../../runtime/clipboard-host";
 import { type FrameSaid, Player, type PlayerController } from "../../runtime/player-chrome";
 import { PLAYER_CHROME_RULES } from "../../runtime/player-chrome-css";
+import { fittedBox, fittedScale, playRoom, readFit, writeFit } from "../../runtime/player-fit";
 import { DESK_BAR_PX } from "../../runtime/player-page";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import type { Box } from "../canvas/camera";
@@ -102,6 +103,8 @@ export function ViewerPlayer({
 	reaches.current = walksAnywhere;
 	/** Where it opened: what the glide grows out of, and shrinks back into while the same frame plays. */
 	const opening = useRef({ start, from });
+	/** Fitted to the window, or laid out at its real size (spool#553). */
+	const fitting = useRef(readFit());
 
 	const controller = useMemo<PlayerController>(() => {
 		const set = (next: Partial<Played>) => {
@@ -109,10 +112,11 @@ export function ViewerPlayer({
 			version.current += 1;
 			for (const listener of listeners.current) listener();
 		};
-		const geometry = (frame: string) => {
+		const authored = (frame: string) => {
 			const found = latest.current.frames.find((each) => each.name === frame);
 			return { w: found?.w ?? 1440, h: found?.h ?? 900 };
 		};
+		const geometry = (frame: string) => (fitting.current ? fittedBox(authored(frame), room()) : authored(frame));
 		return {
 			subscribe(listener) {
 				listeners.current.add(listener);
@@ -137,6 +141,15 @@ export function ViewerPlayer({
 				latest.current.onWalked(frame);
 			},
 			dismissExternal: () => set({ externalHref: null }),
+			fit: {
+				on: () => fitting.current,
+				set(on) {
+					fitting.current = on;
+					writeFit(on);
+					set({});
+				},
+				authored,
+			},
 			close() {
 				if (closing.current) return;
 				closing.current = true;
@@ -152,7 +165,10 @@ export function ViewerPlayer({
 						? [{ opacity: 1 }, { opacity: 0 }]
 						: [
 								{ transform: "none", opacity: 1 },
-								{ transform: grownFrom(back, geometry(played.current.frame).w), opacity: 1 },
+								{
+									transform: grownFrom(back, shownWidth(geometry(played.current.frame), fitting.current)),
+									opacity: 1,
+								},
 							],
 					{ ...GROW, fill: "forwards" },
 				);
@@ -187,7 +203,13 @@ export function ViewerPlayer({
 		if (!shown || grown.current) return;
 		grown.current = true;
 		if (el === null || from === null || reducedMotion()) return;
-		el.animate([{ transform: grownFrom(from, controller.geometry(start).w) }, { transform: "none" }], GROW);
+		el.animate(
+			[
+				{ transform: grownFrom(from, shownWidth(controller.geometry(start), fitting.current)) },
+				{ transform: "none" },
+			],
+			GROW,
+		);
 		backdrop.current?.animate([{ opacity: 0 }, { opacity: 1 }], GROW);
 	}, [shown, controller]);
 
@@ -255,6 +277,7 @@ export function ViewerPlayer({
 								iframe={iframe}
 								played={now}
 								cover={waiting ? cover : undefined}
+								fitted={fitting.current}
 								onLoad={drew.loaded}
 							/>
 						}
@@ -273,17 +296,20 @@ function PlayedDocument({
 	iframe,
 	played,
 	cover,
+	fitted,
 	onLoad,
 }: {
 	iframe: { current: HTMLIFrameElement | null };
 	played: Played;
 	cover: string | undefined;
+	/** Fitted, the screen around it has its box's height; responsive, it is the window's. */
+	fitted: boolean;
 	onLoad: (arrival: number) => void;
 }) {
 	const { frame, arrival, src, drawn, previous } = played;
 	const documents = previous === null ? [{ frame, arrival, src }] : [{ frame, arrival, src }, previous];
 	return (
-		<div className="relative bg-white" style={{ height: `calc(100vh - ${DESK_BAR_PX}px)` }}>
+		<div className="relative bg-white" style={{ height: fitted ? "100%" : `calc(100vh - ${DESK_BAR_PX}px)` }}>
 			{cover !== undefined && (
 				<img
 					src={cover}
@@ -387,9 +413,17 @@ export function walkable(frames: readonly DesignFrame[], anywhere: boolean, fram
 	return frames.some((each) => each.name === frame) || (anywhere && isFramePath(frame));
 }
 
-/** The transform that puts the played page where its frame stands on the canvas. */
-function grownFrom(spot: Box, authored: number): string {
-	const width = Math.min(window.innerWidth, authored);
+function room() {
+	return playRoom({ vw: window.innerWidth, vh: window.innerHeight });
+}
+
+/** How wide the played frame stands on screen, for the glide to start and end on. */
+function shownWidth(box: { w: number; h: number }, fitted: boolean): number {
+	return fitted ? box.w * fittedScale(box, room()) : Math.min(window.innerWidth, box.w);
+}
+
+/** The transform that puts the played page, standing `width` wide, where its frame stands on the canvas. */
+function grownFrom(spot: Box, width: number): string {
 	const scale = spot.w / width;
 	const left = (window.innerWidth - width) / 2;
 	return `translate(${spot.x - left * scale}px, ${spot.y - DESK_BAR_PX * scale}px) scale(${scale})`;
