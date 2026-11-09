@@ -305,27 +305,44 @@ it("catches a WebGL drawing in the frame it was drawn, or one drawn once from th
 		).spoolCapture;
 		const drawn = await readCanvases(document.body);
 		const missing = unread(document.body, drawn);
-		// the tab's picture, taken with only the canvas showing: what lies over it isn't baked in
+		// the tab's picture, taken with only the canvas showing: what lies over it isn't baked in. The canvas is see-through:
+		// half red on its left, clear on its right, over whatever the page shows under it
 		let shown = true;
 		const shot = await shotCanvases(missing, async () => {
 			shown = over.checkVisibility({ visibilityProperty: true });
 			const tab = document.createElement("canvas");
 			tab.width = innerWidth;
 			tab.height = innerHeight;
-			const pen = tab.getContext("2d");
-			if (pen !== null) pen.fillStyle = "lime";
-			pen?.fillRect(0, 0, tab.width, tab.height);
+			const pen = tab.getContext("2d") as CanvasRenderingContext2D;
+			pen.fillStyle = getComputedStyle(document.documentElement).backgroundColor;
+			pen.fillRect(0, 0, tab.width, tab.height);
+			pen.fillStyle = "rgba(255, 0, 0, 0.5)";
+			pen.fillRect(0, 0, 20, 40);
 			return tab.toDataURL();
 		});
+		const taken = new Image();
+		taken.src = shot.get(once) ?? "";
+		await taken.decode();
+		const look = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+		look.drawImage(taken, 0, 0);
+		const at = (x: number) => Array.from(look.getImageData(x, 20, 1, 1).data);
 		return [
 			drawn.get(canvas)?.slice(0, 23) ?? "empty",
 			missing.map((c) => c.id),
 			shown,
 			over.checkVisibility({ visibilityProperty: true }),
 			shot.get(once)?.slice(0, 23) ?? "empty",
+			at(5),
+			at(30),
 		];
 	});
-	expect(read).toEqual(["data:image/webp;base64,", ["once"], false, true, "data:image/webp;base64,"]);
+	expect(read.slice(0, 5)).toEqual(["data:image/webp;base64,", ["once"], false, true, "data:image/webp;base64,"]);
+	// the page under it shows through in the frame as on the site: the red half clear, the rest all clear
+	const [red, clear] = read.slice(5) as number[][];
+	expect(red?.[0]).toBeGreaterThan(240);
+	expect(red?.[1]).toBeLessThan(15);
+	expect(Math.abs((red?.[3] ?? 0) - 128)).toBeLessThan(8);
+	expect(clear?.[3]).toBe(0);
 });
 
 it("serializes the whole page as its body, marked", { timeout: 60_000 }, async () => {
