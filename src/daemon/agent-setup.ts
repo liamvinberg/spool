@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, join, posix, win32 } from "node:path";
 import { withPathFirst } from "./agent-cli";
 import { AGENT_ENGINE_IDS, type AgentEngine, type AgentEngineId } from "./agent-engine";
+import { agentPath } from "./agent-preflight";
+import { checkProviderKey, literalKeyRefusal, readPiAuth, withPiAuthLock, writePiAuth } from "./pi-auth";
 
 /**
  * Putting an agent on this machine from spool's first run (spool#250): install it with its
@@ -40,10 +42,11 @@ export interface AgentSetupPlan {
 
 export type AgentSetupPlans = Readonly<Record<AgentEngineId, AgentSetupPlan>>;
 
-/** The machine an install is planned for: its platform, home, and whether a command is on it. */
+/** The machine an install is planned for: its platform, home, environment, and whether a command is on it. */
 export interface SetupMachine {
 	readonly platform: NodeJS.Platform;
 	readonly home: string;
+	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly has: (command: string) => boolean;
 }
 
@@ -51,13 +54,24 @@ const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
 /**
  * The official installers as their vendors document them (checked for spool#250): Claude
- * Code's native installer and Codex's standalone one need no Node and put the binary in
- * `~/.local/bin`; pi is an npm package. Codex's installer asks whether to start Codex at
- * the end, which `CODEX_NON_INTERACTIVE` answers.
+ * Code's native installer and Codex's standalone one need no Node; pi is an npm package.
+ * Where each puts its binary, which a daemon started before it may not have on PATH:
+ * Claude Code in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows); Codex in
+ * `~/.local/bin`, and on Windows in `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`, either
+ * moved by `CODEX_INSTALL_DIR`; pi wherever npm puts global commands, beside npm itself
+ * on a Mac or Linux and `%APPDATA%\npm` on Windows, as a `pi.cmd`. Codex's installer asks
+ * whether to start Codex at the end, which `CODEX_NON_INTERACTIVE` answers.
  */
-export function agentSetupPlans({ platform, home, has }: SetupMachine): AgentSetupPlans {
+export function agentSetupPlans({ platform, home, env = {}, has }: SetupMachine): AgentSetupPlans {
 	const windows = platform === "win32";
-	const localBin = join(home, ".local", "bin");
+	const path = windows ? win32 : posix;
+	const localBin = path.join(home, ".local", "bin");
+	const set = (name: string) => (env[name]?.trim() ? env[name]?.trim() : undefined);
+	const codexBin =
+		set("CODEX_INSTALL_DIR") ??
+		(windows
+			? path.join(set("LOCALAPPDATA") ?? path.join(home, "AppData", "Local"), "Programs", "OpenAI", "Codex", "bin")
+			: localBin);
 	const powershell = (script: string): SetupCommand => ({
 		command: "powershell",
 		args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
@@ -85,7 +99,7 @@ export function agentSetupPlans({ platform, home, has }: SetupMachine): AgentSet
 				: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
 			signIn: { command: "codex", args: ["login"] },
 			signInLine: "codex login",
-			bin: localBin,
+			bin: codexBin,
 		},
 		pi: {
 			install: has(npm) ? { command: npm, args: ["install", "-g", PI_PACKAGE] } : null,
@@ -93,6 +107,7 @@ export function agentSetupPlans({ platform, home, has }: SetupMachine): AgentSet
 			// pi signs in with a plan only from inside its own session
 			signIn: null,
 			signInLine: "pi, then type /login",
+			...(windows ? { bin: path.join(set("APPDATA") ?? path.join(home, "AppData", "Roaming"), "npm") } : {}),
 		},
 	};
 }
@@ -151,13 +166,27 @@ export function isPiKeyProvider(value: unknown): value is PiKeyProvider {
 }
 
 export type PiKeyResult =
-	| { readonly ok: true; readonly models: number }
-	| { readonly ok: false; readonly reason: string };
+	| {
+			readonly ok: true;
+			/** the provider's models pi now offers; 0 where pi couldn't say */
+			readonly models: number;
+			/** the provider took the key; false when spool couldn't ask it and saved it as it was told */
+			readonly checked: boolean;
+			/** it took the place of a key or sign-in pi already had for the provider */
+			readonly replaced: boolean;
+	  }
+	| {
+			readonly ok: false;
+			readonly reason: string;
+			/** spool couldn't ask the provider, and saving it would replace what pi has: it may be saved unchecked */
+			readonly unchecked?: true;
+	  };
 
 /** A running setup command: its lines, its input, its end. */
 export interface SetupProcess {
 	onLine(listener: (line: string) => void): void;
 	write(text: string): void;
+	/** stop it and everything it started; `exited` says when they have gone */
 	kill(): void;
 	/** its exit code, null when it never started or died on a signal */
 	readonly exited: Promise<number | null>;
@@ -175,15 +204,62 @@ export function plainLine(line: string): string {
 
 const PROMPT = /[>:?]\s*$/;
 
-/** Every line a command prints, from stdout and stderr alike: an installer's progress goes either way. */
+/** An argument cmd.exe reads as itself: no quotes, spaces, `%`, `^`, `&`, `|`, `<`, `>` or parentheses. */
+const CMD_PLAIN = /^[\w@.\\/:=,+-]+$/;
+
+/**
+ * How Windows runs a command spool names bare: the file it is on PATH (`npm.cmd`, a
+ * `pi.cmd` npm made, `codex.exe`), and a `.cmd` or `.bat` only through cmd.exe, which
+ * Node refuses to start one without. cmd.exe reads its line again, so a launcher is run
+ * only with arguments it can't read as anything but themselves.
+ */
+export function windowsLaunch(
+	command: SetupCommand,
+	/** where the bare name resolves on PATH, PATHEXT applied; undefined where it doesn't */
+	resolved: string | undefined,
+): { file: string; args: readonly string[]; shell: boolean } | { refused: string } {
+	const file = resolved ?? command.command;
+	if (!/\.(?:cmd|bat)$/i.test(file)) return { file, args: command.args, shell: false };
+	if (!command.args.every((arg) => CMD_PLAIN.test(arg)))
+		return { refused: `spool won't pass that to ${command.command} through cmd.exe.` };
+	// quoted, as the launcher's own folder may have a space in it (Program Files)
+	return { file: `"${file}"`, args: command.args, shell: true };
+}
+
+/** A command that never started, saying why. */
+function refusedProcess(reason: string): SetupProcess {
+	const listeners: ((line: string) => void)[] = [];
+	const exited = Promise.resolve().then(() => {
+		for (const listener of listeners) listener(reason);
+		return null;
+	});
+	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
+}
+
+/** how long a stopped command has to end before it is killed outright */
+const STOP_GRACE_MS = 3000;
+
+/**
+ * Every line a command prints, from stdout and stderr alike: an installer's progress goes either way.
+ *
+ * An installer is never one process (a shell piping curl into another shell, which starts
+ * the vendor's own binary), so a stop takes back the whole tree: on POSIX the command
+ * leads its own process group and the group is signalled, on Windows `taskkill /T` walks
+ * the tree. It counts as ended once every process holding its output has let go.
+ */
 export const spawnSetup: SetupRunner = (command, env) => {
-	const child = spawn(command.command, [...command.args], {
+	const windows = process.platform === "win32";
+	const launch = windows
+		? windowsLaunch(command, agentPath(env, command.command))
+		: { file: command.command, args: command.args, shell: false };
+	if ("refused" in launch) return refusedProcess(launch.refused);
+	const child = spawn(launch.file, [...launch.args], {
 		env: { ...env, ...command.env },
 		cwd: homedir(),
 		stdio: ["pipe", "pipe", "pipe"],
-		// Windows runs a .cmd (npm's) only through its shell; the arguments are spool's own
-		shell: process.platform === "win32" && command.command.endsWith(".cmd"),
+		shell: launch.shell,
 		windowsHide: true,
+		detached: !windows,
 	});
 	const listeners: ((line: string) => void)[] = [];
 	const read = (stream: NodeJS.ReadableStream) => {
@@ -209,14 +285,38 @@ export const spawnSetup: SetupRunner = (command, env) => {
 	read(child.stdout);
 	read(child.stderr);
 	child.stdin.on("error", () => {});
+	let ended = false;
 	const exited = new Promise<number | null>((resolve) => {
 		child.on("error", () => resolve(null));
 		child.on("close", (code) => resolve(code));
+	}).finally(() => {
+		ended = true;
 	});
+	const signal = (name: NodeJS.Signals) => {
+		const pid = child.pid;
+		if (ended || pid === undefined) return;
+		if (windows) {
+			spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () =>
+				child.kill(),
+			);
+			return;
+		}
+		try {
+			process.kill(-pid, name);
+		} catch {
+			// the group is gone, or never was: the child alone
+			child.kill(name);
+		}
+	};
 	return {
 		onLine: (listener) => listeners.push(listener),
 		write: (text) => child.stdin.write(text),
-		kill: () => child.kill(),
+		kill: () => {
+			signal("SIGTERM");
+			if (windows) return;
+			const hard = setTimeout(() => signal("SIGKILL"), STOP_GRACE_MS);
+			void exited.then(() => clearTimeout(hard));
+		},
 		exited,
 	};
 };
@@ -233,6 +333,8 @@ export interface AgentSetupDeps {
 	readonly home: string;
 	/** pi's agent directory, where its `auth.json` lives */
 	readonly piDir: string;
+	/** how a pasted key is asked of its provider */
+	readonly fetch?: typeof fetch;
 	readonly run?: SetupRunner;
 	/** the environment every setup command runs in, and whose PATH an install adds to */
 	readonly env?: Record<string, string | undefined>;
@@ -247,6 +349,20 @@ interface Known {
 	account: string | null;
 }
 
+/**
+ * What runs for one agent, from its press to its end: an install, the account probe after
+ * it, and the sign-in it goes on to. It holds the agent's slot the whole way, and an install
+ * holds the machine's one install slot until the installer and everything it started have
+ * ended, a stopped one included.
+ */
+interface SetupRun {
+	/** the command running now; null between commands */
+	proc: SetupProcess | null;
+	/** what that command is */
+	step: SetupJob["kind"] | null;
+	stopped: boolean;
+}
+
 /** The machine's agents and the setup runs on them. */
 export function createAgentSetup(deps: AgentSetupDeps) {
 	const { engines, plans, home, emit } = deps;
@@ -254,7 +370,7 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 	const env = deps.env ?? process.env;
 	const known = new Map<AgentEngineId, Known>();
 	const jobs = new Map<AgentEngineId, SetupJob>();
-	const running = new Map<AgentEngineId, SetupProcess>();
+	const runs = new Map<AgentEngineId, SetupRun>();
 	const ids = AGENT_ENGINE_IDS.filter((id) => engines.has(id));
 
 	function snapshot(): MachineAgent[] {
@@ -288,10 +404,23 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 		changed();
 	}
 
-	/** Run one command for an agent, its lines kept on its job as it goes. */
-	function start(id: AgentEngineId, kind: SetupJob["kind"], command: SetupCommand): SetupProcess {
+	/** Still this run's to go on with: not stopped, and nobody else's since. */
+	const owns = (id: AgentEngineId, setup: SetupRun) => runs.get(id) === setup && !setup.stopped;
+
+	function end(id: AgentEngineId, setup: SetupRun): void {
+		if (runs.get(id) === setup) runs.delete(id);
+	}
+
+	/** Run one command for an agent, its lines kept on its job as it goes; its exit code, or undefined once stopped. */
+	async function step(
+		id: AgentEngineId,
+		setup: SetupRun,
+		kind: SetupJob["kind"],
+		command: SetupCommand,
+	): Promise<number | null | undefined> {
 		const proc = run(command, env);
-		running.set(id, proc);
+		setup.proc = proc;
+		setup.step = kind;
 		setJob(
 			id,
 			kind === "install"
@@ -301,7 +430,7 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 		proc.onLine((raw) => {
 			const line = plainLine(raw);
 			const job = jobs.get(id);
-			if (line === "" || job === undefined || running.get(id) !== proc) return;
+			if (line === "" || job === undefined || !owns(id, setup) || setup.proc !== proc) return;
 			const lines = [...job.lines, line].slice(-KEPT_LINES);
 			if (job.kind === "install") return setJob(id, { ...job, lines });
 			setJob(id, {
@@ -311,7 +440,14 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 				asksCode: job.asksCode || ASKS_CODE.test(line),
 			});
 		});
-		return proc;
+		const code = await proc.exited;
+		setup.proc = null;
+		setup.step = null;
+		if (!setup.stopped) return code;
+		// stopped: the slot is free only now, with everything it started gone
+		end(id, setup);
+		setJob(id, null);
+		return undefined;
 	}
 
 	/** The installer's bin on the daemon's PATH, so the `which` and the spawns find what it put there. */
@@ -321,14 +457,14 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 		Object.assign(env, withPathFirst(env, dir));
 	}
 
-	async function signIn(id: AgentEngineId): Promise<void> {
+	async function signIn(id: AgentEngineId, setup: SetupRun): Promise<void> {
 		const command = plans[id].signIn;
-		if (command === null) return;
-		const proc = start(id, "sign-in", command);
-		const code = await proc.exited;
-		if (running.get(id) !== proc) return;
-		running.delete(id);
+		if (command === null) return end(id, setup);
+		const code = await step(id, setup, "sign-in", command);
+		if (code === undefined) return;
 		await check(id);
+		if (!owns(id, setup)) return;
+		end(id, setup);
 		const job = jobs.get(id);
 		if (known.get(id)?.signedIn === true || job === undefined) return setJob(id, null);
 		setJob(id, {
@@ -338,23 +474,24 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 		});
 	}
 
-	async function install(id: AgentEngineId): Promise<void> {
+	async function install(id: AgentEngineId, setup: SetupRun): Promise<void> {
 		const plan = plans[id];
-		if (plan.install === null) return;
-		const proc = start(id, "install", plan.install);
-		const code = await proc.exited;
-		if (running.get(id) !== proc) return;
-		running.delete(id);
+		if (plan.install === null) return end(id, setup);
+		const code = await step(id, setup, "install", plan.install);
+		if (code === undefined) return;
 		if (code === 0) onPath(plan.bin);
 		await check(id);
+		// stopped while the agent was asked: nothing more starts
+		if (!owns(id, setup)) return;
 		const at = known.get(id);
 		const job = jobs.get(id);
 		if (at?.installed === true) {
 			setJob(id, null);
 			// installed and not signed in: its own sign-in comes next, as a person in a terminal would go on
-			if (!at.signedIn && plan.signIn !== null) await signIn(id);
-			return;
+			if (!at.signedIn && plan.signIn !== null) return signIn(id, setup);
+			return end(id, setup);
 		}
+		end(id, setup);
 		if (job === undefined) return;
 		setJob(id, {
 			...job,
@@ -371,16 +508,25 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 	type Refusal = { readonly refused: string; readonly status: 404 | 409 };
 	function refuse(id: AgentEngineId, kind: SetupJob["kind"]): Refusal | undefined {
 		if (!engines.has(id)) return { refused: `spool doesn't run ${id} here`, status: 404 };
-		if (running.has(id)) return { refused: `${id} is already being set up`, status: 409 };
+		if (runs.has(id)) return { refused: `${id} is already being set up`, status: 409 };
 		const plan = plans[id];
 		if ((kind === "install" ? plan.install : plan.signIn) === null)
 			return {
 				refused: `spool can't run this here: ${kind === "install" ? plan.installLine : plan.signInLine}`,
 				status: 409,
 			};
-		// one install at a time, as two installers writing one PATH profile would fight
-		if (kind === "install" && [...jobs.values()].some((job) => job.kind === "install" && job.state === "running"))
+		// one install at a time, as two installers writing one PATH profile would fight; a stopped one until it has gone
+		if (kind === "install" && [...runs.values()].some((other) => other.step === "install"))
 			return { refused: "another agent is installing", status: 409 };
+		return undefined;
+	}
+
+	function begin(id: AgentEngineId, kind: SetupJob["kind"]): Refusal | undefined {
+		const refused = refuse(id, kind);
+		if (refused !== undefined) return refused;
+		const setup: SetupRun = { proc: null, step: null, stopped: false };
+		runs.set(id, setup);
+		void (kind === "install" ? install(id, setup) : signIn(id, setup));
 		return undefined;
 	}
 
@@ -392,79 +538,85 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 			return snapshot();
 		},
 		/** Start the installer; refused while one runs or where it can't run. */
-		install(id: AgentEngineId): Refusal | undefined {
-			const refused = refuse(id, "install");
-			if (refused === undefined) void install(id);
-			return refused;
-		},
-		signIn(id: AgentEngineId): Refusal | undefined {
-			const refused = refuse(id, "sign-in");
-			if (refused === undefined) void signIn(id);
-			return refused;
-		},
+		install: (id: AgentEngineId): Refusal | undefined => begin(id, "install"),
+		signIn: (id: AgentEngineId): Refusal | undefined => begin(id, "sign-in"),
 		/** The code a sign-in's page showed, handed to the agent that asked for it. */
 		code(id: AgentEngineId, code: string): boolean {
 			const job = jobs.get(id);
-			const proc = running.get(id);
-			if (job?.kind !== "sign-in" || proc === undefined) return false;
-			proc.write(`${code.trim()}\n`);
+			const setup = runs.get(id);
+			if (job?.kind !== "sign-in" || setup?.proc == null || setup.step !== "sign-in" || setup.stopped) return false;
+			setup.proc.write(`${code.trim()}\n`);
 			return true;
 		},
-		/** Stop what runs for an agent, and forget what it said. */
+		/**
+		 * Stop what runs for an agent, and everything it started, and forget what it said. Its
+		 * row says it is stopping until the last of it has gone, and only then is it free again.
+		 */
 		cancel(id: AgentEngineId): void {
-			const proc = running.get(id);
-			running.delete(id);
-			proc?.kill();
-			setJob(id, null);
+			const setup = runs.get(id);
+			if (setup === undefined) {
+				setJob(id, null);
+				return;
+			}
+			if (setup.stopped) return;
+			setup.stopped = true;
+			if (setup.proc === null) {
+				// between commands, asking the agent: nothing to wait for
+				end(id, setup);
+				setJob(id, null);
+				return;
+			}
+			const job = jobs.get(id);
+			if (job !== undefined) setJob(id, { ...job, lines: [...job.lines, "Stopping…"].slice(-KEPT_LINES) });
+			setup.proc.kill();
 		},
 		/**
 		 * A provider key saved where pi reads it (`auth.json` in its agent directory, the
-		 * format pi documents), then asked of pi with `pi auth check`. A key pi doesn't take
-		 * is taken back out, so a typo leaves pi as it was.
+		 * format pi documents), once its provider has taken it: a typo or a revoked key
+		 * leaves pi as it was. Where spool can't reach the provider it saves the key only
+		 * when that replaces nothing, or when asked again with `unchecked`, and says so.
 		 */
-		async piKey(provider: PiKeyProvider, key: string): Promise<PiKeyResult> {
+		async piKey(
+			provider: PiKeyProvider,
+			pasted: string,
+			options: { readonly unchecked?: boolean } = {},
+		): Promise<PiKeyResult> {
+			const key = pasted.trim();
+			const refused = literalKeyRefusal(key);
+			if (refused !== undefined) return { ok: false, reason: refused };
+			const name = PI_KEY_PROVIDERS.find((one) => one.id === provider)?.name ?? provider;
+			const said = await checkProviderKey(provider, key, deps.fetch);
+			if (said === "refused") return { ok: false, reason: `${name} didn’t take that key.` };
 			const file = join(deps.piDir, "auth.json");
-			let stored: Record<string, unknown> = {};
-			try {
-				const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
-				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-					return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
-				stored = parsed as Record<string, unknown>;
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-					return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
-			}
-			const write = (next: Record<string, unknown>) => {
-				mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-				const temp = `${file}.spool-${process.pid}`;
-				writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-				renameSync(temp, file);
-			};
-			write({ ...stored, [provider]: { type: "api_key", key: key.trim() } });
-			const said: string[] = [];
-			const checking = run({ command: "pi", args: ["auth", "check", "--provider", provider, "--json"] }, env);
-			checking.onLine((line) => said.push(line));
-			await checking.exited;
-			let status: unknown;
-			try {
-				status = (JSON.parse(said.join("\n")) as { status?: unknown }).status;
-			} catch {
-				status = undefined;
-			}
-			if (status !== "ready") {
-				write(stored);
-				return {
-					ok: false,
-					reason: status === undefined ? "pi couldn't check the key." : "pi didn't take that key.",
-				};
-			}
+			// read again under the lock: another key saved meanwhile, or pi's own sign-in, stays as it is now
+			const saved = await withPiAuthLock(file, (): PiKeyResult | { readonly replaced: boolean } => {
+				const now = readPiAuth(file);
+				if (now.kind === "unreadable") return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
+				const replaced = now.entries[provider] !== undefined;
+				if (said === "unchecked" && replaced && options.unchecked !== true)
+					return {
+						ok: false,
+						unchecked: true,
+						reason: `spool couldn’t reach ${name} to check this key, and pi already has one for ${name}. Save it in its place anyway?`,
+					};
+				writePiAuth(file, { ...now.entries, [provider]: { type: "api_key", key } });
+				return { replaced };
+			});
+			if (!saved.held) return { ok: false, reason: "pi is busy with its sign-ins. Try again in a moment." };
+			if ("ok" in saved.value) return saved.value;
+			const { replaced } = saved.value;
 			const listed: string[] = [];
 			const listing = run({ command: "pi", args: ["--offline", "--list-models"] }, env);
 			listing.onLine((line) => listed.push(line));
 			await listing.exited;
 			await check("pi");
 			changed();
-			return { ok: true, models: listed.filter((line) => line.split(/\s+/)[0] === provider).length };
+			return {
+				ok: true,
+				models: listed.filter((line) => line.split(/\s+/)[0] === provider).length,
+				checked: said === "valid",
+				replaced,
+			};
 		},
 	};
 }

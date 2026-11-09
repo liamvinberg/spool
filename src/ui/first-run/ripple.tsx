@@ -321,13 +321,25 @@ export function Ripple({
 		const buffer = gl.createBuffer();
 		const texture = gl.createTexture();
 		const shaders: WebGLShader[] = [];
-		if (!program || !buffer || !texture) return fallback();
+		/** everything made on the GPU for the light, given back whether it drew or not */
+		const free = () => {
+			gl.deleteTexture(texture);
+			gl.deleteBuffer(buffer);
+			gl.deleteProgram(program);
+			for (const shader of shaders) gl.deleteShader(shader);
+		};
+		/** the plain mark after all, with nothing left on the GPU */
+		const giveUp = () => {
+			free();
+			return fallback();
+		};
+		if (!program || !buffer || !texture) return giveUp();
 		for (const [type, source] of [
 			[gl.VERTEX_SHADER, vertex],
 			[gl.FRAGMENT_SHADER, fragment],
 		] as const) {
 			const shader = gl.createShader(type);
-			if (!shader) return fallback();
+			if (!shader) return giveUp();
 			shaders.push(shader);
 			gl.shaderSource(shader, source);
 			gl.compileShader(shader);
@@ -335,7 +347,7 @@ export function Ripple({
 		}
 		gl.bindAttribLocation(program, 0, "a_position");
 		gl.linkProgram(program);
-		if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return fallback();
+		if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return giveUp();
 		// biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a hook
 		gl.useProgram(program);
 		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -396,12 +408,18 @@ export function Ripple({
 			if (t < T.still) raf = requestAnimationFrame(tick);
 		};
 		raf = requestAnimationFrame(tick);
-		return () => {
+		// the GPU took the context back (a driver reset, another app's demand): the plain mark from here, words on time
+		let stopFallback: (() => void) | undefined;
+		const lost = () => {
 			cancelAnimationFrame(raf);
-			gl.deleteTexture(texture);
-			gl.deleteBuffer(buffer);
-			gl.deleteProgram(program);
-			for (const shader of shaders) gl.deleteShader(shader);
+			stopFallback ??= fallback();
+		};
+		canvas.addEventListener("webglcontextlost", lost);
+		return () => {
+			canvas.removeEventListener("webglcontextlost", lost);
+			cancelAnimationFrame(raf);
+			stopFallback?.();
+			free();
 		};
 	}, [startedAt, envelope]);
 

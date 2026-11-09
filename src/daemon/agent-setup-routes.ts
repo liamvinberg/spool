@@ -34,10 +34,14 @@ export function agentSetupRoutes(setup: AgentSetup) {
 				return c.body(null, 204);
 			})
 			.post("/agents/pi/key", async (c) => {
-				const body = (await c.req.json().catch(() => ({}))) as { provider?: unknown; key?: unknown };
+				const body = (await c.req.json().catch(() => ({}))) as {
+					provider?: unknown;
+					key?: unknown;
+					unchecked?: unknown;
+				};
 				if (!isPiKeyProvider(body.provider) || typeof body.key !== "string" || body.key.trim() === "")
-					return c.text('a key is { "provider": "<pi provider>", "key": "…" }', 400);
-				return c.json(await setup.piKey(body.provider, body.key));
+					return c.text('a key is { "provider": "<pi provider>", "key": "…", "unchecked"?: true }', 400);
+				return c.json(await setup.piKey(body.provider, body.key, { unchecked: body.unchecked === true }));
 			})
 	);
 }

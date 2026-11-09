@@ -3,12 +3,12 @@ import { type ComponentProps, type ReactNode, useCallback, useEffect, useMemo, u
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import { type MachineAgent, PI_KEY_PROVIDERS, type PiKeyProvider } from "../../daemon/agent-setup";
 import type { CloudAccountState } from "../../daemon/cloud-account";
-import { postAgentCode, postAgentSetup, postPiKey } from "../api";
+import { postAgentCode, postAgentSetup } from "../api";
 import { CommandLine } from "../canvas/agent-float";
 import { cn } from "../cn";
 import type { DesktopWindow } from "../desktop-window";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
-import { CheckIcon } from "../icons";
+import { CheckIcon, RibbonMark } from "../icons";
 import { Button, IconButton, ToggleButton } from "../primitives/actions";
 import { SpinRing } from "../primitives/display";
 import { TextField } from "../primitives/inputs";
@@ -27,8 +27,19 @@ import {
 	SPRING,
 	TeamTags,
 } from "./parts";
+import { type PiKeyState, usePiKey } from "./pi-key";
 import { prepareField, Ripple, T } from "./ripple";
-import { heardNow, playSound, preloadSounds, SOUNDS, setMuted } from "./sounds";
+import {
+	audioCanStart,
+	closeAudio,
+	heardNow,
+	playSound,
+	preloadSounds,
+	SETUP_SHOWN,
+	SOUNDS,
+	setMuted,
+	unlockAudio,
+} from "./sounds";
 import {
 	AGENT_COPY,
 	AGENT_ROWS,
@@ -75,6 +86,18 @@ const PEAK = 4.5;
 
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/** The window's size as it is now, again on every resize: the Mac app's window changes size after the page asks. */
+function useViewport() {
+	const [size, setSize] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+	useEffect(() => {
+		const read = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+		window.addEventListener("resize", read);
+		read();
+		return () => window.removeEventListener("resize", read);
+	}, []);
+	return size;
+}
+
 export interface FirstRunProps {
 	/** the machine's agents, as the daemon last said them; null until it has */
 	agents: readonly MachineAgent[] | null;
@@ -102,16 +125,15 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	const [cloud, setCloud] = useState<"offer" | "waiting">("offer");
 	/** the window itself is the small box; false while the page draws it in a bigger window */
 	const [native, setNative] = useState(appWindow?.setupWindow !== undefined);
-	const [startedAt] = useState(() => performance.now());
+	/** when the open started, its light and sound together; null while it waits to be let play */
+	const [startedAt, setStartedAt] = useState<number | null>(null);
+	/** the open, before it starts: waiting for the Mac app to show the window, or for a press where sound needs one */
+	const [gate, setGate] = useState<"waiting" | "press">("waiting");
 	const [skipped, setSkipped] = useState(false);
 	const [refused, setRefused] = useState<string | null>(null);
 	const [code, setCode] = useState("");
-	const [piKey, setPiKey] = useState<{
-		provider: PiKeyProvider;
-		key: string;
-		check: "idle" | "checking" | "ok" | "bad";
-		said: string;
-	}>({ provider: "anthropic", key: "", check: "idle", said: "" });
+	const piKeyField = usePiKey();
+	const piKey = piKeyField.state;
 	/** the agents ready when the step first read them: spool found them rather than set them up */
 	const [found, setFound] = useState<readonly AgentEngineId[] | null>(null);
 	const playing = useRef<AbortController | null>(null);
@@ -149,24 +171,56 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 		});
 	}, []);
 
+	const startedRef = useRef(false);
+	/** the open, light and sound at once; called inside a press (or the app's own), where audio may start */
+	const begin = useCallback(() => {
+		if (startedRef.current) return;
+		startedRef.current = true;
+		unlockAudio();
+		setStartedAt(performance.now());
+		play(0);
+	}, [play]);
+
 	useEffect(() => {
 		// the mark's distance field is made at once, so the light starts on time
 		prepareField();
-		if (!reducedMotion()) {
+		let live = true;
+		let late = 0;
+		// the Mac app starts the open with a press of its own as it shows the window; an app too old to waits as a browser
+		const shown = () => begin();
+		// a browser lets sound start only after a press: the open waits for one rather than playing silent
+		const askBrowser = () =>
+			void audioCanStart().then((can) => {
+				if (!live || startedRef.current) return;
+				if (can) begin();
+				else setGate("press");
+			});
+		if (reducedMotion()) {
+			startedRef.current = true;
+			setStartedAt(performance.now());
+		} else {
 			void preloadSounds(SOUNDS.chords.url, SOUNDS.bloom.url);
-			play(0);
+			if (appWindow?.setupWindow === undefined) askBrowser();
+			else {
+				window.addEventListener(SETUP_SHOWN, shown);
+				late = window.setTimeout(askBrowser, 1500);
+			}
 		}
 		return () => {
+			live = false;
+			window.removeEventListener(SETUP_SHOWN, shown);
+			clearTimeout(late);
 			playing.current?.abort();
 			setMuted(false);
+			closeAudio();
 		};
-	}, [play]);
+	}, [begin, appWindow]);
 
 	/** the picture's clock: the chord as heard while it plays, the wall clock while muted or before it sounds */
 	const clock = useCallback(() => {
 		if (skipped) return T.still;
 		const heard = heardNow();
-		const wall = (performance.now() - startedAt) / 1000;
+		const wall = (performance.now() - (startedAt ?? performance.now())) / 1000;
 		if (heardZero.current === null || heard === null) return wall;
 		return heard - heardZero.current;
 	}, [startedAt, skipped]);
@@ -178,12 +232,13 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 		if (next) {
 			playing.current?.abort();
 			heardZero.current = null;
-		} else if (step === "open" && !skipped) play((performance.now() - startedAt) / 1000);
+		} else if (step === "open" && !skipped && startedAt !== null) play((performance.now() - startedAt) / 1000);
 	};
 
 	/* ------------------------------------------------------------ the window -- */
 
 	const size = SIZE[step];
+	const viewport = useViewport();
 	useEffect(() => {
 		if (growing !== null || appWindow?.setupWindow === undefined) return;
 		let live = true;
@@ -219,6 +274,8 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 		setStep(next);
 	};
 	const skipOpen = () => {
+		startedRef.current = true;
+		setStartedAt((was) => was ?? performance.now());
 		setSkipped(true);
 		setWords(true);
 		playing.current?.abort();
@@ -259,24 +316,10 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	};
 
 	const pi = rows.find((agent) => agent.id === "pi");
-	const checkKey = () => {
-		if (piKey.key.trim() === "" || piKey.check === "checking") return;
-		const { provider, key } = piKey;
-		setPiKey((was) => ({ ...was, check: "checking" }));
-		void postPiKey(provider, key).then((result) =>
-			setPiKey((was) =>
-				was.key === key && was.provider === provider
-					? result.ok
-						? { ...was, check: "ok", said: `${result.models} models, saved to pi` }
-						: { ...was, check: "bad", said: result.reason }
-					: was,
-			),
-		);
-	};
 	const actPi = (i: number) => {
 		if (i === 2) {
 			if (piKey.check === "ok") return go("agents");
-			return checkKey();
+			return piKeyField.check();
 		}
 		// a plan's sign-in happens inside pi itself: the steps are on the row, and return asks pi again
 		onRecheck();
@@ -304,7 +347,8 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	const keys = useRef({ go: () => {}, back: () => {}, move: (_by: number) => {}, mute: () => {} });
 	keys.current = {
 		go: () => {
-			if (step === "open") return words ? go("agents") : skipOpen();
+			if (step === "open")
+				return words ? go("agents") : startedAt === null && gate === "press" ? begin() : skipOpen();
 			if (step === "agents") return actAgent(sel);
 			if (step === "pi") return actPi(piSel);
 			startTrial();
@@ -365,7 +409,6 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	/* -------------------------------------------------------------- the box -- */
 
 	const still = reducedMotion();
-	const viewport = { w: window.innerWidth, h: window.innerHeight };
 	const box =
 		native || growing !== null
 			? { width: viewport.w, height: viewport.h }
@@ -390,7 +433,12 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 				initial={false}
 				animate={box}
 				transition={
-					still ? { duration: 0 } : growing !== null ? { type: "spring", duration: 1.15, bounce: 0.08 } : SPRING
+					// the Mac app's window is the box: it follows the window's own frame exactly, never springs after it
+					still || native
+						? { duration: 0 }
+						: growing !== null
+							? { type: "spring", duration: 1.15, bounce: 0.08 }
+							: SPRING
 				}
 			>
 				{/* the window drags by its head, as spool's bar does */}
@@ -399,6 +447,8 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 				{step === "open" ? (
 					<OpenStep
 						startedAt={startedAt}
+						gate={gate}
+						onOpen={begin}
 						clock={clock}
 						words={words}
 						onWords={() => setWords(true)}
@@ -494,18 +544,8 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 											onSel={setPiSel}
 											onAct={actPi}
 											piKey={piKey}
-											onProvider={(provider) =>
-												setPiKey((was) =>
-													was.provider === provider ? was : { provider, key: "", check: "idle", said: "" },
-												)
-											}
-											onKey={(key) =>
-												setPiKey((was) => ({
-													...was,
-													key,
-													check: was.check === "checking" ? "checking" : "idle",
-												}))
-											}
+											onProvider={piKeyField.setProvider}
+											onKey={piKeyField.setKey}
 										/>
 									) : (
 										<CloudPage />
@@ -574,7 +614,9 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 												? "Done"
 												: piKey.check === "checking"
 													? "Checking"
-													: "Check key"
+													: piKey.check === "unsure"
+														? "Save anyway"
+														: "Check key"
 											: pi !== undefined && isReady(pi)
 												? "Done"
 												: "Check again"}
@@ -613,12 +655,16 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 
 function OpenStep({
 	startedAt,
+	gate,
+	onOpen,
 	clock,
 	words,
 	onWords,
 	onContinue,
 }: {
-	startedAt: number;
+	startedAt: number | null;
+	gate: "waiting" | "press";
+	onOpen: () => void;
 	clock: () => number;
 	words: boolean;
 	onWords: () => void;
@@ -629,6 +675,26 @@ function OpenStep({
 		animate: words ? { opacity: 1, y: 0, filter: "blur(0px)" } : { opacity: 0, y: 6, filter: "blur(3px)" },
 		transition: { duration: reducedMotion() ? 0 : 0.8, ease: EASE, delay: words && !reducedMotion() ? delay : 0 },
 	});
+	if (startedAt === null)
+		return gate === "press" ? (
+			<div className="absolute inset-0 grid place-items-center">
+				<motion.button
+					type="button"
+					onClick={onOpen}
+					className="group flex w-[140px] flex-col items-center gap-3 outline-none"
+					initial={{ opacity: 0 }}
+					animate={{ opacity: 1 }}
+					transition={{ duration: 0.6, ease: EASE }}
+				>
+					<span className="grid size-[84px] place-items-center rounded-[20px] border border-line-default bg-surface-window transition-colors duration-base ease-out group-hover:border-line-strong group-focus-visible:border-line-strong">
+						<RibbonMark className="h-[44px]" />
+					</span>
+					<span className="text-tertiary type-label transition-colors duration-base ease-out group-hover:text-secondary group-focus-visible:text-secondary">
+						Open spool
+					</span>
+				</motion.button>
+			</div>
+		) : null;
 	return (
 		<>
 			<Ripple startedAt={startedAt} clock={clock} envelope={ENVELOPE} onWords={onWords} />
@@ -809,7 +875,7 @@ function PiPage({
 	sel: number;
 	onSel: (i: number) => void;
 	onAct: (i: number) => void;
-	piKey: { provider: PiKeyProvider; key: string; check: "idle" | "checking" | "ok" | "bad"; said: string };
+	piKey: PiKeyState;
 	onProvider: (provider: PiKeyProvider) => void;
 	onKey: (key: string) => void;
 }) {
@@ -899,10 +965,10 @@ function PiPage({
 							role={piKey.check === "bad" ? "alert" : undefined}
 							className={cn("type-label", piKey.check === "bad" ? "text-danger-strong" : "text-tertiary")}
 						>
-							{piKey.check === "ok" || piKey.check === "bad"
+							{piKey.check === "ok" || piKey.check === "bad" || piKey.check === "unsure"
 								? piKey.said
 								: piKey.check === "checking"
-									? `Asking pi about the ${name} key`
+									? `Checking the key with ${name}`
 									: `Return checks it with ${name}.`}
 						</span>
 					</div>

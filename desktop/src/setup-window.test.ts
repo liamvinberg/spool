@@ -24,13 +24,16 @@ test("the setup window is small and centred, and grows back to where the window 
 	assert.deepEqual(grownRect({ x: 3000, y: 80, w: 1600, h: 1000 }, DESK, [DESK]), { x: 240, y: 163, w: 1440, h: 900 });
 });
 
-test("a first launch opens small until the setup is done or a project exists", () => {
+test("a first launch opens small until the setup is done, never where spool was used before it", () => {
 	const dir = mkdtempSync(join(tmpdir(), "spool-setup-"));
 	try {
 		assert.equal(firstRunLikely(dir), true);
-		writeFileSync(join(dir, "registry.json"), JSON.stringify({ projects: [{ root: "/a" }] }));
-		assert.equal(firstRunLikely(dir), false);
+		// a used state folder the daemon hasn't decided yet: it will exempt it
 		writeFileSync(join(dir, "registry.json"), JSON.stringify({ projects: [] }));
+		assert.equal(firstRunLikely(dir), false);
+		// once decided, the decision
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ onboarding: { done: false } }));
+		assert.equal(firstRunLikely(dir), true);
 		writeFileSync(join(dir, "config.json"), JSON.stringify({ onboarding: { done: true } }));
 		assert.equal(firstRunLikely(dir), false);
 	} finally {

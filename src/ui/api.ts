@@ -617,13 +617,17 @@ export async function postAgentCode(engine: AgentEngineId, code: string): Promis
 	return res.ok ? undefined : await errorText(res);
 }
 
-/** A provider key for pi, saved where pi reads it once pi takes it. */
-export async function postPiKey(provider: PiKeyProvider, key: string): Promise<PiKeyResult> {
+/** A provider key for pi, saved where pi reads it once its provider takes it; `unchecked` saves one spool couldn't check. */
+export async function postPiKey(
+	provider: PiKeyProvider,
+	key: string,
+	options: { unchecked?: boolean } = {},
+): Promise<PiKeyResult> {
 	try {
 		const res = await controlFetch("/api/agents/pi/key", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ provider, key }),
+			body: JSON.stringify({ provider, key, ...(options.unchecked === true ? { unchecked: true } : {}) }),
 		});
 		return res.ok ? ((await res.json()) as PiKeyResult) : { ok: false, reason: await errorText(res) };
 	} catch {
