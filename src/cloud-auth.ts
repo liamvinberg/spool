@@ -1,5 +1,6 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { hostname } from "node:os";
@@ -179,13 +180,39 @@ export function sessionVault(spoolDir: string, origin = CLOUD_ORIGIN): CloudVaul
 }
 
 /**
+ * Whether this instance keeps a Cloud session, from where `sessionVault` keeps it, without
+ * reading it. On a Mac the Keychain is asked for the item by name alone, never its secret
+ * (no `-w`): a secret read is what an item's access list guards, and the name never makes
+ * the Mac ask the person. The beta's publisher session counts too.
+ */
+export function hasStoredSession(
+	spoolDir: string,
+	origin = CLOUD_ORIGIN,
+	platform: NodeJS.Platform = process.platform,
+): boolean {
+	if (platform !== "darwin") return existsSync(sessionFile(spoolDir, origin));
+	return [SERVICE, LEGACY_SERVICE].some((entry) => {
+		const { account, service } = keychainIdentity(spoolDir, origin, entry);
+		const found = spawnSync("security", ["find-generic-password", "-a", account, "-s", service], {
+			stdio: "ignore",
+			timeout: 2_000,
+		});
+		return found.status === 0;
+	});
+}
+
+function sessionFile(spoolDir: string, origin: string): string {
+	return join(spoolDir, "cloud", `${new URL(origin).host}.session`);
+}
+
+/**
  * The device session as a file in the instance's state folder, for a machine with no Keychain: a Linux box reached
  * over SSH has no unlocked keyring to ask, and the daemon outlives the session that signed in. Owner-only, the way
  * gh and the cloud CLIs keep theirs.
  */
 export function fileVault(spoolDir: string, origin = CLOUD_ORIGIN): CloudVault {
 	const dir = join(spoolDir, "cloud");
-	const file = join(dir, `${new URL(origin).host}.session`);
+	const file = sessionFile(spoolDir, origin);
 	const unavailable = () =>
 		new SpoolError(`${file} can't be read or written; local spool still works, but Cloud sharing is signed out`);
 	return {

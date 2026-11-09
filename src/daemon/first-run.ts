@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { CLOUD_ORIGIN, cloudOrigin, hasStoredSession } from "../cloud-auth";
 import type { SettingsStore } from "./settings";
 
 /**
@@ -31,13 +32,21 @@ export function firstRunDue({
 
 /**
  * What a state folder holds once somebody has used spool from it: a project registered
- * or forgotten, tabs, a setting, a Spool Cloud sign-in, a thread or a comment. A daemon
- * that only started writes none of them (its `daemon.json` and log are not use).
+ * or forgotten, tabs, a setting, a thread or a comment. A daemon that only started writes
+ * none of them (its `daemon.json` and log are not use). A Spool Cloud sign-in is use too,
+ * wherever this machine keeps it: the Keychain on a Mac, `cloud/` elsewhere.
  */
 export const USED_STATE = ["registry.json", "session.json", "config.json", "cloud", "threads", "comments"] as const;
 
-export function usedBefore(spoolDir: string): boolean {
-	return USED_STATE.some((name) => existsSync(join(spoolDir, name)));
+export function usedBefore(spoolDir: string, platform: NodeJS.Platform = process.platform): boolean {
+	if (USED_STATE.some((name) => existsSync(join(spoolDir, name)))) return true;
+	let origin = CLOUD_ORIGIN;
+	try {
+		origin = cloudOrigin(process.env);
+	} catch {
+		// a SPOOL_CLOUD_ORIGIN spool can't use: spool.page's own
+	}
+	return hasStoredSession(spoolDir, origin, platform);
 }
 
 /**
@@ -45,8 +54,12 @@ export function usedBefore(spoolDir: string): boolean {
  * state folder was used before this version, false where it is new. A machine that already
  * has it written keeps it.
  */
-export function settleFirstRun(spoolDir: string, settings: SettingsStore): void {
+export function settleFirstRun(
+	spoolDir: string,
+	settings: SettingsStore,
+	platform: NodeJS.Platform = process.platform,
+): void {
 	const done = settings.read().entries.find((entry) => entry.key === "onboarding.done");
 	if (done?.source === "file") return;
-	settings.write("onboarding.done", usedBefore(spoolDir));
+	settings.write("onboarding.done", usedBefore(spoolDir, platform));
 }

@@ -128,6 +128,46 @@ export function makeTempDir(): string {
 	return dir;
 }
 
+/**
+ * macOS's `security`, standing in on PATH for the Keychain: it keeps generic passwords by
+ * service and account in a folder, prints one with `-w`, and logs every command line to
+ * `calls`. PATH comes back as it was when the test finishes.
+ */
+export function fakeKeychain(): { calls: string } {
+	const root = makeTempDir();
+	const bin = join(root, "bin");
+	const store = join(root, "store");
+	const calls = join(root, "calls");
+	mkdirSync(bin);
+	mkdirSync(store);
+	writeFileSync(
+		join(bin, "security"),
+		`#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> ${JSON.stringify(calls)}
+op="$1"; shift
+if [ "$op" = "-i" ]; then IFS= read -r line; set -- $line; op="$1"; shift; fi
+account=""; service=""; password=""; show=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in -a) account="$2"; shift 2;; -s) service="$2"; shift 2;; -w) if [ "$#" -gt 1 ]; then password="$2"; shift 2; else show=1; shift; fi;; -U) shift;; *) shift;; esac
+done
+file="${store}/$(printf '%s\\0%s' "$service" "$account" | shasum -a 256 | cut -d' ' -f1)"
+case "$op" in
+  add-generic-password) printf '%s' "$password" > "$file";;
+  find-generic-password) [ -f "$file" ] || exit 44; if [ -n "$show" ]; then cat "$file"; fi;;
+  delete-generic-password) [ -f "$file" ] || exit 44; rm "$file";;
+esac
+`,
+		{ mode: 0o755 },
+	);
+	const path = process.env.PATH;
+	process.env.PATH = `${bin}:${path ?? ""}`;
+	onTestFinished(() => {
+		process.env.PATH = path;
+	});
+	return { calls };
+}
+
 export function markProject(root: string): void {
 	mkdirSync(join(root, "design"), { recursive: true });
 	writeFileSync(join(root, "design", "canvas.json"), canvasJson(true));
