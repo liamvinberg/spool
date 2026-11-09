@@ -111,7 +111,22 @@ const ASKING_TOOLS: Readonly<Record<string, string>> = {
 	request_user_input: "ask you something",
 };
 
+/** A whole to-do list as a harness writes it at once: Claude's TodoWrite, Codex's update_plan. */
+function listOf(tool: string, input: Payload): OutsideTask[] | null {
+	const items = tool === "TodoWrite" ? input.todos : tool === "update_plan" ? input.plan : undefined;
+	if (!Array.isArray(items)) return null;
+	return items.flatMap((item, at) => {
+		const one = record(item);
+		const subject = text(one.content) ?? text(one.step);
+		return subject === null
+			? []
+			: [{ id: `list-${at}`, subject: cut(subject, 80), done: one.status === "completed" }];
+	});
+}
+
 export function wantsOf(tool: string, input: Payload): string {
+	const asks = ASKING_TOOLS[tool];
+	if (asks !== undefined) return asks;
 	const name = tool.toLowerCase();
 	const command = text(input.command);
 	if ((name === "bash" || name === "shell" || name === "exec_command") && command !== null)
@@ -190,6 +205,9 @@ export function foldHook(
 	switch (event) {
 		case "UserPromptSubmit": {
 			const prompt = text(payload.prompt);
+			// what the harness feeds in itself, as a background agent's <task-notification>, goes on the turn it belongs to
+			if (prompt !== null && /^<[a-z][\w-]*>/i.test(prompt.trimStart()))
+				return { ...going(base), state: "working", ended: null, stopped: false };
 			const allDone = session.tasks.every((task) => task.done);
 			return {
 				...base,
@@ -210,7 +228,14 @@ export function foldHook(
 			// a question or a plan put to you holds it until you answer, whatever its permissions
 			const asks = ASKING_TOOLS[tool];
 			if (asks !== undefined) return { ...base, state: "waiting", wants: asks, ended: null };
-			const next = { ...going(base), state: "working" as const, ended: null, busy: session.busy + 1 };
+			const listed = listOf(tool, input);
+			const next = {
+				...going(base),
+				state: "working" as const,
+				ended: null,
+				busy: session.busy + 1,
+				...(listed === null ? {} : { tasks: listed }),
+			};
 			const touched = filesOf(session.harness, tool, input, cwd);
 			if (touched === null) return next;
 			const frame = touched.files.map(frameAt).find((one): one is string => one !== null) ?? null;

@@ -93,6 +93,35 @@ describe("a Claude Code session, folded from its hooks", () => {
 		expect(run([["SessionEnd", {}]], done as OutsideSession)).toBeNull();
 	});
 
+	it("keeps its prompt's name through what the harness feeds in itself, and reads a whole to-do list", () => {
+		const there = run([
+			["UserPromptSubmit", { prompt: "tidy the menu" }],
+			[
+				"PreToolUse",
+				{
+					tool_name: "TodoWrite",
+					tool_input: {
+						todos: [
+							{ content: "Read it", status: "completed" },
+							{ content: "Tidy it", status: "in_progress" },
+						],
+					},
+				},
+			],
+			["UserPromptSubmit", { prompt: "<task-notification>\n<task-id>b1</task-id>" }],
+			["PermissionRequest", { tool_name: "AskUserQuestion", tool_input: {} }],
+		]);
+		expect(there).toMatchObject({
+			name: "tidy the menu",
+			state: "waiting",
+			wants: "ask you something",
+			tasks: [
+				{ subject: "Read it", done: true },
+				{ subject: "Tidy it", done: false },
+			],
+		});
+	});
+
 	it("leaves a frame as it goes to work elsewhere, and keeps its place through a command", () => {
 		const there = run([
 			["UserPromptSubmit", { prompt: "tidy" }],
