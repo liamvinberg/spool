@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { machineAgents, makeApp, makeTempDir } from "../test-helpers";
@@ -11,7 +11,7 @@ import {
 	spawnSetup,
 	windowsLaunch,
 } from "./agent-setup";
-import { checkProviderKey } from "./pi-auth";
+import { checkProviderKey, withPiAuthLock } from "./pi-auth";
 
 /**
  * The first run's agents (spool#250), at the machine's own door: what each agent is here,
@@ -266,46 +266,46 @@ describe("the official installers", () => {
 	});
 });
 
-describe("a key for pi", () => {
-	/** pi's `--list-models`, the only thing spool asks pi itself once a key is saved */
-	function piModels(): SetupProcess {
-		const lines = ["provider  model", "anthropic claude-a", "anthropic claude-b", "openai-codex gpt"];
-		const listeners: ((line: string) => void)[] = [];
-		const exited = Promise.resolve().then(() => {
-			for (const line of lines) for (const listener of listeners) listener(line);
-			return 0;
-		});
-		return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
-	}
+/** pi's `--list-models`, the only thing spool asks pi itself once a key is saved */
+function piModels(): SetupProcess {
+	const lines = ["provider  model", "anthropic claude-a", "anthropic claude-b", "openai-codex gpt"];
+	const listeners: ((line: string) => void)[] = [];
+	const exited = Promise.resolve().then(() => {
+		for (const line of lines) for (const listener of listeners) listener(line);
+		return 0;
+	});
+	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
+}
 
-	/** The providers as they answer a key: `sk-` keys are good, `down` can't be reached, the rest are refused. */
-	const providers: typeof fetch = async (_url, init) => {
-		const sent = JSON.stringify(init?.headers ?? {});
-		if (sent.includes("down")) throw new TypeError("fetch failed");
-		return new Response(null, { status: sent.includes("sk-") ? 200 : 401 });
+/** The providers as they answer a key: `sk-` keys are good, `down` can't be reached, the rest are refused. */
+const providers: typeof fetch = async (_url, init) => {
+	const sent = JSON.stringify(init?.headers ?? {});
+	if (sent.includes("down")) throw new TypeError("fetch failed");
+	return new Response(null, { status: sent.includes("sk-") ? 200 : 401 });
+};
+
+function piKeyApp(fetcher: typeof fetch = providers) {
+	const machine = machineAgents(["pi"]);
+	const piDir = join(machine.dir, "pi");
+	const app = makeApp(makeTempDir(), {
+		agentEngines: machine.engines,
+		agentSetup: { plans: machine.plans, piDir, run: piModels, fetch: fetcher },
+	});
+	const key = async (provider: string, value: string, more: object = {}) => {
+		const res = await app.request("/api/agents/pi/key", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ provider, key: value, ...more }),
+		});
+		return res.status === 200 ? await res.json() : res.status;
 	};
+	const auth = () => JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8"));
+	mkdirSync(piDir, { recursive: true });
+	writeFileSync(join(piDir, "auth.json"), JSON.stringify({ "openai-codex": { type: "oauth", access: "a" } }));
+	return { key, auth, piDir };
+}
 
-	function piKeyApp(fetcher: typeof fetch = providers) {
-		const machine = machineAgents(["pi"]);
-		const piDir = join(machine.dir, "pi");
-		const app = makeApp(makeTempDir(), {
-			agentEngines: machine.engines,
-			agentSetup: { plans: machine.plans, piDir, run: piModels, fetch: fetcher },
-		});
-		const key = async (provider: string, value: string, more: object = {}) => {
-			const res = await app.request("/api/agents/pi/key", {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ provider, key: value, ...more }),
-			});
-			return res.status === 200 ? await res.json() : res.status;
-		};
-		const auth = () => JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8"));
-		mkdirSync(piDir, { recursive: true });
-		writeFileSync(join(piDir, "auth.json"), JSON.stringify({ "openai-codex": { type: "oauth", access: "a" } }));
-		return { key, auth, piDir };
-	}
-
+describe("a key for pi", () => {
 	it("saves a key its provider takes beside what pi already keeps, and leaves pi as it was for one it refuses", async () => {
 		const { key, auth } = piKeyApp();
 
@@ -340,6 +340,45 @@ describe("a key for pi", () => {
 			replaced: true,
 		});
 		expect(auth().groq).toEqual({ type: "api_key", key: "down-2" });
+	});
+});
+
+describe("pi's auth.json, changed by more than one at once", () => {
+	it("keeps every key saved together and whatever pi wrote meanwhile", async () => {
+		const answers: (() => void)[] = [];
+		// the providers answer in the order the test lets them, and pi signs in to Copilot while they think
+		const slow: typeof fetch = (_url, _init) =>
+			new Promise((resolve) => answers.push(() => resolve(new Response(null, { status: 200 }))));
+		const { key, auth, piDir } = piKeyApp(slow);
+		const piSignsIn = () => {
+			const now = JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8"));
+			writeFileSync(join(piDir, "auth.json"), JSON.stringify({ ...now, "github-copilot": { type: "oauth" } }));
+		};
+
+		const first = key("anthropic", "sk-ant-1");
+		const second = key("openai", "sk-oai-1");
+		await expect.poll(() => answers.length).toBe(2);
+		piSignsIn();
+		answers[1]?.();
+		answers[0]?.();
+		expect(await Promise.all([first, second])).toMatchObject([{ ok: true }, { ok: true }]);
+		expect(Object.keys(auth()).sort()).toEqual(["anthropic", "github-copilot", "openai", "openai-codex"]);
+	});
+
+	it("waits out pi's own lock on the file, and takes over one a dead pi left", async () => {
+		const file = join(makeTempDir(), "auth.json");
+		mkdirSync(`${file}.lock`);
+		const waited = withPiAuthLock(file, () => "written");
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		expect(existsSync(`${file}.lock`)).toBe(true);
+		rmSync(`${file}.lock`, { recursive: true });
+		expect(await waited).toEqual({ held: true, value: "written" });
+		expect(existsSync(`${file}.lock`)).toBe(false);
+
+		mkdirSync(`${file}.lock`);
+		const long = new Date(Date.now() - 60_000);
+		utimesSync(`${file}.lock`, long, long);
+		expect(await withPiAuthLock(file, () => "taken")).toEqual({ held: true, value: "taken" });
 	});
 });
 

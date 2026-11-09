@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { PiKeyProvider } from "./agent-setup";
 
@@ -101,4 +101,62 @@ export function writePiAuth(file: string, entries: Readonly<Record<string, unkno
 	const temp = `${file}.spool-${process.pid}-${randomUUID()}`;
 	writeFileSync(temp, `${JSON.stringify(entries, null, 2)}\n`, { mode: 0o600 });
 	renameSync(temp, file);
+}
+
+/** how long pi's lock on auth.json may sit untouched before it was left by a pi that died (proper-lockfile's own) */
+const STALE_LOCK_MS = 10_000;
+const LOCK_TRIES = 50;
+const LOCK_WAIT_MS = 100;
+
+/** spool's own changes to each auth.json, one after another */
+const turns = new Map<string, Promise<unknown>>();
+
+/**
+ * One change to auth.json at a time, read and written while it is held, so it starts
+ * from the file as it is then, other changes included. spool's own changes wait their
+ * turn; pi's are kept out by pi's own lock, the `auth.json.lock` folder its
+ * proper-lockfile makes, which spool takes the same way. Busy when pi holds it longer
+ * than spool waits.
+ */
+export async function withPiAuthLock<T>(
+	file: string,
+	change: () => T,
+): Promise<{ held: true; value: T } | { held: false }> {
+	const before = turns.get(file) ?? Promise.resolve();
+	const mine = before.then(() => locked(file, change));
+	const settled = mine.catch(() => {});
+	turns.set(file, settled);
+	void settled.then(() => {
+		if (turns.get(file) === settled) turns.delete(file);
+	});
+	return mine;
+}
+
+async function locked<T>(file: string, change: () => T): Promise<{ held: true; value: T } | { held: false }> {
+	const lock = `${file}.lock`;
+	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+	for (let tries = 0; ; tries++) {
+		try {
+			mkdirSync(lock);
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+		try {
+			if (Date.now() - statSync(lock).mtimeMs > STALE_LOCK_MS) {
+				rmSync(lock, { recursive: true, force: true });
+				continue;
+			}
+		} catch {
+			// let go between the two looks: take it on the next
+			continue;
+		}
+		if (tries >= LOCK_TRIES) return { held: false };
+		await new Promise((resolve) => setTimeout(resolve, LOCK_WAIT_MS));
+	}
+	try {
+		return { held: true, value: change() };
+	} finally {
+		rmSync(lock, { recursive: true, force: true });
+	}
 }

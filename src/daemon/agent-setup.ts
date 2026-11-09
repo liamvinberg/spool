@@ -5,7 +5,7 @@ import { delimiter, join, posix, win32 } from "node:path";
 import { withPathFirst } from "./agent-cli";
 import { AGENT_ENGINE_IDS, type AgentEngine, type AgentEngineId } from "./agent-engine";
 import { agentPath } from "./agent-preflight";
-import { checkProviderKey, literalKeyRefusal, readPiAuth, writePiAuth } from "./pi-auth";
+import { checkProviderKey, literalKeyRefusal, readPiAuth, withPiAuthLock, writePiAuth } from "./pi-auth";
 
 /**
  * Putting an agent on this machine from spool's first run (spool#250): install it with its
@@ -588,16 +588,23 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 			const said = await checkProviderKey(provider, key, deps.fetch);
 			if (said === "refused") return { ok: false, reason: `${name} didn’t take that key.` };
 			const file = join(deps.piDir, "auth.json");
-			const now = readPiAuth(file);
-			if (now.kind === "unreadable") return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
-			const replaced = now.entries[provider] !== undefined;
-			if (said === "unchecked" && replaced && options.unchecked !== true)
-				return {
-					ok: false,
-					unchecked: true,
-					reason: `spool couldn’t reach ${name} to check this key, and pi already has one for ${name}. Save it in its place anyway?`,
-				};
-			writePiAuth(file, { ...now.entries, [provider]: { type: "api_key", key } });
+			// read again under the lock: another key saved meanwhile, or pi's own sign-in, stays as it is now
+			const saved = await withPiAuthLock(file, (): PiKeyResult | { readonly replaced: boolean } => {
+				const now = readPiAuth(file);
+				if (now.kind === "unreadable") return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
+				const replaced = now.entries[provider] !== undefined;
+				if (said === "unchecked" && replaced && options.unchecked !== true)
+					return {
+						ok: false,
+						unchecked: true,
+						reason: `spool couldn’t reach ${name} to check this key, and pi already has one for ${name}. Save it in its place anyway?`,
+					};
+				writePiAuth(file, { ...now.entries, [provider]: { type: "api_key", key } });
+				return { replaced };
+			});
+			if (!saved.held) return { ok: false, reason: "pi is busy with its sign-ins. Try again in a moment." };
+			if ("ok" in saved.value) return saved.value;
+			const { replaced } = saved.value;
 			const listed: string[] = [];
 			const listing = run({ command: "pi", args: ["--offline", "--list-models"] }, env);
 			listing.onLine((line) => listed.push(line));
