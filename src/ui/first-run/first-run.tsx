@@ -76,6 +76,18 @@ const PEAK = 4.5;
 
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/** The window's size as it is now, again on every resize: the Mac app's window changes size after the page asks. */
+function useViewport() {
+	const [size, setSize] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+	useEffect(() => {
+		const read = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+		window.addEventListener("resize", read);
+		read();
+		return () => window.removeEventListener("resize", read);
+	}, []);
+	return size;
+}
+
 export interface FirstRunProps {
 	/** the machine's agents, as the daemon last said them; null until it has */
 	agents: readonly MachineAgent[] | null;
@@ -182,6 +194,7 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	/* ------------------------------------------------------------ the window -- */
 
 	const size = SIZE[step];
+	const viewport = useViewport();
 	useEffect(() => {
 		if (growing !== null || appWindow?.setupWindow === undefined) return;
 		let live = true;
@@ -349,7 +362,6 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	/* -------------------------------------------------------------- the box -- */
 
 	const still = reducedMotion();
-	const viewport = { w: window.innerWidth, h: window.innerHeight };
 	const box =
 		native || growing !== null
 			? { width: viewport.w, height: viewport.h }
@@ -374,7 +386,12 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 				initial={false}
 				animate={box}
 				transition={
-					still ? { duration: 0 } : growing !== null ? { type: "spring", duration: 1.15, bounce: 0.08 } : SPRING
+					// the Mac app's window is the box: it follows the window's own frame exactly, never springs after it
+					still || native
+						? { duration: 0 }
+						: growing !== null
+							? { type: "spring", duration: 1.15, bounce: 0.08 }
+							: SPRING
 				}
 			>
 				{/* the window drags by its head, as spool's bar does */}
