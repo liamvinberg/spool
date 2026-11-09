@@ -43,12 +43,12 @@ export interface DesktopWindow {
 	/** close the window the canvas is in; an older app has no such call */
 	closeWindow?(): void;
 	/**
-	 * The first run's window (spool#250): `small` is the setup's 560x480, centred and fixed;
-	 * `grow` takes it back to spool's size. True when the window itself changed; false where
-	 * it can't (full screen, not small), and an older app has no such call: the page draws
-	 * the small box itself then.
+	 * The first run's window (spool#250): a step's size, centred and fixed (560 by 480, a
+	 * little taller on a step that holds more), or `grow` back to spool's own. True when the
+	 * window itself changed; false where it can't (full screen, not small), and an older app
+	 * has no such call: the page draws the small box itself then.
 	 */
-	setupWindow?(size: "small" | "grow"): Promise<boolean>;
+	setupWindow?(size: "grow" | { w: number; h: number }): Promise<boolean>;
 	/** a project (.spool) the app saved to Downloads, or could not; an older app does not say where */
 	onProjectDownload?(listener: (report: ProjectDownload) => void): () => void;
 	/** a canvas export (.png, .pdf, .html) the app saved to Downloads, or could not; `requested` is the name the canvas asked for */

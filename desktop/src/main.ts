@@ -54,7 +54,7 @@ import {
 	writeRemoteChoice,
 } from "./remote";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
-import { FULL, firstRunLikely, grownRect, MINIMUM, SMALL, smallRect } from "./setup-window";
+import { FULL, firstRunLikely, grownRect, MINIMUM, SMALL, setupSize, smallRect } from "./setup-window";
 import { UpdateCover } from "./update-cover";
 import {
 	beginUpdateRestart,
@@ -307,7 +307,12 @@ function createWindow(): BrowserWindow {
 		backgroundColor: "#0e0e0e",
 		titleBarStyle: "hiddenInset",
 		trafficLightPosition: { x: 14, y: 16 },
-		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js") },
+		webPreferences: {
+			spellcheck: false,
+			preload: join(__dirname, "canvas-preload.js"),
+			// the first run's open plays its sound as the window shows, before any press (spool#250)
+			autoplayPolicy: "no-user-gesture-required",
+		},
 	});
 
 	if (resumeWorkspace.maximized) created.maximize();
@@ -1163,24 +1168,28 @@ function installCanvasChannels(): void {
 		const showing = window;
 		const areas = screen.getAllDisplays().map((display) => display.workArea);
 		const area = screen.getDisplayMatching(showing.getBounds()).workArea;
-		if (size === "small") {
-			if (setupFrom !== undefined) return true;
+		if (size === "grow") {
+			if (setupFrom === undefined) return false;
+			const to = grownRect(setupFrom ?? undefined, area, areas);
+			setupFrom = undefined;
+			showing.setResizable(true);
+			// macOS animates the frame; elsewhere it is one step, and the page's own fade covers it
+			showing.setBounds({ x: to.x, y: to.y, width: to.w, height: to.h }, true);
+			showing.setMinimumSize(MINIMUM.w, MINIMUM.h);
+			return true;
+		}
+		const step = setupSize(size);
+		if (step === undefined) return false;
+		if (setupFrom === undefined) {
+			// full screen or maximised has no small window in it: the page draws its own box there
 			if (showing.isFullScreen() || showing.isMaximized()) return false;
 			const { x, y, width, height } = showing.getBounds();
 			setupFrom = { x, y, w: width, h: height };
-			showing.setMinimumSize(SMALL.w, SMALL.h);
-			const to = smallRect(area);
-			showing.setBounds({ x: to.x, y: to.y, width: to.w, height: to.h }, true);
-			showing.setResizable(false);
-			return true;
 		}
-		if (size !== "grow" || setupFrom === undefined) return false;
-		const to = grownRect(setupFrom ?? undefined, area, areas);
-		setupFrom = undefined;
-		showing.setResizable(true);
-		// macOS animates the frame; elsewhere it is one step, and the page's own grow covers it
+		showing.setMinimumSize(Math.min(SMALL.w, step.w), Math.min(SMALL.h, step.h));
+		const to = smallRect(area, step);
 		showing.setBounds({ x: to.x, y: to.y, width: to.w, height: to.h }, true);
-		showing.setMinimumSize(MINIMUM.w, MINIMUM.h);
+		showing.setResizable(false);
 		return true;
 	});
 	ipcMain.on("spool:canvas-active", (event, active: unknown) => {

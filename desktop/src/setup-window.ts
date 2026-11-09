@@ -27,8 +27,18 @@ function centred(size: { w: number; h: number }, area: WorkArea): WindowRect {
 	};
 }
 
-export function smallRect(area: WorkArea): WindowRect {
-	return centred(SMALL, area);
+/** A step's size, centred: the first run's window is 560 by 480, a little taller on a step that holds more. */
+export function smallRect(area: WorkArea, size: { w: number; h: number } = SMALL): WindowRect {
+	return centred(size, area);
+}
+
+/** A size the page asked for, held to what a setup step may be: never wider or taller than a step needs. */
+export function setupSize(asked: unknown): { w: number; h: number } | undefined {
+	if (typeof asked !== "object" || asked === null) return undefined;
+	const { w, h } = asked as { w?: unknown; h?: unknown };
+	if (typeof w !== "number" || typeof h !== "number" || !Number.isFinite(w) || !Number.isFinite(h)) return undefined;
+	const clamp = (n: number, low: number, high: number) => Math.round(Math.min(high, Math.max(low, n)));
+	return { w: clamp(w, 400, 900), h: clamp(h, 360, 800) };
 }
 
 /**

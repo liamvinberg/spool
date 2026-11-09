@@ -81,7 +81,8 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 	setMenuKeys: (keys: Partial<Record<CanvasCommand, string>>) => ipcRenderer.send("spool:canvas-menu-keys", keys),
 	closeWindow: () => ipcRenderer.send("spool:canvas-close-window"),
 	// the first run's small window, and its growing into spool's (spool#250)
-	setupWindow: (size: "small" | "grow"): Promise<boolean> => ipcRenderer.invoke("spool:setup-window", size),
+	setupWindow: (size: "grow" | { w: number; h: number }): Promise<boolean> =>
+		ipcRenderer.invoke("spool:setup-window", size),
 	...(local
 		? {
 				// a document Finder handed the app, for the canvas's Open… to read
