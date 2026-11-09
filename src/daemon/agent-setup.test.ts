@@ -403,6 +403,26 @@ describe("pi's auth.json, changed by more than one at once", () => {
 		expect(Object.keys(auth()).sort()).toEqual(["anthropic", "github-copilot", "openai", "openai-codex"]);
 	});
 
+	it("lets a key go once a newer one was sent for its provider, even when the newer one's check ends first", async () => {
+		const answers = new Map<string, () => void>();
+		const slow: typeof fetch = (_url, init) =>
+			new Promise((resolve) =>
+				answers.set(JSON.stringify(init?.headers), () => resolve(new Response(null, { status: 200 }))),
+			);
+		const { key, auth } = piKeyApp(slow);
+		const asked = (value: string) => [...answers.keys()].find((headers) => headers.includes(value));
+
+		const older = key("anthropic", "sk-ant-old");
+		await expect.poll(() => asked("sk-ant-old")).toBeDefined();
+		const newer = key("anthropic", "sk-ant-new");
+		await expect.poll(() => asked("sk-ant-new")).toBeDefined();
+		answers.get(asked("sk-ant-new") ?? "")?.();
+		expect(await newer).toMatchObject({ ok: true });
+		answers.get(asked("sk-ant-old") ?? "")?.();
+		expect(await older).toMatchObject({ ok: false });
+		expect(auth().anthropic).toEqual({ type: "api_key", key: "sk-ant-new" });
+	});
+
 	it("waits out a pi holding its lock on the file, and takes over one a dead pi left", async () => {
 		const file = join(makeTempDir(), "auth.json");
 		writeFileSync(file, "{}");

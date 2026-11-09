@@ -405,6 +405,8 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 	const known = new Map<AgentEngineId, Known>();
 	const jobs = new Map<AgentEngineId, SetupJob>();
 	const runs = new Map<AgentEngineId, SetupRun>();
+	/** each provider's latest key sent, by count: only it may reach pi's auth.json */
+	const keysSent = new Map<PiKeyProvider, number>();
 	const ids = AGENT_ENGINE_IDS.filter((id) => engines.has(id));
 
 	function snapshot(): MachineAgent[] {
@@ -609,7 +611,9 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 		 * A provider key saved where pi reads it (`auth.json` in its agent directory, the
 		 * format pi documents), once its provider has taken it: a typo or a revoked key
 		 * leaves pi as it was. Where spool can't reach the provider it saves the key only
-		 * when that replaces nothing, or when asked again with `unchecked`, and says so.
+		 * when that replaces nothing, or when asked again with `unchecked`, and says so. A key
+		 * sent for a provider makes every earlier one for it obsolete: one whose check ends
+		 * later is let go rather than written over the newer.
 		 */
 		async piKey(
 			provider: PiKeyProvider,
@@ -620,11 +624,17 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 			const refused = literalKeyRefusal(key);
 			if (refused !== undefined) return { ok: false, reason: refused };
 			const name = PI_KEY_PROVIDERS.find((one) => one.id === provider)?.name ?? provider;
+			const sent = (keysSent.get(provider) ?? 0) + 1;
+			keysSent.set(provider, sent);
+			const superseded: PiKeyResult = { ok: false, reason: `A newer key for ${name} took this one’s place.` };
 			const said = await checkProviderKey(provider, key, deps.fetch);
+			if (keysSent.get(provider) !== sent) return superseded;
 			if (said === "refused") return { ok: false, reason: `${name} didn’t take that key.` };
 			const file = join(deps.piDir, "auth.json");
 			// read again under the lock: another key saved meanwhile, or pi's own sign-in, stays as it is now
 			const saved = await withPiAuthLock(file, (): PiKeyResult | { readonly replaced: boolean } => {
+				// a newer key for the provider may have been checked and saved while this one waited its turn
+				if (keysSent.get(provider) !== sent) return superseded;
 				const now = readPiAuth(file);
 				if (now.kind === "unreadable") return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
 				const replaced = now.entries[provider] !== undefined;
