@@ -43,19 +43,25 @@ const runnable: Look = (path) => {
 /**
  * The names a bare command may wear.
  *
- * One on a Unix machine, where the executable bit is the whole of the question. Several
- * on Windows, where a name on PATH is only a name and `PATHEXT` is what says which
- * suffixes are runnable — a check that looked for an extensionless `claude` there would
- * report an agent as missing on a machine that has one, which is the one answer this
- * must never invent.
+ * One on a Unix machine, where the executable bit is the whole of the question. On
+ * Windows a name on PATH is only a name and `PATHEXT` says which suffixes are runnable, in
+ * its order: a check that looked for an extensionless `claude` there would report an agent
+ * as missing on a machine that has one, and one that took an extensionless file would pick
+ * the Unix shell script npm writes beside `pi.cmd`, which Windows can't run. A name that
+ * already wears a runnable suffix (`npm.cmd`) is looked for as it is.
  */
-function candidates(env: Readonly<Record<string, string | undefined>>, command: string): readonly string[] {
-	if (process.platform !== "win32") return [command];
-	const exts = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+function candidates(
+	env: Readonly<Record<string, string | undefined>>,
+	command: string,
+	platform: NodeJS.Platform,
+): readonly string[] {
+	if (platform !== "win32") return [command];
+	const exts = (env.PATHEXT?.trim() ? env.PATHEXT : ".COM;.EXE;.BAT;.CMD")
 		.split(";")
-		.map((ext) => ext.trim())
+		.map((ext) => ext.trim().toLowerCase())
 		.filter((ext) => ext !== "");
-	return [command, ...exts.map((ext) => `${command}${ext.toLowerCase()}`)];
+	if (exts.some((ext) => command.toLowerCase().endsWith(ext))) return [command];
+	return exts.map((ext) => `${command}${ext}`);
 }
 
 /**
@@ -83,8 +89,9 @@ export function agentPath(
 	env: Readonly<Record<string, string | undefined>>,
 	command: string,
 	look: Look = runnable,
+	platform: NodeJS.Platform = process.platform,
 ): string | undefined {
-	const names = candidates(env, command);
+	const names = candidates(env, command, platform);
 	for (const dir of (env.PATH ?? "").split(delimiter)) {
 		// an empty entry means the working directory to a shell, and spool is not a shell:
 		// resolving a bare command name against the project root would make a `claude` file

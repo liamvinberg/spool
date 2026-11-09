@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "
 import { delimiter, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { fixtureAgentExecutor, loginAgentExecutor, makeApp, makeProject, makeTempDir, until } from "../test-helpers";
-import { agentInstalled, askAgentLogin, loginOf, planAgentLogin } from "./agent-preflight";
+import { agentInstalled, agentPath, askAgentLogin, loginOf, planAgentLogin } from "./agent-preflight";
 
 /**
  * The two ways there is no agent to talk to (#201).
@@ -63,6 +63,27 @@ describe("is the agent on this machine", () => {
 		chmodSync(join(dir, "claude"), 0o644);
 
 		expect(agentInstalled({ PATH: dir }, "claude")).toBe(false);
+	});
+
+	/**
+	 * npm puts an extensionless Unix shell script beside the `pi.cmd` it makes on Windows,
+	 * and Windows runs neither a bare name nor that script: it takes `PATHEXT`'s suffixes in
+	 * their order.
+	 */
+	it("on Windows, resolves a bare name through PATHEXT's order and never to an extensionless file", () => {
+		const dir = join(makeTempDir(), "npm");
+		mkdirSync(dir, { recursive: true });
+		for (const name of ["pi", "pi.cmd", "codex.cmd", "codex.exe", "claude", "npm.cmd"]) {
+			writeFileSync(join(dir, name), "@echo off\n");
+			chmodSync(join(dir, name), 0o755);
+		}
+		const env = { PATH: dir };
+
+		expect(agentPath(env, "pi", undefined, "win32")).toBe(join(dir, "pi.cmd"));
+		expect(agentPath(env, "codex", undefined, "win32")).toBe(join(dir, "codex.exe"));
+		expect(agentPath({ ...env, PATHEXT: ".CMD;.EXE" }, "codex", undefined, "win32")).toBe(join(dir, "codex.cmd"));
+		expect(agentPath(env, "claude", undefined, "win32")).toBeUndefined();
+		expect(agentPath(env, "npm.cmd", undefined, "win32")).toBe(join(dir, "npm.cmd"));
 	});
 
 	/**
