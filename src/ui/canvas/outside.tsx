@@ -462,11 +462,20 @@ function hangOutside(element: HTMLElement, frame: Box, view: Camera): void {
 	const height = element.offsetHeight;
 	const below = rect.y + rect.h + HANG.below;
 	const above = rect.y - NAME_ROW - HANG.below - height;
-	const fits = below + height <= field - FOOT;
-	const side = fits || above < 8 ? "below" : "above";
-	const y = side === "below" ? Math.min(below, Math.max(8, field - FOOT - height)) : above;
 	const width = element.parentElement?.clientWidth ?? window.innerWidth;
-	const x = Math.max(8, Math.min(rect.x, width - CARD_W - 8));
+	const lowest = Math.max(8, field - FOOT - height);
+	let side: "below" | "above" | "beside" | "over";
+	let x = Math.max(8, Math.min(rect.x, width - CARD_W - 8));
+	let y: number;
+	if (below + height <= field - FOOT) [side, y] = ["below", below];
+	else if (above >= 8) [side, y] = ["above", above];
+	else {
+		// a frame taller than the screen: beside its foot when there is room, over it when not
+		const right = rect.x + rect.w + HANG.below;
+		side = right + CARD_W <= width - 8 ? "beside" : "over";
+		if (side === "beside") x = right;
+		y = Math.max(8, Math.min(rect.y + rect.h - height, lowest));
+	}
 	element.dataset.side = side;
 	// the notch keeps pointing at the frame's foot when the card is pushed along to stay on screen
 	element.style.setProperty(
@@ -572,7 +581,7 @@ export function OutsideAskCard({
 				<>
 					<span
 						aria-hidden="true"
-						className="-top-[6px] absolute size-[11px] rotate-45 border-line-default border-t border-l bg-surface-panel group-data-[side=above]:hidden"
+						className="-top-[6px] absolute size-[11px] rotate-45 border-line-default border-t border-l bg-surface-panel group-data-[side=above]:hidden group-data-[side=beside]:hidden group-data-[side=over]:hidden"
 						style={{ left: `calc(var(--notch, ${HANG.notch}px) - 5.5px)` }}
 					/>
 					<span
