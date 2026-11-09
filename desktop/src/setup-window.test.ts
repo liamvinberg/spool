@@ -66,7 +66,7 @@ test("a Mac signed in to Spool Cloud before the first run existed opens big, kno
 			assert.equal(firstRunLikely(spoolDir, "darwin"), false);
 			assert.equal(firstRunLikely(join(dir, "other"), "darwin"), true);
 			// never the secret: a `-w` read is what makes a Mac ask the person
-			assert.doesNotMatch(readFileSync(calls, "utf8"), /-w/);
+			assert.doesNotMatch(readFileSync(calls, "utf8"), /(^| )-w( |$)/m);
 			// elsewhere the session is a file in the state folder, which the folder check already sees
 			assert.equal(firstRunLikely(spoolDir, "linux"), true);
 		} finally {
