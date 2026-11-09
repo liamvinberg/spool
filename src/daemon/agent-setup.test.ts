@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import lockfile from "proper-lockfile";
 import { describe, expect, it } from "vitest";
 import { machineAgents, makeApp, makeTempDir } from "../test-helpers";
 import {
@@ -365,19 +366,32 @@ describe("pi's auth.json, changed by more than one at once", () => {
 		expect(Object.keys(auth()).sort()).toEqual(["anthropic", "github-copilot", "openai", "openai-codex"]);
 	});
 
-	it("waits out pi's own lock on the file, and takes over one a dead pi left", async () => {
+	it("waits out a pi holding its lock on the file, and takes over one a dead pi left", async () => {
 		const file = join(makeTempDir(), "auth.json");
-		mkdirSync(`${file}.lock`);
+		writeFileSync(file, "{}");
+		// pi's own lock, as its FileAuthStorageBackend takes it: refreshed every 15 s, stale at 30 s
+		const piRelease = await lockfile.lock(file, { realpath: false, stale: 30_000, retries: 0 });
+		// 20 s since pi last refreshed it: alive to pi, so spool waits however long it has sat
+		const refreshed = new Date(Date.now() - 20_000);
+		utimesSync(`${file}.lock`, refreshed, refreshed);
 		const waited = withPiAuthLock(file, () => "written");
 		await new Promise((resolve) => setTimeout(resolve, 250));
 		expect(existsSync(`${file}.lock`)).toBe(true);
-		rmSync(`${file}.lock`, { recursive: true });
+		await piRelease();
 		expect(await waited).toEqual({ held: true, value: "written" });
 		expect(existsSync(`${file}.lock`)).toBe(false);
 
+		// and pi, asking while spool holds it, is told it is held
+		let piAsked: unknown;
+		await withPiAuthLock(file, () => {
+			piAsked = lockfile.checkSync(file, { realpath: false, stale: 30_000 });
+		});
+		expect(piAsked).toBe(true);
+
+		// left by a pi that died: not refreshed for longer than pi's stale time
 		mkdirSync(`${file}.lock`);
-		const long = new Date(Date.now() - 60_000);
-		utimesSync(`${file}.lock`, long, long);
+		const dead = new Date(Date.now() - 31_000);
+		utimesSync(`${file}.lock`, dead, dead);
 		expect(await withPiAuthLock(file, () => "taken")).toEqual({ held: true, value: "taken" });
 	});
 });
