@@ -210,12 +210,17 @@ export default function (pi: any) {
 	pi.on("before_agent_start", (event: any, ctx: any) => {
 		if (event?.messageType === "user") send({ hook_event_name: "UserPromptSubmit", prompt: event.prompt ?? "" }, ctx);
 	});
-	pi.on("tool_execution_start", (event: any, ctx: any) =>
-		send({ hook_event_name: "PreToolUse", tool_name: event?.toolName, tool_input: event?.args ?? {} }, ctx),
-	);
-	pi.on("tool_execution_end", (event: any, ctx: any) =>
-		send({ hook_event_name: "PostToolUse", tool_name: event?.toolName, tool_input: event?.args ?? {}, failed: event?.isError === true }, ctx),
-	);
+	// a tool's end says only which call it was: its arguments are kept from its start
+	const calls = new Map<string, unknown>();
+	pi.on("tool_execution_start", (event: any, ctx: any) => {
+		calls.set(event?.toolCallId, event?.args ?? {});
+		send({ hook_event_name: "PreToolUse", tool_name: event?.toolName, tool_input: event?.args ?? {} }, ctx);
+	});
+	pi.on("tool_execution_end", (event: any, ctx: any) => {
+		const args = calls.get(event?.toolCallId) ?? {};
+		calls.delete(event?.toolCallId);
+		send({ hook_event_name: "PostToolUse", tool_name: event?.toolName, tool_input: args, failed: event?.isError === true }, ctx);
+	});
 	pi.on("ui_prompt_start", (_event: any, ctx: any) => send({ hook_event_name: "Notification", notification_type: "permission_prompt" }, ctx));
 	pi.on("agent_end", (event: any) => {
 		const messages = Array.isArray(event?.messages) ? event.messages : [];
