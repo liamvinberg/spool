@@ -20,6 +20,16 @@ export interface FrameAgent {
 	readonly waiting: boolean;
 	/** who it is and what it is doing, as hovering the mark says */
 	readonly says: string;
+	/** the word beside the ring while it works, where `working` would say less: `claude editing` */
+	readonly word?: string;
+}
+
+/** A hand of an agent working here from a terminal (task 531): whose and doing what, at which frame. */
+export interface OutsideHandAt {
+	readonly frame: string;
+	readonly who: string;
+	readonly act: "reading" | "editing";
+	readonly waiting: boolean;
 }
 
 export type FrameAgents = ReadonlyMap<string, readonly FrameAgent[]>;
@@ -31,7 +41,11 @@ export const NO_AGENTS: FrameAgents = new Map();
  * and every teammate's their presence tells of. A designer holding only its placeholder is at
  * the placeholder's name.
  */
-export function frameAgents(own: readonly AgentCompanion[], mates: readonly Teammate[]): FrameAgents {
+export function frameAgents(
+	own: readonly AgentCompanion[],
+	mates: readonly Teammate[],
+	outside: readonly OutsideHandAt[] = [],
+): FrameAgents {
 	const at = new Map<string, FrameAgent[]>();
 	const add = (name: string, agent: FrameAgent) => {
 		const there = at.get(name);
@@ -49,6 +63,15 @@ export function frameAgents(own: readonly AgentCompanion[], mates: readonly Team
 			says: `${one.name ?? "Your agent"}${waiting ? " · waiting on you" : ""}`,
 		});
 	}
+	// an agent of yours in a terminal is yours as much as the rail's is
+	for (const hand of outside)
+		add(hand.frame, {
+			color: null,
+			own: true,
+			waiting: hand.waiting,
+			says: `${hand.who} ${hand.waiting ? "· waiting on you" : hand.act}`,
+			word: `${hand.who} ${hand.act}`,
+		});
 	for (const mate of mates) {
 		const agent = mate.left === null ? mate.state.agent : undefined;
 		if (agent === undefined) continue;
@@ -75,7 +98,7 @@ export function FrameAgentsMark({ name, agents }: { name: string; agents: readon
 	const waiting = agents.find((one) => one.waiting);
 	const lead = waiting ?? agents[0];
 	if (lead === undefined) return null;
-	const word = waiting === undefined ? "working" : waiting.own ? "waiting on you" : "waiting";
+	const word = waiting === undefined ? (lead.word ?? "working") : waiting.own ? "waiting on you" : "waiting";
 	const tint = lead.color === null ? undefined : ({ color: lead.color } as CSSProperties);
 	return (
 		<span
@@ -102,15 +125,25 @@ export function FrameAgentsMark({ name, agents }: { name: string; agents: readon
  * whose agents say what they said before keeps the same list, and the map stays the same
  * while none moved, so a turn's ticks redraw no label (task 169)
  */
-export function useFrameAgents(room: PresenceRoom, own: readonly AgentCompanion[], team: boolean): FrameAgents {
+export function useFrameAgents(
+	room: PresenceRoom,
+	own: readonly AgentCompanion[],
+	team: boolean,
+	outside: readonly OutsideHandAt[] = NO_HANDS,
+): FrameAgents {
 	const heard = useSyncExternalStore(room.subscribe, () => (team ? heardWork(room.teammates()) : ""));
 	const last = useRef<FrameAgents>(NO_AGENTS);
 	return useMemo(() => {
-		const next = own.length === 0 && heard === "" ? NO_AGENTS : frameAgents(own, team ? room.teammates() : []);
+		const next =
+			own.length === 0 && heard === "" && outside.length === 0
+				? NO_AGENTS
+				: frameAgents(own, team ? room.teammates() : [], outside);
 		last.current = steady(last.current, next);
 		return last.current;
-	}, [own, heard, room, team]);
+	}, [own, heard, room, team, outside]);
 }
+
+const NO_HANDS: readonly OutsideHandAt[] = [];
 
 /** `next`, holding on to each of `was`'s lists that say the same, and to `was` itself if all do */
 export function steady(was: FrameAgents, next: FrameAgents): FrameAgents {
@@ -138,7 +171,8 @@ function sameAgents(a: readonly FrameAgent[], b: readonly FrameAgent[]): boolean
 				one.color === other.color &&
 				one.own === other.own &&
 				one.waiting === other.waiting &&
-				one.says === other.says
+				one.says === other.says &&
+				one.word === other.word
 			);
 		})
 	);

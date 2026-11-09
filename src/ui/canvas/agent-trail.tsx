@@ -1,5 +1,14 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+	type ReactNode,
+	type RefObject,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { pageName, pageParent, pageSegments, ROOT_PAGE } from "../../page-path";
 import type { Camera } from "../api";
 import { cn } from "../cn";
@@ -69,6 +78,7 @@ export function AgentTrail({
 	onFollow,
 	toPage,
 	onLand,
+	children,
 }: {
 	deck: DeckStore;
 	store: CanvasStore;
@@ -86,6 +96,8 @@ export function AgentTrail({
 	onFollow: () => void;
 	toPage: (page: string, arrive: Camera | undefined, then: Camera) => void;
 	onLand: (name: string) => void;
+	/** what stands under the trail in the corner: agents working here from a terminal (task 531) */
+	children?: ReactNode;
 }) {
 	const turn = useDeck(deck, trailTurnOf, sameTrailTurn);
 	const frames = useCanvasState(store, navigatorFramesOf);
@@ -160,7 +172,7 @@ export function AgentTrail({
 		};
 	}, [open]);
 
-	const t = useScale();
+	const t = useMotionScale();
 	const wake = useCornerWake(viewportRef);
 	const agent = turn?.agent ?? "agent";
 	const label = done ? `${made.length} new` : writing === null ? "" : pageName(writing.frame);
@@ -175,7 +187,7 @@ export function AgentTrail({
 			ref={wake}
 			data-agent-trail=""
 			className={cn(
-				"absolute right-3 z-20 flex h-control-sm items-center transition-[top] duration-slow ease-snap",
+				"absolute right-3 z-20 flex flex-col items-end gap-1 transition-[top] duration-slow ease-snap",
 				under ? "top-8" : "top-3",
 			)}
 			style={{ ["--wake" as string]: 0 }}
@@ -356,6 +368,7 @@ export function AgentTrail({
 					</motion.div>
 				) : null}
 			</AnimatePresence>
+			{children}
 		</div>
 	);
 }
@@ -497,7 +510,7 @@ function useFadeClock(ended: number | null, made: boolean): number {
 }
 
 /** the motion scale's steps in seconds, read off the page as the styles have them */
-function useScale() {
+export function useMotionScale() {
 	const still = useReducedMotion() === true;
 	const [scale, setScale] = useState({ fast: 0.14, base: 0.18, slow: 0.26, slower: 0.4 });
 	useLayoutEffect(() => {

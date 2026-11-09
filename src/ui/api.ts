@@ -34,6 +34,7 @@ import type { BranchesTouchingDesign } from "../daemon/history";
 import type { LocatedRange } from "../daemon/locate";
 import type { MovedAway } from "../daemon/moved-away";
 import type { Finding } from "../daemon/open-finding";
+import type { OutsideView } from "../daemon/outside";
 import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectThumbnail } from "../daemon/project-thumbnail";
@@ -46,6 +47,7 @@ import type { WhatsNewAnswer } from "../daemon/whats-new-routes";
 import type { PlaceSurvey, Survey } from "../get-it-places";
 import type { CloneProgress } from "../git-clone";
 import type { MoveProgress } from "../move-in";
+import type { Harness } from "../outside/harness";
 import type { KnobPath, KnobValue } from "../runtime/knob-protocol";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import {
@@ -143,6 +145,69 @@ function controlFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
 }
 
 const client = hc<AppType>("", { fetch: controlFetch });
+
+/* ------------------------------------------------ agents outside spool -- */
+
+/** What a project's canvas draws of the agents working on it from a terminal (task 531). */
+export async function fetchOutside(project: string): Promise<OutsideView | undefined> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/outside`);
+		if (!response.ok) return undefined;
+		const view = (await response.json()) as Partial<OutsideView> | null;
+		return Array.isArray(view?.sessions) ? (view as OutsideView) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** A harness spool can connect, where its hooks go and what connecting adds there. */
+export interface OutsideHarness {
+	harness: Harness;
+	file: string;
+	connected: boolean;
+	lines: { events: string[]; runs: string };
+}
+
+export async function fetchOutsideHarnesses(): Promise<OutsideHarness[]> {
+	try {
+		const response = await controlFetch("/api/outside");
+		if (!response.ok) return [];
+		const all = ((await response.json()) as { harnesses?: unknown } | null)?.harnesses;
+		return Array.isArray(all) ? (all as OutsideHarness[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+/** Connect a harness, take it out, or say Not now to the ask about it. */
+export async function postOutside(
+	harness: Harness,
+	act: "connect" | "disconnect" | "later",
+): Promise<{ ok: true; never: boolean } | { ok: false; error: string }> {
+	try {
+		const response = await controlFetch(`/api/outside/${harness}/${act}`, { method: "POST" });
+		const body = (await response.json().catch(() => ({}))) as { error?: unknown; never?: unknown };
+		if (!response.ok)
+			return { ok: false, error: typeof body.error === "string" ? body.error : "spool couldn't change that file." };
+		return { ok: true, never: body.never === true };
+	} catch {
+		return { ok: false, error: "spool couldn't be reached." };
+	}
+}
+
+/** Bring the terminal a session runs in to the front. */
+export async function openOutside(project: string, id: string): Promise<boolean> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/outside/open`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ id }),
+		});
+		return response.ok;
+	} catch {
+		return false;
+	}
+}
 
 export async function fetchProjects(): Promise<ProjectCard[]> {
 	const res = await client.api.projects.$get();
