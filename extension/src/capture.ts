@@ -743,6 +743,9 @@ function readable(sheet: CSSStyleSheet): string | null {
 	}
 }
 
+/** a declaration Chrome serialized with no value, which is never a property's own (a custom property's may be) */
+const LOSSY = /(?:^|[\s;{])[a-z][a-z-]*: ;/m;
+
 /** every active stylesheet in document order, `@import`ed ones ahead of the sheet that imports them */
 export function styles(doc: Document): ReferenceStyle[] {
 	const out: ReferenceStyle[] = [];
@@ -768,7 +771,17 @@ export function styles(doc: Document): ReferenceStyle[] {
 			}
 			text.push(rule.cssText);
 		}
-		if (text.length > 0) out.push({ kind: "text", text: text.join("\n"), base: sheet.href ?? doc.baseURI, ...media });
+		const read = text.join("\n");
+		// Chrome serializes a shorthand set from a var() and then a longhand of it as its longhands, all empty: the
+		// rule is lost unless the sheet is read from its source, the file or the <style>'s own text
+		if (LOSSY.test(read)) {
+			if (sheet.href !== null) return void out.push({ kind: "link", href: sheet.href, ...media });
+			const source = sheet.ownerNode instanceof HTMLStyleElement ? sheet.ownerNode.textContent : null;
+			// one that imports holds those sheets too, already taken
+			if (source !== null && source.trim() !== "" && !/@import\b/i.test(source))
+				return void out.push({ kind: "text", text: source, base: doc.baseURI, ...media });
+		}
+		if (text.length > 0) out.push({ kind: "text", text: read, base: sheet.href ?? doc.baseURI, ...media });
 	};
 	for (const sheet of Array.from(doc.styleSheets)) take(sheet);
 	for (const sheet of doc.adoptedStyleSheets ?? []) take(sheet);

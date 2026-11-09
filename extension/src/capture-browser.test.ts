@@ -25,8 +25,10 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 <head>
 	<link rel="stylesheet" href="/site.css">
 	<link rel="stylesheet" href="/faces.css">
+	<link rel="stylesheet" href="/lossy.css">
 	<link rel="stylesheet" href="${otherOrigin}/fonts.css" media="screen">
 	<style>@import url("/imported.css"); .pricing .card { color: red; }</style>
+	<style>.lead { font: var(--type); font-weight: 700 }</style>
 </head>
 <body class="home" style="--brand: #f40">
 	<main class="page">
@@ -118,6 +120,7 @@ beforeAll(async () => {
 			"text/css",
 			"@font-face { font-family: Used; src: url(used.woff2) } @font-face { font-family: Idle; src: url(idle.woff2) } .pricing { font-family: Used }",
 		],
+		"/lossy.css": ["text/css", ".lead { font: var(--type); font-weight: 700 }"],
 		"/a.png": ["image/png", ""],
 	});
 });
@@ -178,13 +181,16 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	expect(c.size).toMatchObject({ w: expect.any(Number), h: expect.any(Number) });
 	expect(c.viewport).toEqual({ w: 1200, h: 800 });
 
-	// every sheet in order: read where the tab may, the other origin's left for the daemon to fetch
+	// every sheet in order: read where the tab may, the other origin's left for the daemon to fetch, as is one Chrome
+	// reads back with a rule emptied, which its source still has
 	expect(c.styles).toEqual([
 		{ kind: "text", text: '.page { background: url("bg.png"); }', base: `${at(page)}/site.css` },
 		expect.objectContaining({ kind: "text", base: `${at(page)}/faces.css` }),
+		{ kind: "link", href: `${at(page)}/lossy.css` },
 		{ kind: "link", href: `${at(other)}/fonts.css`, media: "screen" },
 		{ kind: "text", text: ".imported { color: green; }", base: `${at(page)}/imported.css` },
 		{ kind: "text", text: ".pricing .card { color: red; }", base: `${at(page)}/` },
+		{ kind: "text", text: ".lead { font: var(--type); font-weight: 700 }", base: `${at(page)}/` },
 	]);
 
 	// a face the page declared and never loaded, for the daemon to leave on the web
