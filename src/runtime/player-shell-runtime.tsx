@@ -4,7 +4,7 @@ import { SPOOL_MARK_PATH } from "../brand";
 import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
-import { DESK_BAR_PX } from "./player-page";
+import { fittedBox, playRoom, readFit, writeFit } from "./player-fit";
 import { createPlayerRecorder, type NotedHands, type PlayerRecorder } from "./player-recorder";
 import { type ClipAspect, shapedBox } from "./record-protocol";
 
@@ -190,6 +190,8 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	let latestGeometry: { revision: number; frames: { name: string; w: number; h: number }[] } | undefined;
 	/** The clip shape the frame is played at while Record's panel is up or it records (spool#221). */
 	let shapedAs: ClipAspect | null = typeof config.record === "object" ? config.record.start : null;
+	/** Fitted to the window, or laid out at its real size (spool#553). */
+	let fitting = readFit();
 	/**
 	 * Geometry as the canvas authored it. `config.frames` holds the played box
 	 * instead — see `playedBox` below — and a window that changes size re-derives one
@@ -335,17 +337,20 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	};
 
 	/**
-	 * The box the page really gives a frame (#227): the authored width as a cap
-	 * and the real viewport below it, over the whole height of the window less
-	 * the 30px bar both shells wear. The frame is never scaled, so this is both
-	 * what the iframe is sized to and what the runtime inside it will measure —
-	 * which is why every w/h that crosses the port is in this space and not the
-	 * authored one, and why being 30px out here wedges the reveal shut.
+	 * The box the page really gives a frame. Responsive (#227): the authored
+	 * width as a cap and the real viewport below it, over the whole height of the
+	 * window less the 30px bar both shells wear. Fitted (spool#553): never less
+	 * than the authored size, shrunk by the chrome until it fits. Either way this
+	 * is what the iframe is laid out at and what the runtime inside it will
+	 * measure, since a scale does not change a viewport — which is why every w/h
+	 * that crosses the port is in this space and not the authored one, and why
+	 * being 30px out here wedges the reveal shut.
 	 */
 	const playedBox = (geometry: FrameGeometry): FrameGeometry => {
-		const room = { w: window.innerWidth, h: Math.max(window.innerHeight - DESK_BAR_PX, 1) };
+		const room = playRoom({ vw: window.innerWidth, vh: window.innerHeight });
 		// a frame played at a clip's shape lays itself out in that shape (spool#221)
 		if (shapedAs !== null) return shapedBox(shapedAs, room, geometry);
+		if (fitting) return fittedBox(geometry, room);
 		return { w: Math.min(room.w, geometry.w), h: room.h };
 	};
 	const playedList = (frames: { name: string; w: number; h: number }[]) =>
@@ -368,6 +373,17 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		},
 		dismissExternal: () => command("dismiss-external"),
 		close: () => host.close(),
+		fit: {
+			on: () => fitting,
+			set: (on) => {
+				if (on === fitting) return;
+				fitting = on;
+				writeFit(on);
+				geometryReplay();
+				notify();
+			},
+			authored: (frame) => authoredGeometry.find((each) => each.name === frame) ?? { w: 1440, h: 900 },
+		},
 	};
 
 	const applyGeometry = (frames: { name: string; w: number; h: number }[]) => {
