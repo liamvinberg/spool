@@ -29,7 +29,7 @@ import {
 } from "./parts";
 import { type PiKeyState, usePiKey } from "./pi-key";
 import { prepareField, Ripple, T } from "./ripple";
-import { heardNow, playSound, preloadSounds, SOUNDS, setMuted } from "./sounds";
+import { closeAudio, heardNow, playSound, preloadSounds, SOUNDS, setMuted } from "./sounds";
 import {
 	AGENT_COPY,
 	AGENT_ROWS,
@@ -156,6 +156,7 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 		return () => {
 			playing.current?.abort();
 			setMuted(false);
+			closeAudio();
 		};
 	}, [play]);
 

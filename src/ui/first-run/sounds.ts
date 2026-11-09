@@ -24,11 +24,30 @@ export const setMuted = (next: boolean) => {
 	muted = next;
 };
 
+/** the open's one audio context, made when it first plays and closed when the setup ends */
 let context: AudioContext | null = null;
 const audio = () => {
 	context ??= new AudioContext();
 	return context;
 };
+
+/** Inside a press: the audio context made or woken now, while the press still lets it start. */
+export function unlockAudio(): void {
+	try {
+		void audio()
+			.resume()
+			.catch(() => {});
+	} catch {
+		// no Web Audio: the open is silent
+	}
+}
+
+/** The setup ended: its audio context closed, and a new one made if it runs again (Help's Run setup again). */
+export function closeAudio(): void {
+	const closing = context;
+	context = null;
+	void closing?.close().catch(() => {});
+}
 
 const buffers = new Map<string, Promise<AudioBuffer>>();
 function load(url: string): Promise<AudioBuffer> {
