@@ -87,9 +87,16 @@ export function sniffAsset(bytes: Buffer): string | undefined {
 	return undefined;
 }
 
-/** an address that names a video by its extension, which is how a page's markup names its videos */
-function isVideo(url: string): boolean {
-	return /\.(?:mp4|m4v|webm|mov|m3u8)(?:[?#]|$)/i.test(url);
+/** the files a page plays, named by its <video>, <audio> and their <source>s: a sheet can only name one by its extension */
+function mediaUrls(html: string, base: string): Set<string> {
+	const found = new Set<string>();
+	for (const [tag] of html.matchAll(/<(?:video|audio|source)\b[^>]*>/gi)) {
+		const raw = /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
+		const value = raw?.[1] ?? raw?.[2] ?? raw?.[3];
+		const url = value === undefined ? undefined : absoluteUrl(decodeEntities(value.trim()), base);
+		if (url !== undefined) found.add(url);
+	}
+	return found;
 }
 
 /** The capture as one page, its files fetched within the caps. */
@@ -137,6 +144,8 @@ export async function referencePage(
 	for (const url of [...cssUrls(css), ...cssUrls(capture.animations)]) {
 		if (!otherFaces.has(url)) wanted.add(url);
 	}
+	const played = mediaUrls(body, pageBase);
+	const isVideo = (url: string) => played.has(url) || /\.(?:mp4|m4v|webm|mov|m3u8)(?:[?#]|$)/i.test(url);
 	const web = [...wanted].filter((url) => /^https?:/i.test(url));
 	const fetchable = web.filter((url) => !isVideo(url)).slice(0, limits.files);
 

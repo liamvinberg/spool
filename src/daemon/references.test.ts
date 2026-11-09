@@ -36,7 +36,7 @@ function capture(overrides: Partial<ReferenceCapture> = {}): ReferenceCapture {
 		label: "section.pricing",
 		size: { w: 600, h: 300 },
 		viewport: { w: 1280, h: 800 },
-		html: '<main class="page"><section class="pricing" data-spool-reference=""><img src="https://cdn.example.com/hero.png" loading="lazy" onclick="steal()"><p style="background:url(&quot;/dot.png&quot;)">Plans</p><x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price><video src="/clip.mp4#t=2" muted></video></section></main>',
+		html: '<main class="page"><section class="pricing" data-spool-reference=""><img src="https://cdn.example.com/hero.png" loading="lazy" onclick="steal()"><p style="background:url(&quot;/dot.png&quot;)">Plans</p><x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price><video src="/clip.mp4#t=2" muted></video><video><source src="/reel?id=2"></video></section></main>',
 		htmlAttrs: { class: "dark", lang: "en" },
 		bodyAttrs: { class: "site" },
 		styles: [
@@ -174,6 +174,7 @@ describe("a reference", () => {
 		expect(page).not.toContain("onclick");
 		// a video plays from the site: kept, it would weigh down every copy of the project
 		expect(asked).not.toContain("https://example.com/clip.mp4#t=2");
+		expect(asked).not.toContain("https://example.com/reel?id=2");
 		expect(page).toContain('<video src="https://example.com/clip.mp4#t=2" muted>');
 		// a video that showed no controls on the page shows none in the frame, where nothing runs to hide them
 		expect(page).toContain("video:not([controls])::-webkit-media-controls { display: none !important; }");
@@ -183,7 +184,7 @@ describe("a reference", () => {
 		);
 		const tsx = readFileSync(join(folder, "frame.tsx"), "utf8");
 		expect(tsx).toContain(
-			"Left out: a cross-origin iframe; 1 file the site would not give; 1 video, played from the site.",
+			"Left out: a cross-origin iframe; 1 file the site would not give; 2 videos, played from the site.",
 		);
 		// in view, and the canvas is told it arrived
 		expect(JSON.parse(readFileSync(join(folder, "frame.json"), "utf8"))).toEqual({
