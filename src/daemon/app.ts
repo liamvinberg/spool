@@ -201,7 +201,7 @@ export interface DaemonOptions {
 	/** The first run (spool#250): on in a packaged build, absent in tests and a checkout unless SPOOL_FIRST_RUN asks. */
 	firstRun?: boolean | undefined;
 	/** The first run's installers and sign-ins, swapped so a test runs fake commands rather than a vendor's. */
-	agentSetup?: Partial<Pick<AgentSetupDeps, "plans" | "run" | "env" | "piDir">> | undefined;
+	agentSetup?: Partial<Pick<AgentSetupDeps, "plans" | "run" | "env" | "piDir" | "fetch">> | undefined;
 	/** The registry probe — swapped out by seam tests. */
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
@@ -1086,6 +1086,7 @@ export function createDaemonApp({
 		piDir: agentSetupSeams?.piDir ?? piAgentDir(process.env, fsIndex.home),
 		...(agentSetupSeams?.run === undefined ? {} : { run: agentSetupSeams.run }),
 		...(agentSetupSeams?.env === undefined ? {} : { env: agentSetupSeams.env }),
+		...(agentSetupSeams?.fetch === undefined ? {} : { fetch: agentSetupSeams.fetch }),
 		emit: (agents) => emitAppEvent({ kind: "agents", agents }),
 	});
 

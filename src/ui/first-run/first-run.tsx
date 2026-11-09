@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { type ComponentProps, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
-import { type MachineAgent, PI_KEY_PROVIDERS, type PiKeyProvider } from "../../daemon/agent-setup";
+import { type MachineAgent, PI_KEY_PROVIDERS, type PiKeyProvider, type PiKeyResult } from "../../daemon/agent-setup";
 import type { CloudAccountState } from "../../daemon/cloud-account";
 import { postAgentCode, postAgentSetup, postPiKey } from "../api";
 import { CommandLine } from "../canvas/agent-float";
@@ -106,12 +106,7 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	const [skipped, setSkipped] = useState(false);
 	const [refused, setRefused] = useState<string | null>(null);
 	const [code, setCode] = useState("");
-	const [piKey, setPiKey] = useState<{
-		provider: PiKeyProvider;
-		key: string;
-		check: "idle" | "checking" | "ok" | "bad";
-		said: string;
-	}>({ provider: "anthropic", key: "", check: "idle", said: "" });
+	const [piKey, setPiKey] = useState<PiKeyState>({ provider: "anthropic", key: "", check: "idle", said: "" });
 	/** the agents ready when the step first read them: spool found them rather than set them up */
 	const [found, setFound] = useState<readonly AgentEngineId[] | null>(null);
 	const playing = useRef<AbortController | null>(null);
@@ -259,24 +254,20 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	};
 
 	const pi = rows.find((agent) => agent.id === "pi");
-	const checkKey = () => {
+	const checkKey = (unchecked = false) => {
 		if (piKey.key.trim() === "" || piKey.check === "checking") return;
 		const { provider, key } = piKey;
 		setPiKey((was) => ({ ...was, check: "checking" }));
-		void postPiKey(provider, key).then((result) =>
+		void postPiKey(provider, key, { unchecked }).then((result) =>
 			setPiKey((was) =>
-				was.key === key && was.provider === provider
-					? result.ok
-						? { ...was, check: "ok", said: `${result.models} models, saved to pi` }
-						: { ...was, check: "bad", said: result.reason }
-					: was,
+				was.key === key && was.provider === provider ? { ...was, ...keySaid(result, provider) } : was,
 			),
 		);
 	};
 	const actPi = (i: number) => {
 		if (i === 2) {
 			if (piKey.check === "ok") return go("agents");
-			return checkKey();
+			return checkKey(piKey.check === "unsure");
 		}
 		// a plan's sign-in happens inside pi itself: the steps are on the row, and return asks pi again
 		onRecheck();
@@ -574,7 +565,9 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 												? "Done"
 												: piKey.check === "checking"
 													? "Checking"
-													: "Check key"
+													: piKey.check === "unsure"
+														? "Save anyway"
+														: "Check key"
 											: pi !== undefined && isReady(pi)
 												? "Done"
 												: "Check again"}
@@ -798,6 +791,26 @@ function Lines({ lines, open }: { lines: readonly string[]; open: boolean }) {
 
 /* ------------------------------------------------------------------- pi -- */
 
+/** The key on pi's page, and what became of it: `unsure` is a key spool couldn't check that would replace pi's. */
+interface PiKeyState {
+	provider: PiKeyProvider;
+	key: string;
+	check: "idle" | "checking" | "ok" | "bad" | "unsure";
+	said: string;
+}
+
+/** What the key's line says once the daemon has answered. */
+function keySaid(result: PiKeyResult, provider: PiKeyProvider): Pick<PiKeyState, "check" | "said"> {
+	const name = PI_KEY_PROVIDERS.find((one) => one.id === provider)?.name ?? provider;
+	if (!result.ok) return { check: result.unchecked === true ? "unsure" : "bad", said: result.reason };
+	const took = result.checked
+		? result.models > 0
+			? `${name} took it: ${result.models} models in pi.`
+			: `${name} took it, and pi has it.`
+		: `Saved to pi unchecked: spool couldn’t reach ${name}.`;
+	return { check: "ok", said: result.replaced ? `${took} It replaced the one pi had.` : took };
+}
+
 function PiPage({
 	sel,
 	onSel,
@@ -809,7 +822,7 @@ function PiPage({
 	sel: number;
 	onSel: (i: number) => void;
 	onAct: (i: number) => void;
-	piKey: { provider: PiKeyProvider; key: string; check: "idle" | "checking" | "ok" | "bad"; said: string };
+	piKey: PiKeyState;
 	onProvider: (provider: PiKeyProvider) => void;
 	onKey: (key: string) => void;
 }) {
@@ -899,10 +912,10 @@ function PiPage({
 							role={piKey.check === "bad" ? "alert" : undefined}
 							className={cn("type-label", piKey.check === "bad" ? "text-danger-strong" : "text-tertiary")}
 						>
-							{piKey.check === "ok" || piKey.check === "bad"
+							{piKey.check === "ok" || piKey.check === "bad" || piKey.check === "unsure"
 								? piKey.said
 								: piKey.check === "checking"
-									? `Asking pi about the ${name} key`
+									? `Checking the key with ${name}`
 									: `Return checks it with ${name}.`}
 						</span>
 					</div>

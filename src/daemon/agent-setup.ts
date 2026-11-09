@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, posix, win32 } from "node:path";
+import { delimiter, join, posix, win32 } from "node:path";
 import { withPathFirst } from "./agent-cli";
 import { AGENT_ENGINE_IDS, type AgentEngine, type AgentEngineId } from "./agent-engine";
 import { agentPath } from "./agent-preflight";
-import { literalKeyRefusal } from "./pi-auth";
+import { checkProviderKey, literalKeyRefusal, readPiAuth, writePiAuth } from "./pi-auth";
 
 /**
  * Putting an agent on this machine from spool's first run (spool#250): install it with its
@@ -166,8 +166,21 @@ export function isPiKeyProvider(value: unknown): value is PiKeyProvider {
 }
 
 export type PiKeyResult =
-	| { readonly ok: true; readonly models: number }
-	| { readonly ok: false; readonly reason: string };
+	| {
+			readonly ok: true;
+			/** the provider's models pi now offers; 0 where pi couldn't say */
+			readonly models: number;
+			/** the provider took the key; false when spool couldn't ask it and saved it as it was told */
+			readonly checked: boolean;
+			/** it took the place of a key or sign-in pi already had for the provider */
+			readonly replaced: boolean;
+	  }
+	| {
+			readonly ok: false;
+			readonly reason: string;
+			/** spool couldn't ask the provider, and saving it would replace what pi has: it may be saved unchecked */
+			readonly unchecked?: true;
+	  };
 
 /** A running setup command: its lines, its input, its end. */
 export interface SetupProcess {
@@ -320,6 +333,8 @@ export interface AgentSetupDeps {
 	readonly home: string;
 	/** pi's agent directory, where its `auth.json` lives */
 	readonly piDir: string;
+	/** how a pasted key is asked of its provider */
+	readonly fetch?: typeof fetch;
 	readonly run?: SetupRunner;
 	/** the environment every setup command runs in, and whose PATH an install adds to */
 	readonly env?: Record<string, string | undefined>;
@@ -557,55 +572,44 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 		},
 		/**
 		 * A provider key saved where pi reads it (`auth.json` in its agent directory, the
-		 * format pi documents), then asked of pi with `pi auth check`. A key pi doesn't take
-		 * is taken back out, so a typo leaves pi as it was.
+		 * format pi documents), once its provider has taken it: a typo or a revoked key
+		 * leaves pi as it was. Where spool can't reach the provider it saves the key only
+		 * when that replaces nothing, or when asked again with `unchecked`, and says so.
 		 */
-		async piKey(provider: PiKeyProvider, pasted: string): Promise<PiKeyResult> {
+		async piKey(
+			provider: PiKeyProvider,
+			pasted: string,
+			options: { readonly unchecked?: boolean } = {},
+		): Promise<PiKeyResult> {
 			const key = pasted.trim();
 			const refused = literalKeyRefusal(key);
 			if (refused !== undefined) return { ok: false, reason: refused };
+			const name = PI_KEY_PROVIDERS.find((one) => one.id === provider)?.name ?? provider;
+			const said = await checkProviderKey(provider, key, deps.fetch);
+			if (said === "refused") return { ok: false, reason: `${name} didn’t take that key.` };
 			const file = join(deps.piDir, "auth.json");
-			let stored: Record<string, unknown> = {};
-			try {
-				const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
-				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-					return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
-				stored = parsed as Record<string, unknown>;
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-					return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
-			}
-			const write = (next: Record<string, unknown>) => {
-				mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-				const temp = `${file}.spool-${process.pid}`;
-				writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-				renameSync(temp, file);
-			};
-			write({ ...stored, [provider]: { type: "api_key", key } });
-			const said: string[] = [];
-			const checking = run({ command: "pi", args: ["auth", "check", "--provider", provider, "--json"] }, env);
-			checking.onLine((line) => said.push(line));
-			await checking.exited;
-			let status: unknown;
-			try {
-				status = (JSON.parse(said.join("\n")) as { status?: unknown }).status;
-			} catch {
-				status = undefined;
-			}
-			if (status !== "ready") {
-				write(stored);
+			const now = readPiAuth(file);
+			if (now.kind === "unreadable") return { ok: false, reason: "pi's auth.json isn't one spool can add to." };
+			const replaced = now.entries[provider] !== undefined;
+			if (said === "unchecked" && replaced && options.unchecked !== true)
 				return {
 					ok: false,
-					reason: status === undefined ? "pi couldn't check the key." : "pi didn't take that key.",
+					unchecked: true,
+					reason: `spool couldn’t reach ${name} to check this key, and pi already has one for ${name}. Save it in its place anyway?`,
 				};
-			}
+			writePiAuth(file, { ...now.entries, [provider]: { type: "api_key", key } });
 			const listed: string[] = [];
 			const listing = run({ command: "pi", args: ["--offline", "--list-models"] }, env);
 			listing.onLine((line) => listed.push(line));
 			await listing.exited;
 			await check("pi");
 			changed();
-			return { ok: true, models: listed.filter((line) => line.split(/\s+/)[0] === provider).length };
+			return {
+				ok: true,
+				models: listed.filter((line) => line.split(/\s+/)[0] === provider).length,
+				checked: said === "valid",
+				replaced,
+			};
 		},
 	};
 }

@@ -11,6 +11,7 @@ import {
 	spawnSetup,
 	windowsLaunch,
 } from "./agent-setup";
+import { checkProviderKey } from "./pi-auth";
 
 /**
  * The first run's agents (spool#250), at the machine's own door: what each agent is here,
@@ -266,60 +267,109 @@ describe("the official installers", () => {
 });
 
 describe("a key for pi", () => {
-	/** pi as `pi auth check` and `--list-models` answer, from what auth.json says */
-	function piAnswers(piDir: string) {
-		return (command: { command: string; args: readonly string[] }): SetupProcess => {
-			let lines: string[] = [];
-			const auth = JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8")) as Record<string, { key?: string }>;
-			if (command.args[0] === "auth") {
-				const provider = command.args[3] ?? "";
-				const ready = auth[provider]?.key?.startsWith("sk-") === true;
-				lines = [JSON.stringify({ status: ready ? "ready" : "invalid", provider })];
-			} else lines = ["provider  model", "anthropic claude-a", "anthropic claude-b", "openai-codex gpt"];
-			const listeners: ((line: string) => void)[] = [];
-			const exited = Promise.resolve().then(() => {
-				for (const line of lines) for (const listener of listeners) listener(line);
-				return 0;
-			});
-			return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
-		};
+	/** pi's `--list-models`, the only thing spool asks pi itself once a key is saved */
+	function piModels(): SetupProcess {
+		const lines = ["provider  model", "anthropic claude-a", "anthropic claude-b", "openai-codex gpt"];
+		const listeners: ((line: string) => void)[] = [];
+		const exited = Promise.resolve().then(() => {
+			for (const line of lines) for (const listener of listeners) listener(line);
+			return 0;
+		});
+		return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
 	}
 
-	it("saves a key pi takes beside what pi already keeps, and takes back one it doesn't", async () => {
+	/** The providers as they answer a key: `sk-` keys are good, `down` can't be reached, the rest are refused. */
+	const providers: typeof fetch = async (_url, init) => {
+		const sent = JSON.stringify(init?.headers ?? {});
+		if (sent.includes("down")) throw new TypeError("fetch failed");
+		return new Response(null, { status: sent.includes("sk-") ? 200 : 401 });
+	};
+
+	function piKeyApp(fetcher: typeof fetch = providers) {
 		const machine = machineAgents(["pi"]);
 		const piDir = join(machine.dir, "pi");
 		const app = makeApp(makeTempDir(), {
 			agentEngines: machine.engines,
-			agentSetup: { plans: machine.plans, piDir, run: piAnswers(piDir) },
+			agentSetup: { plans: machine.plans, piDir, run: piModels, fetch: fetcher },
 		});
-		const key = (provider: string, value: string) =>
-			app.request("/api/agents/pi/key", {
+		const key = async (provider: string, value: string, more: object = {}) => {
+			const res = await app.request("/api/agents/pi/key", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ provider, key: value }),
+				body: JSON.stringify({ provider, key: value, ...more }),
 			});
+			return res.status === 200 ? await res.json() : res.status;
+		};
+		const auth = () => JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8"));
 		mkdirSync(piDir, { recursive: true });
 		writeFileSync(join(piDir, "auth.json"), JSON.stringify({ "openai-codex": { type: "oauth", access: "a" } }));
+		return { key, auth, piDir };
+	}
 
-		expect(await (await key("anthropic", " sk-ant-123 ")).json()).toEqual({ ok: true, models: 2 });
-		expect(JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8"))).toEqual({
+	it("saves a key its provider takes beside what pi already keeps, and leaves pi as it was for one it refuses", async () => {
+		const { key, auth } = piKeyApp();
+
+		expect(await key("anthropic", " sk-ant-123 ")).toEqual({ ok: true, models: 2, checked: true, replaced: false });
+		expect(auth()).toEqual({
 			"openai-codex": { type: "oauth", access: "a" },
 			anthropic: { type: "api_key", key: "sk-ant-123" },
 		});
 
-		expect(await (await key("openai", "typo")).json()).toEqual({ ok: false, reason: "pi didn't take that key." });
-		expect(Object.keys(JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8")))).toEqual([
-			"openai-codex",
-			"anthropic",
-		]);
-		expect((await key("not-a-provider", "sk-1")).status).toBe(400);
+		expect(await key("anthropic", "typo")).toEqual({ ok: false, reason: "Anthropic didn’t take that key." });
+		expect(auth().anthropic).toEqual({ type: "api_key", key: "sk-ant-123" });
+		expect(await key("not-a-provider", "sk-1")).toBe(400);
 
 		// pi runs a key starting with ! and fills in a $: a pasted one is stored only as the key itself
 		for (const pasted of ["!touch pwned", "sk-$HOME", "sk-a b"])
-			expect(await (await key("anthropic", pasted)).json()).toMatchObject({ ok: false });
-		expect(JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8")).anthropic).toEqual({
-			type: "api_key",
-			key: "sk-ant-123",
+			expect(await key("anthropic", pasted)).toMatchObject({ ok: false });
+		expect(auth().anthropic).toEqual({ type: "api_key", key: "sk-ant-123" });
+	});
+
+	it("saves a key it couldn't check only where that replaces nothing, unless asked again", async () => {
+		const { key, auth } = piKeyApp();
+
+		expect(await key("groq", "down-1")).toMatchObject({ ok: true, checked: false, replaced: false });
+		expect(auth().groq).toEqual({ type: "api_key", key: "down-1" });
+
+		// pi's working key for a provider is never swapped for one nobody checked without asking
+		expect(await key("groq", "down-2")).toMatchObject({ ok: false, unchecked: true });
+		expect(auth().groq).toEqual({ type: "api_key", key: "down-1" });
+		expect(await key("groq", "down-2", { unchecked: true })).toMatchObject({
+			ok: true,
+			checked: false,
+			replaced: true,
 		});
+		expect(auth().groq).toEqual({ type: "api_key", key: "down-2" });
+	});
+});
+
+describe("asking a provider about a key", () => {
+	const answering =
+		(status: number): typeof fetch =>
+		async () =>
+			new Response(null, { status });
+
+	it("calls a key good only when the provider took it, and bad only when it said so", async () => {
+		let asked: { url: string; headers: unknown } | undefined;
+		const valid: typeof fetch = async (url, init) => {
+			asked = { url: String(url), headers: init?.headers };
+			return new Response("{}", { status: 200 });
+		};
+		expect(await checkProviderKey("anthropic", "sk-ant", valid)).toBe("valid");
+		expect(asked).toEqual({
+			url: "https://api.anthropic.com/v1/models",
+			headers: { "x-api-key": "sk-ant", "anthropic-version": "2023-06-01" },
+		});
+
+		expect(await checkProviderKey("openai", "k", answering(401))).toBe("refused");
+		// Google says a bad key with a 400
+		expect(await checkProviderKey("google", "k", answering(400))).toBe("refused");
+		expect(await checkProviderKey("openai", "k", answering(400))).toBe("unchecked");
+		expect(await checkProviderKey("openai", "k", answering(503))).toBe("unchecked");
+		expect(
+			await checkProviderKey("openai", "k", async () => {
+				throw new TypeError("fetch failed");
+			}),
+		).toBe("unchecked");
 	});
 });
