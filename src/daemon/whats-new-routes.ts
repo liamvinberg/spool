@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { readRegistry } from "../registry";
 import type { SettingsStore } from "./settings";
 import {
 	CHANGELOG_JSON_URL,
@@ -61,10 +62,14 @@ const FRESH_MS = 10 * 60 * 1000;
 export function whatsNewRoutes({
 	settings,
 	options,
+	spoolDir,
 }: {
 	settings: SettingsStore;
 	options: WhatsNewOptions | undefined;
+	spoolDir: string;
 }) {
+	// read before any window opens a project and moves its time on
+	const usedSince = options === undefined ? undefined : earliestOpen(spoolDir);
 	let held: { feed: ChangelogFeed; at: number } | undefined;
 	let reading: Promise<ChangelogFeed | undefined> | undefined;
 	const now = () => options?.now?.() ?? Date.now();
@@ -97,7 +102,7 @@ export function whatsNewRoutes({
 			const found = entries.find((entry) => entry.key === key)?.value;
 			return typeof found === "string" && found !== "" ? found : undefined;
 		};
-		return { seen: value("whatsNew.seen"), from: value("whatsNew.from") };
+		return { seen: value("whatsNew.seen"), from: value("whatsNew.from"), usedSince };
 	}
 
 	function remember(next: { seen: string; from?: string | undefined }): void {
@@ -118,4 +123,16 @@ export function whatsNewRoutes({
 			if (options !== undefined) remember(shownMemory(memory(), options.version));
 			return c.body(null, 204);
 		});
+}
+
+/** The last open of the project left longest unopened: when this Mac last used spool, at the latest. */
+function earliestOpen(spoolDir: string): number | undefined {
+	try {
+		const times = readRegistry(spoolDir)
+			.projects.map((project) => Date.parse(project.openedAt))
+			.filter(Number.isFinite);
+		return times.length === 0 ? undefined : Math.min(...times);
+	} catch {
+		return undefined;
+	}
 }

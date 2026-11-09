@@ -1385,7 +1385,7 @@ export function createDaemonApp({
 				historyChanged: () => history.keeping(registeredRoots()),
 			}),
 		)
-		.route("/api", whatsNewRoutes({ settings, options: whatsNew }))
+		.route("/api", whatsNewRoutes({ settings, options: whatsNew, spoolDir }))
 		.route(
 			"/api",
 			referenceRoutes({

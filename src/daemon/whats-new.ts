@@ -71,6 +71,11 @@ export interface WhatsNewContent {
 export interface WhatsNewMemory {
 	seen?: string | undefined;
 	from?: string | undefined;
+	/**
+	 * With nothing remembered, the earliest sign that spool ran here before: the
+	 * last open of the project left longest unopened, as the daemon started.
+	 */
+	usedSince?: number | undefined;
 }
 
 export interface WhatsNewDecision {
@@ -88,8 +93,12 @@ const NOTHING: WhatsNewDecision = { content: null, pop: false };
  * What to show, given what this Mac remembers, the version running and the
  * changelog (undefined when spool.page could not be reached).
  *
- * - Nothing remembered (a fresh install, a test, a clip's fresh lane): this
- *   version is remembered and nothing pops.
+ * - Nothing remembered, but a project was opened before this release went
+ *   out: spool ran here before What's new did, so the release before this one
+ *   stands in as the version seen, and this release's card pops as for any
+ *   update.
+ * - Nothing remembered otherwise (a fresh install, a test, a clip's fresh
+ *   lane): this version is remembered and nothing pops.
  * - A newer version than remembered gathers every release since. Fixes alone
  *   are remembered silently; a minor among them pops the card, which is
  *   remembered once it has been shown (`shown`).
@@ -104,10 +113,19 @@ export function decideWhatsNew(
 	feed: ChangelogFeed | undefined,
 	now: number,
 ): WhatsNewDecision {
-	if (memory.seen === undefined) {
-		return { ...(feed === undefined ? NOTHING : settled(feed, undefined, current)), remember: { seen: current } };
-	}
 	if (feed === undefined) return NOTHING;
+	if (memory.seen === undefined) {
+		const release = feed.releases.find((candidate) => candidate.version === current);
+		if (release === undefined) return NOTHING;
+		const before =
+			memory.usedSince !== undefined && memory.usedSince < releasedAt(feed, release)
+				? feed.releases.find((candidate) => isNewer(current, candidate.version))?.version
+				: undefined;
+		if (before === undefined) return { ...settled(feed, undefined, current), remember: { seen: current } };
+		// the release before stands in from now on, so the card still pops when this daemon's start no longer shows the trace
+		const upgrade = decideWhatsNew({ seen: before }, current, feed, now);
+		return upgrade.remember === undefined ? { ...upgrade, remember: { seen: before } } : upgrade;
+	}
 	if (!isNewer(current, memory.seen)) {
 		return settled(feed, memory.seen === current ? memory.from : undefined, current);
 	}

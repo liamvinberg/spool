@@ -47,21 +47,44 @@ const feed = readChangelogFeed(json) as ChangelogFeed;
 const NOW = Date.parse("2026-11-18T12:00:00Z");
 
 describe("decideWhatsNew", () => {
-	it("remembers the first version it sees and shows nothing, reachable or not", () => {
-		expect(decideWhatsNew({}, "0.52.1", undefined, NOW)).toEqual({
-			content: null,
-			pop: false,
-			remember: { seen: "0.52.1" },
-		});
-		// a fresh install on a release with features finds them in help, without the card unfolding
-		const fresh = decideWhatsNew({}, "0.52.0", feed, NOW);
+	it("on a fresh install, remembers the first version it sees and shows nothing", () => {
+		// a project first opened after this release went out came with this install
+		const fresh = decideWhatsNew({ usedSince: Date.parse("2026-11-18T11:00:00Z") }, "0.52.0", feed, NOW);
 		expect(fresh).toMatchObject({ pop: false, remember: { seen: "0.52.0" } });
+		// it finds this release's features in help, without the card unfolding
 		expect(fresh.content?.highlights.map((h) => h.title)).toEqual([
 			"The agent's trail",
 			"Chrome extension",
 			"Bring in Figma files",
 		]);
+		expect(decideWhatsNew({}, "0.52.0", feed, NOW)).toMatchObject({ pop: false, remember: { seen: "0.52.0" } });
 		expect(decideWhatsNew({}, "0.52.1", feed, NOW).content).toBeNull();
+		// out of reach, it decides nothing yet, so a Mac that ran spool before is not taken for a fresh one
+		expect(decideWhatsNew({}, "0.52.1", undefined, NOW)).toEqual({ content: null, pop: false });
+	});
+
+	it("takes a Mac that ran spool before this release, with nothing remembered, as updated from the release before", () => {
+		const before = Date.parse("2026-11-12T09:00:00Z");
+		const upgraded = decideWhatsNew({ usedSince: before }, "0.52.0", feed, NOW);
+		expect(upgraded).toMatchObject({ pop: true, remember: { seen: "0.51.0" } });
+		// this release's card, not every release before it
+		expect(upgraded.content?.highlights.map((h) => h.title)).toEqual([
+			"The agent's trail",
+			"Chrome extension",
+			"Bring in Figma files",
+		]);
+		// still waiting for clips, the release before is remembered so a later start without the trace pops it
+		const early = { ...feed, through: "0.51.0" };
+		expect(decideWhatsNew({ usedSince: before }, "0.52.0", early, NOW)).toMatchObject({
+			pop: false,
+			remember: { seen: "0.51.0" },
+		});
+		// an update of fixes alone stays quiet, as ever
+		expect(decideWhatsNew({ usedSince: before }, "0.52.1", feed, NOW)).toEqual({
+			content: null,
+			pop: false,
+			remember: { seen: "0.52.1", from: "0.52.0" },
+		});
 	});
 
 	it("gathers every release since the one remembered: four highlights newest first, the rest of the minors, the fixes summed", () => {

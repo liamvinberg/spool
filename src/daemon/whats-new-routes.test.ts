@@ -1,13 +1,17 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { makeApp, makeTempDir } from "../test-helpers";
-import { createSettingsStore } from "./settings";
 import type { WhatsNewAnswer } from "./whats-new-routes";
 
-it("reads changelog.json once, pops the card for an update, and remembers it when the window says it was shown", async () => {
+it("reads changelog.json once, pops the card for a Mac that used spool before, and remembers it when the window says it was shown", async () => {
 	const spoolDir = join(makeTempDir(), ".spool");
-	createSettingsStore(spoolDir).write("whatsNew.seen", "0.51.0");
+	// nothing remembered, but a project opened before 0.52.0 went out
+	mkdirSync(spoolDir, { recursive: true });
+	writeFileSync(
+		join(spoolDir, "registry.json"),
+		JSON.stringify({ version: 1, projects: [{ root: "/tmp/kaffe", openedAt: "2026-11-12T09:00:00Z" }] }),
+	);
 	const changelog = {
 		through: "0.52.0",
 		published: { "0.52.0": "2026-11-18T10:00:00Z" },
@@ -19,6 +23,7 @@ it("reads changelog.json once, pops the card for an update, and remembers it whe
 					{ kind: "minor", headline: "The agent's trail", title: "The canvas names the frame.", highlight: true },
 				],
 			},
+			{ version: "0.51.0", date: "2026-11-10", entries: [{ kind: "patch", title: "A fix." }] },
 		],
 	};
 	const fetch = vi.fn(async (_url: string | URL | Request) => Response.json(changelog));
