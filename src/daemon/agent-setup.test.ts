@@ -9,6 +9,7 @@ import {
 	type MachineAgent,
 	type SetupProcess,
 	spawnSetup,
+	windowsLaunch,
 } from "./agent-setup";
 
 /**
@@ -220,9 +221,47 @@ describe("the official installers", () => {
 		expect([bare.claude.install, bare.codex.install, bare.pi.install]).toEqual([null, null, null]);
 		expect(bare.pi.installLine).toBe("npm install -g @earendil-works/pi-coding-agent");
 
-		const windows = agentSetupPlans({ platform: "win32", home: "C:\\Users\\ada", has: has(["npm.cmd"]) });
+		// Windows: Codex's installer and npm put their commands elsewhere, which the daemon's PATH may not hold yet
+		const windows = agentSetupPlans({
+			platform: "win32",
+			home: "C:\\Users\\ada",
+			env: { LOCALAPPDATA: "C:\\Users\\ada\\AppData\\Local", APPDATA: "C:\\Users\\ada\\AppData\\Roaming" },
+			has: has(["npm.cmd"]),
+		});
 		expect(windows.claude.install?.command).toBe("powershell");
+		expect(windows.claude.bin).toBe("C:\\Users\\ada\\.local\\bin");
+		expect(windows.codex.bin).toBe("C:\\Users\\ada\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin");
 		expect(windows.pi.install?.command).toBe("npm.cmd");
+		expect(windows.pi.bin).toBe("C:\\Users\\ada\\AppData\\Roaming\\npm");
+		expect(
+			agentSetupPlans({
+				platform: "darwin",
+				home: "/Users/ada",
+				env: { CODEX_INSTALL_DIR: "/opt/codex" },
+				has: has([]),
+			}).codex.bin,
+		).toBe("/opt/codex");
+	});
+
+	it("runs a Windows launcher through cmd.exe only with arguments it reads as themselves", () => {
+		const npm = "C:\\Program Files\\nodejs\\npm.cmd";
+		expect(
+			windowsLaunch({ command: "npm.cmd", args: ["install", "-g", "@earendil-works/pi-coding-agent"] }, npm),
+		).toEqual({
+			file: `"${npm}"`,
+			args: ["install", "-g", "@earendil-works/pi-coding-agent"],
+			shell: true,
+		});
+		// pi, as npm made it: a pi.cmd the bare name finds
+		expect(windowsLaunch({ command: "pi", args: ["--list-models"] }, "C:\\npm\\pi.cmd")).toMatchObject({
+			shell: true,
+		});
+		expect(windowsLaunch({ command: "pi", args: ["a&calc"] }, "C:\\npm\\pi.cmd")).toHaveProperty("refused");
+		expect(windowsLaunch({ command: "codex", args: ["login"] }, "C:\\bin\\codex.exe")).toEqual({
+			file: "C:\\bin\\codex.exe",
+			args: ["login"],
+			shell: false,
+		});
 	});
 });
 

@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, posix, win32 } from "node:path";
 import { withPathFirst } from "./agent-cli";
 import { AGENT_ENGINE_IDS, type AgentEngine, type AgentEngineId } from "./agent-engine";
+import { agentPath } from "./agent-preflight";
 
 /**
  * Putting an agent on this machine from spool's first run (spool#250): install it with its
@@ -40,10 +41,11 @@ export interface AgentSetupPlan {
 
 export type AgentSetupPlans = Readonly<Record<AgentEngineId, AgentSetupPlan>>;
 
-/** The machine an install is planned for: its platform, home, and whether a command is on it. */
+/** The machine an install is planned for: its platform, home, environment, and whether a command is on it. */
 export interface SetupMachine {
 	readonly platform: NodeJS.Platform;
 	readonly home: string;
+	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly has: (command: string) => boolean;
 }
 
@@ -51,13 +53,24 @@ const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
 /**
  * The official installers as their vendors document them (checked for spool#250): Claude
- * Code's native installer and Codex's standalone one need no Node and put the binary in
- * `~/.local/bin`; pi is an npm package. Codex's installer asks whether to start Codex at
- * the end, which `CODEX_NON_INTERACTIVE` answers.
+ * Code's native installer and Codex's standalone one need no Node; pi is an npm package.
+ * Where each puts its binary, which a daemon started before it may not have on PATH:
+ * Claude Code in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows); Codex in
+ * `~/.local/bin`, and on Windows in `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`, either
+ * moved by `CODEX_INSTALL_DIR`; pi wherever npm puts global commands, beside npm itself
+ * on a Mac or Linux and `%APPDATA%\npm` on Windows, as a `pi.cmd`. Codex's installer asks
+ * whether to start Codex at the end, which `CODEX_NON_INTERACTIVE` answers.
  */
-export function agentSetupPlans({ platform, home, has }: SetupMachine): AgentSetupPlans {
+export function agentSetupPlans({ platform, home, env = {}, has }: SetupMachine): AgentSetupPlans {
 	const windows = platform === "win32";
-	const localBin = join(home, ".local", "bin");
+	const path = windows ? win32 : posix;
+	const localBin = path.join(home, ".local", "bin");
+	const set = (name: string) => (env[name]?.trim() ? env[name]?.trim() : undefined);
+	const codexBin =
+		set("CODEX_INSTALL_DIR") ??
+		(windows
+			? path.join(set("LOCALAPPDATA") ?? path.join(home, "AppData", "Local"), "Programs", "OpenAI", "Codex", "bin")
+			: localBin);
 	const powershell = (script: string): SetupCommand => ({
 		command: "powershell",
 		args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
@@ -85,7 +98,7 @@ export function agentSetupPlans({ platform, home, has }: SetupMachine): AgentSet
 				: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
 			signIn: { command: "codex", args: ["login"] },
 			signInLine: "codex login",
-			bin: localBin,
+			bin: codexBin,
 		},
 		pi: {
 			install: has(npm) ? { command: npm, args: ["install", "-g", PI_PACKAGE] } : null,
@@ -93,6 +106,7 @@ export function agentSetupPlans({ platform, home, has }: SetupMachine): AgentSet
 			// pi signs in with a plan only from inside its own session
 			signIn: null,
 			signInLine: "pi, then type /login",
+			...(windows ? { bin: path.join(set("APPDATA") ?? path.join(home, "AppData", "Roaming"), "npm") } : {}),
 		},
 	};
 }
@@ -176,6 +190,38 @@ export function plainLine(line: string): string {
 
 const PROMPT = /[>:?]\s*$/;
 
+/** An argument cmd.exe reads as itself: no quotes, spaces, `%`, `^`, `&`, `|`, `<`, `>` or parentheses. */
+const CMD_PLAIN = /^[\w@.\\/:=,+-]+$/;
+
+/**
+ * How Windows runs a command spool names bare: the file it is on PATH (`npm.cmd`, a
+ * `pi.cmd` npm made, `codex.exe`), and a `.cmd` or `.bat` only through cmd.exe, which
+ * Node refuses to start one without. cmd.exe reads its line again, so a launcher is run
+ * only with arguments it can't read as anything but themselves.
+ */
+export function windowsLaunch(
+	command: SetupCommand,
+	/** where the bare name resolves on PATH, PATHEXT applied; undefined where it doesn't */
+	resolved: string | undefined,
+): { file: string; args: readonly string[]; shell: boolean } | { refused: string } {
+	const file = resolved ?? command.command;
+	if (!/\.(?:cmd|bat)$/i.test(file)) return { file, args: command.args, shell: false };
+	if (!command.args.every((arg) => CMD_PLAIN.test(arg)))
+		return { refused: `spool won't pass that to ${command.command} through cmd.exe.` };
+	// quoted, as the launcher's own folder may have a space in it (Program Files)
+	return { file: `"${file}"`, args: command.args, shell: true };
+}
+
+/** A command that never started, saying why. */
+function refusedProcess(reason: string): SetupProcess {
+	const listeners: ((line: string) => void)[] = [];
+	const exited = Promise.resolve().then(() => {
+		for (const listener of listeners) listener(reason);
+		return null;
+	});
+	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
+}
+
 /** how long a stopped command has to end before it is killed outright */
 const STOP_GRACE_MS = 3000;
 
@@ -189,12 +235,15 @@ const STOP_GRACE_MS = 3000;
  */
 export const spawnSetup: SetupRunner = (command, env) => {
 	const windows = process.platform === "win32";
-	const child = spawn(command.command, [...command.args], {
+	const launch = windows
+		? windowsLaunch(command, agentPath(env, command.command))
+		: { file: command.command, args: command.args, shell: false };
+	if ("refused" in launch) return refusedProcess(launch.refused);
+	const child = spawn(launch.file, [...launch.args], {
 		env: { ...env, ...command.env },
 		cwd: homedir(),
 		stdio: ["pipe", "pipe", "pipe"],
-		// Windows runs a .cmd (npm's) only through its shell; the arguments are spool's own
-		shell: windows && command.command.endsWith(".cmd"),
+		shell: launch.shell,
 		windowsHide: true,
 		detached: !windows,
 	});

@@ -1080,6 +1080,7 @@ export function createDaemonApp({
 			agentSetupPlans({
 				platform: process.platform,
 				home: fsIndex.home,
+				env: process.env,
 				has: (command) => agentInstalled(process.env, command),
 			}),
 		piDir: agentSetupSeams?.piDir ?? piAgentDir(process.env, fsIndex.home),

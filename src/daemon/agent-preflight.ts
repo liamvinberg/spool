@@ -79,7 +79,11 @@ export function agentInstalled(
 }
 
 /** The path a bare command resolves to on this PATH, the first one a shell would run. */
-function agentPath(env: Readonly<Record<string, string | undefined>>, command: string, look: Look): string | undefined {
+export function agentPath(
+	env: Readonly<Record<string, string | undefined>>,
+	command: string,
+	look: Look = runnable,
+): string | undefined {
 	const names = candidates(env, command);
 	for (const dir of (env.PATH ?? "").split(delimiter)) {
 		// an empty entry means the working directory to a shell, and spool is not a shell:
