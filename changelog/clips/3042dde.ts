@@ -8,7 +8,13 @@ const pages: Record<string, { component: string; screens: string[]; prop: string
 	dill: { component: "Dill", screens: ["recipe", "step", "done"], prop: "onNext" },
 };
 
-const frame = (product: string, component: string, screen: string, next: string, prop: string) => `import { ui } from "spool";
+const frame = (
+	product: string,
+	component: string,
+	screen: string,
+	next: string,
+	prop: string,
+) => `import { ui } from "spool";
 import { ${component} } from "shared/kit/${product}/${product}";
 
 export default function Frame() {
@@ -31,7 +37,10 @@ export default {
 		...Object.fromEntries(
 			Object.entries(pages).flatMap(([product, { component, screens, prop }]) =>
 				screens.flatMap((screen, at) => [
-					[`design/frames/${product}/${screen}/frame.json`, JSON.stringify({ x: 80 + at * 440, y: 80, w: 390, h: 844 })],
+					[
+						`design/frames/${product}/${screen}/frame.json`,
+						JSON.stringify({ x: 80 + at * 440, y: 80, w: 390, h: 844 }),
+					],
 					[
 						`design/frames/${product}/${screen}/frame.tsx`,
 						frame(product, component, screen, screens[(at + 1) % screens.length] as string, prop),

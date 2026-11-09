@@ -12,12 +12,15 @@ import type { Clip } from "../../.agents/skills/changelog/scripts/clip";
  * Pay → Confirm → Sent → Amount as kin walks them.
  */
 function kinFig(): string {
-	const doc = parseFig(new Uint8Array(readFileSync(new URL("../../src/fixtures/import/reading-list.fig", import.meta.url))));
+	const doc = parseFig(
+		new Uint8Array(readFileSync(new URL("../../src/fixtures/import/reading-list.fig", import.meta.url))),
+	);
 	type Guid = { sessionID: number; localID: number };
 	type Layer = Record<string, unknown>;
 	const layer = (id: string): Layer => structuredClone(doc.nodeMap.get(id)) as unknown as Layer;
 	const FRAME = layer("1:15");
-	for (const key of Object.keys(FRAME)) if (key.startsWith("stack") || key === "parameterConsumptionMap") delete FRAME[key];
+	for (const key of Object.keys(FRAME))
+		if (key.startsWith("stack") || key === "parameterConsumptionMap") delete FRAME[key];
 	const TEXT = layer("1:16");
 	delete TEXT.derivedTextData;
 	delete TEXT.stackChildAlignSelf;
@@ -66,7 +69,9 @@ function kinFig(): string {
 					{
 						id: { sessionID: 1, localID: next++ },
 						event: { interactionType: "ON_CLICK" },
-						actions: [{ transitionNodeID: box.link, connectionType: "INTERNAL_NODE", navigationType: "NAVIGATE" }],
+						actions: [
+							{ transitionNodeID: box.link, connectionType: "INTERNAL_NODE", navigationType: "NAVIGATE" },
+						],
 						isDeleted: false,
 						stateManagementVersion: 1,
 					},
@@ -78,7 +83,17 @@ function kinFig(): string {
 	const text = (
 		parent: Guid,
 		characters: string,
-		t: { x: number; y: number; w: number; size: number; style?: string; color: string; alpha?: number; align?: string; tracking?: number },
+		t: {
+			x: number;
+			y: number;
+			w: number;
+			size: number;
+			style?: string;
+			color: string;
+			alpha?: number;
+			align?: string;
+			tracking?: number;
+		},
 	) =>
 		layers.push({
 			...structuredClone(TEXT),
@@ -106,7 +121,14 @@ function kinFig(): string {
 	const sent = frame(root, "Sent", { x: 940, y: 0, w: W, h: 844, fill: ACCENT });
 	(layers[0] as Layer).prototypeStartingPoint = { name: "Pay Maya", description: "", position: "!" };
 	const status = (on: Guid, color: string) =>
-		text(frame(on, "Status bar", { x: 0, y: 0, w: W, h: 54 }), "9:41", { x: 32, y: 18, w: 60, size: 16, style: "Semi Bold", color });
+		text(frame(on, "Status bar", { x: 0, y: 0, w: W, h: 54 }), "9:41", {
+			x: 32,
+			y: 18,
+			w: 60,
+			size: 16,
+			style: "Semi Bold",
+			color,
+		});
 	const card = (on: Guid, y: number, balance: string, inverted: boolean) => {
 		const color = inverted ? ACCENT : WHITE;
 		const c = frame(on, "Card", { x: 20, y, w: 350, h: 196, fill: inverted ? WHITE : ACCENT, radius: 26 });
@@ -116,7 +138,15 @@ function kinFig(): string {
 		text(c, "•••• 4021", { x: 226, y: 146, w: 100, size: 16, style: "Semi Bold", color, alpha: 0.8, align: "RIGHT" });
 	};
 	const button = (on: Guid, label: string, box: Parameters<typeof frame>[2], color: string, style = "Bold") =>
-		text(frame(on, label, box), label, { x: 0, y: (box.h - 22) / 2, w: box.w, size: 18, style, color, align: "CENTER" });
+		text(frame(on, label, box), label, {
+			x: 0,
+			y: (box.h - 22) / 2,
+			w: box.w,
+			size: 18,
+			style,
+			color,
+			align: "CENTER",
+		});
 
 	status(amount, WHITE);
 	frame(amount, "Clear", { x: 20, y: 62, w: 40, h: 40, fill: WHITE, alpha: 0.16, radius: 20 });
@@ -128,8 +158,22 @@ function kinFig(): string {
 	text(note, "Ramen at Tajima", { x: 0, y: 10, w: 160, size: 15, style: "Medium", color: WHITE, align: "CENTER" });
 	const keypad = frame(amount, "Keypad", { x: 24, y: 452, w: 342, h: 264 });
 	for (const [i, key] of ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "←"].entries())
-		text(keypad, key, { x: (i % 3) * 114, y: Math.floor(i / 3) * 66 + 16, w: 114, size: 30, style: "Semi Bold", color: WHITE, align: "CENTER" });
-	button(amount, "Request", { x: 20, y: 734, w: 169, h: 58, fill: WHITE, alpha: 0.16, radius: 29 }, WHITE, "Semi Bold");
+		text(keypad, key, {
+			x: (i % 3) * 114,
+			y: Math.floor(i / 3) * 66 + 16,
+			w: 114,
+			size: 30,
+			style: "Semi Bold",
+			color: WHITE,
+			align: "CENTER",
+		});
+	button(
+		amount,
+		"Request",
+		{ x: 20, y: 734, w: 169, h: 58, fill: WHITE, alpha: 0.16, radius: 29 },
+		WHITE,
+		"Semi Bold",
+	);
 	button(amount, "Pay", { x: 201, y: 734, w: 169, h: 58, fill: WHITE, radius: 29, link: confirm }, ACCENT);
 
 	status(confirm, INK);
@@ -137,7 +181,16 @@ function kinFig(): string {
 	text(confirm, "Review", { x: 0, y: 72, w: W, size: 17, style: "Semi Bold", color: INK, align: "CENTER" });
 	const face = frame(confirm, "Avatar", { x: mid(92), y: 134, w: 92, h: 92, fill: ACCENT, radius: 46 });
 	text(face, "MC", { x: 0, y: 28, w: 92, size: 32, style: "Bold", color: WHITE, align: "CENTER" });
-	text(confirm, "Maya Collins", { x: 0, y: 242, w: W, size: 28, style: "Bold", color: INK, align: "CENTER", tracking: -2 });
+	text(confirm, "Maya Collins", {
+		x: 0,
+		y: 242,
+		w: W,
+		size: 28,
+		style: "Bold",
+		color: INK,
+		align: "CENTER",
+		tracking: -2,
+	});
 	text(confirm, "$mayacollins", { x: 0, y: 280, w: W, size: 16, color: INK, alpha: 0.52, align: "CENTER" });
 	text(confirm, "$42", { x: 0, y: 330, w: W, size: 76, style: "Bold", color: INK, align: "CENTER", tracking: -5 });
 	text(confirm, "Ramen at Tajima", { x: 0, y: 418, w: W, size: 17, color: INK, alpha: 0.52, align: "CENTER" });
