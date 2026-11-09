@@ -66,6 +66,8 @@ export interface ReferencePage {
 	assets: Map<string, Buffer>;
 	/** how many files the page names that stayed on the web */
 	missed: number;
+	/** the videos it names, which play from the site: kept, they would weigh down every copy of the project */
+	linked: number;
 }
 
 /** What a file is, read from its first bytes: a site's content type is often wrong and an extension often absent. */
@@ -83,6 +85,11 @@ export function sniffAsset(bytes: Buffer): string | undefined {
 	const head = bytes.subarray(0, 1024).toString("utf8").trimStart();
 	if (/^(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!doctype svg[^>]*>\s*)?<svg[\s>]/i.test(head)) return ".svg";
 	return undefined;
+}
+
+/** an address that names a video by its extension, which is how a page's markup names its videos */
+function isVideo(url: string): boolean {
+	return /\.(?:mp4|m4v|webm|mov|m3u8)(?:[?#]|$)/i.test(url);
 }
 
 /** The capture as one page, its files fetched within the caps. */
@@ -130,7 +137,8 @@ export async function referencePage(
 	for (const url of [...cssUrls(css), ...cssUrls(capture.animations)]) {
 		if (!otherFaces.has(url)) wanted.add(url);
 	}
-	const fetchable = [...wanted].filter((url) => /^https?:/i.test(url)).slice(0, limits.files);
+	const web = [...wanted].filter((url) => /^https?:/i.test(url));
+	const fetchable = web.filter((url) => !isVideo(url)).slice(0, limits.files);
 
 	const local = new Map<string, string>();
 	const assets = new Map<string, Buffer>();
@@ -150,7 +158,8 @@ export async function referencePage(
 		}
 	};
 	await Promise.all(Array.from({ length: Math.max(1, limits.parallel) }, worker));
-	const missed = new Set([...wanted].filter((url) => !local.has(url) && /^https?:/i.test(url))).size;
+	const linked = web.filter(isVideo).length;
+	const missed = web.filter((url) => !local.has(url)).length - linked;
 
 	const toLocal = (url: string) => local.get(url) ?? url;
 	const pinned = (text: string) =>
@@ -177,7 +186,7 @@ export async function referencePage(
 	]
 		.filter((line) => line !== "")
 		.join("\n");
-	return { html: page, assets, missed };
+	return { html: page, assets, missed, linked };
 }
 
 type Get = (url: string, maxBytes: number) => Promise<PublicFile | undefined>;
