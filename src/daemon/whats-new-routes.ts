@@ -54,7 +54,7 @@ export interface WhatsNewAnswer {
 const FRESH_MS = 10 * 60 * 1000;
 
 /**
- * GET /api/whats-new and POST /api/whats-new/seen (spool#526). The window asks
+ * GET /api/whats-new and POST /api/whats-new/seen. The window asks
  * the daemon, never spool.page: the daemon reads changelog.json, decides with
  * what this Mac remembers (`whatsNew.*` in config.json), and is told when the
  * card has been shown so it is remembered then and not before.

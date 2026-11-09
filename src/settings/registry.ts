@@ -206,7 +206,7 @@ export const SETTINGS = {
 		label: "Appearance",
 		says: "Dark, light, or whichever the system is set to.",
 	},
-	// What's new (spool#526): the version this Mac last opened on, and the one before it, which its card began after
+	// What's new: the version this Mac last opened on, and the one before it, which its card began after
 	"whatsNew.seen": {
 		scope: "machine",
 		group: "remembered",

@@ -24,7 +24,7 @@ export function BarEnd({
 	onShortcuts: () => void;
 	/** on a canvas with a project folder: hand the project to an agent of one's own */
 	onUseAgent?: (() => void) | undefined;
-	/** this version's What's new, at the head of help's menu, when it brought any features (spool#526) */
+	/** this version's What's new, at the head of help's menu, when it brought any features */
 	whatsNew?: WhatsNewRow | undefined;
 }) {
 	return (

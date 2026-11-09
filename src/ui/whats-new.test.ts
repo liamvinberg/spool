@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { WhatsNewAnswer } from "../daemon/whats-new-routes";
 
 /**
- * What's new in the window (spool#526), over a daemon played by a fetch stub:
+ * What's new in the window, over a daemon played by a fetch stub:
  * told to pop, the pill unfolds into the card by itself and says once that it
  * was shown; dismissed, it goes to help, whose row brings it back.
  */

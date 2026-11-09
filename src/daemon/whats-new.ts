@@ -1,7 +1,7 @@
 import { isNewer } from "./update-check";
 
 /**
- * What's new (spool#526): the first open on a new version shows what came with
+ * What's new: the first open on a new version shows what came with
  * it, once. spool.page/changelog.json holds the releases (spool-cloud builds it
  * from CHANGELOG.md, changelog/highlights.json and npm's publish times) and the
  * app ships no copy; this file decides, from that and the version last seen on

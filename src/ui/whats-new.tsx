@@ -11,7 +11,7 @@ import { TextAction } from "./primitives/feedback";
 import { Clip } from "./whats-new-clip";
 
 /**
- * What's new (spool#526), as the update pill unfolded. The first time the
+ * What's new, as the update pill unfolded. The first time the
  * window opens on a new version, the pill comes back as "Updated to Spool
  * 0.52.0" and opens upward into one card, one highlight at a time, its row
  * staying at the foot where the pill was. The ticks in that row are the clips'

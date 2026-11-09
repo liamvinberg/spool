@@ -21,7 +21,7 @@ export interface ServeDaemonOptions {
 	development?: boolean | undefined;
 	/** #30 phone-home — absent means off, so tests and tools stay silent. */
 	updateCheck?: boolean | undefined;
-	/** What's new (spool#526) — absent means off, so tests and a checkout stay quiet. */
+	/** What's new — absent means off, so tests and a checkout stay quiet. */
 	whatsNew?: WhatsNewOptions | undefined;
 	/** #158 the per-user history switch — absent means on, since only `false` is a refusal. */
 	history?: boolean | undefined;

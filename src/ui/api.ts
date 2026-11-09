@@ -497,7 +497,7 @@ export async function postUpgrade(): Promise<UpgradeStart> {
 	}
 }
 
-/** What's new as the window opens (spool#526): what help's row holds, and whether the card unfolds by itself. */
+/** What's new as the window opens: what help's row holds, and whether the card unfolds by itself. */
 export async function fetchWhatsNew(): Promise<WhatsNewAnswer | undefined> {
 	try {
 		const res = await controlFetch("/api/whats-new");

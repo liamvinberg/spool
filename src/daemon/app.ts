@@ -191,7 +191,7 @@ export interface DaemonOptions {
 	 * this is the one way to say no to every project at once.
 	 */
 	history?: boolean | undefined;
-	/** What's new (spool#526): on in a packaged build, absent in tests and a checkout unless SPOOL_WHATS_NEW asks. */
+	/** What's new: on in a packaged build, absent in tests and a checkout unless SPOOL_WHATS_NEW asks. */
 	whatsNew?: WhatsNewOptions | undefined;
 	/** The registry probe — swapped out by seam tests. */
 	fetchLatest?: () => Promise<string | undefined>;
