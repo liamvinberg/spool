@@ -313,12 +313,18 @@ it("brings what the site's script does under the hand, and the frame does it aga
 				<div id="media" class="still" style="height: 100px">media</div>
 				<div id="bar" style="width: 1px">progress</div>
 			</a>
-			<a id="away" href="/elsewhere">away</a>`;
+			<a id="away" href="/elsewhere">away</a>
+			<div id="tile" style="cursor: pointer; width: 200px; height: 80px"><span id="tip">tip</span></div>`;
 		// the site's script: the card lights its media as the hand comes; its bar grows on its own
 		const card = document.getElementById("card") as HTMLElement;
 		const media = document.getElementById("media") as HTMLElement;
 		card.addEventListener("mouseenter", () => media.setAttribute("data-active", ""));
 		card.addEventListener("mouseleave", () => media.removeAttribute("data-active"));
+		// one the hand never comes to, which shows its tip as a pointer enters it
+		const tile = document.getElementById("tile") as HTMLElement;
+		const tip = document.getElementById("tip") as HTMLElement;
+		tile.addEventListener("pointerenter", () => tip.classList.add("shown"));
+		tile.addEventListener("pointerleave", () => tip.classList.remove("shown"));
 		const bar = document.getElementById("bar") as HTMLElement;
 		setInterval(() => {
 			bar.style.width = `${Number.parseFloat(bar.style.width) + 1}px`;
@@ -334,8 +340,13 @@ it("brings what the site's script does under the hand, and the frame does it aga
 	await tab.waitForTimeout(300);
 	await tab.mouse.move(150, 120, { steps: 4 });
 	await tab.waitForTimeout(1500);
-	const c = await tab.evaluate(() => {
-		const w = window as unknown as { watch: { read(): unknown }; spoolCapture: typeof import("./capture") };
+	const c = await tab.evaluate(async () => {
+		const w = window as unknown as {
+			watch: import("./hovers").HoverWatch;
+			spoolCapture: typeof import("./capture") & typeof import("./hovers");
+		};
+		// the hand is brought to what it never came to before the page is taken
+		await w.watch.probe(w.spoolCapture.hoverables(document.body), 1500);
 		return w.spoolCapture.capture(
 			{ el: document.body, whole: true, label: location.host },
 			{ hovers: w.watch.read() as never },
@@ -346,6 +357,10 @@ it("brings what the site's script does under the hand, and the frame does it aga
 	expect(c.html).toMatch(/<a id="card" [^>]*data-spool-hover="h1">/);
 	expect(c.html).toContain(
 		'<div id="media" class="still" style="height: 100px" data-spool-hover-set="[[&quot;h1&quot;,&quot;data-active&quot;,&quot;&quot;]]">',
+	);
+	expect(c.html).toMatch(/<div id="tile" [^>]*data-spool-hover="h\d">/);
+	expect(c.html).toMatch(
+		/<span id="tip" data-spool-hover-set="\[\[&quot;h\d&quot;,&quot;class&quot;,&quot;shown&quot;\]\]">/,
 	);
 	// what moves on its own is no hover, though it moved as the hand came
 	expect(c.html).toMatch(/<div id="bar" style="width: \d+px;">/);
