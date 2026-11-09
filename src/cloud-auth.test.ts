@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,7 +13,7 @@ import {
 	logout,
 	pastedCode,
 } from "./cloud-auth";
-import { makeTempDir } from "./test-helpers";
+import { fakeKeychain, makeTempDir } from "./test-helpers";
 
 const originalPath = process.env.PATH;
 const originalCloudOrigin = process.env.SPOOL_CLOUD_ORIGIN;
@@ -318,33 +318,7 @@ describe("Cloud account sign-in", () => {
 	});
 
 	it("keeps Keychain entries separate by authority and local instance without putting the token in argv", async () => {
-		const root = makeTempDir();
-		const bin = join(root, "bin");
-		const store = join(root, "store");
-		const calls = join(root, "calls");
-		mkdirSync(bin);
-		mkdirSync(store);
-		writeFileSync(
-			join(bin, "security"),
-			`#!/bin/sh
-set -eu
-printf '%s\\n' "$*" >> ${JSON.stringify(calls)}
-op="$1"; shift
-if [ "$op" = "-i" ]; then IFS= read -r line; set -- $line; op="$1"; shift; fi
-account=""; service=""; password=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in -a) account="$2"; shift 2;; -s) service="$2"; shift 2;; -w) if [ "$#" -gt 1 ]; then password="$2"; shift 2; else shift; fi;; -U) shift;; *) shift;; esac
-done
-file="${store}/$(printf '%s\\0%s' "$service" "$account" | shasum -a 256 | cut -d' ' -f1)"
-case "$op" in
-  add-generic-password) printf '%s' "$password" > "$file";;
-  find-generic-password) [ -f "$file" ] || exit 44; cat "$file";;
-  delete-generic-password) [ -f "$file" ] || exit 44; rm "$file";;
-esac
-`,
-		);
-		chmodSync(join(bin, "security"), 0o755);
-		process.env.PATH = `${bin}:${originalPath ?? ""}`;
+		const { calls } = fakeKeychain();
 		const one = keychainVault("/tmp/checkout-one", "https://spool.page");
 		const two = keychainVault("/tmp/checkout-two", "https://spool.page");
 		await one.write("a".repeat(43));

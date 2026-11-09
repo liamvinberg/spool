@@ -673,8 +673,11 @@ test("a restart whose catch-up fails still restarts once, into the waiting updat
 test("the setup window lets the first run's open play its sound with a press of the app's own, and nothing else", async () => {
 	api.boot();
 	await turn();
-	// no window-wide autoplay: a page in it plays sound only after a press
-	assert.equal((canvasOptions.webPreferences as { autoplayPolicy?: string }).autoplayPolicy, undefined);
+	// a page in it plays sound only after a press, never by Electron's default of no press at all
+	assert.equal(
+		(canvasOptions.webPreferences as { autoplayPolicy?: string }).autoplayPolicy,
+		"document-user-activation-required",
+	);
 	const setup = handlers.get("spool:setup-window") as unknown as (event: unknown, size: unknown) => unknown;
 	assert.ok(setup);
 	await setup(sender(), { w: 560, h: 480 });

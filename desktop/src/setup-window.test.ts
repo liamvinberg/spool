@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -36,6 +37,41 @@ test("a first launch opens small until the setup is done, never where spool was 
 		assert.equal(firstRunLikely(dir), true);
 		writeFileSync(join(dir, "config.json"), JSON.stringify({ onboarding: { done: true } }));
 		assert.equal(firstRunLikely(dir), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a Mac signed in to Spool Cloud before the first run existed opens big, known by the Keychain item's name alone", () => {
+	const dir = mkdtempSync(join(tmpdir(), "spool-setup-"));
+	try {
+		const spoolDir = join(dir, "state");
+		mkdirSync(spoolDir);
+		// the Keychain item spool's keychainVault keeps a session in, as the daemon names it
+		const authority = "https://spool.page";
+		const hash = (text: string) => createHash("sha256").update(text).digest("base64url");
+		const account = hash(`${authority}\0${spoolDir}`);
+		const service = `spool.device-session.${hash(authority)}`;
+		const calls = join(dir, "calls");
+		mkdirSync(join(dir, "bin"));
+		writeFileSync(
+			join(dir, "bin", "security"),
+			`#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\n[ "$*" = "find-generic-password -a ${account} -s ${service}" ]\n`,
+			{ mode: 0o755 },
+		);
+		const env = { PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` };
+		const path = process.env.PATH;
+		process.env.PATH = env.PATH;
+		try {
+			assert.equal(firstRunLikely(spoolDir, "darwin"), false);
+			assert.equal(firstRunLikely(join(dir, "other"), "darwin"), true);
+			// never the secret: a `-w` read is what makes a Mac ask the person
+			assert.doesNotMatch(readFileSync(calls, "utf8"), /-w/);
+			// elsewhere the session is a file in the state folder, which the folder check already sees
+			assert.equal(firstRunLikely(spoolDir, "linux"), true);
+		} finally {
+			process.env.PATH = path;
+		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

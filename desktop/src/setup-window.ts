@@ -1,5 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { rectIsReachable, type WindowRect, type WorkArea } from "./play-window";
 
 // The first run's window (spool#250).
@@ -64,16 +66,52 @@ function readJson(file: string): unknown {
 /** What a state folder holds once spool was used from it: the daemon's `USED_STATE` (spool's `src/daemon/first-run.ts`). */
 const USED_STATE = ["registry.json", "session.json", "config.json", "cloud", "threads", "comments"] as const;
 
+/** The spool.page this machine signs in to: spool's `cloudOrigin`, falling back to spool.page's own as the daemon does. */
+function cloudAuthority(env: NodeJS.ProcessEnv): string {
+	const raw = env.SPOOL_CLOUD_ORIGIN;
+	try {
+		const url = new URL(raw ?? "");
+		if (url.protocol === "https:" && url.origin === raw && !url.username && !url.password) return url.origin;
+	} catch {
+		// unset or not an origin
+	}
+	return "https://spool.page";
+}
+
+/**
+ * A Spool Cloud sign-in in this Mac's Keychain, where a Mac keeps it rather than the state
+ * folder: spool's `hasStoredSession` (`src/cloud-auth.ts`), the item asked for by its
+ * service and account alone, never its secret, so the Mac never asks the person.
+ */
+function keychainSession(spoolDir: string, env: NodeJS.ProcessEnv): boolean {
+	const authority = cloudAuthority(env);
+	const hash = (text: string) => createHash("sha256").update(text).digest("base64url");
+	const account = hash(`${authority}\0${resolve(spoolDir)}`);
+	return ["spool.device-session", "spool.publisher-session"].some(
+		(entry) =>
+			spawnSync("security", ["find-generic-password", "-a", account, "-s", `${entry}.${hash(authority)}`], {
+				stdio: "ignore",
+				timeout: 2_000,
+			}).status === 0,
+	);
+}
+
 /**
  * Whether the window should open small, ahead of the page saying so: the daemon's own
- * rule (`settleFirstRun` in spool's `src/daemon/first-run.ts`), read off the same files,
- * so a first launch shows the small window straight away rather than a big one shrinking.
- * `onboarding.done` once the daemon has written it; before that, a state folder nobody
- * has used yet. The page still decides; a window opened small that turns out not to need it grows.
+ * rule (`settleFirstRun` in spool's `src/daemon/first-run.ts`), read off the same files
+ * and the same Keychain item, so a first launch shows the small window straight away
+ * rather than a big one shrinking. `onboarding.done` once the daemon has written it;
+ * before that, a state folder nobody has used yet and no Cloud sign-in. The page still
+ * decides; a window opened small that turns out not to need it grows.
  */
-export function firstRunLikely(spoolDir: string): boolean {
+export function firstRunLikely(
+	spoolDir: string,
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+): boolean {
 	const config = readJson(join(spoolDir, "config.json")) as { onboarding?: { done?: unknown } } | undefined;
 	const done = config?.onboarding?.done;
 	if (typeof done === "boolean") return !done;
-	return !USED_STATE.some((name) => existsSync(join(spoolDir, name)));
+	if (USED_STATE.some((name) => existsSync(join(spoolDir, name)))) return false;
+	return !(platform === "darwin" && keychainSession(spoolDir, env));
 }

@@ -1,7 +1,8 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeTempDir } from "../test-helpers";
+import { keychainVault } from "../cloud-auth";
+import { fakeKeychain, makeTempDir } from "../test-helpers";
 import { firstRunDue, firstRunServing, settleFirstRun } from "./first-run";
 import { createSettingsStore } from "./settings";
 
@@ -42,5 +43,27 @@ describe("the first run", () => {
 			settleFirstRun(before, createSettingsStore(before));
 			expect(done(before)).toBe(true);
 		}
+	});
+
+	it("knows somebody signed in to Spool Cloud on a Mac by the Keychain, without asking it for the session", async () => {
+		const { calls } = fakeKeychain();
+		const done = (spoolDir: string) =>
+			createSettingsStore(spoolDir)
+				.read()
+				.entries.find((entry) => entry.key === "onboarding.done")?.value;
+		const fresh = makeTempDir();
+		settleFirstRun(fresh, createSettingsStore(fresh), "darwin");
+		expect(done(fresh)).toBe(false);
+
+		// signed in before this version: the session is in the Keychain, and nothing in the state folder says so
+		const signedIn = makeTempDir();
+		await keychainVault(signedIn).write("s".repeat(43));
+		writeFileSync(calls, "");
+		settleFirstRun(signedIn, createSettingsStore(signedIn), "darwin");
+		expect(done(signedIn)).toBe(true);
+		const asked = readFileSync(calls, "utf8").trim().split("\n");
+		expect(asked.length).toBeGreaterThan(0);
+		// by name alone: a read of the secret is what makes a Mac ask the person
+		for (const line of asked) expect(line).toMatch(/^find-generic-password -a \S+ -s \S+$/);
 	});
 });

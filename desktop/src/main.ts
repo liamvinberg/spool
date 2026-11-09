@@ -154,11 +154,15 @@ let canvasDownloads: CanvasDownloads | undefined;
  */
 let setupFrom: WindowRect | null | undefined;
 
+/** Sound only after a press in the page, as in a browser: Electron's default is `no-user-gesture-required`. */
+const AUTOPLAY = { autoplayPolicy: "document-user-activation-required" } as const;
+
 /**
  * The first run's open (spool#250) plays its sound as the setup window shows: the app
  * tells the page it is showing with a press of its own (`executeJavaScript` with a user
  * gesture), which lets that page start its audio. Nothing in the window may play sound
- * unasked otherwise: there is no window-wide autoplay policy.
+ * unasked otherwise: spool's windows take a browser's rule (`AUTOPLAY`), where Electron's
+ * own lets any page play sound without a press.
  */
 function startSetupOpen(showing: BrowserWindow): void {
 	const tell = () => {
@@ -330,7 +334,7 @@ function createWindow(): BrowserWindow {
 		backgroundColor: "#0e0e0e",
 		titleBarStyle: "hiddenInset",
 		trafficLightPosition: { x: 14, y: 16 },
-		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js") },
+		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js"), ...AUTOPLAY },
 	});
 
 	if (resumeWorkspace.maximized) created.maximize();
@@ -930,6 +934,7 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 		webPreferences: {
 			spellcheck: false,
 			preload: join(__dirname, "play-preload.js"),
+			...AUTOPLAY,
 		},
 	});
 	const id = window_.webContents.id;

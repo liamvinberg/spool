@@ -19,7 +19,7 @@ import { AGENT_PERMISSIONS, type AgentEngineId, type AgentPermissions, isAgentEn
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AgentAsk } from "../daemon/agent-offer";
 import type { AgentLogin } from "../daemon/agent-preflight";
-import type { MachineAgent, PiKeyProvider, PiKeyResult } from "../daemon/agent-setup";
+import type { MachineAgent, PiKeyResult } from "../daemon/agent-setup";
 import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { CanvasOrder } from "../daemon/canvas-order";
@@ -36,6 +36,7 @@ import type { LocatedRange } from "../daemon/locate";
 import type { MovedAway } from "../daemon/moved-away";
 import type { Finding } from "../daemon/open-finding";
 import type { OutsideView } from "../daemon/outside";
+import type { PiKeyProvider } from "../daemon/pi-providers";
 import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectThumbnail } from "../daemon/project-thumbnail";

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { PiKeyProvider } from "./agent-setup";
+import type { PiKeyProvider } from "./pi-providers";
 
 /**
  * pi's `auth.json`, as the first run writes a pasted key into it (spool#250).
@@ -103,10 +103,15 @@ export function writePiAuth(file: string, entries: Readonly<Record<string, unkno
 	renameSync(temp, file);
 }
 
-/** how long pi's lock on auth.json may sit untouched before it was left by a pi that died (proper-lockfile's own) */
-const STALE_LOCK_MS = 10_000;
-const LOCK_TRIES = 50;
-const LOCK_WAIT_MS = 100;
+/**
+ * pi's lock on auth.json, as its `FileAuthStorageBackend` takes it (pi 1.5): proper-lockfile's
+ * `auth.json.lock` folder, called stale only once its mtime is 30 s old, which its holder
+ * refreshes every 15 s. spool takes it with the same package and the same numbers, so a pi
+ * holding it is never taken for a dead one, and pi waits out spool's.
+ */
+const PI_LOCK = { realpath: false, stale: 30_000, update: 15_000 } as const;
+/** how long spool waits for pi to let go before calling it busy */
+const LOCK_RETRIES = { retries: 50, factor: 1, minTimeout: 100, maxTimeout: 100 } as const;
 
 /** spool's own changes to each auth.json, one after another */
 const turns = new Map<string, Promise<unknown>>();
@@ -114,9 +119,8 @@ const turns = new Map<string, Promise<unknown>>();
 /**
  * One change to auth.json at a time, read and written while it is held, so it starts
  * from the file as it is then, other changes included. spool's own changes wait their
- * turn; pi's are kept out by pi's own lock, the `auth.json.lock` folder its
- * proper-lockfile makes, which spool takes the same way. Busy when pi holds it longer
- * than spool waits.
+ * turn; pi's are kept out by pi's own lock, which spool takes as pi does. Busy when pi
+ * holds it longer than spool waits.
  */
 export async function withPiAuthLock<T>(
 	file: string,
@@ -133,30 +137,29 @@ export async function withPiAuthLock<T>(
 }
 
 async function locked<T>(file: string, change: () => T): Promise<{ held: true; value: T } | { held: false }> {
-	const lock = `${file}.lock`;
 	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-	for (let tries = 0; ; tries++) {
-		try {
-			mkdirSync(lock);
-			break;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		}
-		try {
-			if (Date.now() - statSync(lock).mtimeMs > STALE_LOCK_MS) {
-				rmSync(lock, { recursive: true, force: true });
-				continue;
-			}
-		} catch {
-			// let go between the two looks: take it on the next
-			continue;
-		}
-		if (tries >= LOCK_TRIES) return { held: false };
-		await new Promise((resolve) => setTimeout(resolve, LOCK_WAIT_MS));
+	let compromised = false;
+	let release: () => Promise<void>;
+	// loaded on first use: it patches fs and listens for exit signals, which only a key's save needs
+	const { default: lockfile } = await import("proper-lockfile");
+	try {
+		release = await lockfile.lock(file, {
+			...PI_LOCK,
+			retries: LOCK_RETRIES,
+			// proper-lockfile throws from a timer by default, which would take the daemon down
+			onCompromised: () => {
+				compromised = true;
+			},
+		});
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ELOCKED" || (code === "EPERM" && process.platform === "win32")) return { held: false };
+		throw error;
 	}
 	try {
+		if (compromised) return { held: false };
 		return { held: true, value: change() };
 	} finally {
-		rmSync(lock, { recursive: true, force: true });
+		await release().catch(() => {});
 	}
 }

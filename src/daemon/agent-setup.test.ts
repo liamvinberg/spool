@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import lockfile from "proper-lockfile";
 import { describe, expect, it } from "vitest";
 import { machineAgents, makeApp, makeTempDir } from "../test-helpers";
 import {
@@ -8,7 +9,6 @@ import {
 	createAgentSetup,
 	type MachineAgent,
 	type SetupProcess,
-	spawnSetup,
 	windowsLaunch,
 } from "./agent-setup";
 import { checkProviderKey, withPiAuthLock } from "./pi-auth";
@@ -112,6 +112,7 @@ function heldProcess() {
 		write: () => {},
 		kill: () => {
 			killed = true;
+			return exited.then(() => {});
 		},
 		exited,
 	};
@@ -119,28 +120,65 @@ function heldProcess() {
 }
 
 describe("stopping a setup", () => {
-	it.skipIf(process.platform === "win32")("takes back everything the command started", async () => {
-		const dir = makeTempDir();
-		const pidFile = join(dir, "grandchild");
-		// a shell piping into a shell, as `curl … | bash` is: the grandchild outlives a signal to the one pid
-		const script = `const c=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"inherit"});require("node:fs").writeFileSync(${JSON.stringify(pidFile)},String(c.pid));console.log("started");setInterval(()=>{},1000)`;
-		const proc = spawnSetup({ command: process.execPath, args: ["-e", script] }, process.env);
-		await new Promise<void>((resolve) => proc.onLine((line) => line === "started" && resolve()));
-		const grandchild = Number(readFileSync(pidFile, "utf8"));
+	it.skipIf(process.platform === "win32")(
+		"holds the slot until everything the command started has gone, a descendant that let go of its output and ignores SIGTERM included",
+		async () => {
+			const machine = machineAgents();
+			const dir = makeTempDir();
+			const marker = join(dir, "marker");
+			// `curl … | bash`, as an installer is: a descendant that closed its output and shrugs off SIGTERM,
+			// which outlives the shell (the shell's close) and writes once its delay is up
+			const script = `(trap '' TERM; sleep 5; touch '${marker}') </dev/null >/dev/null 2>&1 & echo "started $!"; wait`;
+			const plans: AgentSetupPlans = {
+				...machine.plans,
+				claude: { ...machine.plans.claude, install: { command: "sh", args: ["-c", script] } },
+			};
+			let descendant = 0;
+			const alive = () => {
+				try {
+					process.kill(descendant, 0);
+					return true;
+				} catch {
+					return false;
+				}
+			};
+			let freed: { at: number; descendantAlive: boolean } | undefined;
+			let stopping = false;
+			const setup = createAgentSetup({
+				engines: new Map(machine.engines.map((engine) => [engine.id, engine])),
+				plans,
+				home: dir,
+				piDir: join(dir, "pi"),
+				emit: (agents) => {
+					const job = agents.find((agent) => agent.id === "claude")?.job;
+					if (job?.kind === "install")
+						descendant ||= Number(job.lines.find((line) => line.startsWith("started "))?.slice(8) ?? 0);
+					if (stopping && job === null && freed === undefined)
+						freed = { at: Date.now(), descendantAlive: alive() };
+				},
+			});
+			const started = Date.now();
+			expect(setup.install("claude")).toBeUndefined();
+			await expect.poll(() => descendant, POLL).toBeGreaterThan(0);
 
-		proc.kill();
-		await proc.exited;
-		const alive = () => {
-			try {
-				process.kill(grandchild, 0);
-				return true;
-			} catch {
-				return false;
-			}
-		};
-		// a killed process lingers until whoever adopted it reaps it
-		await expect.poll(alive, { timeout: 2000 }).toBe(false);
-	});
+			stopping = true;
+			const asked = Date.now();
+			setup.cancel("claude");
+			// the shell has gone; its descendant hasn't, so no other installer may start
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			expect(alive()).toBe(true);
+			expect(setup.install("codex")).toMatchObject({ status: 409 });
+
+			await expect.poll(() => freed, POLL).toBeDefined();
+			// freed only once SIGKILL had taken the descendant, and not before it had gone
+			expect(freed?.at).toBeGreaterThanOrEqual(asked + 3000);
+			expect(freed?.descendantAlive).toBe(false);
+			// past the moment it would have written
+			await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 6500 - Date.now())));
+			expect(existsSync(marker)).toBe(false);
+		},
+		15_000,
+	);
 
 	it("keeps the install slot until a stopped installer has gone, and starts nothing after a stop", async () => {
 		const machine = machineAgents();
@@ -274,7 +312,7 @@ function piModels(): SetupProcess {
 		for (const line of lines) for (const listener of listeners) listener(line);
 		return 0;
 	});
-	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: () => {}, exited };
+	return { onLine: (listener) => listeners.push(listener), write: () => {}, kill: async () => {}, exited };
 }
 
 /** The providers as they answer a key: `sk-` keys are good, `down` can't be reached, the rest are refused. */
@@ -365,19 +403,52 @@ describe("pi's auth.json, changed by more than one at once", () => {
 		expect(Object.keys(auth()).sort()).toEqual(["anthropic", "github-copilot", "openai", "openai-codex"]);
 	});
 
-	it("waits out pi's own lock on the file, and takes over one a dead pi left", async () => {
+	it("lets a key go once a newer one was sent for its provider, even when the newer one's check ends first", async () => {
+		const answers = new Map<string, () => void>();
+		const slow: typeof fetch = (_url, init) =>
+			new Promise((resolve) =>
+				answers.set(JSON.stringify(init?.headers), () => resolve(new Response(null, { status: 200 }))),
+			);
+		const { key, auth } = piKeyApp(slow);
+		const asked = (value: string) => [...answers.keys()].find((headers) => headers.includes(value));
+
+		const older = key("anthropic", "sk-ant-old");
+		await expect.poll(() => asked("sk-ant-old")).toBeDefined();
+		const newer = key("anthropic", "sk-ant-new");
+		await expect.poll(() => asked("sk-ant-new")).toBeDefined();
+		answers.get(asked("sk-ant-new") ?? "")?.();
+		expect(await newer).toMatchObject({ ok: true });
+		answers.get(asked("sk-ant-old") ?? "")?.();
+		expect(await older).toMatchObject({ ok: false });
+		expect(auth().anthropic).toEqual({ type: "api_key", key: "sk-ant-new" });
+	});
+
+	it("waits out a pi holding its lock on the file, and takes over one a dead pi left", async () => {
 		const file = join(makeTempDir(), "auth.json");
-		mkdirSync(`${file}.lock`);
+		writeFileSync(file, "{}");
+		// pi's own lock, as its FileAuthStorageBackend takes it: refreshed every 15 s, stale at 30 s
+		const piRelease = await lockfile.lock(file, { realpath: false, stale: 30_000, retries: 0 });
+		// 20 s since pi last refreshed it: alive to pi, so spool waits however long it has sat
+		const refreshed = new Date(Date.now() - 20_000);
+		utimesSync(`${file}.lock`, refreshed, refreshed);
 		const waited = withPiAuthLock(file, () => "written");
 		await new Promise((resolve) => setTimeout(resolve, 250));
 		expect(existsSync(`${file}.lock`)).toBe(true);
-		rmSync(`${file}.lock`, { recursive: true });
+		await piRelease();
 		expect(await waited).toEqual({ held: true, value: "written" });
 		expect(existsSync(`${file}.lock`)).toBe(false);
 
+		// and pi, asking while spool holds it, is told it is held
+		let piAsked: unknown;
+		await withPiAuthLock(file, () => {
+			piAsked = lockfile.checkSync(file, { realpath: false, stale: 30_000 });
+		});
+		expect(piAsked).toBe(true);
+
+		// left by a pi that died: not refreshed for longer than pi's stale time
 		mkdirSync(`${file}.lock`);
-		const long = new Date(Date.now() - 60_000);
-		utimesSync(`${file}.lock`, long, long);
+		const dead = new Date(Date.now() - 31_000);
+		utimesSync(`${file}.lock`, dead, dead);
 		expect(await withPiAuthLock(file, () => "taken")).toEqual({ held: true, value: "taken" });
 	});
 });

@@ -64,6 +64,18 @@ describe("the open", () => {
 		expect(closeAudio).toHaveBeenCalled();
 	});
 
+	/** an app too old to say it showed the window: its window takes a browser's rule, so audio can't start unpressed (checked in Electron 43) */
+	it("waits for a press in a Mac app that never says it showed the window", async () => {
+		vi.mocked(audioCanStart).mockResolvedValue(false);
+		const { root, openButton, chordPlays } = await mount({
+			setupWindow: vi.fn(async () => true),
+		} as unknown as DesktopWindow);
+		expect(openButton()).toBeUndefined();
+		await vi.waitFor(() => expect(openButton()).toBeDefined(), { timeout: 3000 });
+		expect(chordPlays()).toBe(0);
+		act(() => root.unmount());
+	});
+
 	it("starts at once in the Mac app as the app shows the window, and fills the window at every size", async () => {
 		vi.mocked(audioCanStart).mockResolvedValue(false);
 		const setupWindow = vi.fn(async () => true);

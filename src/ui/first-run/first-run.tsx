@@ -1,8 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import { type ComponentProps, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
-import { type MachineAgent, PI_KEY_PROVIDERS, type PiKeyProvider } from "../../daemon/agent-setup";
+import type { MachineAgent } from "../../daemon/agent-setup";
 import type { CloudAccountState } from "../../daemon/cloud-account";
+import { PI_KEY_PROVIDERS, type PiKeyProvider } from "../../daemon/pi-providers";
 import { postAgentCode, postAgentSetup } from "../api";
 import { CommandLine } from "../canvas/agent-float";
 import { cn } from "../cn";
