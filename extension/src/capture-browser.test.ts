@@ -347,17 +347,29 @@ it("brings what the site's script does under the hand, and the frame does it aga
 				<div id="bar" style="width: 1px">progress</div>
 			</a>
 			<a id="away" href="/elsewhere">away</a>
-			<div id="tile" style="cursor: pointer; width: 200px; height: 80px"><span id="tip">tip</span></div>`;
+			<div id="tile" style="cursor: pointer; width: 20px; height: 12px"><span id="tip">tip</span></div>`;
 		// the site's script: the card lights its media as the hand comes; its bar grows on its own
 		const card = document.getElementById("card") as HTMLElement;
 		const media = document.getElementById("media") as HTMLElement;
 		card.addEventListener("mouseenter", () => media.setAttribute("data-active", ""));
 		card.addEventListener("mouseleave", () => media.removeAttribute("data-active"));
-		// one the hand never comes to, which shows its tip as a pointer enters it
+		// one the hand never comes to, which shows its tip as a pointer enters it, and a menu it closes a while after
 		const tile = document.getElementById("tile") as HTMLElement;
 		const tip = document.getElementById("tip") as HTMLElement;
-		tile.addEventListener("pointerenter", () => tip.classList.add("shown"));
-		tile.addEventListener("pointerleave", () => tip.classList.remove("shown"));
+		const menu = document.createElement("nav");
+		menu.id = "menu";
+		tile.addEventListener("pointerenter", () => {
+			tip.classList.add("shown");
+			tile.setAttribute("aria-expanded", "true");
+			document.body.append(menu);
+		});
+		tile.addEventListener("pointerleave", () => {
+			tip.classList.remove("shown");
+			setTimeout(() => {
+				tile.setAttribute("aria-expanded", "false");
+				menu.remove();
+			}, 250);
+		});
 		const bar = document.getElementById("bar") as HTMLElement;
 		setInterval(() => {
 			bar.style.width = `${Number.parseFloat(bar.style.width) + 1}px`;
@@ -395,6 +407,8 @@ it("brings what the site's script does under the hand, and the frame does it aga
 	expect(c.html).toMatch(
 		/<span id="tip" data-spool-hover-set="\[\[&quot;h\d&quot;,&quot;class&quot;,&quot;shown&quot;\]\]">/,
 	);
+	// the menu the hand opened last has closed by the time the page is taken
+	expect(c.html).not.toContain('id="menu"');
 	// what moves on its own is no hover, though it moved as the hand came
 	expect(c.html).toMatch(/<div id="bar" style="width: \d+px;">/);
 
