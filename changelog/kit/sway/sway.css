@@ -1,0 +1,42 @@
+.sway {
+	--sway-page: #f3eee6;
+	--sway-ink: #1e1a16;
+	--sway-dim: rgba(30, 26, 22, 0.58);
+	--sway-faint: rgba(30, 26, 22, 0.1);
+	--sway-glass: rgba(251, 248, 243, 0.72);
+	color: var(--sway-ink);
+	background: var(--sway-page);
+	font-family: "Inter", system-ui, sans-serif;
+	font-feature-settings: "tnum", "cv11";
+	-webkit-font-smoothing: antialiased;
+}
+
+.sway-title {
+	font-weight: 400;
+	letter-spacing: -0.015em;
+	line-height: 0.95;
+}
+
+@keyframes sway-rise {
+	from {
+		opacity: 0;
+		transform: translateY(16px);
+	}
+}
+@keyframes sway-zoom {
+	from {
+		transform: scale(1.06);
+	}
+}
+.sway-rise {
+	animation: sway-rise 700ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.sway-zoom {
+	animation: sway-zoom 1600ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+	.sway-rise,
+	.sway-zoom {
+		animation: none;
+	}
+}
