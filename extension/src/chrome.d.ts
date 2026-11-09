@@ -26,6 +26,7 @@ declare namespace chrome {
 			url?: string;
 		}
 		function create(options: { url: string; active?: boolean }): Promise<Tab>;
+		function query(filter: { url?: string }): Promise<Tab[]>;
 	}
 	namespace action {
 		const onClicked: { addListener(listener: (tab: tabs.Tab) => void): void };
@@ -39,7 +40,10 @@ declare namespace chrome {
 		function executeScript<T>(injection: Injection<T>): Promise<{ result?: T }[]>;
 	}
 	namespace storage {
-		const local: { get(keys: string | string[]): Promise<Record<string, unknown>> };
+		const local: {
+			get(keys: string | string[]): Promise<Record<string, unknown>>;
+			set(items: Record<string, unknown>): Promise<void>;
+		};
 	}
 	namespace dom {
 		function openOrClosedShadowRoot(element: HTMLElement): ShadowRoot | null;
