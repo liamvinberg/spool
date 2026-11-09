@@ -34,4 +34,5 @@ export const APP_PATH_SEGMENTS: readonly string[] = [
 	"session",
 	"settings",
 	"upgrade",
+	"whats-new",
 ];

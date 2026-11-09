@@ -21,7 +21,8 @@ export type SettingScope =
 	/** config.json: this install */
 	| "machine";
 
-export type SettingGroup = "general" | "agent" | "appearance" | "theme" | "experimental";
+/** `remembered`: what spool keeps for itself, never a row on the sheet */
+export type SettingGroup = "general" | "agent" | "appearance" | "theme" | "experimental" | "remembered";
 
 export type SettingKind =
 	| { readonly kind: "boolean" }
@@ -30,7 +31,9 @@ export type SettingKind =
 	/** where a new project goes: `ask`, `local`, or a team's address */
 	| { readonly kind: "destination" }
 	/** a six-digit hex colour, lowercase, `#` first */
-	| { readonly kind: "colour" };
+	| { readonly kind: "colour" }
+	/** a spool version, `0.52.0`, or none yet */
+	| { readonly kind: "version" };
 
 export interface SettingEntry<Value extends SettingPrimitive = SettingPrimitive> {
 	readonly scope: SettingScope;
@@ -203,6 +206,23 @@ export const SETTINGS = {
 		label: "Appearance",
 		says: "Dark, light, or whichever the system is set to.",
 	},
+	// What's new: the version this Mac last opened on, and the one before it, which its card began after
+	"whatsNew.seen": {
+		scope: "machine",
+		group: "remembered",
+		shape: { kind: "version" },
+		fallback: "",
+		label: "Last version seen",
+		says: "What's new shows what came after it, once, when spool opens on a newer one.",
+	},
+	"whatsNew.from": {
+		scope: "machine",
+		group: "remembered",
+		shape: { kind: "version" },
+		fallback: "",
+		label: "Version seen before it",
+		says: "Help's What's new holds what came after it.",
+	},
 	...themeEntries,
 	...experimentEntries,
 } as const satisfies Record<string, SettingEntry>;
@@ -221,6 +241,7 @@ export function isSettingKey(key: string): key is SettingKey {
 }
 
 const COLOUR = /^#[0-9a-f]{6}$/;
+const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const TEAM_ADDRESS = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
 
 /** One value against its entry's shape: what a store may hold and the API may accept. */
@@ -249,6 +270,10 @@ export function parseSetting<Key extends SettingKey>(
 			if (typeof raw === "string" && (raw === "ask" || raw === "local" || TEAM_ADDRESS.test(raw)))
 				return { ok: true, value: raw as SettingValue<Key> };
 			return { ok: false, reason: `"${key}" must be ask, local, or a team's address` };
+		case "version":
+			if (typeof raw === "string" && (raw === "" || VERSION.test(raw)))
+				return { ok: true, value: raw as SettingValue<Key> };
+			return { ok: false, reason: `"${key}" must be a version like 0.52.0` };
 		case "colour": {
 			const colour = typeof raw === "string" ? raw.trim().toLowerCase() : undefined;
 			if (colour !== undefined && COLOUR.test(colour)) return { ok: true, value: colour as SettingValue<Key> };

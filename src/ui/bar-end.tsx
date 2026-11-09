@@ -5,6 +5,7 @@ import { hotkeyKey } from "./hotkeys";
 import { CogIcon } from "./icons";
 import { IconButton } from "./primitives/actions";
 import { Menu, MenuItem } from "./primitives/overlays";
+import type { WhatsNewRow } from "./whats-new";
 
 /**
  * What stands at the window bar's right end, on Home and on every canvas alike: help and
@@ -15,6 +16,7 @@ export function BarEnd({
 	onSettings,
 	onShortcuts,
 	onUseAgent,
+	whatsNew,
 }: {
 	/** while the settings page is up, the gear is pressed and puts it away */
 	settingsOpen?: boolean | undefined;
@@ -22,10 +24,12 @@ export function BarEnd({
 	onShortcuts: () => void;
 	/** on a canvas with a project folder: hand the project to an agent of one's own */
 	onUseAgent?: (() => void) | undefined;
+	/** this version's What's new, at the head of help's menu, when it brought any features */
+	whatsNew?: WhatsNewRow | undefined;
 }) {
 	return (
 		<>
-			<BarHelp onShortcuts={onShortcuts} onUseAgent={onUseAgent} />
+			<BarHelp onShortcuts={onShortcuts} onUseAgent={onUseAgent} whatsNew={whatsNew} />
 			<IconButton
 				data-bar-end="settings"
 				icon={<CogIcon />}
@@ -38,7 +42,15 @@ export function BarEnd({
 	);
 }
 
-function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAgent?: (() => void) | undefined }) {
+function BarHelp({
+	onShortcuts,
+	onUseAgent,
+	whatsNew,
+}: {
+	onShortcuts: () => void;
+	onUseAgent?: (() => void) | undefined;
+	whatsNew?: WhatsNewRow | undefined;
+}) {
 	const [open, setOpen] = useState(false);
 	const [at, setAt] = useState<{ right: number; top: number } | null>(null);
 	const id = useId();
@@ -116,6 +128,16 @@ function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAg
 						className="fixed z-50"
 						style={{ right: at.right, top: at.top }}
 					>
+						{whatsNew === undefined ? null : (
+							<MenuItem
+								label="What's new"
+								meta={whatsNew.version}
+								onClick={() => {
+									close();
+									whatsNew.open();
+								}}
+							/>
+						)}
 						{onUseAgent === undefined ? null : (
 							<MenuItem
 								// the arrow says it leaves spool; a key face would read as a shortcut

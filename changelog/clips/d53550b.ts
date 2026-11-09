@@ -1,48 +1,39 @@
 import type { Clip } from "../../.agents/skills/changelog/scripts/clip";
 
 /** 0.52.0, the agent's trail: the top right names the frame the agent is writing, and following it walks the canvas there */
-const frame = (title: string, line: string, bg: string, ink: string) => `export default function Screen() {
-	return (
-		<div style={{ display: "grid", alignContent: "center", gap: 12, height: "100%", padding: 32, background: "${bg}", color: "${ink}", fontFamily: "system-ui" }}>
-			<h1 style={{ margin: 0, fontSize: 34 }}>${title}</h1>
-			<p style={{ margin: 0, fontSize: 18, opacity: 0.75 }}>${line}</p>
-			<div style={{ height: 48, borderRadius: 12, background: "${ink}", opacity: 0.9 }} />
-		</div>
-	);
+const lope = (screen: string, next: string) => `import { ui } from "spool";
+import { Lope } from "shared/kit/lope/lope";
+
+export default function Frame() {
+	return <Lope screen="${screen}" onNext={(patch) => ui.go("${next}", patch)} />;
 }
 `;
-const box = (at: number) => JSON.stringify({ x: 80 + at * 440, y: 80, w: 390, h: 520 });
+const departures = `import { ui } from "spool";
+import { Headway } from "shared/kit/headway/headway";
+
+export default function Frame() {
+	return <Headway screen="departures" onGo={() => undefined} />;
+}
+`;
+// phones at their real size; the run's three sit off to the right, so following the trail walks the canvas there
+const box = (at: number) => JSON.stringify({ x: 80 + at * 470, y: 80, w: 390, h: 844 });
 
 export default {
+	kit: ["headway", "lope"],
 	files: {
-		"design/frames/home/frame.json": box(0),
-		"design/frames/home/frame.tsx": frame("Kaffe", "Fresh beans every Friday", "#efe6da", "#5a3a22"),
+		"design/frames/departures/frame.json": box(0),
+		"design/frames/departures/frame.tsx": departures,
 	},
 	viewport: { w: 960, h: 600 },
 	agent: {
 		steps: [
 			{ wait: 500 },
-			{
-				write: "design/frames/cart/frame.tsx",
-				json: box(3),
-				content: frame("Varukorg", "Two bags, 418 kr", "#f3e3d3", "#7a3416"),
-				ms: 1800,
-			},
+			{ write: "design/frames/start/frame.tsx", json: box(2), content: lope("start", "run"), ms: 1800 },
 			{ wait: 300 },
-			{
-				write: "design/frames/pay/frame.tsx",
-				json: box(4),
-				content: frame("Betala", "Swish or card", "#f6ebe0", "#7a3416"),
-				ms: 1600,
-			},
+			{ write: "design/frames/run/frame.tsx", json: box(3), content: lope("run", "done"), ms: 1600 },
 			{ wait: 300 },
-			{
-				write: "design/frames/done/frame.tsx",
-				json: box(5),
-				content: frame("Klart", "Your order is on its way", "#e3efe2", "#24502b"),
-				ms: 1600,
-			},
-			{ say: "Added cart, pay and done." },
+			{ write: "design/frames/done/frame.tsx", json: box(4), content: lope("done", "start"), ms: 1600 },
+			{ say: "Added start, run and done." },
 		],
 	},
 	// the window as someone has it while they ask: both sides shut by hand, the Agent pane open on the prompt
@@ -56,7 +47,7 @@ export default {
 		await shut("left");
 		await page.locator('[data-rail-icon="agent"]').click();
 		await page.locator('[data-pane-tab="agent"]').click();
-		await page.locator("[data-agent-rail] textarea").fill("add the checkout: cart, pay, done");
+		await page.locator("[data-agent-rail] textarea").fill("add the run: start, run, done");
 		await page.waitForTimeout(1500);
 	},
 	live: async ({ page, walk }) => {
@@ -75,7 +66,7 @@ export default {
 			{ wait: 900 },
 			{ click: '[data-agent-trail-button="done"]', ms: 400 },
 			{ wait: 600 },
-			{ click: '[data-agent-trail-row="cart"]', ms: 500 },
+			{ click: '[data-agent-trail-row="start"]', ms: 500 },
 			{ wait: 1400 },
 		]);
 	},

@@ -1,0 +1,84 @@
+.lope {
+	--lope-bg: #0b0b0c;
+	--lope-panel: #161618;
+	--lope-raised: #222225;
+	--lope-ink: #f4f3ef;
+	--lope-dim: rgba(244, 243, 239, 0.56);
+	--lope-faint: rgba(244, 243, 239, 0.12);
+	color: var(--lope-ink);
+	background: var(--lope-bg);
+	font-family: "Archivo", system-ui, sans-serif;
+	font-feature-settings: "tnum";
+	-webkit-font-smoothing: antialiased;
+}
+
+.lope-num {
+	font-weight: 900;
+	line-height: 0.84;
+	letter-spacing: -0.015em;
+	font-variant-numeric: tabular-nums;
+}
+
+.lope-title {
+	font-weight: 800;
+	font-stretch: 88%;
+	letter-spacing: -0.02em;
+}
+
+@keyframes lope-ring {
+	0% {
+		transform: scale(1);
+		opacity: 0.4;
+	}
+	100% {
+		transform: scale(1.42);
+		opacity: 0;
+	}
+}
+@keyframes lope-blink {
+	50% {
+		opacity: 0.25;
+	}
+}
+@keyframes lope-draw {
+	from {
+		stroke-dashoffset: 1;
+	}
+}
+@keyframes lope-rise {
+	from {
+		opacity: 0;
+		transform: translateY(14px);
+	}
+}
+@keyframes lope-grow {
+	from {
+		transform: scaleX(0);
+	}
+}
+.lope-ring {
+	animation: lope-ring 2.4s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+.lope-blink {
+	animation: lope-blink 1.6s ease-in-out infinite;
+}
+.lope-draw {
+	stroke-dasharray: 1;
+	animation: lope-draw 1.6s cubic-bezier(0.65, 0, 0.35, 1) 150ms both;
+}
+.lope-rise {
+	animation: lope-rise 600ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.lope-grow {
+	animation: lope-grow 900ms cubic-bezier(0.23, 1, 0.32, 1) both;
+	transform-origin: left;
+}
+@media (prefers-reduced-motion: reduce) {
+	.lope-ring,
+	.lope-blink,
+	.lope-draw,
+	.lope-rise,
+	.lope-grow {
+		animation: none;
+	}
+}

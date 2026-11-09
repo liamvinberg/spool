@@ -37,6 +37,7 @@ pnpm exec tsx .agents/skills/changelog/scripts/clip.ts changelog/clips/<id>.ts -
 
 `--rehearse` walks the steps in a fresh spool of this checkout and stops, leaving `<id>.start.png` and `<id>.end.png`. Look at both, fix the steps, repeat. Then drop `--rehearse` to render `<id>.mp4` (1120 wide, silent) and `<id>.jpg`, its last frame, for the poster. Each run starts its own daemon on a free port and stops it; the shared one is never touched.
 
+- Every frame in a clip is drawn from a demo product in `changelog/kit/` (its `README.md` names its screens, its one-line agent ask and its knob card), listed in the clip's `kit`. Never write a clip's own screens; a product that is missing is added to the kit first, in English with nothing local to one country.
 - Show one thing, start to finish, in 8 to 15 seconds. The page loops it muted at 560 wide, so make the change visible at that size: a frame that changes colour beats a value in a text field.
 - Aim steps by selector (`text=radius`, `[aria-label="#c8553d"]`, `role=button[name="Play"]`) rather than points, so the script survives layout changes.
 - The take replays the rehearsal's inputs on a virtual clock, so the window's slow parts (a frame selected, its knobs arriving) need a `wait` after them. A take that drifts from the rehearsal needs a longer one.

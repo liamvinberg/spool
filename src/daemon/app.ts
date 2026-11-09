@@ -167,6 +167,7 @@ import {
 } from "./vendor";
 import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./verify-record";
 import { createWebfonts, type Webfonts } from "./webfonts";
+import { type WhatsNewOptions, whatsNewRoutes } from "./whats-new-routes";
 
 export interface DaemonOptions {
 	agentAppLauncher?: AgentAppLauncher;
@@ -190,6 +191,8 @@ export interface DaemonOptions {
 	 * this is the one way to say no to every project at once.
 	 */
 	history?: boolean | undefined;
+	/** What's new: on in a packaged build, absent in tests and a checkout unless SPOOL_WHATS_NEW asks. */
+	whatsNew?: WhatsNewOptions | undefined;
 	/** The registry probe — swapped out by seam tests. */
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
@@ -401,6 +404,7 @@ export function createDaemonApp({
 	moveToTrash,
 	updateCheck,
 	history: historyAllowed,
+	whatsNew,
 	fetchLatest,
 	upgrade,
 	agentExecutor,
@@ -1381,6 +1385,7 @@ export function createDaemonApp({
 				historyChanged: () => history.keeping(registeredRoots()),
 			}),
 		)
+		.route("/api", whatsNewRoutes({ settings, options: whatsNew, spoolDir }))
 		.route(
 			"/api",
 			referenceRoutes({

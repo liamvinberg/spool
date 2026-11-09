@@ -497,7 +497,8 @@ function defaultServeCommand(): string[] {
 	return [process.execPath, ...process.execArgv, selfCliPath(), "serve", "--foreground"];
 }
 
-function runsFromSource(): boolean {
+/** Whether this spool runs its TypeScript source: a checkout, or a test, rather than a packaged build. */
+export function runsFromSource(): boolean {
 	return selfCliPath().endsWith(".ts");
 }
 

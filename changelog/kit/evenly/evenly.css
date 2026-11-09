@@ -1,0 +1,142 @@
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap");
+
+.ev {
+	--ev-bg: #0f0f11;
+	--ev-ink: #f3f2ee;
+	--ev-dim: rgba(243, 242, 238, 0.5);
+	--ev-faint: rgba(243, 242, 238, 0.1);
+	--ev-panel: #1a1a1d;
+	position: relative;
+	height: 100%;
+	overflow: hidden;
+	background: var(--ev-bg);
+	color: var(--ev-ink);
+	font-family: "Geist", system-ui, sans-serif;
+	font-variant-numeric: tabular-nums;
+	-webkit-font-smoothing: antialiased;
+	user-select: none;
+}
+
+.ev button {
+	cursor: pointer;
+}
+
+.ev-bar {
+	display: flex;
+	height: 54px;
+	align-items: center;
+	justify-content: space-between;
+	padding: 4px 32px 0;
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.ev-round {
+	display: grid;
+	width: 40px;
+	height: 40px;
+	place-items: center;
+	border-radius: 999px;
+	background: var(--ev-faint);
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ev-round:active {
+	transform: scale(0.92);
+}
+
+.ev-primary {
+	display: flex;
+	width: 100%;
+	height: 58px;
+	align-items: center;
+	justify-content: center;
+	border-radius: 999px;
+	background: var(--ev-ink);
+	color: var(--ev-bg);
+	font-size: 17px;
+	font-weight: 600;
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ev-primary:active {
+	transform: scale(0.97);
+}
+
+.ev-press {
+	transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ev-press:active {
+	transform: scale(0.98);
+}
+
+/* segments grow and shrink as items change hands */
+.ev-seg {
+	transition:
+		flex-grow 520ms cubic-bezier(0.23, 1, 0.32, 1),
+		background-color 420ms ease;
+}
+
+.ev-person {
+	transition:
+		transform 260ms cubic-bezier(0.34, 1.3, 0.64, 1),
+		box-shadow 260ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ev-paid {
+	transition:
+		background-color 520ms cubic-bezier(0.23, 1, 0.32, 1),
+		box-shadow 520ms cubic-bezier(0.23, 1, 0.32, 1),
+		color 320ms ease;
+}
+
+@keyframes ev-rise {
+	from {
+		opacity: 0;
+		transform: translateY(14px);
+	}
+}
+@keyframes ev-pop {
+	0% {
+		transform: scale(0.4);
+		opacity: 0;
+	}
+	60% {
+		transform: scale(1.12);
+		opacity: 1;
+	}
+	100% {
+		transform: scale(1);
+	}
+}
+@keyframes ev-burst {
+	from {
+		transform: scale(1);
+		opacity: 0.55;
+	}
+	to {
+		transform: scale(1.9);
+		opacity: 0;
+	}
+}
+
+.ev-rise {
+	animation: ev-rise 640ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.ev-pop {
+	animation: ev-pop 420ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.ev-burst {
+	animation: ev-burst 700ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ev-rise,
+	.ev-pop,
+	.ev-burst {
+		animation: none;
+	}
+	.ev-seg,
+	.ev-person,
+	.ev-paid {
+		transition: none;
+	}
+}
