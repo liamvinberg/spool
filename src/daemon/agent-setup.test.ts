@@ -2,7 +2,14 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { machineAgents, makeApp, makeTempDir } from "../test-helpers";
-import { type AgentSetupPlans, agentSetupPlans, type MachineAgent, type SetupProcess } from "./agent-setup";
+import {
+	type AgentSetupPlans,
+	agentSetupPlans,
+	createAgentSetup,
+	type MachineAgent,
+	type SetupProcess,
+	spawnSetup,
+} from "./agent-setup";
 
 /**
  * The first run's agents (spool#250), at the machine's own door: what each agent is here,
@@ -88,6 +95,109 @@ describe("the machine's agents", () => {
 		expect(install.status).toBe(409);
 		expect(await install.text()).toContain("install pi");
 		expect((await app.request("/api/agents/pi/sign-in", { method: "POST" })).status).toBe(409);
+	});
+});
+
+/** A command that runs until the test lets it end; `kill` only asks, as a real tree takes its time going. */
+function heldProcess() {
+	let end: (code: number | null) => void = () => {};
+	const exited = new Promise<number | null>((resolve) => {
+		end = resolve;
+	});
+	let killed = false;
+	const proc: SetupProcess = {
+		onLine: () => {},
+		write: () => {},
+		kill: () => {
+			killed = true;
+		},
+		exited,
+	};
+	return { proc, end, killed: () => killed };
+}
+
+describe("stopping a setup", () => {
+	it.skipIf(process.platform === "win32")("takes back everything the command started", async () => {
+		const dir = makeTempDir();
+		const pidFile = join(dir, "grandchild");
+		// a shell piping into a shell, as `curl … | bash` is: the grandchild outlives a signal to the one pid
+		const script = `const c=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"inherit"});require("node:fs").writeFileSync(${JSON.stringify(pidFile)},String(c.pid));console.log("started");setInterval(()=>{},1000)`;
+		const proc = spawnSetup({ command: process.execPath, args: ["-e", script] }, process.env);
+		await new Promise<void>((resolve) => proc.onLine((line) => line === "started" && resolve()));
+		const grandchild = Number(readFileSync(pidFile, "utf8"));
+
+		proc.kill();
+		await proc.exited;
+		const alive = () => {
+			try {
+				process.kill(grandchild, 0);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		// a killed process lingers until whoever adopted it reaps it
+		await expect.poll(alive, { timeout: 2000 }).toBe(false);
+	});
+
+	it("keeps the install slot until a stopped installer has gone, and starts nothing after a stop", async () => {
+		const machine = machineAgents();
+		const installs = new Map<string, ReturnType<typeof heldProcess>>();
+		let probing: (() => void) | undefined;
+		const engines = new Map(
+			machine.engines.map((engine) => [
+				engine.id,
+				engine.id === "codex"
+					? {
+							...engine,
+							installed: () => true,
+							// the account probe after an install, held so a stop lands during it
+							account: () =>
+								new Promise<{ signedIn: boolean; account: null }>((resolve) => {
+									probing = () => resolve({ signedIn: false, account: null });
+								}),
+						}
+					: engine,
+			]),
+		);
+		const ran: string[] = [];
+		const setup = createAgentSetup({
+			engines,
+			plans: machine.plans,
+			home: machine.dir,
+			piDir: join(machine.dir, "pi"),
+			emit: () => {},
+			run: (command) => {
+				const id =
+					machine.plans.claude.install === command
+						? "claude"
+						: command === machine.plans.codex.install
+							? "codex"
+							: "other";
+				ran.push(id);
+				const held = heldProcess();
+				installs.set(id, held);
+				return held.proc;
+			},
+		});
+
+		expect(setup.install("claude")).toBeUndefined();
+		setup.cancel("claude");
+		expect(installs.get("claude")?.killed()).toBe(true);
+		// still going: no second installer starts beside it
+		expect(setup.install("codex")).toMatchObject({ status: 409 });
+		installs.get("claude")?.end(null);
+		await expect.poll(() => setup.install("codex")).toBeUndefined();
+		expect(setup.snapshot().find((agent) => agent.id === "claude")?.job).toBeNull();
+
+		// codex's installer ends, and while spool asks codex who is signed in, the person stops it
+		installs.get("codex")?.end(0);
+		await expect.poll(() => probing).toBeDefined();
+		setup.cancel("codex");
+		probing?.();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(ran).toEqual(["claude", "codex"]);
+		expect(setup.snapshot().find((agent) => agent.id === "codex")?.job).toBeNull();
 	});
 });
 
