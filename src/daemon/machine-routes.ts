@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { readRegistry } from "../registry";
 import type { createCloudAccount } from "./cloud-account";
 import { firstRunDue } from "./first-run";
 import type { ResolveProject } from "./project-route";
@@ -61,8 +60,7 @@ export function machineRoutes(deps: {
 				const done = settings
 					.read()
 					.entries.some((entry) => entry.key === "onboarding.done" && entry.value === (true as unknown));
-				const projects = readRegistry(spoolDir).projects.length;
-				return c.json({ due: firstRunDue({ serving: deps.firstRun, done, projects }) });
+				return c.json({ due: firstRunDue({ serving: deps.firstRun, done }) });
 			})
 			.get("/session", (c) => c.json(readSession(spoolDir)))
 			.put(

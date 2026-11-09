@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { rectIsReachable, type WindowRect, type WorkArea } from "./play-window";
 
@@ -58,15 +58,19 @@ function readJson(file: string): unknown {
 	}
 }
 
+/** What a state folder holds once spool was used from it: the daemon's `USED_STATE` (spool's `src/daemon/first-run.ts`). */
+const USED_STATE = ["registry.json", "session.json", "config.json", "cloud", "threads", "comments"] as const;
+
 /**
  * Whether the window should open small, ahead of the page saying so: the daemon's own
- * rule (`firstRunDue` in spool's `src/daemon/first-run.ts`), read off the same files, so
- * a first launch shows the small window straight away rather than a big one shrinking.
- * The page still decides; a window opened small that turns out not to need it grows.
+ * rule (`settleFirstRun` in spool's `src/daemon/first-run.ts`), read off the same files,
+ * so a first launch shows the small window straight away rather than a big one shrinking.
+ * `onboarding.done` once the daemon has written it; before that, a state folder nobody
+ * has used yet. The page still decides; a window opened small that turns out not to need it grows.
  */
 export function firstRunLikely(spoolDir: string): boolean {
 	const config = readJson(join(spoolDir, "config.json")) as { onboarding?: { done?: unknown } } | undefined;
-	if (config?.onboarding?.done === true) return false;
-	const registry = readJson(join(spoolDir, "registry.json")) as { projects?: unknown } | undefined;
-	return !Array.isArray(registry?.projects) || registry.projects.length === 0;
+	const done = config?.onboarding?.done;
+	if (typeof done === "boolean") return !done;
+	return !USED_STATE.some((name) => existsSync(join(spoolDir, name)));
 }

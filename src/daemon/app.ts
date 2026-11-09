@@ -76,6 +76,7 @@ import {
 import { createChangeHub } from "./events";
 import { explorerRoutes } from "./explorer-routes";
 import { exportRoutes } from "./export-routes";
+import { settleFirstRun } from "./first-run";
 import { createFlowGraph } from "./flows";
 import { servedFrameCsp } from "./frame-csp";
 import { frameRevisionOnDisk } from "./frame-revision";
@@ -642,6 +643,8 @@ export function createDaemonApp({
 	});
 	// #281: every setting, behind one read and one write over the three files
 	const settings = createSettingsStore(spoolDir);
+	// spool#250: whether this machine gets the first run, decided once, before anything here writes the state folder
+	if (firstRun) settleFirstRun(spoolDir, settings);
 	/** Whether this machine has Record on (spool#221), read fresh so a switch flipped in Settings holds at once. */
 	const recordOn = () => experimentsOn(settings.read().entries).includes("record");
 	/** The recording rendering now, which the next one waits behind. */
