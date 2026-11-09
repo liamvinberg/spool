@@ -473,9 +473,12 @@ function Run({ onNext }: { onNext: Next }) {
 					style={{ background: paused ? "rgba(244,243,239,0.14)" : "rgba(0,0,0,0.14)" }}
 				>
 					<motion.div
-						className="h-full rounded-full"
-						animate={{ width: `${progress * 100}%`, backgroundColor: paused ? accent : ink }}
-						transition={{ duration: 0.6, ease }}
+						className="h-full w-full rounded-full"
+						initial={false}
+						// slid in rather than widened, and gliding linearly over exactly one 250 ms tick: a width snaps to
+						// layout's 1/64 px and an eased tween restarted every tick, so the bar's end jittered
+						animate={{ x: `${(progress - 1) * 100}%`, backgroundColor: paused ? accent : ink }}
+						transition={{ x: { duration: 0.25, ease: "linear" }, backgroundColor: { duration: 0.6, ease } }}
 					/>
 				</div>
 			</div>
