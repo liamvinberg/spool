@@ -24,6 +24,13 @@ export const setMuted = (next: boolean) => {
 	muted = next;
 };
 
+/**
+ * The event the Mac app fires in the page as it shows the setup window, with a press of
+ * its own (`executeJavaScript` with a user gesture): the one press that lets the open's
+ * sound start without the app letting every page in it play sound unasked.
+ */
+export const SETUP_SHOWN = "spool:setup-shown";
+
 /** the open's one audio context, made when it first plays and closed when the setup ends */
 let context: AudioContext | null = null;
 const audio = () => {
@@ -39,6 +46,22 @@ export function unlockAudio(): void {
 			.catch(() => {});
 	} catch {
 		// no Web Audio: the open is silent
+	}
+}
+
+/** Whether sound can start now, without a press: the browser's own policy where it says, else a context that runs. */
+export async function audioCanStart(): Promise<boolean> {
+	const policy = (
+		navigator as Navigator & { getAutoplayPolicy?: (type: "audiocontext") => string }
+	).getAutoplayPolicy?.("audiocontext");
+	if (policy !== undefined) return policy === "allowed";
+	try {
+		const ctx = audio();
+		if (ctx.state !== "running")
+			await Promise.race([ctx.resume().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 150))]);
+		return (ctx.state as AudioContextState) === "running";
+	} catch {
+		return false;
 	}
 }
 

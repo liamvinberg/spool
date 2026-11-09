@@ -9,6 +9,9 @@ import { rectIsReachable, type WindowRect, type WorkArea } from "./play-window";
 // throughout, on every platform: nothing transparent and no second window, only its
 // size, whether it can be resized, and the smallest it may go change.
 
+/** What the app runs in the page, with a press of its own, as the setup window shows: spool's `SETUP_SHOWN` event (`src/ui/first-run/sounds.ts`). */
+export const SETUP_SHOWN_SCRIPT = 'window.dispatchEvent(new Event("spool:setup-shown"))';
+
 /** The first run's window: big enough for a step, small enough to read as a welcome. */
 export const SMALL = { w: 560, h: 480 } as const;
 /** The canvas window as it first opens, and its smallest. */

@@ -54,7 +54,16 @@ import {
 	writeRemoteChoice,
 } from "./remote";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
-import { FULL, firstRunLikely, grownRect, MINIMUM, SMALL, setupSize, smallRect } from "./setup-window";
+import {
+	FULL,
+	firstRunLikely,
+	grownRect,
+	MINIMUM,
+	SETUP_SHOWN_SCRIPT,
+	SMALL,
+	setupSize,
+	smallRect,
+} from "./setup-window";
 import { UpdateCover } from "./update-cover";
 import {
 	beginUpdateRestart,
@@ -144,6 +153,20 @@ let canvasDownloads: CanvasDownloads | undefined;
  * and so stood nowhere yet.
  */
 let setupFrom: WindowRect | null | undefined;
+
+/**
+ * The first run's open (spool#250) plays its sound as the setup window shows: the app
+ * tells the page it is showing with a press of its own (`executeJavaScript` with a user
+ * gesture), which lets that page start its audio. Nothing in the window may play sound
+ * unasked otherwise: there is no window-wide autoplay policy.
+ */
+function startSetupOpen(showing: BrowserWindow): void {
+	const tell = () => {
+		if (!showing.isDestroyed()) void showing.webContents.executeJavaScript(SETUP_SHOWN_SCRIPT, true).catch(() => {});
+	};
+	if (showing.isVisible()) tell();
+	else showing.once("show", tell);
+}
 
 function canvasSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): boolean {
 	return window !== undefined && event.sender === window.webContents && event.senderFrame === event.sender.mainFrame;
@@ -307,12 +330,7 @@ function createWindow(): BrowserWindow {
 		backgroundColor: "#0e0e0e",
 		titleBarStyle: "hiddenInset",
 		trafficLightPosition: { x: 14, y: 16 },
-		webPreferences: {
-			spellcheck: false,
-			preload: join(__dirname, "canvas-preload.js"),
-			// the first run's open plays its sound as the window shows, before any press (spool#250)
-			autoplayPolicy: "no-user-gesture-required",
-		},
+		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js") },
 	});
 
 	if (resumeWorkspace.maximized) created.maximize();
@@ -1166,6 +1184,7 @@ function installCanvasChannels(): void {
 	ipcMain.handle("spool:setup-window", (event, size: unknown) => {
 		if (!canvasSender(event) || window === undefined) return false;
 		const showing = window;
+		if (size !== "grow") startSetupOpen(showing);
 		const areas = screen.getAllDisplays().map((display) => display.workArea);
 		const area = screen.getDisplayMatching(showing.getBounds()).workArea;
 		if (size === "grow") {

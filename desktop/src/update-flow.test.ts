@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import type { MenuItemConstructorOptions, MessageBoxOptions } from "electron";
+import { SETUP_SHOWN_SCRIPT } from "./setup-window";
 import { beginUpdateRestart, updateRestartState } from "./update-restart";
 import type { InstallProgress } from "./updates";
 
@@ -56,6 +57,7 @@ let saveError: string | null = null;
 let saveReplies = true;
 let reloads = 0;
 let coversClosed = 0;
+let scripts: { code: string; gesture: boolean | undefined }[] = [];
 class Window extends EventEmitter {
 	isDestroyed = () => false;
 	constructor(options: { title?: string }) {
@@ -80,12 +82,19 @@ class Window extends EventEmitter {
 			if (args[0] === "spool:canvas-save" && saveReplies)
 				ipc.emit("spool:canvas-saved", sender(), args[1], saveError);
 		},
-		executeJavaScript: async () => {},
+		executeJavaScript: async (code: string, gesture?: boolean) => {
+			scripts.push({ code, gesture });
+		},
 	});
 	close = () => this.emit("closed");
 	getNormalBounds = () => ({ x: 50, y: 50, width: 1100, height: 800 });
 	isMaximized = () => false;
 	isFullScreen = () => false;
+	isVisible = () => true;
+	getBounds = () => ({ x: 50, y: 50, width: 1100, height: 800 });
+	setBounds = noop;
+	setMinimumSize = noop;
+	setResizable = noop;
 	show = noop;
 	focus = noop;
 	loadURL = async () => {};
@@ -109,7 +118,10 @@ const electron = {
 		setToolTip = noop;
 		setContextMenu = noop;
 	},
-	screen: { getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1728, height: 1117 } }] },
+	screen: {
+		getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1728, height: 1117 } }],
+		getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1728, height: 1117 } }),
+	},
 	dialog: {
 		showMessageBox: async (options: MessageBoxOptions) => {
 			dialogs.push(options);
@@ -145,6 +157,7 @@ beforeEach(async () => {
 	progressWindows = 0;
 	reloads = 0;
 	coversClosed = 0;
+	scripts = [];
 	handlers.clear();
 	canvas = undefined;
 	saveError = null;
@@ -655,4 +668,17 @@ test("a restart whose catch-up fails still restarts once, into the waiting updat
 	assert.equal(dialogs.length, 0);
 	assert.equal(updateRestartState(directory, "0.20.1"), "waiting");
 	assert.equal(updateRestartState(directory, "0.20.2"), "completed");
+});
+
+test("the setup window lets the first run's open play its sound with a press of the app's own, and nothing else", async () => {
+	api.boot();
+	await turn();
+	// no window-wide autoplay: a page in it plays sound only after a press
+	assert.equal((canvasOptions.webPreferences as { autoplayPolicy?: string }).autoplayPolicy, undefined);
+	const setup = handlers.get("spool:setup-window") as unknown as (event: unknown, size: unknown) => unknown;
+	assert.ok(setup);
+	await setup(sender(), { w: 560, h: 480 });
+	assert.deepEqual(scripts, [{ code: SETUP_SHOWN_SCRIPT, gesture: true }]);
+	await setup(sender(), "grow");
+	assert.equal(scripts.length, 1);
 });
