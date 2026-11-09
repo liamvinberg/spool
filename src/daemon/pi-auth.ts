@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import lockfile from "proper-lockfile";
 import type { PiKeyProvider } from "./pi-providers";
 
 /**
@@ -141,6 +140,8 @@ async function locked<T>(file: string, change: () => T): Promise<{ held: true; v
 	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 	let compromised = false;
 	let release: () => Promise<void>;
+	// loaded on first use: it patches fs and listens for exit signals, which only a key's save needs
+	const { default: lockfile } = await import("proper-lockfile");
 	try {
 		release = await lockfile.lock(file, {
 			...PI_LOCK,
