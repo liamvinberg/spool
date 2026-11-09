@@ -262,6 +262,24 @@ export async function rehearse(
 	return { inputs, duration: t + 800, at };
 }
 
+/**
+ * The window has drawn a frame: a still on the canvas's picture layer, or a document or image in the field. A frame
+ * with no image of its own is only ever a picture until it is entered, so the field alone can wait forever.
+ */
+function frameDrawn(page: Page): Promise<unknown> {
+	return page.waitForFunction(
+		() => {
+			const layer = document.querySelector<HTMLCanvasElement & { spoolPictures?: () => { drawn: unknown[] } }>(
+				"[data-picture-layer]",
+			);
+			if ((layer?.spoolPictures?.().drawn.length ?? 0) > 0) return true;
+			return [...document.querySelectorAll("img, iframe")].some((one) => one.checkVisibility());
+		},
+		undefined,
+		{ timeout: 60_000 },
+	);
+}
+
 const free = () =>
 	new Promise<number>((done, fail) => {
 		const server = createServer();
@@ -367,7 +385,7 @@ async function main() {
 			const page = await browser.newPage({ viewport: { width: viewport.w, height: viewport.h } });
 			// the window holds its daemon's socket open, so it never goes network-idle: wait for a frame to draw
 			await page.goto(url);
-			await page.locator("img, iframe").first().waitFor({ timeout: 60_000 });
+			await frameDrawn(page);
 			await page.waitForTimeout(2000);
 			await page.screenshot({ path: out.replace(/\.mp4$/, ".start.png") });
 			const rehearsed = await rehearse(page, clip.steps ?? []);
@@ -486,7 +504,7 @@ async function live(
 			}
 			const page = context.pages()[0] ?? (await context.newPage());
 			await page.goto(url);
-			await page.locator("img, iframe").first().waitFor({ timeout: 60_000 });
+			await frameDrawn(page);
 			await page.waitForTimeout(2000);
 			await page.screenshot({ path: out.replace(/\.mp4$/, ".start.png") });
 			let filmed = null as { stop: () => Promise<void> } | null;
