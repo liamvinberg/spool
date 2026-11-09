@@ -1,60 +1,394 @@
 .tern {
-	--tern-ink: #121316;
-	--tern-dim: rgba(18, 19, 22, 0.52);
-	--tern-faint: rgba(18, 19, 22, 0.08);
-	--tern-ground: #efede8;
-	--tern-night: #101114;
-	font-family: "Geist", "Inter", system-ui, sans-serif;
-	font-feature-settings: "tnum";
+	--tern-paper: #f3f1ec;
+	--tern-ink: #111214;
+	--tern-dim: rgba(17, 18, 20, 0.52);
+	--tern-line: rgba(17, 18, 20, 0.1);
+	--tern-seat: #e4e1da;
+	position: relative;
+	height: 100%;
+	overflow: hidden;
+	background: var(--tern-paper);
+	color: var(--tern-ink);
+	font-family: "Inter Tight", "Inter", system-ui, sans-serif;
+	font-feature-settings: "tnum", "ss01";
 	-webkit-font-smoothing: antialiased;
+	display: flex;
+	flex-direction: column;
 }
 
-@keyframes tern-rise {
-	from {
+.tern-status {
+	display: flex;
+	height: 54px;
+	flex: none;
+	align-items: center;
+	justify-content: space-between;
+	padding: 4px 32px 0;
+	font-size: 16px;
+	font-weight: 600;
+}
+.tern-status-icons {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.tern-top {
+	display: flex;
+	height: 52px;
+	flex: none;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 24px;
+	font-size: 15px;
+	font-weight: 500;
+}
+.tern-top-dim {
+	color: var(--tern-dim);
+}
+.tern-round {
+	display: grid;
+	width: 40px;
+	height: 40px;
+	place-items: center;
+	border-radius: 999px;
+	background: var(--tern-line);
+	color: var(--tern-ink);
+	cursor: pointer;
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.tern-round:active {
+	transform: scale(0.92);
+}
+
+.tern-live {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+}
+.tern-dot {
+	position: relative;
+	width: 8px;
+	height: 8px;
+	border-radius: 99px;
+	background: #19a463;
+}
+.tern-dot::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: 99px;
+	background: #19a463;
+	animation: tern-pulse 2.4s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+.tern-route {
+	padding: 12px 24px 0;
+}
+.tern-leg {
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+}
+.tern-city {
+	font-size: 15px;
+	font-weight: 500;
+	color: var(--tern-dim);
+}
+.tern-code {
+	font-size: 92px;
+	line-height: 0.86;
+	font-weight: 700;
+	letter-spacing: -0.045em;
+	margin-top: 6px;
+}
+.tern-time {
+	font-size: 30px;
+	font-weight: 500;
+	letter-spacing: -0.02em;
+	line-height: 1;
+	padding-bottom: 6px;
+}
+.tern-time small {
+	display: block;
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--tern-dim);
+	letter-spacing: 0;
+	text-align: right;
+	margin-bottom: 6px;
+}
+.tern-between {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 44px;
+	margin: 8px 0;
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--tern-dim);
+}
+.tern-between-line {
+	flex: 1;
+	height: 1px;
+	background-image: linear-gradient(90deg, var(--tern-dim) 50%, transparent 0);
+	background-size: 6px 1px;
+	opacity: 0.6;
+}
+
+.tern-card {
+	color: #fff;
+	padding: 22px 22px 20px;
+	position: relative;
+	overflow: hidden;
+}
+.tern-card-label {
+	font-size: 15px;
+	font-weight: 500;
+	opacity: 0.72;
+}
+.tern-big {
+	font-size: 64px;
+	line-height: 0.95;
+	font-weight: 700;
+	letter-spacing: -0.04em;
+}
+.tern-grid {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 8px;
+	margin-top: 22px;
+	padding-top: 16px;
+	border-top: 1px solid rgba(255, 255, 255, 0.22);
+}
+.tern-grid dt {
+	font-size: 13px;
+	font-weight: 500;
+	opacity: 0.68;
+}
+.tern-grid dd {
+	font-size: 26px;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	margin-top: 4px;
+}
+.tern-bar {
+	height: 4px;
+	border-radius: 99px;
+	background: rgba(255, 255, 255, 0.24);
+	margin-top: 18px;
+	overflow: hidden;
+}
+.tern-bar span {
+	display: block;
+	height: 100%;
+	border-radius: 99px;
+	background: #fff;
+	transform-origin: left;
+}
+
+.tern-foot {
+	margin-top: auto;
+	padding: 0 16px calc(env(safe-area-inset-bottom, 0px) + 30px);
+}
+.tern-note {
+	text-align: center;
+	font-size: 14px;
+	color: var(--tern-dim);
+	margin-bottom: 12px;
+	font-weight: 500;
+}
+.tern-cta {
+	display: flex;
+	width: 100%;
+	height: 60px;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	border-radius: 999px;
+	background: var(--tern-ink);
+	color: var(--tern-paper);
+	font-size: 18px;
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+		opacity 160ms;
+}
+.tern-cta:active {
+	transform: scale(0.97);
+}
+
+/* seat */
+.tern-pick {
+	padding: 4px 24px 0;
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	height: 108px;
+	flex: none;
+}
+.tern-pick-seat {
+	font-size: 92px;
+	line-height: 0.86;
+	font-weight: 700;
+	letter-spacing: -0.045em;
+	display: block;
+}
+.tern-pick-kind {
+	font-size: 15px;
+	font-weight: 500;
+	color: var(--tern-dim);
+	text-align: right;
+	padding-bottom: 8px;
+	line-height: 1.4;
+}
+.tern-cabin {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding-top: 18px;
+}
+.tern-cols,
+.tern-row {
+	display: grid;
+	grid-template-columns: 38px 38px 38px 34px 38px 38px 38px;
+	column-gap: 6px;
+	align-items: center;
+}
+.tern-cols {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--tern-dim);
+	text-align: center;
+	margin-bottom: 10px;
+}
+.tern-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+}
+.tern-rownum {
+	text-align: center;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--tern-dim);
+}
+.tern-exit {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 280px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--tern-dim);
+	letter-spacing: 0.02em;
+	margin: 2px 0;
+}
+.tern-exit::before,
+.tern-exit::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--tern-line);
+}
+.tern-seat {
+	position: relative;
+	height: 36px;
+	border-radius: 10px 10px 7px 7px;
+	background: #fff;
+	box-shadow: inset 0 0 0 1.5px rgba(17, 18, 20, 0.14);
+	cursor: pointer;
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.tern-seat:active {
+	transform: scale(0.9);
+}
+.tern-seat[data-taken] {
+	background: var(--tern-seat);
+	box-shadow: none;
+	cursor: default;
+}
+.tern-seat[data-taken]:active {
+	transform: none;
+}
+.tern-seat-fill {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	display: grid;
+	place-items: center;
+	color: #fff;
+	font-size: 13px;
+	font-weight: 700;
+}
+
+/* pass */
+.tern-pass-route {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-top: 14px;
+}
+.tern-pass-route .tern-big {
+	font-size: 72px;
+}
+.tern-perf {
+	position: relative;
+	height: 28px;
+	margin: 18px -22px 0;
+}
+.tern-perf::before {
+	content: "";
+	position: absolute;
+	left: 22px;
+	right: 22px;
+	top: 50%;
+	border-top: 2px dashed rgba(255, 255, 255, 0.3);
+}
+.tern-perf i {
+	position: absolute;
+	top: 0;
+	width: 28px;
+	height: 28px;
+	border-radius: 99px;
+	background: var(--tern-paper);
+}
+.tern-qr {
+	background: #fff;
+	border-radius: 18px;
+	padding: 16px;
+	display: grid;
+	place-items: center;
+	margin-top: 6px;
+}
+.tern-pax {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-end;
+	margin-top: 16px;
+}
+.tern-pax b {
+	display: block;
+	font-size: 22px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	margin-top: 4px;
+}
+
+@keyframes tern-pulse {
+	0% {
+		transform: scale(1);
+		opacity: 0.6;
+	}
+	100% {
+		transform: scale(3);
 		opacity: 0;
-		transform: translateY(14px);
 	}
 }
-.tern-rise {
-	animation: tern-rise 640ms cubic-bezier(0.23, 1, 0.32, 1) both;
-}
-
-@keyframes tern-draw {
-	from {
-		stroke-dashoffset: 1;
-	}
-}
-.tern-draw {
-	stroke-dasharray: 1;
-	animation: tern-draw 1400ms cubic-bezier(0.65, 0, 0.35, 1) 200ms both;
-}
-
-@keyframes tern-shine {
-	from {
-		transform: translateX(-120%) skewX(-18deg);
-	}
-	to {
-		transform: translateX(260%) skewX(-18deg);
-	}
-}
-.tern-shine {
-	animation: tern-shine 1400ms cubic-bezier(0.65, 0, 0.35, 1) 450ms both;
-}
-
-@keyframes tern-blink {
-	50% {
-		opacity: 0.35;
-	}
-}
-.tern-blink {
-	animation: tern-blink 1.6s ease-in-out infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
-	.tern-rise,
-	.tern-draw,
-	.tern-shine,
-	.tern-blink {
+	.tern-dot::after {
 		animation: none;
 	}
 }

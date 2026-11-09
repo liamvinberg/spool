@@ -1,524 +1,518 @@
 import { AnimatePresence, motion } from "motion/react";
-import { type ReactNode, useEffect, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useState } from "react";
 import { ui } from "spool";
 import "./tern.css";
 
-/* Tern: a trip. One ticket carries every screen; it is the piece to tune. */
-const k = ui.knobs({
+/* Tern, a flight app. The flight is the screen: codes, times, gate. */
+
+export const k = ui.knobs({
 	ticket: {
-		radius: { type: "corners", value: 30, min: 0, max: 48 },
-		accent: { type: "color", value: "#f2542d", swatches: ["#f2542d", "#1f3cff", "#0b7a5c", "#6d3cf5", "#121316"] },
+		radius: { type: "corners", value: 30, min: 0, max: 44 },
+		accent: { type: "color", value: "#2f45f5", swatches: ["#2f45f5", "#ff5a1f", "#0f7a5c", "#111214", "#c2245a"] },
+	},
+	page: {
+		paper: { type: "color", value: "#f3f1ec", swatches: ["#f3f1ec", "#ffffff", "#e9eef2"] },
+	},
+	motion: {
+		spring: { type: "spring", value: { duration: 0.55, bounce: 0.18 } },
+		replay: { type: "action", label: "Replay entrance" },
 	},
 });
 
-const ease = [0.23, 1, 0.32, 1] as const;
+export type TernScreen = "flight" | "seat" | "pass";
 
 const flight = {
-	number: "TP 1284",
-	date: "Fri 14 Nov",
-	from: { code: "LHR", city: "London", time: "07:25" },
-	to: { code: "LIS", city: "Lisbon", time: "10:05" },
-	gate: "B22",
-	boards: "06:45",
-	length: "2 h 40 min",
-	distance: "1,565 km",
+	number: "TN 500",
+	date: "Thu, Nov 13",
+	from: { city: "London", code: "LHR", time: "07:05" },
+	to: { city: "Lisbon", code: "LIS", time: "09:50" },
+	duration: "2 h 45 min",
+	gate: "F34",
+	boards: "06:25",
+	passenger: "Maya Collins",
+	group: "2",
 };
 
-const passengers = [
-	{ name: "Ada Hughes", seat: "14A", group: "2", seed: 7 },
-	{ name: "Tom Hughes", seat: "14B", group: "2", seed: 19 },
-];
-
-const later = [
-	{ route: "LIS → LHR", when: "Sun 23 Nov · TP 1285", time: "17:40" },
-	{ route: "LHR → AMS", when: "Thu 4 Dec · KL 1004", time: "08:10" },
-	{ route: "AMS → LHR", when: "Sun 7 Dec · KL 1011", time: "19:55" },
-];
-
-function corners(r: number | number[]) {
-	return typeof r === "number" ? r : r.map((v) => `${v}px`).join(" ");
+function spring(delay = 0) {
+	const s = k.motion.spring as { duration: number; bounce: number };
+	return { type: "spring" as const, duration: s.duration, bounce: s.bounce, delay };
 }
 
-/* Each frame passes where its primary action walks, so the canvas draws one arrow per screen. */
-export function Tern({ screen, onNext }: { screen: "trips" | "flight" | "pass"; onNext: () => void }) {
+function useTrip() {
+	ui.use();
+	const seat = (ui.state.ternSeat as string | undefined) ?? "23C";
+	const checkedIn = (ui.state.ternCheckedIn as boolean | undefined) ?? false;
+	return { seat, checkedIn };
+}
+
+/** where a screen's primary action walks: the clip's frame says which frame that is */
+export type TernGo = (to: TernScreen, patch?: Record<string, unknown>) => void;
+
+export function Tern({ screen, onGo }: { screen: TernScreen; onGo?: TernGo }) {
+	const style = { "--tern-paper": k.page.paper } as CSSProperties;
+	const go: TernGo = (to, patch) => onGo?.(to, patch);
 	return (
-		<>
+		<div className="tern" style={style} key={k.motion.replay}>
 			<link
 				rel="stylesheet"
-				href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
+				href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap"
 				precedence="default"
 			/>
-			{screen === "trips" && <TripsScreen onNext={onNext} />}
-			{screen === "flight" && <FlightScreen onNext={onNext} />}
-			{screen === "pass" && <PassScreen onNext={onNext} />}
+			<StatusBar />
+			{screen === "flight" && <Flight go={go} />}
+			{screen === "seat" && <Seat go={go} />}
+			{screen === "pass" && <Pass go={go} />}
+		</div>
+	);
+}
+
+/* the one card: the flight's live numbers, and later the pass itself */
+export function Ticket({ children, delay = 0.12 }: { children: ReactNode; delay?: number }) {
+	const r = k.ticket.radius as number | number[];
+	const borderRadius = Array.isArray(r) ? r.map((v) => `${v}px`).join(" ") : r;
+	return (
+		<motion.section
+			className="tern-card"
+			style={{ background: k.ticket.accent, borderRadius }}
+			initial={{ opacity: 0, y: 28 }}
+			animate={{ opacity: 1, y: 0 }}
+			transition={spring(delay)}
+		>
+			{children}
+		</motion.section>
+	);
+}
+
+function Rise({ children, i }: { children: ReactNode; i: number }) {
+	return (
+		<motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring(i * 0.06)}>
+			{children}
+		</motion.div>
+	);
+}
+
+function Flight({ go }: { go: TernGo }) {
+	const { seat, checkedIn } = useTrip();
+	return (
+		<>
+			<div className="tern-top">
+				<span>{flight.number}</span>
+				<span className="tern-live tern-top-dim">
+					<span className="tern-dot" />
+					On time · {flight.date}
+				</span>
+			</div>
+
+			<div className="tern-route">
+				<Rise i={0}>
+					<div className="tern-leg">
+						<div>
+							<div className="tern-city">{flight.from.city}</div>
+							<div className="tern-code">{flight.from.code}</div>
+						</div>
+						<div className="tern-time">
+							<small>Departs</small>
+							{flight.from.time}
+						</div>
+					</div>
+				</Rise>
+				<Rise i={1}>
+					<div className="tern-between">
+						<Plane />
+						<span>{flight.duration}, nonstop</span>
+						<span className="tern-between-line" />
+					</div>
+				</Rise>
+				<Rise i={2}>
+					<div className="tern-leg">
+						<div>
+							<div className="tern-city">{flight.to.city}</div>
+							<div className="tern-code">{flight.to.code}</div>
+						</div>
+						<div className="tern-time">
+							<small>Lands</small>
+							{flight.to.time}
+						</div>
+					</div>
+				</Rise>
+			</div>
+
+			<div style={{ padding: "26px 16px 0" }}>
+				<Ticket>
+					<div className="tern-card-label">Boarding in</div>
+					<div className="tern-big">42 min</div>
+					<div className="tern-bar">
+						<motion.span
+							initial={{ scaleX: 0 }}
+							animate={{ scaleX: 0.62 }}
+							transition={{ duration: 1.6, ease: [0.23, 1, 0.32, 1], delay: 0.35 }}
+						/>
+					</div>
+					<dl className="tern-grid">
+						<div>
+							<dt>Gate</dt>
+							<dd>{flight.gate}</dd>
+						</div>
+						<div>
+							<dt>Boards</dt>
+							<dd>{flight.boards}</dd>
+						</div>
+						<div>
+							<dt>Seat</dt>
+							<AnimatePresence mode="popLayout" initial={false}>
+								<motion.dd
+									key={seat}
+									initial={{ y: 16, opacity: 0 }}
+									animate={{ y: 0, opacity: 1 }}
+									transition={spring()}
+								>
+									{seat}
+								</motion.dd>
+							</AnimatePresence>
+						</div>
+					</dl>
+				</Ticket>
+			</div>
+
+			<div className="tern-foot">
+				{checkedIn ? (
+					<>
+						<p className="tern-note">
+							You're checked in. Seat {seat}, group {flight.group}.
+						</p>
+						<button type="button" className="tern-cta" onClick={() => go("pass")}>
+							Boarding pass
+						</button>
+					</>
+				) : (
+					<>
+						<p className="tern-note">Check-in closes at 06:25</p>
+						<button type="button" className="tern-cta" onClick={() => go("seat")}>
+							Check in
+						</button>
+					</>
+				)}
+			</div>
 		</>
 	);
 }
 
-/* ---------- trips ---------- */
+const COLS = ["A", "B", "C", "D", "E", "F"];
+const ROWS = [10, 11, 12, 14, 15, 16, 17, 18, 19, 20];
+/* taken seats, as an airline would send them */
+const TAKEN = new Set([
+	"10A",
+	"10B",
+	"10E",
+	"10F",
+	"11C",
+	"11D",
+	"11E",
+	"12A",
+	"12B",
+	"12C",
+	"12F",
+	"14A",
+	"14B",
+	"14D",
+	"15C",
+	"15D",
+	"15E",
+	"15F",
+	"16A",
+	"16F",
+	"17B",
+	"17C",
+	"17D",
+	"17E",
+	"18A",
+	"18F",
+	"19C",
+	"19D",
+	"20A",
+	"20B",
+	"20E",
+	"20F",
+]);
 
-function TripsScreen({ onNext }: { onNext: () => void }) {
-	const left = useCountdown(2 * 3600 + 9 * 60 + 41);
+function kind(seat: string) {
+	const col = seat.slice(-1);
+	const row = Number(seat.slice(0, -1));
+	const place = col === "A" || col === "F" ? "Window" : col === "C" || col === "D" ? "Aisle" : "Middle";
+	return { place, extra: row === 14 ? "Extra legroom" : `Row ${row}` };
+}
+
+function Seat({ go }: { go: TernGo }) {
+	const trip = useTrip();
+	const [pick, setPick] = useState(trip.seat === "23C" ? "14F" : trip.seat);
+	const info = kind(pick);
 	return (
-		<div className="tern flex h-full flex-col overflow-hidden bg-[var(--tern-ground)] text-[var(--tern-ink)]">
-			<StatusBar />
-			<header className="flex items-end justify-between px-6 pt-3">
-				<div>
-					<h1 className="text-[40px] font-bold leading-none tracking-[-0.035em]">Trips</h1>
-					<p className="mt-2 flex items-center gap-2 text-[16px] font-medium text-[var(--tern-dim)]">
-						<span className="tern-blink size-2 rounded-full" style={{ background: k.ticket.accent }} />
-						Boards in {left}
-					</p>
-				</div>
-				<span className="grid size-11 place-items-center rounded-full bg-[var(--tern-faint)] text-[15px] font-semibold">
-					AH
+		<>
+			<div className="tern-top">
+				<button type="button" className="tern-round" onClick={() => ui.back()} aria-label="Back">
+					<Chevron />
+				</button>
+				<span>
+					LHR → LIS <span className="tern-top-dim">· {flight.number}</span>
 				</span>
-			</header>
-
-			<motion.button
-				type="button"
-				whileTap={{ scale: 0.97 }}
-				onClick={onNext}
-				className="tern-rise mx-4 mt-6 block text-left"
-			>
-				<Ticket mode="hero" />
-			</motion.button>
-
-			<h2
-				className="tern-rise mt-8 px-6 text-[20px] font-semibold tracking-[-0.02em]"
-				style={{ animationDelay: "80ms" }}
-			>
-				Later
-			</h2>
-			<ul className="tern-rise mx-4 mt-3 rounded-[24px] bg-[#fff] px-5" style={{ animationDelay: "140ms" }}>
-				{later.map((trip, i) => (
-					<li
-						key={trip.route}
-						className={
-							i > 0
-								? "flex h-[76px] items-center border-t border-[var(--tern-faint)]"
-								: "flex h-[76px] items-center"
-						}
-					>
-						<div className="flex-1">
-							<p className="text-[20px] font-semibold tracking-[-0.02em]">{trip.route}</p>
-							<p className="mt-0.5 text-[14px] text-[var(--tern-dim)]">{trip.when}</p>
-						</div>
-						<span className="text-[18px] font-medium">{trip.time}</span>
-					</li>
-				))}
-			</ul>
-		</div>
-	);
-}
-
-function useCountdown(start: number) {
-	const [s, setS] = useState(start);
-	useEffect(() => {
-		const t = setInterval(() => setS((v) => Math.max(0, v - 1)), 1000);
-		return () => clearInterval(t);
-	}, []);
-	const h = Math.floor(s / 3600);
-	const m = Math.floor((s % 3600) / 60);
-	const sec = s % 60;
-	return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-}
-
-/* ---------- flight ---------- */
-
-function FlightScreen({ onNext }: { onNext: () => void }) {
-	return (
-		<div className="tern flex h-full flex-col overflow-hidden bg-[var(--tern-ground)] text-[var(--tern-ink)]">
-			<StatusBar />
-			<header className="flex h-14 items-center justify-between px-5">
-				<RoundButton label="Back" onClick={() => ui.back()}>
-					<path d="M15 5l-7 7 7 7" />
-				</RoundButton>
-				<span className="text-[17px] font-semibold">{flight.number}</span>
-				<span className="size-10" />
-			</header>
-
-			<div className="mx-4 mt-2">
-				<Ticket mode="compact" />
+				<span style={{ width: 40 }} />
 			</div>
 
-			<RouteMap />
-
-			<div className="tern-rise mt-6 flex items-end justify-between px-6" style={{ animationDelay: "120ms" }}>
-				<div>
-					<p className="text-[16px] font-medium text-[var(--tern-dim)]">Gate</p>
-					<p className="text-[96px] font-bold leading-[0.9] tracking-[-0.05em]">{flight.gate}</p>
-				</div>
-				<div className="flex flex-col gap-3 pb-1 text-right">
-					<Stat label="Boards" value={flight.boards} />
-					<Stat label="Seat" value="14A" />
-				</div>
-			</div>
-
-			<div className="mt-auto px-4 pb-[calc(env(safe-area-inset-bottom)+34px)]">
-				<motion.button
-					type="button"
-					whileTap={{ scale: 0.97 }}
-					onClick={onNext}
-					className="flex h-[62px] w-full items-center justify-center gap-3 rounded-full bg-[var(--tern-ink)] text-[19px] font-semibold text-[#fff]"
-				>
-					<svg
-						aria-hidden="true"
-						width="22"
-						height="22"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					>
-						<rect x="4" y="4" width="6" height="6" rx="1" />
-						<rect x="14" y="4" width="6" height="6" rx="1" />
-						<rect x="4" y="14" width="6" height="6" rx="1" />
-						<path d="M14 14h2v2M20 14v6h-6M17 17v3" />
-					</svg>
-					Boarding pass
-				</motion.button>
-			</div>
-		</div>
-	);
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-	return (
-		<div>
-			<p className="text-[14px] font-medium text-[var(--tern-dim)]">{label}</p>
-			<p className="text-[28px] font-semibold leading-tight tracking-[-0.03em]">{value}</p>
-		</div>
-	);
-}
-
-function RouteMap() {
-	/* the dot field is a fixed scatter, denser where land would be */
-	const dots: [number, number][] = [];
-	for (let x = 0; x < 30; x++) {
-		for (let y = 0; y < 11; y++) {
-			const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-			const r = n - Math.floor(n);
-			const land = (x > 4 && x < 14 && y > 3) || (x > 14 && y < 7) || (x > 20 && y > 2);
-			if (r < (land ? 0.82 : 0.12)) dots.push([12 + x * 12, 12 + y * 13]);
-		}
-	}
-	return (
-		<div
-			className="tern-rise relative mx-4 mt-3 h-[164px] overflow-hidden rounded-[24px] bg-[#fff]"
-			style={{ animationDelay: "60ms" }}
-		>
-			<svg aria-hidden="true" viewBox="0 0 358 164" className="absolute inset-0 size-full">
-				{dots.map(([x, y]) => (
-					<circle key={`${x}-${y}`} cx={x} cy={y} r="1.6" fill="var(--tern-faint)" />
-				))}
-				<path
-					d="M300 34 Q 190 -8 64 120"
-					fill="none"
-					stroke="var(--tern-faint)"
-					strokeWidth="3"
-					strokeLinecap="round"
-				/>
-				<path
-					d="M300 34 Q 190 -8 64 120"
-					pathLength={1}
-					className="tern-draw"
-					fill="none"
-					stroke={k.ticket.accent}
-					strokeWidth="3"
-					strokeLinecap="round"
-				/>
-				<circle cx="300" cy="34" r="6" fill={k.ticket.accent} />
-				<circle cx="64" cy="120" r="6" fill="#fff" stroke={k.ticket.accent} strokeWidth="3" />
-			</svg>
-			<span className="absolute top-[46px] right-[34px] text-[14px] font-semibold">LHR</span>
-			<span className="absolute top-[94px] left-[30px] text-[14px] font-semibold">LIS</span>
-			<p className="absolute right-5 bottom-4 text-[14px] font-medium text-[var(--tern-dim)]">
-				{flight.distance} · {flight.length}
-			</p>
-		</div>
-	);
-}
-
-/* ---------- pass ---------- */
-
-function PassScreen({ onNext }: { onNext: () => void }) {
-	const [who, setWho] = useState(0);
-	const [saved, setSaved] = useState(false);
-	const p = passengers[who] ?? passengers[0]!;
-	return (
-		<div className="tern flex h-full flex-col overflow-hidden bg-[var(--tern-night)] text-[#fff]">
-			<StatusBar />
-			<header className="flex h-14 items-center justify-between px-5">
-				<RoundButton label="Done" light onClick={onNext}>
-					<path d="M6 6l12 12M18 6L6 18" />
-				</RoundButton>
-				<span className="text-[17px] font-semibold">Boarding pass</span>
-				<span className="w-10 text-right text-[15px] font-medium text-[rgba(255,255,255,0.55)]">
-					{who + 1}/{passengers.length}
-				</span>
-			</header>
-
-			<button
-				type="button"
-				onClick={() => setWho((w) => (w + 1) % passengers.length)}
-				className="mx-4 mt-3 block text-left"
-			>
-				<Ticket mode="pass" passenger={who} ground="var(--tern-night)" />
-			</button>
-
-			<div className="mt-4 flex justify-center gap-2">
-				{passengers.map((x, i) => (
-					<motion.span
-						key={x.name}
-						animate={{ width: i === who ? 20 : 6, opacity: i === who ? 1 : 0.35 }}
-						transition={{ duration: 0.3, ease }}
-						className="h-1.5 rounded-full bg-[#fff]"
-					/>
-				))}
-			</div>
-
-			<div className="mt-auto px-4 pb-[calc(env(safe-area-inset-bottom)+34px)]">
-				<motion.button
-					type="button"
-					whileTap={{ scale: 0.97 }}
-					onClick={() => setSaved(true)}
-					className="flex h-[62px] w-full items-center justify-center gap-2 rounded-full bg-[#fff] text-[19px] font-semibold text-[var(--tern-ink)]"
-				>
+			<div className="tern-pick">
+				<div style={{ overflow: "hidden", height: 92 }}>
 					<AnimatePresence mode="popLayout" initial={false}>
 						<motion.span
-							key={saved ? "saved" : "save"}
-							initial={{ opacity: 0, y: 10 }}
-							animate={{ opacity: 1, y: 0 }}
-							exit={{ opacity: 0, y: -10 }}
-							transition={{ duration: 0.28, ease }}
+							key={pick}
+							className="tern-pick-seat"
+							style={{ color: k.ticket.accent }}
+							initial={{ y: 70, opacity: 0 }}
+							animate={{ y: 0, opacity: 1 }}
+							exit={{ y: -70, opacity: 0 }}
+							transition={spring()}
 						>
-							{saved ? `Saved for ${p.name.split(" ")[0]}` : "Save to phone"}
+							{pick}
 						</motion.span>
 					</AnimatePresence>
-				</motion.button>
+				</div>
+				<div className="tern-pick-kind">
+					{info.place}
+					<br />
+					{info.extra}
+				</div>
 			</div>
-		</div>
+
+			<div className="tern-cabin">
+				<div className="tern-cols">
+					{["A", "B", "C", "", "D", "E", "F"].map((c, i) => (
+						<span key={i}>{c}</span>
+					))}
+				</div>
+				<div className="tern-rows">
+					{ROWS.map((row, ri) => (
+						<div key={row}>
+							{row === 14 && <div className="tern-exit">Exit</div>}
+							<motion.div
+								className="tern-row"
+								initial={{ opacity: 0, y: 10 }}
+								animate={{ opacity: 1, y: 0 }}
+								transition={spring(0.1 + ri * 0.025)}
+							>
+								{COLS.slice(0, 3).map((c) => (
+									<SeatButton key={c} id={`${row}${c}`} pick={pick} onPick={setPick} />
+								))}
+								<span className="tern-rownum">{row}</span>
+								{COLS.slice(3).map((c) => (
+									<SeatButton key={c} id={`${row}${c}`} pick={pick} onPick={setPick} />
+								))}
+							</motion.div>
+						</div>
+					))}
+				</div>
+			</div>
+
+			<div className="tern-foot" style={{ paddingTop: 12 }}>
+				<button
+					type="button"
+					className="tern-cta"
+					onClick={() => go("pass", { ternSeat: pick, ternCheckedIn: true })}
+				>
+					Check in to {pick}
+				</button>
+			</div>
+		</>
 	);
 }
 
-/* ---------- the ticket ---------- */
-
-function Ticket({
-	mode,
-	passenger = 0,
-	ground = "var(--tern-ground)",
-}: {
-	mode: "hero" | "compact" | "pass";
-	passenger?: number;
-	ground?: string;
-}) {
-	const p = passengers[passenger] ?? passengers[0]!;
+function SeatButton({ id, pick, onPick }: { id: string; pick: string; onPick: (id: string) => void }) {
+	const taken = TAKEN.has(id);
+	const on = id === pick;
 	return (
-		<div
-			className="relative overflow-hidden"
-			style={{
-				borderRadius: corners(k.ticket.radius),
-				background: mode === "pass" ? "#fff" : k.ticket.accent,
-				viewTransitionName: "tern-ticket",
-			}}
+		<button
+			type="button"
+			className="tern-seat"
+			data-taken={taken ? "" : undefined}
+			onClick={taken ? undefined : () => onPick(id)}
+			aria-label={id}
 		>
-			<div className="relative overflow-hidden px-6 pt-5 pb-6 text-[#fff]" style={{ background: k.ticket.accent }}>
-				{mode === "pass" && (
-					<span className="tern-shine pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-[rgba(255,255,255,0.18)]" />
+			<AnimatePresence>
+				{on && (
+					<motion.span
+						className="tern-seat-fill"
+						style={{ background: k.ticket.accent }}
+						initial={{ scale: 0.4, opacity: 0 }}
+						animate={{ scale: 1, opacity: 1 }}
+						exit={{ scale: 0.4, opacity: 0 }}
+						transition={spring()}
+					>
+						✓
+					</motion.span>
 				)}
-				<div className="flex items-center justify-between text-[15px] font-medium">
-					<span className="text-[rgba(255,255,255,0.8)]">
-						{flight.number} · {flight.date}
-					</span>
-					<span className="flex items-center gap-1.5 rounded-full bg-[rgba(255,255,255,0.2)] px-2.5 py-1 text-[13px] font-semibold">
-						<span className="size-1.5 rounded-full bg-[#fff]" />
-						On time
-					</span>
-				</div>
-				<div className="mt-5 flex items-center gap-3">
-					<span className="text-[64px] font-bold leading-none tracking-[-0.04em]">{flight.from.code}</span>
-					<span className="relative flex h-6 flex-1 items-center">
-						<span className="h-0 flex-1 border-t-2 border-dashed border-[rgba(255,255,255,0.45)]" />
-						<svg
-							aria-hidden="true"
-							width="24"
-							height="24"
-							viewBox="0 0 24 24"
-							fill="#fff"
-							className="mx-1.5 shrink-0 rotate-90"
-						>
-							<path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5Z" />
-						</svg>
-						<span className="h-0 flex-1 border-t-2 border-dashed border-[rgba(255,255,255,0.45)]" />
-					</span>
-					<span className="text-[64px] font-bold leading-none tracking-[-0.04em]">{flight.to.code}</span>
-				</div>
-				<div className="mt-2 flex justify-between text-[15px] font-medium text-[rgba(255,255,255,0.8)]">
-					<span>
-						{flight.from.city} {flight.from.time}
-					</span>
-					<span>
-						{flight.to.city} {flight.to.time}
-					</span>
-				</div>
-				{mode === "hero" && (
-					<div className="mt-5 grid grid-cols-3 border-t border-[rgba(255,255,255,0.25)] pt-4">
-						<HeroStat label="Gate" value={flight.gate} />
-						<HeroStat label="Boards" value={flight.boards} />
-						<HeroStat label="Seat" value="14A" />
-					</div>
-				)}
+			</AnimatePresence>
+		</button>
+	);
+}
+
+function Pass({ go }: { go: TernGo }) {
+	const { seat } = useTrip();
+	return (
+		<>
+			<div className="tern-top">
+				<button type="button" className="tern-round" onClick={() => ui.back()} aria-label="Back">
+					<Chevron />
+				</button>
+				<span>Boarding pass</span>
+				<span style={{ width: 40 }} />
 			</div>
 
-			{mode === "pass" && (
-				<div className="relative text-[var(--tern-ink)]">
-					<span className="absolute -top-3 -left-3 size-6 rounded-full" style={{ background: ground }} />
-					<span className="absolute -top-3 -right-3 size-6 rounded-full" style={{ background: ground }} />
-					<AnimatePresence mode="popLayout" initial={false}>
-						<motion.div
-							key={p.name}
-							initial={{ opacity: 0, x: 40 }}
-							animate={{ opacity: 1, x: 0 }}
-							exit={{ opacity: 0, x: -40 }}
-							transition={{ duration: 0.36, ease }}
-							className="px-6 pt-6 pb-6"
-						>
-							<p className="text-[14px] font-medium text-[var(--tern-dim)]">Passenger</p>
-							<p className="text-[28px] font-bold tracking-[-0.03em]">{p.name}</p>
-							<div className="mt-4 grid grid-cols-4">
-								<PassStat label="Seat" value={p.seat} />
-								<PassStat label="Group" value={p.group} />
-								<PassStat label="Gate" value={flight.gate} />
-								<PassStat label="Boards" value={flight.boards} />
-							</div>
-							<div className="mt-6 flex justify-center">
-								<Code seed={p.seed} size={172} />
-							</div>
-						</motion.div>
-					</AnimatePresence>
-				</div>
-			)}
-		</div>
+			<div style={{ padding: "8px 16px 0" }}>
+				<Ticket delay={0.04}>
+					<div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 500 }}>
+						<span>{flight.number}</span>
+						<span style={{ opacity: 0.72 }}>{flight.date}</span>
+					</div>
+					<div className="tern-pass-route">
+						<span className="tern-big">{flight.from.code}</span>
+						<Plane size={28} />
+						<span className="tern-big">{flight.to.code}</span>
+					</div>
+					<dl className="tern-grid">
+						<div>
+							<dt>Gate</dt>
+							<dd>{flight.gate}</dd>
+						</div>
+						<div>
+							<dt>Boards</dt>
+							<dd>{flight.boards}</dd>
+						</div>
+						<div>
+							<dt>Seat</dt>
+							<dd>{seat}</dd>
+						</div>
+					</dl>
+					<div className="tern-perf">
+						<i style={{ left: -14 }} />
+						<i style={{ right: -14 }} />
+					</div>
+					<motion.div
+						className="tern-qr"
+						initial={{ opacity: 0, scale: 0.94 }}
+						animate={{ opacity: 1, scale: 1 }}
+						transition={spring(0.3)}
+					>
+						<Code />
+					</motion.div>
+					<div className="tern-pax">
+						<div>
+							<div className="tern-card-label">Passenger</div>
+							<b>{flight.passenger}</b>
+						</div>
+						<div style={{ textAlign: "right" }}>
+							<div className="tern-card-label">Group</div>
+							<b>{flight.group}</b>
+						</div>
+					</div>
+				</Ticket>
+			</div>
+
+			<div className="tern-foot" style={{ paddingTop: 16 }}>
+				<button type="button" className="tern-cta" onClick={() => go("flight")}>
+					Done
+				</button>
+			</div>
+		</>
 	);
 }
 
-function HeroStat({ label, value }: { label: string; value: string }) {
-	return (
-		<div>
-			<p className="text-[13px] font-medium text-[rgba(255,255,255,0.72)]">{label}</p>
-			<p className="mt-0.5 text-[26px] font-semibold leading-tight tracking-[-0.03em]">{value}</p>
-		</div>
-	);
-}
-
-function PassStat({ label, value }: { label: string; value: string }) {
-	return (
-		<div>
-			<p className="text-[13px] font-medium text-[var(--tern-dim)]">{label}</p>
-			<p className="text-[22px] font-semibold tracking-[-0.03em]">{value}</p>
-		</div>
-	);
-}
-
-/* A scannable-looking square: three finder marks and a seeded field. */
-function Code({ seed, size }: { seed: number; size: number }) {
+/* a scannable-looking code: three finder squares and a seeded field */
+function Code() {
 	const n = 25;
-	const cells: [number, number][] = [];
-	let s = seed * 9973;
+	let s = 1417;
 	const rand = () => {
 		s = (s * 16807) % 2147483647;
 		return s / 2147483647;
 	};
-	const finder = (x: number, y: number) => (x < 8 && y < 8) || (x > n - 9 && y < 8) || (x < 8 && y > n - 9);
-	for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (!finder(x, y) && rand() < 0.5) cells.push([x, y]);
-	const marks = [
-		[0, 0],
-		[n - 7, 0],
-		[0, n - 7],
-	];
+	const finder = (x: number, y: number) => {
+		for (const [fx, fy] of [
+			[0, 0],
+			[n - 7, 0],
+			[0, n - 7],
+		] as const) {
+			if (x >= fx && x < fx + 7 && y >= fy && y < fy + 7) return true;
+		}
+		return false;
+	};
+	const cells: ReactNode[] = [];
+	for (let y = 0; y < n; y++)
+		for (let x = 0; x < n; x++) {
+			const r = rand();
+			if (finder(x, y)) continue;
+			if (r > 0.52) cells.push(<rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} />);
+		}
+	const square = (x: number, y: number) => (
+		<g key={`f${x}${y}`}>
+			<rect x={x} y={y} width={7} height={7} />
+			<rect x={x + 1} y={y + 1} width={5} height={5} fill="#fff" />
+			<rect x={x + 2} y={y + 2} width={3} height={3} />
+		</g>
+	);
 	return (
-		<svg aria-hidden="true" width={size} height={size} viewBox={`0 0 ${n} ${n}`} shapeRendering="crispEdges">
-			{cells.map(([x, y]) => (
-				<rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="var(--tern-ink)" />
-			))}
-			{marks.map(([x = 0, y = 0]) => (
-				<g key={`${x}-${y}`}>
-					<rect
-						x={x + 0.5}
-						y={y + 0.5}
-						width="6"
-						height="6"
-						rx="1.4"
-						fill="none"
-						stroke="var(--tern-ink)"
-						strokeWidth="1"
-					/>
-					<rect x={x + 2} y={y + 2} width="3" height="3" rx="0.6" fill="var(--tern-ink)" />
-				</g>
-			))}
+		<svg
+			width={150}
+			height={150}
+			viewBox={`0 0 ${n} ${n}`}
+			fill="#111214"
+			shapeRendering="crispEdges"
+			aria-label="Boarding code"
+		>
+			{cells}
+			{square(0, 0)}
+			{square(n - 7, 0)}
+			{square(0, n - 7)}
 		</svg>
 	);
 }
 
-/* ---------- parts ---------- */
-
-function RoundButton({
-	label,
-	onClick,
-	light = false,
-	children,
-}: {
-	label: string;
-	onClick: () => void;
-	light?: boolean;
-	children: ReactNode;
-}) {
+function Plane({ size = 18 }: { size?: number }) {
 	return (
-		<motion.button
-			type="button"
-			aria-label={label}
-			whileTap={{ scale: 0.88 }}
-			onClick={onClick}
-			className={
-				light
-					? "grid size-10 place-items-center rounded-full bg-[rgba(255,255,255,0.12)]"
-					: "grid size-10 place-items-center rounded-full bg-[var(--tern-faint)]"
-			}
+		<svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+			<path d="M21.5 12.6c0-.6-.5-1-1.1-1H15l-4.6-7.3a.9.9 0 0 0-.8-.4H8.3l2.4 7.7H5.9L4.2 9.4H2.8l1 3.2-1 3.2h1.4l1.7-2.2h4.8l-2.4 7.7h1.3c.3 0 .6-.2.8-.4l4.6-7.3h5.4c.6 0 1.1-.5 1.1-1Z" />
+		</svg>
+	);
+}
+
+function Chevron() {
+	return (
+		<svg
+			width="20"
+			height="20"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth={2.2}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden
 		>
-			<svg
-				aria-hidden="true"
-				width="20"
-				height="20"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2.4"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-			>
-				{children}
-			</svg>
-		</motion.button>
+			<path d="M14.5 5.5 8 12l6.5 6.5" />
+		</svg>
 	);
 }
 
 function StatusBar() {
 	return (
-		<div className="flex h-[54px] shrink-0 items-center justify-between px-8 pt-1 text-[16px] font-semibold">
-			<span>9:41</span>
-			<span className="flex items-center gap-1.5">
-				<svg aria-hidden="true" width="18" height="12" viewBox="0 0 18 12" fill="currentColor">
+		<div className="tern-status">
+			<span>05:43</span>
+			<span className="tern-status-icons">
+				<svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor" aria-hidden>
 					<rect x="0" y="8" width="3" height="4" rx="1" />
 					<rect x="5" y="5.5" width="3" height="6.5" rx="1" />
 					<rect x="10" y="3" width="3" height="9" rx="1" />
 					<rect x="15" y="0" width="3" height="12" rx="1" />
 				</svg>
-				<svg aria-hidden="true" width="27" height="13" viewBox="0 0 27 13" fill="none">
+				<svg width="27" height="13" viewBox="0 0 27 13" fill="none" aria-hidden>
 					<rect x="0.5" y="0.5" width="23" height="12" rx="3.8" stroke="currentColor" opacity="0.4" />
-					<rect x="2" y="2" width="17" height="9" rx="2.5" fill="currentColor" />
+					<rect x="2" y="2" width="15" height="9" rx="2.5" fill="currentColor" />
 					<path d="M25 4.5v4c.8-.3 1.3-1.1 1.3-2s-.5-1.7-1.3-2Z" fill="currentColor" opacity="0.5" />
 				</svg>
 			</span>
