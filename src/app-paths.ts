@@ -25,8 +25,10 @@ export const APP_PATH_SEGMENTS: readonly string[] = [
 	"vendor",
 	// the daemon's API beneath /api, kept clear so a team's address never reads as one of them
 	"abs",
+	"agents",
 	"cloud",
 	"events",
+	"first-run",
 	"fs",
 	"health",
 	"hook",
