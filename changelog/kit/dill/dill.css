@@ -1,0 +1,310 @@
+.dill {
+	--dill-cream: #f7f2ea;
+	--dill-ink: #1d1a16;
+	--dill-dim: rgba(29, 26, 22, 0.55);
+	--dill-line: rgba(29, 26, 22, 0.1);
+	position: relative;
+	height: 100%;
+	overflow: hidden;
+	background: var(--dill-cream);
+	color: var(--dill-ink);
+	font-family: "Inter", system-ui, sans-serif;
+	font-feature-settings: "tnum";
+	-webkit-font-smoothing: antialiased;
+}
+.dill-serif {
+	font-family: "Newsreader", Georgia, serif;
+	font-optical-sizing: auto;
+}
+
+.dill-status {
+	position: absolute;
+	inset: 0 0 auto;
+	z-index: 3;
+	display: flex;
+	height: 54px;
+	align-items: center;
+	justify-content: space-between;
+	padding: 4px 32px 0;
+	font-size: 16px;
+	font-weight: 600;
+	color: #fff;
+}
+.dill-status span:last-child {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.dill-photo {
+	position: absolute;
+	inset: 0 0 auto;
+	overflow: hidden;
+}
+.dill-photo img {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+.dill-photo::after {
+	content: "";
+	position: absolute;
+	inset: 0 0 auto;
+	height: 120px;
+	background: linear-gradient(180deg, rgba(0, 0, 0, 0.32), transparent);
+}
+
+.dill-glass {
+	position: absolute;
+	top: 62px;
+	z-index: 3;
+	display: grid;
+	width: 40px;
+	height: 40px;
+	place-items: center;
+	border-radius: 999px;
+	background: rgba(20, 16, 12, 0.32);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	color: #fff;
+	cursor: pointer;
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.dill-glass:active {
+	transform: scale(0.92);
+}
+
+.dill-sheet {
+	position: absolute;
+	inset: auto 0 0;
+	z-index: 2;
+	background: var(--dill-cream);
+	display: flex;
+	flex-direction: column;
+}
+
+.dill-title {
+	font-size: 36px;
+	line-height: 1.04;
+	letter-spacing: -0.015em;
+	font-weight: 500;
+}
+.dill-meta {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-top: 12px;
+	font-size: 15px;
+	color: var(--dill-dim);
+	font-weight: 500;
+}
+.dill-stepper {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--dill-ink);
+}
+.dill-stepper button {
+	display: grid;
+	width: 34px;
+	height: 34px;
+	place-items: center;
+	border-radius: 999px;
+	background: var(--dill-line);
+	font-size: 18px;
+	cursor: pointer;
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.dill-stepper button:active {
+	transform: scale(0.88);
+}
+.dill-stepper output {
+	min-width: 86px;
+	text-align: center;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.dill-list {
+	margin-top: 14px;
+	border-top: 1px solid var(--dill-line);
+}
+.dill-list li {
+	display: flex;
+	align-items: baseline;
+	height: 39px;
+	padding-top: 9px;
+	border-bottom: 1px solid var(--dill-line);
+	font-size: 16px;
+}
+.dill-amt {
+	width: 84px;
+	font-weight: 600;
+	display: inline-flex;
+	overflow: hidden;
+	height: 22px;
+}
+
+.dill-cta {
+	display: flex;
+	height: 60px;
+	width: 100%;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	border-radius: 999px;
+	color: #fff;
+	font-size: 18px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.dill-cta:active {
+	transform: scale(0.97);
+}
+.dill-foot {
+	margin-top: auto;
+	padding: 14px 20px calc(env(safe-area-inset-bottom, 0px) + 30px);
+}
+
+/* step */
+.dill-progress {
+	display: flex;
+	gap: 6px;
+}
+.dill-progress span {
+	flex: 1;
+	height: 4px;
+	border-radius: 99px;
+	background: var(--dill-line);
+	overflow: hidden;
+}
+.dill-progress i {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	transform-origin: left;
+}
+.dill-stepno {
+	display: flex;
+	justify-content: space-between;
+	margin-top: 16px;
+	font-size: 15px;
+	font-weight: 500;
+	color: var(--dill-dim);
+}
+.dill-step {
+	font-size: 30px;
+	line-height: 1.22;
+	letter-spacing: -0.01em;
+	margin-top: 12px;
+}
+.dill-timer {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 38px;
+	padding: 0 14px 0 11px;
+	border-radius: 999px;
+	font-family: "Inter", system-ui, sans-serif;
+	font-size: 17px;
+	font-weight: 600;
+	vertical-align: 3px;
+	overflow: hidden;
+	cursor: pointer;
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.dill-timer:active {
+	transform: scale(0.95);
+}
+.dill-timer > b {
+	position: absolute;
+	inset: 0;
+	transform-origin: left;
+}
+.dill-timer > span {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.dill-nav {
+	display: flex;
+	gap: 10px;
+}
+.dill-back {
+	display: grid;
+	width: 60px;
+	height: 60px;
+	flex: none;
+	place-items: center;
+	border-radius: 999px;
+	background: var(--dill-line);
+	cursor: pointer;
+	transition:
+		transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+		opacity 200ms;
+}
+.dill-back:active {
+	transform: scale(0.94);
+}
+.dill-back:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+/* done */
+.dill-done {
+	position: absolute;
+	inset: 0;
+	color: #fff;
+	display: flex;
+	flex-direction: column;
+}
+.dill-done-shade {
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(
+		180deg,
+		rgba(0, 0, 0, 0.3) 0%,
+		transparent 18%,
+		transparent 26%,
+		rgba(18, 13, 9, 0.78) 46%,
+		rgba(18, 13, 9, 0.97) 64%
+	);
+}
+.dill-big {
+	font-size: 60px;
+	line-height: 0.98;
+	letter-spacing: -0.025em;
+	font-weight: 400;
+}
+.dill-stars {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+}
+.dill-stars button {
+	cursor: pointer;
+	transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.dill-stars button:active {
+	transform: scale(0.85);
+}
+.dill-light {
+	background: var(--dill-cream);
+	color: var(--dill-ink);
+}
+.dill-link {
+	display: block;
+	width: 100%;
+	margin-top: 8px;
+	height: 44px;
+	font-size: 16px;
+	font-weight: 500;
+	color: rgba(255, 255, 255, 0.72);
+	cursor: pointer;
+}
