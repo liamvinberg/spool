@@ -26,29 +26,29 @@ test("a tall frame takes the screen's height and snaps to its right edge", () =>
 	assert.deepEqual(fitRect({ w: 1200, h: 2400 }, DESK), { x: 720, y: 25, w: 1200, h: 1175 });
 });
 
-test("a phone frame keeps the height it was authored at, centred", () => {
+test("a phone frame keeps the height it was authored at under the bar, centred", () => {
 	// The whole argument: 844 and stop. Stretching it to 1175 would invent a
 	// device nobody has, which is the same lie as scaling.
-	assert.deepEqual(fitRect({ w: 390, h: 844 }, DESK), { x: 1530, y: 191, w: 390, h: 844 });
+	assert.deepEqual(fitRect({ w: 390, h: 844 }, DESK), { x: 1530, y: 176, w: 390, h: 874 });
 });
 
-test("a frame exactly the screen's height is not centred by a rounding error", () => {
-	assert.deepEqual(fitRect({ w: 800, h: 1175 }, DESK), { x: 1120, y: 25, w: 800, h: 1175 });
+test("a frame exactly the screen's height under the bar is not centred by a rounding error", () => {
+	assert.deepEqual(fitRect({ w: 800, h: 1145 }, DESK), { x: 1120, y: 25, w: 800, h: 1175 });
 });
 
 test("an odd leftover rounds rather than landing on a half pixel", () => {
-	const rect = fitRect({ w: 400, h: 1000 }, DESK);
+	const rect = fitRect({ w: 400, h: 970 }, DESK);
 	assert.equal(rect.y, 25 + 88);
 	assert.equal(Number.isInteger(rect.y), true);
 });
 
 test("a frame wider than the screen is capped, never hung off the left edge", () => {
-	assert.deepEqual(fitRect({ w: 2400, h: 1000 }, DESK), { x: 0, y: 113, w: 1920, h: 1000 });
+	assert.deepEqual(fitRect({ w: 2400, h: 1000 }, DESK), { x: 0, y: 98, w: 1920, h: 1030 });
 });
 
 test("the second display's own coordinates are the ones it snaps to", () => {
 	const second = { x: 1920, y: 0, width: 1440, height: 900 };
-	assert.deepEqual(fitRect({ w: 390, h: 844 }, second), { x: 2970, y: 28, w: 390, h: 844 });
+	assert.deepEqual(fitRect({ w: 390, h: 844 }, second), { x: 2970, y: 13, w: 390, h: 874 });
 });
 
 test("the key is per project and per authored width, and never ambiguous", () => {
