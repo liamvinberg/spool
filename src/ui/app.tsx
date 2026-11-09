@@ -75,6 +75,7 @@ import { useTeamHome } from "./teams";
 import { type CopyTeam, DeleteFromTeamDialog, TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
+import { useWhatsNew } from "./whats-new";
 
 /**
  * The shell (#4/#12/#13): one top bar with a pinned Home button, one
@@ -182,6 +183,9 @@ export function App() {
 		[open, byRoot, forgetting, tabsHere],
 	);
 	const focusedTab = tabs.find((tab) => tab.root === focused);
+	// the pill's place: over the canvas tools on a canvas, as the update pill sits
+	const aboveCanvasTools = focusedTab !== undefined && chrome !== null;
+	const whatsNew = useWhatsNew({ foot: aboveCanvasTools ? 120 : 24 });
 	/** The strip as drawn, for the tab keys, which read it when pressed. */
 	const stripRef = useRef<readonly string[]>([]);
 	stripRef.current = tabs.map((tab) => tab.root);
@@ -997,6 +1001,7 @@ export function App() {
 								setKeysOpen(true);
 							}}
 							onUseAgent={focusedTab === undefined ? undefined : chrome?.useAgent}
+							whatsNew={whatsNew.row}
 						/>
 					</div>
 				</header>
@@ -1124,10 +1129,12 @@ export function App() {
 				{focusedTab === undefined && teamHome.toast}
 				{teamHome.exportSurface}
 				{focusedTab === undefined && movedToast.toast}
-				{toast !== null && (
+				{whatsNew.surface}
+				{/* What's new is the update pill come back: while it has the foot, an offer waits */}
+				{toast !== null && !whatsNew.showing && (
 					<UpdateToastPill
 						toast={toast}
-						aboveCanvasTools={focusedTab !== undefined && chrome !== null}
+						aboveCanvasTools={aboveCanvasTools}
 						onUpdate={() => (toast.kind === "app" ? bridge?.install() : void startUpgrade())}
 						onDismiss={dismissToast}
 					/>
