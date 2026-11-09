@@ -33,8 +33,15 @@ async function toggle(tabId: number): Promise<void> {
 	}
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+chrome.runtime.onMessage.addListener((message, sender, respond) => {
 	const ask = message as Ask;
+	if (ask.type === "spool:shot") {
+		void chrome.tabs
+			.captureVisibleTab(sender.tab?.windowId, { format: "png" })
+			.catch(() => null)
+			.then(respond);
+		return true;
+	}
 	if (ask.type === "spool:send") {
 		void send(JSON.stringify(ask.capture)).then(respond);
 		return true;
@@ -52,8 +59,9 @@ async function ports(): Promise<number[]> {
 	return list.length > 0 ? list : DEFAULT_PORTS;
 }
 
-/** the first port that answers at all, or null when none does */
-async function post(path: string, body: string, timeout: number): Promise<Response | null> {
+/** the first port that answers at all; "slow" when one took it and never answered in time; null when none is there */
+async function post(path: string, body: string, timeout: number): Promise<Response | "slow" | null> {
+	let slow = false;
 	for (const port of await ports()) {
 		try {
 			return await fetch(`http://127.0.0.1:${port}${path}`, {
@@ -62,23 +70,25 @@ async function post(path: string, body: string, timeout: number): Promise<Respon
 				body,
 				signal: AbortSignal.timeout(timeout),
 			});
-		} catch {
-			// nothing listening there, or it never answered: the next one
+		} catch (e) {
+			// nothing listening there (refused at once), or it never answered: the next one
+			if (e instanceof DOMException && e.name === "TimeoutError") slow = true;
 		}
 	}
-	return null;
+	return slow ? "slow" : null;
 }
 
 async function send(body: string): Promise<SendAnswer> {
 	const res = await post("/api/references", body, SEND_TIMEOUT_MS);
 	if (res === null) return { ok: false, offline: true };
+	if (res === "slow") return { ok: false, offline: false, error: "it took too long. Try a smaller part." };
 	if (!res.ok) return { ok: false, offline: false, error: await reason(res) };
 	return { ok: true, sent: (await res.json()) as ReferenceSent };
 }
 
 async function open(body: string): Promise<OpenAnswer> {
 	const res = await post("/api/references/open", body, OPEN_TIMEOUT_MS);
-	if (res === null || !res.ok) return { ok: false };
+	if (res === null || res === "slow" || !res.ok) return { ok: false };
 	const opened = (await res.json()) as ReferenceOpened;
 	// no spool window took it: the canvas in a tab of this browser instead
 	if (!opened.shown) await chrome.tabs.create({ url: opened.url });

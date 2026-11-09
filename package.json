@@ -51,6 +51,7 @@
 		"build:ui": "vite build",
 		"extension:build": "tsx extension/build.ts",
 		"extension:pack": "tsx extension/pack.ts",
+		"extension:bench": "tsx extension/bench.ts",
 		"extension:icons": "tsx extension/icons.ts"
 	},
 	"devDependencies": {

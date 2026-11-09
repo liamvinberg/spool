@@ -2,9 +2,16 @@ import fragmentMono from "@fontsource/fragment-mono/files/fragment-mono-latin-40
 import instrumentSans from "@fontsource-variable/instrument-sans/files/instrument-sans-latin-wght-normal.woff2?inline";
 import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { capture, readCanvases } from "../capture";
-import { type HoverWatch, watchHovers } from "../hovers";
-import { type Ask, type OpenAnswer, PICKER_GLOBAL, type PickerHandle, type SendAnswer } from "../messages";
+import { capture, readCanvases, shotCanvases, unread } from "../capture";
+import { type HoverWatch, hoverables, watchHovers } from "../hovers";
+import {
+	type Ask,
+	type OpenAnswer,
+	PICKER_GLOBAL,
+	type PickerHandle,
+	type SendAnswer,
+	type ShotAnswer,
+} from "../messages";
 import { MOTION, Overlay } from "./overlay";
 import css from "./overlay.css?inline";
 import { shadowCss } from "./shadow-css";
@@ -72,7 +79,8 @@ function mount(): void {
 	const handle: PickerHandle = { toggle: () => {} };
 	g[PICKER_GLOBAL] = handle;
 	// from here on, what the site does as the hand moves over it is watched, for the reference to do again
-	hovers = watchHovers(document, (el) => el === host || el.getRootNode() === root);
+	ours = (el) => el === host || el.getRootNode() === root;
+	hovers = watchHovers(document, ours);
 	const react = createRoot(at);
 	// an extension removed or reloaded leaves this script behind without a runtime: the next touch takes it all away
 	const orphaned = () => {
@@ -90,6 +98,9 @@ function mount(): void {
 const ORPHAN_WATCH = ["keydown", "pointerdown", "pointermove"] as const;
 
 let hovers: HoverWatch | undefined;
+let ours: (el: Element) => boolean = () => false;
+/** how long a send may spend hovering what it takes, for the hovers the hand never went over */
+const PROBE_MS = 1500;
 
 function Picker({ host, handle }: { host: HTMLElement; handle: PickerHandle }) {
 	const hostRef = useRef<HTMLElement | null>(host);
@@ -115,7 +126,20 @@ function Picker({ host, handle }: { host: HTMLElement; handle: PickerHandle }) {
 
 async function deliver(grab: { el: Element; whole: boolean; label: string }): Promise<Delivery> {
 	const started = performance.now();
+	if (hovers !== undefined) await hovers.probe(hoverables(grab.el, ours), PROBE_MS);
+	const probed = performance.now();
 	const drawn = await readCanvases(grab.el);
+	const missing = unread(grab.el, drawn);
+	if (missing.length > 0) {
+		// the picker too is out of the shot: its inline `all: initial !important` outranks the sheet that hides the page
+		const host = document.querySelector<HTMLElement>("spool-picker");
+		const style = host?.getAttribute("style") ?? "";
+		host?.style.setProperty("visibility", "hidden", "important");
+		const shot = await shotCanvases(missing, () =>
+			chrome.runtime.sendMessage<ShotAnswer>({ type: "spool:shot" } satisfies Ask).catch(() => null),
+		).finally(() => host?.setAttribute("style", style));
+		for (const [canvas, url] of shot) drawn.set(canvas, url);
+	}
 	const read = performance.now();
 	const taken = capture(grab, {
 		closedShadowRoot: (el) =>
@@ -125,7 +149,7 @@ async function deliver(grab: { el: Element; whole: boolean; label: string }): Pr
 	});
 	const ms = (from: number, to: number) => Math.round(to - from);
 	console.debug(
-		`spool: captured ${grab.label} in ${ms(started, performance.now())} ms (canvases ${ms(started, read)} ms)`,
+		`spool: captured ${grab.label} in ${ms(started, performance.now())} ms (hovers ${ms(started, probed)} ms, canvases ${ms(probed, read)} ms)`,
 	);
 	const ask: Ask = { type: "spool:send", capture: taken };
 	const answer = await chrome.runtime.sendMessage<SendAnswer>(ask);

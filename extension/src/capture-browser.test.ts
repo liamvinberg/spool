@@ -25,8 +25,10 @@ const FIXTURE = (otherOrigin: string) => `<!doctype html>
 <head>
 	<link rel="stylesheet" href="/site.css">
 	<link rel="stylesheet" href="/faces.css">
+	<link rel="stylesheet" href="/lossy.css">
 	<link rel="stylesheet" href="${otherOrigin}/fonts.css" media="screen">
 	<style>@import url("/imported.css"); .pricing .card { color: red; }</style>
+	<style>.lead { font: var(--type); font-weight: 700 }</style>
 </head>
 <body class="home" style="--brand: #f40">
 	<main class="page">
@@ -118,6 +120,7 @@ beforeAll(async () => {
 			"text/css",
 			"@font-face { font-family: Used; src: url(used.woff2) } @font-face { font-family: Idle; src: url(idle.woff2) } .pricing { font-family: Used }",
 		],
+		"/lossy.css": ["text/css", ".lead { font: var(--type); font-weight: 700 }"],
 		"/a.png": ["image/png", ""],
 	});
 });
@@ -178,13 +181,16 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 	expect(c.size).toMatchObject({ w: expect.any(Number), h: expect.any(Number) });
 	expect(c.viewport).toEqual({ w: 1200, h: 800 });
 
-	// every sheet in order: read where the tab may, the other origin's left for the daemon to fetch
+	// every sheet in order: read where the tab may, the other origin's left for the daemon to fetch, as is one Chrome
+	// reads back with a rule emptied, which its source still has
 	expect(c.styles).toEqual([
 		{ kind: "text", text: '.page { background: url("bg.png"); }', base: `${at(page)}/site.css` },
 		expect.objectContaining({ kind: "text", base: `${at(page)}/faces.css` }),
+		{ kind: "link", href: `${at(page)}/lossy.css` },
 		{ kind: "link", href: `${at(other)}/fonts.css`, media: "screen" },
 		{ kind: "text", text: ".imported { color: green; }", base: `${at(page)}/imported.css` },
 		{ kind: "text", text: ".pricing .card { color: red; }", base: `${at(page)}/` },
+		{ kind: "text", text: ".lead { font: var(--type); font-weight: 700 }", base: `${at(page)}/` },
 	]);
 
 	// a face the page declared and never loaded, for the daemon to leave on the web
@@ -274,12 +280,17 @@ it("keeps a box scrolled where it was, sticky parts and all, in a frame that run
 	expect(kept).toEqual([120, 0]);
 });
 
-it("catches a WebGL drawing in the frame it was drawn, though it reads back empty after", {
+it("catches a WebGL drawing in the frame it was drawn, or one drawn once from the tab's picture", {
 	timeout: 60_000,
 }, async () => {
 	const read = await (await openTab()).evaluate(async () => {
-		document.body.innerHTML = `<canvas id="gl" width="8" height="8"></canvas>`;
+		document.body.innerHTML = `<canvas id="gl" width="8" height="8"></canvas>
+			<canvas id="once" width="40" height="40" style="position: absolute; left: 0; top: 0"></canvas>
+			<p id="over" style="position: absolute; left: 0; top: 0">over</p>`;
 		const canvas = document.getElementById("gl") as HTMLCanvasElement;
+		const once = document.getElementById("once") as HTMLCanvasElement;
+		const over = document.getElementById("over") as HTMLElement;
+		once.getContext("webgl");
 		const gl = canvas.getContext("webgl");
 		if (gl === null) return "no webgl";
 		const paint = () => {
@@ -289,10 +300,32 @@ it("catches a WebGL drawing in the frame it was drawn, though it reads back empt
 		};
 		requestAnimationFrame(paint);
 		await new Promise((done) => setTimeout(done, 100));
-		const { readCanvases } = (globalThis as unknown as { spoolCapture: typeof import("./capture") }).spoolCapture;
-		return (await readCanvases(document.body)).get(canvas)?.slice(0, 23) ?? "empty";
+		const { readCanvases, shotCanvases, unread } = (
+			globalThis as unknown as { spoolCapture: typeof import("./capture") }
+		).spoolCapture;
+		const drawn = await readCanvases(document.body);
+		const missing = unread(document.body, drawn);
+		// the tab's picture, taken with only the canvas showing: what lies over it isn't baked in
+		let shown = true;
+		const shot = await shotCanvases(missing, async () => {
+			shown = over.checkVisibility({ visibilityProperty: true });
+			const tab = document.createElement("canvas");
+			tab.width = innerWidth;
+			tab.height = innerHeight;
+			const pen = tab.getContext("2d");
+			if (pen !== null) pen.fillStyle = "lime";
+			pen?.fillRect(0, 0, tab.width, tab.height);
+			return tab.toDataURL();
+		});
+		return [
+			drawn.get(canvas)?.slice(0, 23) ?? "empty",
+			missing.map((c) => c.id),
+			shown,
+			over.checkVisibility({ visibilityProperty: true }),
+			shot.get(once)?.slice(0, 23) ?? "empty",
+		];
 	});
-	expect(read).toBe("data:image/webp;base64,");
+	expect(read).toEqual(["data:image/webp;base64,", ["once"], false, true, "data:image/webp;base64,"]);
 });
 
 it("serializes the whole page as its body, marked", { timeout: 60_000 }, async () => {
@@ -313,12 +346,18 @@ it("brings what the site's script does under the hand, and the frame does it aga
 				<div id="media" class="still" style="height: 100px">media</div>
 				<div id="bar" style="width: 1px">progress</div>
 			</a>
-			<a id="away" href="/elsewhere">away</a>`;
+			<a id="away" href="/elsewhere">away</a>
+			<div id="tile" style="cursor: pointer; width: 200px; height: 80px"><span id="tip">tip</span></div>`;
 		// the site's script: the card lights its media as the hand comes; its bar grows on its own
 		const card = document.getElementById("card") as HTMLElement;
 		const media = document.getElementById("media") as HTMLElement;
 		card.addEventListener("mouseenter", () => media.setAttribute("data-active", ""));
 		card.addEventListener("mouseleave", () => media.removeAttribute("data-active"));
+		// one the hand never comes to, which shows its tip as a pointer enters it
+		const tile = document.getElementById("tile") as HTMLElement;
+		const tip = document.getElementById("tip") as HTMLElement;
+		tile.addEventListener("pointerenter", () => tip.classList.add("shown"));
+		tile.addEventListener("pointerleave", () => tip.classList.remove("shown"));
 		const bar = document.getElementById("bar") as HTMLElement;
 		setInterval(() => {
 			bar.style.width = `${Number.parseFloat(bar.style.width) + 1}px`;
@@ -334,8 +373,13 @@ it("brings what the site's script does under the hand, and the frame does it aga
 	await tab.waitForTimeout(300);
 	await tab.mouse.move(150, 120, { steps: 4 });
 	await tab.waitForTimeout(1500);
-	const c = await tab.evaluate(() => {
-		const w = window as unknown as { watch: { read(): unknown }; spoolCapture: typeof import("./capture") };
+	const c = await tab.evaluate(async () => {
+		const w = window as unknown as {
+			watch: import("./hovers").HoverWatch;
+			spoolCapture: typeof import("./capture") & typeof import("./hovers");
+		};
+		// the hand is brought to what it never came to before the page is taken
+		await w.watch.probe(w.spoolCapture.hoverables(document.body), 1500);
 		return w.spoolCapture.capture(
 			{ el: document.body, whole: true, label: location.host },
 			{ hovers: w.watch.read() as never },
@@ -346,6 +390,10 @@ it("brings what the site's script does under the hand, and the frame does it aga
 	expect(c.html).toMatch(/<a id="card" [^>]*data-spool-hover="h1">/);
 	expect(c.html).toContain(
 		'<div id="media" class="still" style="height: 100px" data-spool-hover-set="[[&quot;h1&quot;,&quot;data-active&quot;,&quot;&quot;]]">',
+	);
+	expect(c.html).toMatch(/<div id="tile" [^>]*data-spool-hover="h\d">/);
+	expect(c.html).toMatch(
+		/<span id="tip" data-spool-hover-set="\[\[&quot;h\d&quot;,&quot;class&quot;,&quot;shown&quot;\]\]">/,
 	);
 	// what moves on its own is no hover, though it moved as the hand came
 	expect(c.html).toMatch(/<div id="bar" style="width: \d+px;">/);

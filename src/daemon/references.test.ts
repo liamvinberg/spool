@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { ReferenceCapture } from "../reference-wire";
 import { COVER_PNG, makeApp, makeProject, makeTempDir, sseReader } from "../test-helpers";
-import { asScripted, pinViewportHeights } from "./reference-css";
+import { asScripted, facesShown, pinViewportHeights } from "./reference-css";
 import { placeReference } from "./reference-frame";
 import type { ReferenceFetch } from "./reference-page";
 import { chooseReferenceProject } from "./reference-routes";
@@ -36,7 +36,7 @@ function capture(overrides: Partial<ReferenceCapture> = {}): ReferenceCapture {
 		label: "section.pricing",
 		size: { w: 600, h: 300 },
 		viewport: { w: 1280, h: 800 },
-		html: '<main class="page"><section class="pricing" data-spool-reference=""><img src="https://cdn.example.com/hero.png" loading="lazy" onclick="steal()"><p style="background:url(&quot;/dot.png&quot;)">Plans</p><x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price></section></main>',
+		html: '<main class="page"><section class="pricing" data-spool-reference=""><img src="https://cdn.example.com/hero.png" loading="lazy" onclick="steal()"><p style="background:url(&quot;/dot.png&quot;)">Plans</p><x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price><video src="/clip.mp4#t=2" muted></video><video><source src="/reel?id=2"></video></section></main>',
 		htmlAttrs: { class: "dark", lang: "en" },
 		bodyAttrs: { class: "site" },
 		styles: [
@@ -172,6 +172,10 @@ describe("a reference", () => {
 		expect(asked).not.toContain("https://example.com/fonts/greek.woff2");
 		expect(page).toContain('url("https://example.com/fonts/greek.woff2")');
 		expect(page).not.toContain("onclick");
+		// a video plays from the site: kept, it would weigh down every copy of the project
+		expect(asked).not.toContain("https://example.com/clip.mp4#t=2");
+		expect(asked).not.toContain("https://example.com/reel?id=2");
+		expect(page).toContain('<video src="https://example.com/clip.mp4#t=2" muted>');
 		// a video that showed no controls on the page shows none in the frame, where nothing runs to hide them
 		expect(page).toContain("video:not([controls])::-webkit-media-controls { display: none !important; }");
 		// a web component keeps its shadow root, declared, or it draws nothing
@@ -179,7 +183,9 @@ describe("a reference", () => {
 			'<x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price>',
 		);
 		const tsx = readFileSync(join(folder, "frame.tsx"), "utf8");
-		expect(tsx).toContain("Left out: a cross-origin iframe; 1 file the site would not give.");
+		expect(tsx).toContain(
+			"Left out: a cross-origin iframe; 1 file the site would not give; 2 videos, played from the site.",
+		);
 		// in view, and the canvas is told it arrived
 		expect(JSON.parse(readFileSync(join(folder, "frame.json"), "utf8"))).toEqual({
 			x: 2080,
@@ -290,5 +296,11 @@ describe("where a reference goes", () => {
 		expect(asScripted(css)).toBe(
 			"@media (width < 0px){.a{transform:none}}@media (min-width:1px) and (width >= 0px),(width >= 0px){.b{x:y}}",
 		);
+	});
+
+	it("shows every face once it loads, though the site would keep a late one's fallback", () => {
+		expect(
+			facesShown("@font-face{font-family:A;font-display:optional}@font-face{font-family:B;font-display: Fallback}"),
+		).toBe("@font-face{font-family:A;font-display: swap}@font-face{font-family:B;font-display: swap}");
 	});
 });

@@ -55,7 +55,7 @@ export function takenReferenceNames(designDir: string): Set<string> {
 }
 
 /** The one line a reference says about itself: where it came from, and what didn't come with it. */
-export function referenceNote(capture: ReferenceCapture, missed: number, when: Date): string {
+export function referenceNote(capture: ReferenceCapture, missed: number, linked: number, when: Date): string {
 	let where = capture.url;
 	try {
 		const url = new URL(capture.url);
@@ -66,6 +66,7 @@ export function referenceNote(capture: ReferenceCapture, missed: number, when: D
 	const what = capture.whole ? "The whole page" : capture.label;
 	const left = [...capture.notes.map((note) => note.trim()).filter((note) => note !== "")];
 	if (missed > 0) left.push(`${missed} ${missed === 1 ? "file" : "files"} the site would not give`);
+	if (linked > 0) left.push(`${linked} ${linked === 1 ? "video" : "videos"}, played from the site`);
 	const leftOut = left.length === 0 ? "" : ` Left out: ${left.join("; ")}.`;
 	const line = `${what} of ${where}, sent from Chrome on ${when.toISOString().slice(0, 10)}.${leftOut}`;
 	return line.replace(/\s+/g, " ").replace(/\*\//g, "* /").slice(0, 400);
@@ -97,7 +98,7 @@ export function referenceFiles(
 	files.set(
 		"frame.tsx",
 		`/**
- * A reference: ${referenceNote(capture, page.missed, when)}
+ * A reference: ${referenceNote(capture, page.missed, page.linked, when)}
  * Read it for ideas (layout, type, motion, colour); never copy it as it is, and never edit it.
  */
 import { assets } from "./assets";
