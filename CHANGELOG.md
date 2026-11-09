@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.54.0
+
+### Minor Changes
+
+- f5a0789: **Agents in your terminal.** Claude Code, Codex or pi working in a terminal now shows on the canvas the way spool's own agent does. It shows which frames it reads and edits, when it waits on you, and what it changed once done. spool asks once to connect an agent it notices. You can also connect or disconnect one any time in Settings, or with `spool hooks`. The hooks only listen: they add nothing to the agent's context and never slow it down.
+- 83fd42c: **A first run.** The first time spool opens on a computer, a small window plays the ripple and its sound, then sets up your agents: it installs Claude Code, Codex or pi and signs them in, or tells you the one line to run when it can't. You can try Spool Cloud with your team or pass it by, and the window then grows into spool. Run it again from Help.
+- 3c934c1: **Play fits the window.** A frame bigger than the window you play it in now shrinks until all of it shows, instead of losing its bottom off the edge. The middle of the bar says how far it shrank. Click it to play the frame at the window's own size instead, to check how it reflows, and click again to go back. Your pick is remembered.
+
+### Patch Changes
+
+- a29614e: In the Mac app, sound in a frame now waits for your first click, as it does in a browser.
+- 8ef7ba6: The Mac app's play window now opens tall enough for its bar, so the bottom of a frame is no longer hidden under the window's edge.
+
 ## 0.53.0
 
 ### Minor Changes
