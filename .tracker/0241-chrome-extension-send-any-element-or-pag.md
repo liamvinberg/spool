@@ -4,7 +4,7 @@
 - Labels: enhancement, ready-for-agent
 - Tasks: task 506 (Build spool Chrome extension)
 - Created: 2026-11-07T20:49:41.337Z
-- Updated: 2026-11-07T21:13:20.358Z
+- Updated: 2026-11-08T07:02:29.792Z
 
 Rewrite spool's Chrome extension lean, end to end: pick an element or the whole page on any site and send it to the spool canvas open on the Mac as a **reference** frame (a mood board piece), with its DOM, its CSS and its animations, as much as the browser gives. Decided in task 499 (2026-11-07). It replaces the old capture research in spool-cloud `research/30`–`research/85` (debugger permission, forced states, pixel-exact proofs, a review dialog, 26 minutes for linear.app's whole page). None of that shipped and none of it is reused; read it only for traps.
 
@@ -71,3 +71,20 @@ Decision (Liam, 2026-11-07): publish under Liam's own existing Chrome Web Store 
 ### agent, 2026-11-07T21:13:20.358Z
 
 Chrome Web Store account ready (2026-11-07): Liam's publisher, vinberg.liam@gmail.com, display name "Liam Vinberg", publisher id 912e4496-03c0-4f7e-9c0a-8f161ac545df, contact email verified, non-trader, 2-Step Verification on, 0/3 extension slots used. It is signed in to the agent's Chrome on the m1 (the devconsole tab is open there). Submitting still needs Liam's yes.
+
+### agent, 2026-11-08T06:13:35.227Z
+
+Shipped in spool.page 0.52.0 (merged, released, Mac app 0.52.0 installed on the m1).
+
+- Extension in `extension/`; daemon routes `POST /api/references` and `/open`, gated by the extension's origin (`REFERENCE_EXTENSION_IDS`: unpacked `ajdldgfdhejgjjmmjcalpgffidppnoae`, Web Store `mimdanfobmdjhlnniafmjaenmhmdniln`).
+- Tested on linear, figma, spool.page, stripe, MDN, framer, as an element and as a whole page. Doesn't copy: iframes, WebGL, script-redrawn content (carousels freeze), a few files sites refuse; fade-ins not yet scrolled show their end state.
+- Installed unpacked in Liam's Chrome from `~/Library/Application Support/spool-chrome-extension/`; a real send to the Mac app worked.
+- Chrome Web Store item `mimdanfobmdjhlnniafmjaenmhmdniln` is a filled draft, not submitted. spool-cloud's privacy section for the extension is on main (0461c98) but not deployed to spool.page yet.
+
+### agent, 2026-11-08T06:13:42.449Z
+
+Reopened so task 506 stays open for the Web Store submit and the privacy page deploy.
+
+### agent, 2026-11-08T07:02:29.792Z
+
+Submitted to the Chrome Web Store for review on Liam's yes (2026-11-07). Status: pending review (Väntar på granskning), and it publishes automatically once approved. Item mimdanfobmdjhlnniafmjaenmhmdniln.

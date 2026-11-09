@@ -1,10 +1,11 @@
 # #242 · Import a Figma file: drop a .fig on Home
 
-- State: open
+- State: closed (done, merged in 96e95245)
 - Labels: ready-for-agent
 - Tasks: task 498 (Design-tool migration guide for Spool)
 - Created: 2026-11-07T20:51:07.926Z
-- Updated: 2026-11-08T00:10:08.530Z
+- Updated: 2026-11-08T10:09:24.671Z
+- Closed: 2026-11-08T10:09:24.671Z
 
 A `.fig` (Figma's Save Local Copy, free plan too) dropped on Home, chosen in Open… or pasted as a path becomes a new project named after the file, and its agent starts on the frames by itself (task 498).
 

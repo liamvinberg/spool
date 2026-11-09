@@ -1,11 +1,12 @@
 # #238 · A way back to all: the team's projects, and Shared with you for clients
 
-- State: open
+- State: closed (shipped; deploy rides the next release)
 - Labels: enhancement
 - Parent: #227
 - Tasks: task 500 (Prototype way back navigation)
 - Created: 2026-11-07T17:21:34.412Z
-- Updated: 2026-11-08T02:02:43.721Z
+- Updated: 2026-11-08T10:09:06.909Z
+- Closed: 2026-11-08T10:09:06.909Z
 
 Raised by Cata in task 481 (spool#230), with screenshots of spool.page's team home and a project's read-only canvas.
 
@@ -32,3 +33,7 @@ Round 2 on the canvas (task 500), as the Mac app in a browser on the new inline 
 ### agent, 2026-11-08T02:02:43.721Z
 
 Adopted on the canvas (task 500): `back-final` is in `app/` as To build. Changed or new: `spool-viewer` and its states plus new `spool-viewer--shared` (the path), `spool-home--browser`, `--browser-teams`, `--shared`, `--shared-client`, `--account`, and the team box on every `spool-home` state. `explore/way-back` is deleted. Building in task 500: the canvas path and browser Home with Shared with you are on the task branch; `/api/shared`, `/shared` and the no-team sign-in landing are on spool-cloud's branch; the instant cut between Home and canvas is in progress.
+
+### agent, 2026-11-08T03:16:03.005Z
+
+Shipped (task 500): merged to main in spool (5d566c54) and spool-cloud (bea67bf). The canvas path leads with the team or `shared` and ⌘↑ climbs; Home has Shared with you at /shared (grouped by who shared, a new dot per browser) and the team box with sliding sidebar motion, on the Mac too; one browser document swaps Home and canvas in place; GET /api/shared; no-team sign-in lands on /shared. Not deployed: wait for the spool release carrying `.changeset/way-back.md`, bump spool-cloud's spool.page pin to it, then deploy (cloud serves the one document only once the pinned build has app.html).
