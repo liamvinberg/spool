@@ -15,6 +15,7 @@ import { useSettings, useWriteSetting, useWriteSettings } from "../settings";
 import type { TabProject } from "../tab-strip";
 import { AppearanceSection, ColoursSection } from "./appearance";
 import { ExperimentalSection } from "./experimental";
+import { OutsideRows } from "./outside";
 import { Choice, ColourControl, FILES, Head, Says, SettingLine, type Write } from "./parts";
 
 /**
@@ -207,6 +208,7 @@ function MachineSection({ entries, write }: { entries: readonly SettingReading[]
 				spool writes a file when something here moves, only the key that moved. Every other key in it is left the
 				way you typed it.
 			</p>
+			<OutsideRows />
 		</>
 	);
 }
