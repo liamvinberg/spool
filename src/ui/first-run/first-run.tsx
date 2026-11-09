@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import { type ComponentProps, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
-import { type MachineAgent, PI_KEY_PROVIDERS, type PiKeyProvider, type PiKeyResult } from "../../daemon/agent-setup";
+import { type MachineAgent, PI_KEY_PROVIDERS, type PiKeyProvider } from "../../daemon/agent-setup";
 import type { CloudAccountState } from "../../daemon/cloud-account";
-import { postAgentCode, postAgentSetup, postPiKey } from "../api";
+import { postAgentCode, postAgentSetup } from "../api";
 import { CommandLine } from "../canvas/agent-float";
 import { cn } from "../cn";
 import type { DesktopWindow } from "../desktop-window";
@@ -27,6 +27,7 @@ import {
 	SPRING,
 	TeamTags,
 } from "./parts";
+import { type PiKeyState, usePiKey } from "./pi-key";
 import { prepareField, Ripple, T } from "./ripple";
 import { heardNow, playSound, preloadSounds, SOUNDS, setMuted } from "./sounds";
 import {
@@ -106,7 +107,8 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	const [skipped, setSkipped] = useState(false);
 	const [refused, setRefused] = useState<string | null>(null);
 	const [code, setCode] = useState("");
-	const [piKey, setPiKey] = useState<PiKeyState>({ provider: "anthropic", key: "", check: "idle", said: "" });
+	const piKeyField = usePiKey();
+	const piKey = piKeyField.state;
 	/** the agents ready when the step first read them: spool found them rather than set them up */
 	const [found, setFound] = useState<readonly AgentEngineId[] | null>(null);
 	const playing = useRef<AbortController | null>(null);
@@ -254,20 +256,10 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 	};
 
 	const pi = rows.find((agent) => agent.id === "pi");
-	const checkKey = (unchecked = false) => {
-		if (piKey.key.trim() === "" || piKey.check === "checking") return;
-		const { provider, key } = piKey;
-		setPiKey((was) => ({ ...was, check: "checking" }));
-		void postPiKey(provider, key, { unchecked }).then((result) =>
-			setPiKey((was) =>
-				was.key === key && was.provider === provider ? { ...was, ...keySaid(result, provider) } : was,
-			),
-		);
-	};
 	const actPi = (i: number) => {
 		if (i === 2) {
 			if (piKey.check === "ok") return go("agents");
-			return checkKey(piKey.check === "unsure");
+			return piKeyField.check();
 		}
 		// a plan's sign-in happens inside pi itself: the steps are on the row, and return asks pi again
 		onRecheck();
@@ -485,18 +477,8 @@ export function FirstRun({ agents, onRecheck, account, onSignIn, onCancelSignIn,
 											onSel={setPiSel}
 											onAct={actPi}
 											piKey={piKey}
-											onProvider={(provider) =>
-												setPiKey((was) =>
-													was.provider === provider ? was : { provider, key: "", check: "idle", said: "" },
-												)
-											}
-											onKey={(key) =>
-												setPiKey((was) => ({
-													...was,
-													key,
-													check: was.check === "checking" ? "checking" : "idle",
-												}))
-											}
+											onProvider={piKeyField.setProvider}
+											onKey={piKeyField.setKey}
 										/>
 									) : (
 										<CloudPage />
@@ -790,26 +772,6 @@ function Lines({ lines, open }: { lines: readonly string[]; open: boolean }) {
 }
 
 /* ------------------------------------------------------------------- pi -- */
-
-/** The key on pi's page, and what became of it: `unsure` is a key spool couldn't check that would replace pi's. */
-interface PiKeyState {
-	provider: PiKeyProvider;
-	key: string;
-	check: "idle" | "checking" | "ok" | "bad" | "unsure";
-	said: string;
-}
-
-/** What the key's line says once the daemon has answered. */
-function keySaid(result: PiKeyResult, provider: PiKeyProvider): Pick<PiKeyState, "check" | "said"> {
-	const name = PI_KEY_PROVIDERS.find((one) => one.id === provider)?.name ?? provider;
-	if (!result.ok) return { check: result.unchecked === true ? "unsure" : "bad", said: result.reason };
-	const took = result.checked
-		? result.models > 0
-			? `${name} took it: ${result.models} models in pi.`
-			: `${name} took it, and pi has it.`
-		: `Saved to pi unchecked: spool couldn’t reach ${name}.`;
-	return { check: "ok", said: result.replaced ? `${took} It replaced the one pi had.` : took };
-}
 
 function PiPage({
 	sel,
