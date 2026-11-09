@@ -3,7 +3,14 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import type { OutsideAsk, OutsideSessionView, OutsideView } from "../../daemon/outside";
 import type { Unseen } from "../../daemon/seen";
 import type { Harness } from "../../outside/harness";
-import { fetchOutside, fetchOutsideHarnesses, type OutsideHarness, openOutside, postOutside } from "../api";
+import {
+	type Camera,
+	fetchOutside,
+	fetchOutsideHarnesses,
+	type OutsideHarness,
+	openOutside,
+	postOutside,
+} from "../api";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";
 import { Button } from "../primitives/actions";
@@ -440,7 +447,36 @@ const CARD_W = 340;
 /** where the card hangs off its frame's left foot, as the agent's own ask hangs */
 const HANG = { below: 22, notch: 15 } as const;
 
-/** The ask, hung under the frame the agent wrote last, moving with the camera without a render. */
+/** room kept clear at the field's foot, where the tool bar stands */
+const FOOT = 84;
+/** the frame's name row above it, which the card never covers */
+const NAME_ROW = 30;
+
+/**
+ * Where the card hangs: under the frame, or over it when there is no room under it,
+ * and kept on screen either way. Its notch follows through `data-side`.
+ */
+function hangOutside(element: HTMLElement, frame: Box, view: Camera): void {
+	const rect = toScreen(frame, view);
+	const field = element.parentElement?.clientHeight ?? window.innerHeight;
+	const height = element.offsetHeight;
+	const below = rect.y + rect.h + HANG.below;
+	const above = rect.y - NAME_ROW - HANG.below - height;
+	const fits = below + height <= field - FOOT;
+	const side = fits || above < 8 ? "below" : "above";
+	const y = side === "below" ? Math.min(below, Math.max(8, field - FOOT - height)) : above;
+	const width = element.parentElement?.clientWidth ?? window.innerWidth;
+	const x = Math.max(8, Math.min(rect.x, width - CARD_W - 8));
+	element.dataset.side = side;
+	// the notch keeps pointing at the frame's foot when the card is pushed along to stay on screen
+	element.style.setProperty(
+		"--notch",
+		`${Math.round(Math.max(HANG.notch, Math.min(CARD_W - 24, rect.x - x + HANG.notch)))}px`,
+	);
+	element.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+}
+
+/** The ask, hung at the frame the agent wrote last, moving with the camera without a render. */
 export function OutsideAskOnFrame({
 	camera,
 	frame,
@@ -463,17 +499,32 @@ export function OutsideAskOnFrame({
 				return;
 			}
 			element.style.visibility = "";
-			const rect = toScreen(box.current, view);
-			element.style.transform = `translate(${Math.round(rect.x)}px, ${Math.round(rect.y + rect.h + HANG.below)}px)`;
+			hangOutside(element, box.current, view);
 		};
 		place();
-		return camera.subscribe(place);
+		// a face that grows or shrinks, as See change opens, may no longer fit where it hung
+		const grows = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+		if (card.current !== null) grows?.observe(card.current);
+		const unsubscribe = camera.subscribe(place);
+		return () => {
+			grows?.disconnect();
+			unsubscribe();
+		};
 	}, [camera]);
+	// a frame that moved under a still camera moves its card too
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the box is read through its ref
+	useLayoutEffect(() => {
+		const view = camera.get();
+		const element = card.current;
+		if (view === null || element === null) return;
+		hangOutside(element, frame, view);
+	}, [frame.x, frame.y, frame.w, frame.h]);
 	return (
 		<div
 			ref={card}
 			data-outside-ask-hung=""
-			className="pointer-events-auto absolute top-0 left-0 z-20"
+			data-side="below"
+			className="group pointer-events-auto absolute top-0 left-0 z-20"
 			style={{ width: CARD_W }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
@@ -518,11 +569,18 @@ export function OutsideAskCard({
 			style={{ width: CARD_W }}
 		>
 			{notch ? (
-				<span
-					aria-hidden="true"
-					className="-top-[6px] absolute size-[11px] rotate-45 border-line-default border-t border-l bg-surface-panel"
-					style={{ left: HANG.notch - 5.5 }}
-				/>
+				<>
+					<span
+						aria-hidden="true"
+						className="-top-[6px] absolute size-[11px] rotate-45 border-line-default border-t border-l bg-surface-panel group-data-[side=above]:hidden"
+						style={{ left: `calc(var(--notch, ${HANG.notch}px) - 5.5px)` }}
+					/>
+					<span
+						aria-hidden="true"
+						className="-bottom-[6px] absolute hidden size-[11px] rotate-45 border-line-default border-r border-b bg-surface-panel group-data-[side=above]:block"
+						style={{ left: `calc(var(--notch, ${HANG.notch}px) - 5.5px)` }}
+					/>
+				</>
 			) : null}
 			<div key={key} className="animate-step-in motion-reduce:animate-none">
 				{face === "ask" ? (
