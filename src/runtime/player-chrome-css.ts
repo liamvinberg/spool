@@ -55,6 +55,9 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
    more than a glance away, and nothing has to be found again */
 .spool-page.has-bar { box-sizing: border-box; padding-top: 30px; }
 .spool-page.has-bar .spool-screen { min-height: calc(100vh - 30px); }
+/* a fitted frame (spool#553): its box shrunk to the room, centred, and the screen inside drawn at that scale */
+.spool-fitted { margin: 0 auto; overflow: hidden; }
+.spool-fitted.is-off { display: contents; }
 .spool-top {
 	position: fixed;
 	inset: 0 0 auto;
@@ -93,6 +96,12 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
 	transition: opacity 180ms ease-out;
 }
 .spool-bar-size.is-on { opacity: 1; }
+/* fit or responsive (spool#553), in the size's place whenever the frame is bigger than the window */
+.spool-bar-fit { position: absolute; left: 50%; translate: -50% 0; }
+.spool-bar-fit .spool-bar-share { color: #94918d; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spool-bar-fit .spool-bar-share:hover { color: #f0efed; }
+.spool-bar-fit-size { color: #6c6a67; }
+.spool-bar-fit .spool-bar-tip { right: auto; left: 50%; translate: -50% 0; white-space: nowrap; }
 .spool-bar-end { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .spool-bar-hint { color: #94918d; font-size: 11px; white-space: nowrap; }
 /* said while the screen is on its way: the compile and the first fetch happen

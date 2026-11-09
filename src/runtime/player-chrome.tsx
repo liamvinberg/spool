@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { accelChord } from "./accel-chord";
 import { ExternalLinkDialog } from "./external-link-dialog";
 import { accelLabel } from "./platform-keys";
+import { fittedScale, overflows, type PlayerFit, playRoom } from "./player-fit";
 import {
 	barLayout,
 	DESK_BAR_PX,
@@ -20,11 +21,12 @@ import { CLIP_ASPECTS, type ClipAspect, RECORD_WARN_MS } from "./record-protocol
  * The played page (#227). Play opens a browser tab, so the frame stops being a
  * scaled picture and becomes a document the browser owns: it lays out at the
  * real viewport width, capped at its authored `w` as a max-width, and its
- * height is whatever its content is. No fit, no letterbox, no `transform:
- * scale` — spool never scales to rescue a page, because the rescue lies to the
- * CSS. Below the cap the frame's own breakpoints fire and its own padding
- * compresses; a frame that makes no accommodation overflows sideways the way
- * that site would in production.
+ * height is whatever its content is. Below the cap the frame's own breakpoints
+ * fire and its own padding compresses; a frame that makes no accommodation
+ * overflows the way that site would in production. That is responsive, and it
+ * is one of two ways to play: by default a frame bigger than the window is
+ * fitted instead (spool#553), laid out at its authored size and shrunk until
+ * all of it shows, and the bar's middle switches between the two.
  *
  * The only chrome is the bar along the top, the same 30px the Mac app's window
  * wears: the frame's name, copy link and close, and the window's size while it
@@ -53,6 +55,8 @@ export interface PlayerController {
 	walk(frame: string, back?: boolean): void;
 	dismissExternal(): void;
 	close(): void;
+	/** Fit and responsive, where this player can fit: absent, a frame is always played responsive. */
+	fit?: PlayerFit;
 }
 
 /** A frame as the player's bar names it: the place it is in, when it says one, and its name there. */
@@ -104,6 +108,11 @@ export function Player({
 	const boxed = shaped?.() === true;
 	const recording = recorder?.view().kind === "recording";
 	const viewport = useViewport();
+	const room = playRoom(viewport);
+	// a frame played at a clip's shape has a box of its own, which is never fitted
+	const fit = boxed ? undefined : controller.fit;
+	const fitted = fit?.on() === true;
+	const scale = fitted ? fittedScale({ w, h }, room) : 1;
 	const Screen = frames[frame];
 	// Which shell this document is in, asked once: a window the app made and
 	// handed a bridge draws the bar it was sized for, and everything else is the
@@ -135,25 +144,51 @@ export function Player({
 			said={named}
 			viewport={viewport}
 			loading={loading}
+			{...(fit !== undefined && overflows(fit.authored(frame), room)
+				? { fit: { on: fitted, scale, set: (on: boolean) => fit.set(on) } }
+				: {})}
 			{...(recorder === undefined ? {} : { recorder })}
 			{...(desk === null ? { onClose: close, closeLabel, exitKey, linkable } : { desk })}
 		/>
 	);
 
+	const screen = (
+		<div
+			className={
+				boxed ? (recording ? "spool-screen is-shaped is-recording" : "spool-screen is-shaped") : "spool-screen"
+			}
+			// Responsive, the authored width as a cap and the real viewport below it.
+			// Written here rather than left to `max-width` so the shell's iframe is
+			// exactly the box the runtime inside it will measure, which is what the
+			// geometry handshake compares against. A frame played at a clip's shape
+			// gets its height too, centred, and a fitted one its whole box, drawn
+			// smaller: a scale is the one thing the frame's viewport never sees.
+			style={
+				boxed
+					? { width: w, height: h }
+					: fitted
+						? {
+								width: w,
+								height: h,
+								minHeight: 0,
+								...(scale < 1 ? { transform: `scale(${scale})`, transformOrigin: "0 0" } : {}),
+							}
+						: { width: Math.min(viewport.vw, w) }
+			}
+		>
+			{host ?? (Screen === undefined ? null : <Screen key={arrival} />)}
+		</div>
+	);
+
 	return (
 		<div className="spool-page has-bar">
+			{/* the room the shrunk frame takes, so the page centres it and never scrolls past it; worn by every frame
+			    and only sized when fitted, since a screen that moved in the tree would reload the frame inside it */}
 			<div
-				className={
-					boxed ? (recording ? "spool-screen is-shaped is-recording" : "spool-screen is-shaped") : "spool-screen"
-				}
-				// The one number spool imposes: the authored width as a cap, and the
-				// real viewport below it. Written here rather than left to `max-width`
-				// so the shell's iframe is exactly the box the runtime inside it will
-				// measure, which is what the geometry handshake compares against. A
-				// frame played at a clip's shape gets its height too, centred.
-				style={boxed ? { width: w, height: h } : { width: Math.min(viewport.vw, w) }}
+				className={fitted ? "spool-fitted" : "spool-fitted is-off"}
+				style={fitted ? { width: w * scale, height: h * scale } : undefined}
 			>
-				{host ?? (Screen === undefined ? null : <Screen key={arrival} />)}
+				{screen}
 			</div>
 			{externalHref !== null && (
 				<ExternalLinkDialog
@@ -286,9 +321,12 @@ function TopBar({
 	exitKey = EXIT_KEY,
 	linkable = false,
 	recorder,
+	fit,
 }: {
 	said: FrameSaid;
 	viewport: Viewport;
+	/** Fit or responsive, offered when the frame is bigger than the window, the one case where they differ. */
+	fit?: { on: boolean; scale: number; set(on: boolean): void };
 	/** The frame is being compiled or fetched: said in the bar, since the screen has nothing to show yet. */
 	loading: boolean;
 	/** The app's window, when this is its title bar. */
@@ -315,7 +353,26 @@ function TopBar({
 				{layout.project && said.place !== null && <span className="spool-bar-project">{said.place} /</span>}
 				<span className="spool-bar-name">{said.name}</span>
 			</span>
-			{layout.size && (
+			{layout.size && fit !== undefined && (
+				<span className="spool-bar-tipped spool-bar-fit">
+					<button type="button" className="spool-bar-share" onClick={() => fit.set(!fit.on)}>
+						{resizing && (
+							<span className="spool-bar-fit-size">
+								{viewport.vw} × {viewport.vh}
+							</span>
+						)}
+						{fit.on ? `${Math.round(fit.scale * 100)}%` : "responsive"}
+					</button>
+					<Tip
+						label={
+							fit.on
+								? "Shrunk to fit. Click to play it at the window's own size"
+								: "At the window's own size. Click to fit the whole frame"
+						}
+					/>
+				</span>
+			)}
+			{layout.size && fit === undefined && (
 				<span className={resizing ? "spool-bar-size is-on" : "spool-bar-size"} aria-hidden={!resizing}>
 					{viewport.vw} × {viewport.vh}
 				</span>
