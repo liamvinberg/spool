@@ -104,6 +104,13 @@ export function filesOf(
 }
 
 /** What a tool asks permission for, as the line says it after "wants to". */
+/** Tools that stop to put something to the person, and what spool says it wants then. */
+const ASKING_TOOLS: Readonly<Record<string, string>> = {
+	AskUserQuestion: "ask you something",
+	ExitPlanMode: "show you a plan",
+	request_user_input: "ask you something",
+};
+
 export function wantsOf(tool: string, input: Payload): string {
 	const name = tool.toLowerCase();
 	const command = text(input.command);
@@ -200,6 +207,9 @@ export function foldHook(
 			};
 		}
 		case "PreToolUse": {
+			// a question or a plan put to you holds it until you answer, whatever its permissions
+			const asks = ASKING_TOOLS[tool];
+			if (asks !== undefined) return { ...base, state: "waiting", wants: asks, ended: null };
 			const next = { ...going(base), state: "working" as const, ended: null, busy: session.busy + 1 };
 			const touched = filesOf(session.harness, tool, input, cwd);
 			if (touched === null) return next;

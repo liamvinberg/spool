@@ -65,13 +65,22 @@ describe("a Claude Code session, folded from its hooks", () => {
 		);
 		expect(waiting).toMatchObject({ state: "waiting", wants: "fetch fonts.google.com" });
 
-		const done = run(
+		const asking = run(
 			[
 				["PostToolUse", { tool_name: "WebFetch", tool_input: {} }],
+				["PreToolUse", { tool_name: "AskUserQuestion", tool_input: { questions: [] } }],
+			],
+			waiting as OutsideSession,
+		);
+		expect(asking).toMatchObject({ state: "waiting", wants: "ask you something" });
+
+		const done = run(
+			[
+				["PostToolUse", { tool_name: "AskUserQuestion", tool_input: {} }],
 				["SubagentStop", { agent_id: "a1", agent_type: "Explore" }],
 				["Stop", { last_assistant_message: "Restyled the cart." }],
 			],
-			waiting as OutsideSession,
+			asking as OutsideSession,
 		);
 		expect(done).toMatchObject({
 			state: "done",
