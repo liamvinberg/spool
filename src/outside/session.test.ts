@@ -90,7 +90,17 @@ describe("a Claude Code session, folded from its hooks", () => {
 			stopped: false,
 			ended: 3,
 		});
-		expect(run([["SessionEnd", {}]], done as OutsideSession)).toBeNull();
+		expect(run([["SessionEnd", {}]], done as OutsideSession)).toMatchObject({
+			state: "done",
+			changed: ["cart"],
+			ended: 3,
+		});
+		expect(
+			run([
+				["UserPromptSubmit", { prompt: "look" }],
+				["SessionEnd", {}],
+			]),
+		).toBeNull();
 	});
 
 	it("keeps its prompt's name through what the harness feeds in itself, and reads a whole to-do list", () => {

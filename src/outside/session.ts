@@ -337,7 +337,18 @@ export function foldHook(
 			};
 		}
 		case "SessionEnd":
-			return null;
+			// what it changed stays on the canvas until it is seen, though the agent has quit
+			return session.changed.length === 0
+				? null
+				: {
+						...base,
+						state: "done",
+						wants: null,
+						hands: [],
+						busy: 0,
+						stopped: session.state !== "done",
+						ended: session.ended ?? at,
+					};
 		default:
 			return base;
 	}
