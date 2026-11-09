@@ -458,15 +458,17 @@ async function live(
 	await withLane(clip, options.keep, async (url, lane) => {
 		const size = { viewport: { width: viewport.w, height: viewport.h }, deviceScaleFactor: 2 };
 		const unpacked = join(CHECKOUT, "extension/dist");
+		// a persistent context owns its browser; a plain one leaves it running unless closed too
+		const browser = clip.extension === true ? null : await chromium.launch({ channel: "chromium-headless-shell" });
 		const context =
-			clip.extension === true
+			browser === null
 				? await chromium.launchPersistentContext(join(lane.dir, "profile"), {
 						channel: "chromium",
 						headless: true,
 						args: [`--disable-extensions-except=${unpacked}`, `--load-extension=${unpacked}`],
 						...size,
 					})
-				: await (await chromium.launch({ channel: "chromium-headless-shell" })).newContext(size);
+				: await browser.newContext(size);
 		try {
 			await context.addInitScript(CURSOR);
 			let extension: Worker | null = null;
@@ -533,6 +535,7 @@ async function live(
 			await (context.pages().at(-1) ?? page).screenshot({ path: out.replace(/\.mp4$/, ".end.png") });
 		} finally {
 			await context.close();
+			await browser?.close();
 		}
 	});
 	if (options.rehearse) return;
