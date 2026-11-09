@@ -21,6 +21,8 @@ export interface Clip {
 	files: Readonly<Record<string, string>>;
 	/** Demo products from changelog/kit/ the frames import, each copied to design/shared/kit/<name>/ (`import { Lope } from "shared/kit/lope/lope"`). */
 	kit?: readonly string[];
+	/** More environment for the clip's spool, such as SPOOL_WHATS_NEW to play What's new on a checkout. */
+	env?: Readonly<Record<string, string>>;
 	/** The window's size in CSS pixels; 1440×900 by default, the page's 16:10. */
 	viewport?: { w: number; h: number };
 	/** What the replayed take does; a live clip walks its own. */
@@ -300,7 +302,7 @@ async function withLane<T>(
 ): Promise<T> {
 	const lane = mkdtempSync(join(tmpdir(), "spool-changelog-clip-"));
 	const project = join(lane, "clip");
-	const env: NodeJS.ProcessEnv = { SPOOL_DIR: join(lane, "state"), SPOOL_PORT: String(await free()) };
+	const env: NodeJS.ProcessEnv = { ...clip.env, SPOOL_DIR: join(lane, "state"), SPOOL_PORT: String(await free()) };
 	if (clip.agent !== undefined) {
 		// the stand-in is the only agent on the lane's PATH, so the pane offers it and nothing real
 		const bin = join(lane, "bin");
