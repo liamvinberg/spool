@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -547,6 +547,8 @@ test("a completed update restores the window on a connected screen", async () =>
 });
 
 test("a disconnected display cannot strand the restored window", async () => {
+	// a machine updating has used spool, so the daemon has settled its first run
+	writeFileSync(join(directory, "config.json"), JSON.stringify({ onboarding: { done: true } }));
 	beginUpdateRestart(directory, "0.20.1", Date.now(), { rect: { x: -5000, y: 60, w: 1100, h: 800 } });
 	api.boot();
 	await turn();
