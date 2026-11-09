@@ -55,14 +55,26 @@ interface Reading {
 const READ = `(() => {
 	const text = [];
 	const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+	// a run of text split by comments (a framework's markers, which a reference drops) is one text, as the reference has it
+	const split = (n) => n !== null && (n.nodeType === 3 || n.nodeType === 8);
 	for (let n = walk.nextNode(); n !== null && text.length < 4000; n = walk.nextNode()) {
-		const said = n.data.replace(/\\s+/g, " ").trim();
+		let before = n.previousSibling;
+		while (before !== null && before.nodeType === 8) before = before.previousSibling;
+		if (before !== null && before.nodeType === 3) continue;
+		let last = n;
+		let data = n.data;
+		while (split(last.nextSibling)) {
+			last = last.nextSibling;
+			if (last.nodeType === 3) data += last.data;
+		}
+		const said = data.replace(/\\s+/g, " ").trim();
 		const p = n.parentElement;
 		if (said.length < 2 || p === null || p.closest("script, style, noscript, template, spool-picker")) continue;
 		const s = getComputedStyle(p);
 		if (s.visibility !== "visible" || Number(s.opacity) === 0) continue;
 		const range = document.createRange();
-		range.selectNodeContents(n);
+		range.setStart(n, 0);
+		range.setEnd(last, last.nodeType === 3 ? last.data.length : 0);
 		const r = range.getBoundingClientRect();
 		if (r.width < 1 || r.height < 1) continue;
 		text.push([said.slice(0, 80), Math.round(r.left + scrollX), Math.round(r.top + scrollY), s.fontFamily.split(",")[0].replace(/["']/g, "").trim(), s.fontSize, s.color]);
