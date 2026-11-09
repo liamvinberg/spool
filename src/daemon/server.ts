@@ -10,6 +10,7 @@ import { createDaemonApp, type DaemonCloud } from "./app";
 import type { BoothSeams } from "./booth";
 import type { CloudAccountServices } from "./cloud-account";
 import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
+import type { WhatsNewOptions } from "./whats-new-routes";
 
 export interface ServeDaemonOptions {
 	spoolDir: string;
@@ -20,6 +21,8 @@ export interface ServeDaemonOptions {
 	development?: boolean | undefined;
 	/** #30 phone-home — absent means off, so tests and tools stay silent. */
 	updateCheck?: boolean | undefined;
+	/** What's new (spool#526) — absent means off, so tests and a checkout stay quiet. */
+	whatsNew?: WhatsNewOptions | undefined;
 	/** #158 the per-user history switch — absent means on, since only `false` is a refusal. */
 	history?: boolean | undefined;
 	/** A stand-in for the agent binary, so a browser test can drive a whole turn. */
@@ -61,6 +64,7 @@ export function serveDaemon({
 	uiDir,
 	development,
 	updateCheck,
+	whatsNew,
 	history,
 	agentExecutor,
 	agentEngines,
@@ -79,6 +83,7 @@ export function serveDaemon({
 		uiDir,
 		development,
 		updateCheck,
+		whatsNew,
 		history,
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
 		...(agentEngines === undefined ? {} : { agentEngines }),

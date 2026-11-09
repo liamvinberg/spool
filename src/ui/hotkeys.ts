@@ -852,6 +852,10 @@ export const HOTKEYS = [
 	{ id: "finder.close", scope: "finder", group: "Find and jump", label: "", keys: ["escape"], listed: false },
 	{ id: "picker.close", scope: "picker", group: "Home", label: "", keys: ["escape"], listed: false },
 	{ id: "toast.undo", scope: "toast", group: "Undo", label: "", keys: ["accel+z"], listed: false },
+	// What's new, while its card is open: ← → step through it, Esc folds it away
+	{ id: "whatsNew.next", scope: "toast", group: "Help", label: "", keys: ["arrowright"], listed: false },
+	{ id: "whatsNew.previous", scope: "toast", group: "Help", label: "", keys: ["arrowleft"], listed: false },
+	{ id: "whatsNew.close", scope: "toast", group: "Help", label: "", keys: ["escape"], listed: false },
 ] as const satisfies readonly HotkeySpec[];
 
 export type HotkeyEntry = (typeof HOTKEYS)[number];

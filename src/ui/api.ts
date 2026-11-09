@@ -42,6 +42,7 @@ import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { ShownSetAside } from "../daemon/set-aside-routes";
 import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-projects";
 import type { SyncState } from "../daemon/team-sync";
+import type { WhatsNewAnswer } from "../daemon/whats-new-routes";
 import type { PlaceSurvey, Survey } from "../get-it-places";
 import type { CloneProgress } from "../git-clone";
 import type { MoveProgress } from "../move-in";
@@ -494,6 +495,21 @@ export async function postUpgrade(): Promise<UpgradeStart> {
 	} catch {
 		return { ok: false, error: "the daemon is unreachable" };
 	}
+}
+
+/** What's new as the window opens (spool#526): what help's row holds, and whether the card unfolds by itself. */
+export async function fetchWhatsNew(): Promise<WhatsNewAnswer | undefined> {
+	try {
+		const res = await controlFetch("/api/whats-new");
+		return res.ok ? ((await res.json()) as WhatsNewAnswer) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The card has been shown: remember this version, so it unfolds by itself no more. */
+export function postWhatsNewSeen(): void {
+	void controlFetch("/api/whats-new/seen", { method: "POST" }).catch(() => {});
 }
 
 async function errorText(res: { text(): Promise<string> }): Promise<string> {

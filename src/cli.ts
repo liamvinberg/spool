@@ -30,6 +30,7 @@ import {
 	resolveServeConfig,
 	resolveSpoolDir,
 	retryFirst,
+	runsFromSource,
 	selfCliPath,
 	spoolDaemonAt,
 	statusDaemon,
@@ -43,6 +44,7 @@ import { createSettingsStore, experimentsOnHere } from "./daemon/settings";
 import { followedLink } from "./daemon/team-sync";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
+import { whatsNewServing } from "./daemon/whats-new-routes";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
@@ -798,6 +800,7 @@ program
 					// #30: an install no package manager owns cannot take an upgrade,
 					// so it is never offered one — the checkout included
 					updateCheck: config.updateCheck && selfUpgradeable(),
+					whatsNew: whatsNewServing(pkg.version, process.env, runsFromSource()),
 					history: config.history,
 				});
 			} catch (error) {
