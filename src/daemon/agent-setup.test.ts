@@ -313,5 +313,13 @@ describe("a key for pi", () => {
 			"anthropic",
 		]);
 		expect((await key("not-a-provider", "sk-1")).status).toBe(400);
+
+		// pi runs a key starting with ! and fills in a $: a pasted one is stored only as the key itself
+		for (const pasted of ["!touch pwned", "sk-$HOME", "sk-a b"])
+			expect(await (await key("anthropic", pasted)).json()).toMatchObject({ ok: false });
+		expect(JSON.parse(readFileSync(join(piDir, "auth.json"), "utf8")).anthropic).toEqual({
+			type: "api_key",
+			key: "sk-ant-123",
+		});
 	});
 });

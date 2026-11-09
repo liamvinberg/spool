@@ -5,6 +5,7 @@ import { delimiter, dirname, join, posix, win32 } from "node:path";
 import { withPathFirst } from "./agent-cli";
 import { AGENT_ENGINE_IDS, type AgentEngine, type AgentEngineId } from "./agent-engine";
 import { agentPath } from "./agent-preflight";
+import { literalKeyRefusal } from "./pi-auth";
 
 /**
  * Putting an agent on this machine from spool's first run (spool#250): install it with its
@@ -559,7 +560,10 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 		 * format pi documents), then asked of pi with `pi auth check`. A key pi doesn't take
 		 * is taken back out, so a typo leaves pi as it was.
 		 */
-		async piKey(provider: PiKeyProvider, key: string): Promise<PiKeyResult> {
+		async piKey(provider: PiKeyProvider, pasted: string): Promise<PiKeyResult> {
+			const key = pasted.trim();
+			const refused = literalKeyRefusal(key);
+			if (refused !== undefined) return { ok: false, reason: refused };
 			const file = join(deps.piDir, "auth.json");
 			let stored: Record<string, unknown> = {};
 			try {
@@ -577,7 +581,7 @@ export function createAgentSetup(deps: AgentSetupDeps) {
 				writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
 				renameSync(temp, file);
 			};
-			write({ ...stored, [provider]: { type: "api_key", key: key.trim() } });
+			write({ ...stored, [provider]: { type: "api_key", key } });
 			const said: string[] = [];
 			const checking = run({ command: "pi", args: ["auth", "check", "--provider", provider, "--json"] }, env);
 			checking.onLine((line) => said.push(line));
