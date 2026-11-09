@@ -58,7 +58,7 @@ export type Payload = Readonly<Record<string, unknown>>;
 export type FrameAt = (file: string) => string | null;
 
 const NAME_MAX = 60;
-const SAID_MAX = 600;
+const SAID_MAX = 1_500;
 const WANTS_MAX = 48;
 
 function text(value: unknown): string | null {
@@ -68,6 +68,15 @@ function text(value: unknown): string | null {
 function cut(value: string, max: number): string {
 	const one = value.replace(/\s+/g, " ").trim();
 	return one.length <= max ? one : `${one.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** Its own words, kept as markdown with their lines, cut at a line or word when too long. */
+function clip(value: string, max: number): string {
+	const kept = value.trim();
+	if (kept.length <= max) return kept;
+	const head = kept.slice(0, max);
+	const at = Math.max(head.lastIndexOf("\n"), head.lastIndexOf(" "));
+	return `${head.slice(0, at > max / 2 ? at : max).trimEnd()}…`;
 }
 
 function firstLine(value: string): string {
@@ -322,7 +331,7 @@ export function foldHook(
 				wants: null,
 				hands: [],
 				busy: 0,
-				said: said === null ? null : cut(said, SAID_MAX),
+				said: said === null ? null : clip(said, SAID_MAX),
 				stopped: event !== "Stop",
 				ended: at,
 			};

@@ -16,6 +16,7 @@ import { CheckIcon } from "../icons";
 import { Button } from "../primitives/actions";
 import { SpinRing, StatusMark } from "../primitives/display";
 import { TextAction } from "../primitives/feedback";
+import { Said } from "./agent-said";
 import { useMotionScale } from "./agent-trail";
 import { type Box, toScreen } from "./camera";
 import type { CameraStore } from "./camera-store";
@@ -329,9 +330,9 @@ function Done({
 	return (
 		<div className="flex flex-col">
 			{session.said === null ? null : (
-				<p className="max-h-48 overflow-y-auto whitespace-pre-line px-3 pt-2.5 pb-3 text-pretty text-secondary type-label">
-					{session.said}
-				</p>
+				<div className="max-h-56 overflow-y-auto px-3 pt-2.5 pb-3 text-secondary type-label">
+					<Said text={session.said} />
+				</div>
 			)}
 			<div className={cn("flex flex-col p-1", session.said !== null && "border-line-default border-t")}>
 				{session.changed.map((frame) => {
