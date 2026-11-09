@@ -160,6 +160,15 @@ export function asScripted(css: string): string {
 	);
 }
 
+/**
+ * Every face shown once it loads: `font-display: optional` (or `fallback`) keeps the fallback for good when the face
+ * comes late, which on the site it rarely does (preloaded, cached) and in a frame, its files served fresh, it always
+ * does, so the reference would wear the fallback font.
+ */
+export function facesShown(css: string): string {
+	return css.replace(/font-display\s*:\s*(?:optional|fallback)\b/gi, "font-display: swap");
+}
+
 function round(value: number): number {
 	return Math.round(value * 100) / 100;
 }

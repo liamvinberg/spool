@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { ReferenceCapture } from "../reference-wire";
 import { COVER_PNG, makeApp, makeProject, makeTempDir, sseReader } from "../test-helpers";
-import { asScripted, pinViewportHeights } from "./reference-css";
+import { asScripted, facesShown, pinViewportHeights } from "./reference-css";
 import { placeReference } from "./reference-frame";
 import type { ReferenceFetch } from "./reference-page";
 import { chooseReferenceProject } from "./reference-routes";
@@ -179,7 +179,9 @@ describe("a reference", () => {
 			'<x-price><template shadowrootmode="open"><style>b { color: blue }</style><b>$12</b><slot></slot></template>a month</x-price>',
 		);
 		const tsx = readFileSync(join(folder, "frame.tsx"), "utf8");
-		expect(tsx).toContain("Left out: a cross-origin iframe; 1 file the site would not give.");
+		expect(tsx).toContain(
+			"Left out: a cross-origin iframe; 1 file the site would not give.",
+		);
 		// in view, and the canvas is told it arrived
 		expect(JSON.parse(readFileSync(join(folder, "frame.json"), "utf8"))).toEqual({
 			x: 2080,
@@ -290,5 +292,11 @@ describe("where a reference goes", () => {
 		expect(asScripted(css)).toBe(
 			"@media (width < 0px){.a{transform:none}}@media (min-width:1px) and (width >= 0px),(width >= 0px){.b{x:y}}",
 		);
+	});
+
+	it("shows every face once it loads, though the site would keep a late one's fallback", () => {
+		expect(
+			facesShown("@font-face{font-family:A;font-display:optional}@font-face{font-family:B;font-display: Fallback}"),
+		).toBe("@font-face{font-family:A;font-display: swap}@font-face{font-family:B;font-display: swap}");
 	});
 });

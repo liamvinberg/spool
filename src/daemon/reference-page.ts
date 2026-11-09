@@ -6,6 +6,7 @@ import {
 	absoluteUrl,
 	asScripted,
 	cssImports,
+	facesShown,
 	fontFaceSources,
 	mapCssUrls,
 	nestable,
@@ -152,7 +153,8 @@ export async function referencePage(
 	const missed = new Set([...wanted].filter((url) => !local.has(url) && /^https?:/i.test(url))).size;
 
 	const toLocal = (url: string) => local.get(url) ?? url;
-	const pinned = (text: string) => asScripted(pinViewportHeights(mapCssUrls(text, toLocal), capture.viewport));
+	const pinned = (text: string) =>
+		facesShown(asScripted(pinViewportHeights(mapCssUrls(text, toLocal), capture.viewport)));
 	const page = [
 		"<!doctype html>",
 		mapMarkupUrls(htmlOpen, pageBase, toLocal, capture.viewport),
