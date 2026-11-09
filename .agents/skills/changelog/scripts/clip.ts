@@ -316,7 +316,8 @@ async function withLane<T>(
 		spawnSync("git", ["init", "-q", project]);
 		const made = spool(["init", "--local", "--history", project], env);
 		if (made.status !== 0) throw new Error(`spool init failed: ${made.stdout}${made.stderr}`);
-		for (const name of clip.kit ?? []) cpSync(join(KIT, name), join(project, "design/shared/kit", name), { recursive: true });
+		for (const name of clip.kit ?? [])
+			cpSync(join(KIT, name), join(project, "design/shared/kit", name), { recursive: true });
 		for (const [path, content] of Object.entries(clip.files)) {
 			mkdirSync(dirname(join(project, path)), { recursive: true });
 			writeFileSync(join(project, path), content);
