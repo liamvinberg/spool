@@ -1,6 +1,7 @@
 import { join, sep } from "node:path";
 import type { Cover } from "../cover";
 import { realDesignDir } from "./design-path";
+import type { OutsideView } from "./outside";
 import { isPageFolder } from "./projection";
 import { type TreeWatch, watchTree } from "./watch-tree";
 
@@ -61,7 +62,9 @@ export type ChangeEvent =
 	// travel, a pause on a limit, or the team project ending on this machine
 	| { kind: "sync"; message: string }
 	// spool's Chrome extension sent a reference here (spool#241): a canvas on its page shows it arriving
-	| { kind: "reference"; frame: string };
+	| { kind: "reference"; frame: string }
+	// agents working here from a terminal (task 531): the whole of what a canvas draws of them, again
+	| { kind: "outside"; view: OutsideView };
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {
