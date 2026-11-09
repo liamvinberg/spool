@@ -94,3 +94,12 @@ body {
 	/* biome-ignore lint/complexity/noImportantStyles: the stand-in's own inline style hides it */
 	visibility: visible !important;
 }
+
+/* The first run's small window drags by its head, as the bar does; its buttons keep their pointer (spool#250). */
+:root[data-desktop] [data-first-run-head] {
+	app-region: drag;
+}
+
+:root[data-desktop] [data-first-run] :is(button, input, a) {
+	app-region: no-drag;
+}

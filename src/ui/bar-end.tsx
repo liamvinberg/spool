@@ -17,6 +17,7 @@ export function BarEnd({
 	onShortcuts,
 	onUseAgent,
 	whatsNew,
+	onSetup,
 }: {
 	/** while the settings page is up, the gear is pressed and puts it away */
 	settingsOpen?: boolean | undefined;
@@ -26,10 +27,12 @@ export function BarEnd({
 	onUseAgent?: (() => void) | undefined;
 	/** this version's What's new, at the head of help's menu, when it brought any features */
 	whatsNew?: WhatsNewRow | undefined;
+	/** the first run's setup again (spool#250): the agents and Spool Cloud, from the small window */
+	onSetup?: (() => void) | undefined;
 }) {
 	return (
 		<>
-			<BarHelp onShortcuts={onShortcuts} onUseAgent={onUseAgent} whatsNew={whatsNew} />
+			<BarHelp onShortcuts={onShortcuts} onUseAgent={onUseAgent} whatsNew={whatsNew} onSetup={onSetup} />
 			<IconButton
 				data-bar-end="settings"
 				icon={<CogIcon />}
@@ -46,10 +49,12 @@ function BarHelp({
 	onShortcuts,
 	onUseAgent,
 	whatsNew,
+	onSetup,
 }: {
 	onShortcuts: () => void;
 	onUseAgent?: (() => void) | undefined;
 	whatsNew?: WhatsNewRow | undefined;
+	onSetup?: (() => void) | undefined;
 }) {
 	const [open, setOpen] = useState(false);
 	const [at, setAt] = useState<{ right: number; top: number } | null>(null);
@@ -156,6 +161,15 @@ function BarHelp({
 								onShortcuts();
 							}}
 						/>
+						{onSetup === undefined ? null : (
+							<MenuItem
+								label="Run setup again"
+								onClick={() => {
+									close();
+									onSetup();
+								}}
+							/>
+						)}
 					</Menu>,
 					document.body,
 				)}

@@ -20,6 +20,7 @@ import { formatCombo } from "./hotkey-combos";
 
 export type HotkeyScope =
 	| "dialog"
+	| "setup"
 	| "finder"
 	| "picker"
 	| "help"
@@ -46,6 +47,8 @@ export type HotkeyScope =
  */
 export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"dialog",
+	// the first run's small window (spool#250): under a dialog it opens, over everything else
+	"setup",
 	"finder",
 	"picker",
 	"toast",
@@ -60,7 +63,14 @@ export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 ];
 
 /** Scopes that own the keyboard outright while they are up. */
-export const EXCLUSIVE_SCOPES: ReadonlySet<HotkeyScope> = new Set(["dialog", "finder", "picker", "help", "settings"]);
+export const EXCLUSIVE_SCOPES: ReadonlySet<HotkeyScope> = new Set([
+	"dialog",
+	"setup",
+	"finder",
+	"picker",
+	"help",
+	"settings",
+]);
 
 export const HOTKEY_GROUPS = [
 	"Frames",
@@ -846,6 +856,13 @@ export const HOTKEYS = [
 	// --- Help -------------------------------------------------------------------
 	{ id: "app.help", scope: "app", group: "Help", label: "Show this sheet", keys: ["question"] },
 	{ id: "help.close", scope: "help", group: "Help", label: "", keys: ["escape", "question"], listed: false },
+
+	// --- The first run (spool#250): its small window owns the keys while it is up --
+	{ id: "firstRun.go", scope: "setup", group: "Help", label: "", keys: ["enter"], listed: false, typing: true },
+	{ id: "firstRun.back", scope: "setup", group: "Help", label: "", keys: ["escape"], listed: false },
+	{ id: "firstRun.up", scope: "setup", group: "Help", label: "", keys: ["arrowup"], listed: false },
+	{ id: "firstRun.down", scope: "setup", group: "Help", label: "", keys: ["arrowdown"], listed: false },
+	{ id: "firstRun.mute", scope: "setup", group: "Help", label: "", keys: ["m"], listed: false },
 
 	// --- Modal plumbing: each open surface answers its own escape ---------------
 	{ id: "dialog.close", scope: "dialog", group: "Frames", label: "", keys: ["escape"], listed: false },

@@ -14,6 +14,7 @@ const MIME: Record<string, string> = {
 	".html": "text/html; charset=utf-8",
 	".svg": "image/svg+xml",
 	".png": "image/png",
+	".mp3": "audio/mpeg",
 	".woff2": "font/woff2",
 	".woff": "font/woff",
 	".json": "application/json; charset=utf-8",
