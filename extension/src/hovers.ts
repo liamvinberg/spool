@@ -210,6 +210,11 @@ export function watchHovers(doc: Document, ignore: (el: Element) => boolean = ()
 					await frame(view);
 					mediaChanged(held);
 				}
+				// a site may answer the hand going only after a while (a menu with a close delay): what it opened gets that while to close
+				const left = performance.now();
+				const last = came;
+				const open = () => [...pending.values()].some((of) => [...of.values()].some((one) => one.came === last));
+				while (open() && performance.now() - left < CLOSE_MS) await frame(view);
 				await frame(view);
 			} finally {
 				probing = false;
@@ -246,6 +251,8 @@ export function watchHovers(doc: Document, ignore: (el: Element) => boolean = ()
 
 /** how long a probe waits at most for the site to settle under the hand */
 const SETTLE_MS = 400;
+/** how long a probe waits at most, once done, for what the hand opened to close */
+const CLOSE_MS = 600;
 /** how long the site keeps still before a probe takes it as settled */
 const QUIET_MS = 60;
 

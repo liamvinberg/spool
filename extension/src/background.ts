@@ -36,8 +36,10 @@ async function toggle(tabId: number): Promise<void> {
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
 	const ask = message as Ask;
 	if (ask.type === "spool:shot") {
-		void chrome.tabs
-			.captureVisibleTab(sender.tab?.windowId, { format: "png" })
+		// Chrome takes two of a tab a second at most: one asked too soon is asked again once the second is up
+		const take = () => chrome.tabs.captureVisibleTab(sender.tab?.windowId, { format: "png" });
+		void take()
+			.catch(() => new Promise((done) => setTimeout(done, 600)).then(take))
 			.catch(() => null)
 			.then(respond);
 		return true;

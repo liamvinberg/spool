@@ -118,7 +118,7 @@ beforeAll(async () => {
 		"/imported.css": ["text/css", ".imported { color: green }"],
 		"/faces.css": [
 			"text/css",
-			"@font-face { font-family: Used; src: url(used.woff2) } @font-face { font-family: Idle; src: url(idle.woff2) } .pricing { font-family: Used }",
+			"@font-face { font-family: Used; src: url(used.woff2) } @font-face { font-family: Idle; src: url(idle.woff2) } @font-face { font-family: Alias; src: url(used.woff2) } .pricing { font-family: Used }",
 		],
 		"/lossy.css": ["text/css", ".lead { font: var(--type); font-weight: 700 }"],
 		"/a.png": ["image/png", ""],
@@ -193,7 +193,7 @@ it("serializes a picked element without its scripts, as it stands, inside its an
 		{ kind: "text", text: ".lead { font: var(--type); font-weight: 700 }", base: `${at(page)}/` },
 	]);
 
-	// a face the page declared and never loaded, for the daemon to leave on the web
+	// a face the page declared and never loaded, for the daemon to leave on the web, unless a face it used shares the file
 	expect(c.unusedFonts).toEqual([`${at(page)}/idle.woff2`]);
 
 	// the script-started spin, as keyframes on an attribute the markup carries
@@ -305,27 +305,44 @@ it("catches a WebGL drawing in the frame it was drawn, or one drawn once from th
 		).spoolCapture;
 		const drawn = await readCanvases(document.body);
 		const missing = unread(document.body, drawn);
-		// the tab's picture, taken with only the canvas showing: what lies over it isn't baked in
+		// the tab's picture, taken with only the canvas showing: what lies over it isn't baked in. The canvas is see-through:
+		// half red on its left, clear on its right, over whatever the page shows under it
 		let shown = true;
 		const shot = await shotCanvases(missing, async () => {
 			shown = over.checkVisibility({ visibilityProperty: true });
 			const tab = document.createElement("canvas");
 			tab.width = innerWidth;
 			tab.height = innerHeight;
-			const pen = tab.getContext("2d");
-			if (pen !== null) pen.fillStyle = "lime";
-			pen?.fillRect(0, 0, tab.width, tab.height);
+			const pen = tab.getContext("2d") as CanvasRenderingContext2D;
+			pen.fillStyle = getComputedStyle(document.documentElement).backgroundColor;
+			pen.fillRect(0, 0, tab.width, tab.height);
+			pen.fillStyle = "rgba(255, 0, 0, 0.5)";
+			pen.fillRect(0, 0, 20, 40);
 			return tab.toDataURL();
 		});
+		const taken = new Image();
+		taken.src = shot.get(once) ?? "";
+		await taken.decode();
+		const look = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+		look.drawImage(taken, 0, 0);
+		const at = (x: number) => Array.from(look.getImageData(x, 20, 1, 1).data);
 		return [
 			drawn.get(canvas)?.slice(0, 23) ?? "empty",
 			missing.map((c) => c.id),
 			shown,
 			over.checkVisibility({ visibilityProperty: true }),
 			shot.get(once)?.slice(0, 23) ?? "empty",
+			at(5),
+			at(30),
 		];
 	});
-	expect(read).toEqual(["data:image/webp;base64,", ["once"], false, true, "data:image/webp;base64,"]);
+	expect(read.slice(0, 5)).toEqual(["data:image/webp;base64,", ["once"], false, true, "data:image/webp;base64,"]);
+	// the page under it shows through in the frame as on the site: the red half clear, the rest all clear
+	const [red, clear] = read.slice(5) as number[][];
+	expect(red?.[0]).toBeGreaterThan(240);
+	expect(red?.[1]).toBeLessThan(15);
+	expect(Math.abs((red?.[3] ?? 0) - 128)).toBeLessThan(8);
+	expect(clear?.[3]).toBe(0);
 });
 
 it("serializes the whole page as its body, marked", { timeout: 60_000 }, async () => {
@@ -347,17 +364,29 @@ it("brings what the site's script does under the hand, and the frame does it aga
 				<div id="bar" style="width: 1px">progress</div>
 			</a>
 			<a id="away" href="/elsewhere">away</a>
-			<div id="tile" style="cursor: pointer; width: 200px; height: 80px"><span id="tip">tip</span></div>`;
+			<div id="tile" style="cursor: pointer; width: 20px; height: 12px"><span id="tip">tip</span></div>`;
 		// the site's script: the card lights its media as the hand comes; its bar grows on its own
 		const card = document.getElementById("card") as HTMLElement;
 		const media = document.getElementById("media") as HTMLElement;
 		card.addEventListener("mouseenter", () => media.setAttribute("data-active", ""));
 		card.addEventListener("mouseleave", () => media.removeAttribute("data-active"));
-		// one the hand never comes to, which shows its tip as a pointer enters it
+		// one the hand never comes to, which shows its tip as a pointer enters it, and a menu it closes a while after
 		const tile = document.getElementById("tile") as HTMLElement;
 		const tip = document.getElementById("tip") as HTMLElement;
-		tile.addEventListener("pointerenter", () => tip.classList.add("shown"));
-		tile.addEventListener("pointerleave", () => tip.classList.remove("shown"));
+		const menu = document.createElement("nav");
+		menu.id = "menu";
+		tile.addEventListener("pointerenter", () => {
+			tip.classList.add("shown");
+			tile.setAttribute("aria-expanded", "true");
+			document.body.append(menu);
+		});
+		tile.addEventListener("pointerleave", () => {
+			tip.classList.remove("shown");
+			setTimeout(() => {
+				tile.setAttribute("aria-expanded", "false");
+				menu.remove();
+			}, 250);
+		});
 		const bar = document.getElementById("bar") as HTMLElement;
 		setInterval(() => {
 			bar.style.width = `${Number.parseFloat(bar.style.width) + 1}px`;
@@ -395,6 +424,8 @@ it("brings what the site's script does under the hand, and the frame does it aga
 	expect(c.html).toMatch(
 		/<span id="tip" data-spool-hover-set="\[\[&quot;h\d&quot;,&quot;class&quot;,&quot;shown&quot;\]\]">/,
 	);
+	// the menu the hand opened last has closed by the time the page is taken
+	expect(c.html).not.toContain('id="menu"');
 	// what moves on its own is no hover, though it moved as the hand came
 	expect(c.html).toMatch(/<div id="bar" style="width: \d+px;">/);
 

@@ -605,6 +605,8 @@ export function unread(root: Element, drawn: ReadonlyMap<HTMLCanvasElement, stri
 /**
  * The canvases as the tab shows them, everything else hidden for the moment of the shot so none of the page over
  * them is baked in. The part of a canvas out of sight stays clear. `shoot` takes the tab's picture, as a data URL.
+ * A canvas may be see-through (a WebGL layer over the page): it is shot over black and over white, and what differs
+ * between the two is how clear it is there, so the page under it shows through in the frame as it does on the site.
  */
 export async function shotCanvases(
 	canvases: HTMLCanvasElement[],
@@ -621,25 +623,27 @@ export async function shotCanvases(
 			kept.push(el);
 		}
 	const hide = doc.createElement("style");
-	hide.textContent = "* { visibility: hidden !important } [data-spool-shot] { visibility: visible !important }";
+	const over = (colour: string) =>
+		`* { visibility: hidden !important } [data-spool-shot] { visibility: visible !important } html, [data-spool-shot]:not(canvas) { background: ${colour} !important }`;
 	doc.head.append(hide);
 	const frame = () => new Promise<void>((done) => view.requestAnimationFrame(() => done()));
-	let url: string | null = null;
+	const shots: Array<string | null> = [];
 	try {
-		await frame();
-		await frame();
-		url = await shoot();
+		for (const colour of ["#000", "#fff"]) {
+			hide.textContent = over(colour);
+			await frame();
+			await frame();
+			shots.push(await shoot());
+		}
 	} finally {
 		hide.remove();
 		for (const el of kept) el.removeAttribute("data-spool-shot");
 	}
-	if (url === null) return out;
-	const shot = new view.Image();
-	shot.src = url;
-	await shot.decode().catch(() => {});
-	if (shot.naturalWidth === 0) return out;
+	const [dark, light] = await Promise.all(shots.map((url) => (url === null ? null : decoded(view, url))));
+	const any = dark ?? light;
+	if (any === null || any === undefined) return out;
 	// the shot is in the screen's pixels: the canvas's place on it, scaled
-	const scale = shot.naturalWidth / view.innerWidth;
+	const scale = any.naturalWidth / view.innerWidth;
 	await Promise.all(
 		canvases.map(async (canvas) => {
 			const r = canvas.getBoundingClientRect();
@@ -650,9 +654,10 @@ export async function shotCanvases(
 			const copy = doc.createElement("canvas");
 			copy.width = Math.round(r.width * scale);
 			copy.height = Math.round(r.height * scale);
-			copy
-				.getContext("2d")
-				?.drawImage(
+			const cut = (shot: HTMLImageElement) => {
+				const pen = copy.getContext("2d", { willReadFrequently: true });
+				pen?.clearRect(0, 0, copy.width, copy.height);
+				pen?.drawImage(
 					shot,
 					left * scale,
 					top * scale,
@@ -663,11 +668,47 @@ export async function shotCanvases(
 					w * scale,
 					h * scale,
 				);
+				return pen;
+			};
+			if (dark !== null && dark !== undefined && light !== null && light !== undefined) {
+				const lit = cut(light)?.getImageData(0, 0, copy.width, copy.height);
+				const pen = cut(dark);
+				if (lit !== undefined && pen !== null)
+					pen.putImageData(matte(pen.getImageData(0, 0, copy.width, copy.height), lit), 0, 0);
+			} else cut(any);
 			const picked = await picture(copy);
 			if (picked !== null) out.set(canvas, picked);
 		}),
 	);
 	return out;
+}
+
+/** a shot as an image to draw from, or null when it won't decode */
+async function decoded(view: Window & typeof globalThis, url: string): Promise<HTMLImageElement | null> {
+	const shot = new view.Image();
+	shot.src = url;
+	await shot.decode().catch(() => {});
+	return shot.naturalWidth === 0 ? null : shot;
+}
+
+/**
+ * One picture over black and the same over white made into one with its transparency: where it is clear the two
+ * differ by all the backdrop does, where it is solid not at all. The black one is changed in place and returned.
+ */
+export function matte(dark: ImageData, light: ImageData): ImageData {
+	const d = dark.data;
+	const l = light.data;
+	for (let i = 0; i < d.length; i += 4) {
+		const through =
+			((l[i] ?? 0) - (d[i] ?? 0) + (l[i + 1] ?? 0) - (d[i + 1] ?? 0) + (l[i + 2] ?? 0) - (d[i + 2] ?? 0)) / 3;
+		const alpha = Math.min(255, Math.max(0, 255 - through));
+		const lift = alpha === 0 ? 0 : 255 / alpha;
+		d[i] = Math.min(255, (d[i] ?? 0) * lift);
+		d[i + 1] = Math.min(255, (d[i + 1] ?? 0) * lift);
+		d[i + 2] = Math.min(255, (d[i + 2] ?? 0) * lift);
+		d[i + 3] = alpha;
+	}
+	return dark;
 }
 
 function draw(img: HTMLImageElement, w: number, h: number): string | null {
@@ -800,6 +841,8 @@ export function unusedFonts(doc: Document): string[] {
 		(face.status === "unloaded" ? idle : loaded).add(key);
 	});
 	const out = new Set<string>();
+	// a file two faces share (one family under two names) is needed when either is used
+	const needed = new Set<string>();
 	const seen = new Set<CSSStyleSheet>();
 	const visit = (rules: CSSRuleList, base: string) => {
 		for (const rule of Array.from(rules)) {
@@ -816,9 +859,9 @@ export function unusedFonts(doc: Document): string[] {
 					s.getPropertyValue("font-stretch") || "normal",
 					s.getPropertyValue("unicode-range") || "U+0-10FFFF",
 				);
-				if (!idle.has(key) || loaded.has(key)) continue;
+				const into = !idle.has(key) || loaded.has(key) ? needed : out;
 				for (const m of s.getPropertyValue("src").matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/g)) {
-					if (m[2] !== undefined && m[2] !== "" && !m[2].startsWith("data:")) out.add(absolute(m[2], base));
+					if (m[2] !== undefined && m[2] !== "" && !m[2].startsWith("data:")) into.add(absolute(m[2], base));
 				}
 			}
 		}
@@ -834,7 +877,7 @@ export function unusedFonts(doc: Document): string[] {
 	};
 	for (const s of Array.from(doc.styleSheets)) sheet(s);
 	for (const s of doc.adoptedStyleSheets ?? []) sheet(s);
-	return [...out];
+	return [...out].filter((url) => !needed.has(url));
 }
 
 function faceKey(family: string, weight: string, style: string, stretch: string, range: string): string {
