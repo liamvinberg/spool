@@ -196,6 +196,8 @@ export interface DaemonOptions {
 	history?: boolean | undefined;
 	/** What's new: on in a packaged build, absent in tests and a checkout unless SPOOL_WHATS_NEW asks. */
 	whatsNew?: WhatsNewOptions | undefined;
+	/** The first run (spool#250): on in a packaged build, absent in tests and a checkout unless SPOOL_FIRST_RUN asks. */
+	firstRun?: boolean | undefined;
 	/** The registry probe — swapped out by seam tests. */
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
@@ -408,6 +410,7 @@ export function createDaemonApp({
 	updateCheck,
 	history: historyAllowed,
 	whatsNew,
+	firstRun = false,
 	fetchLatest,
 	upgrade,
 	agentExecutor,
@@ -1429,6 +1432,7 @@ export function createDaemonApp({
 				machineStateWatch,
 				emitAppEvent,
 				historyChanged: () => history.keeping(registeredRoots()),
+				firstRun,
 			}),
 		)
 		.route("/api", whatsNewRoutes({ settings, options: whatsNew, spoolDir }))

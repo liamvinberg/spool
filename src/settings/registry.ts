@@ -223,6 +223,15 @@ export const SETTINGS = {
 		label: "Version seen before it",
 		says: "Help's What's new holds what came after it.",
 	},
+	// the first run (spool#250): once finished or skipped on this machine, it opens again only from Help
+	"onboarding.done": {
+		scope: "machine",
+		group: "remembered",
+		shape: { kind: "boolean" },
+		fallback: false,
+		label: "Setup done",
+		says: "The first run's setup was finished or skipped on this machine. Help's Run setup again opens it.",
+	},
 	...themeEntries,
 	...experimentEntries,
 } as const satisfies Record<string, SettingEntry>;

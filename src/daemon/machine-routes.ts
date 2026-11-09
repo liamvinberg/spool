@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { validator } from "hono/validator";
+import { readRegistry } from "../registry";
 import type { createCloudAccount } from "./cloud-account";
+import { firstRunDue } from "./first-run";
 import type { ResolveProject } from "./project-route";
 import {
 	type AppEvent,
@@ -26,6 +28,8 @@ export function machineRoutes(deps: {
 	emitAppEvent: (event: AppEvent) => void;
 	/** The history setting changed: who keeps history is decided again now. */
 	historyChanged: () => void;
+	/** Whether this build opens the first run by itself (spool#250). */
+	firstRun: boolean;
 }) {
 	const { spoolDir, cloudAccount, settings, machineStateWatch, emitAppEvent } = deps;
 	return (
@@ -51,6 +55,14 @@ export function machineRoutes(deps: {
 					return c.text(error instanceof Error ? error.message : "could not sign out", 503);
 				}
 				return c.json(await cloudAccount.read());
+			})
+			// spool#250: whether the window opens on the first run, asked once as it boots
+			.get("/first-run", (c) => {
+				const done = settings
+					.read()
+					.entries.some((entry) => entry.key === "onboarding.done" && entry.value === (true as unknown));
+				const projects = readRegistry(spoolDir).projects.length;
+				return c.json({ due: firstRunDue({ serving: deps.firstRun, done, projects }) });
 			})
 			.get("/session", (c) => c.json(readSession(spoolDir)))
 			.put(

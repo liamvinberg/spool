@@ -21,6 +21,7 @@ import {
 	showComment,
 } from "./comments-verb";
 import { readCanvasFields } from "./daemon/canvas-file";
+import { firstRunServing } from "./daemon/first-run";
 import {
 	daemonUrl,
 	ensureDaemon,
@@ -850,6 +851,7 @@ program
 					// so it is never offered one — the checkout included
 					updateCheck: config.updateCheck && selfUpgradeable(),
 					whatsNew: whatsNewServing(pkg.version, process.env, runsFromSource()),
+					firstRun: firstRunServing(process.env, runsFromSource()),
 					history: config.history,
 				});
 			} catch (error) {
