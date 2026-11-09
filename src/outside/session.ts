@@ -94,6 +94,8 @@ export function filesOf(
 		);
 		return { files, writes: true };
 	}
+	const command = text(input.command);
+	if (command !== null && ["bash", "shell", "exec_command", "local_shell"].includes(name)) return framesIn(command);
 	const path = text(input.file_path) ?? text(input.notebook_path) ?? text(input.path);
 	if (path === null) return null;
 	if (["read", "view", "cat", "ls", "glob", "grep", "find"].includes(name))
@@ -103,7 +105,6 @@ export function filesOf(
 	return null;
 }
 
-/** What a tool asks permission for, as the line says it after "wants to". */
 /** Tools that stop to put something to the person, and what spool says it wants then. */
 const ASKING_TOOLS: Readonly<Record<string, string>> = {
 	AskUserQuestion: "ask you something",
@@ -124,6 +125,21 @@ function listOf(tool: string, input: Payload): OutsideTask[] | null {
 	});
 }
 
+/**
+ * The frames a shell command names, as `frames/<name>/…` paths the project's frames
+ * folder resolves (agents often write a frame with a heredoc), and whether it seems to
+ * write them. A guess from the command's words: a hand on a frame, never a file read.
+ */
+function framesIn(command: string): { files: readonly string[]; writes: boolean } | null {
+	const files = [...command.matchAll(/(?:^|[\s'"=(:])(?:[\w.@~/-]*\/)?(frames\/[\w.@-]+(?:\/[\w.@-]+)*)/g)].map(
+		(match) => match[1] ?? "",
+	);
+	if (files.length === 0) return null;
+	const plain = command.replace(/\d?>&\d/g, "").replace(/[\d&]?>\s*\/dev\/null/g, "");
+	return { files, writes: /(?:>|\btee\b|\bsed\s+-i|\bcp\b|\bmv\b|\btouch\b|\.write|open\([^)]*['"][wa])/.test(plain) };
+}
+
+/** What a tool asks permission for, as the line says it after "wants to". */
 export function wantsOf(tool: string, input: Payload): string {
 	const asks = ASKING_TOOLS[tool];
 	if (asks !== undefined) return asks;

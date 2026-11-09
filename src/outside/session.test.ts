@@ -173,4 +173,16 @@ describe("the files a tool call names", () => {
 		});
 		expect(filesOf("pi", "bash", { command: "ls" }, ROOT)).toBeNull();
 	});
+
+	it("finds the frames a shell command names, and whether it writes them", () => {
+		const heredoc = "cd /work/shop/design; cat frames/cart/frame.json; cat > frames/cart/frame.tsx <<'EOF'\nx\nEOF";
+		expect(filesOf("claude", "Bash", { command: heredoc }, ROOT)).toEqual({
+			files: ["frames/cart/frame.json", "frames/cart/frame.tsx"],
+			writes: true,
+		});
+		expect(filesOf("claude", "Bash", { command: "spool check design/frames/menu/frame.tsx 2>&1" }, ROOT)).toEqual({
+			files: ["frames/menu/frame.tsx"],
+			writes: false,
+		});
+	});
 });

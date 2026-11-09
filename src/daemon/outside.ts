@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { HARNESSES, type Harness, type Terminal } from "../outside/harness";
 import { type Connection, connection } from "../outside/install";
@@ -161,7 +161,12 @@ export function createOutside({
 		try {
 			framesDir = join(realDesignDir(root), "frames");
 		} catch {}
-		return (file) => {
+		return (path) => {
+			// a shell command's `frames/<name>/…`, wherever it ran from
+			const file =
+				!isAbsolute(path) && path.startsWith("frames/") && framesDir !== null
+					? join(framesDir, path.slice(7))
+					: path;
 			for (let at = file; at.length > 1; at = at.slice(0, Math.max(at.lastIndexOf(sep), 1))) {
 				const name = dirs.get(at);
 				if (name !== undefined) return name;
