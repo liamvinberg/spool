@@ -18,7 +18,7 @@ import { mutateMachineState } from "../machine-state";
 import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
 import { hooksMade, readHookToken, writeHookTarget } from "../outside/install";
-import { isFramePath, isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
+import { isFramePath, isPagePath, isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "../runtime/record-protocol";
 import { experimentsOn } from "../settings/experiments";
@@ -65,6 +65,7 @@ import { createFrameCompiler } from "./compile";
 import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
 import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
 import { deckRoutes } from "./deck/routes";
+import { createStagePlay } from "./deck/stage-play";
 import { DesignBoundaryError, designRelativePath, realDesignDir } from "./design-path";
 import {
 	captureWorkerCsp,
@@ -168,6 +169,7 @@ import { createUpdateChecker } from "./update-check";
 import {
 	reactVersion,
 	type VendorModule,
+	vendorDeckStageHostJs,
 	vendorPlayerShellJs,
 	vendorReactDevJs,
 	vendorReactJs,
@@ -292,6 +294,8 @@ const playParams = z.object({
 		.string()
 		.regex(/^[A-Za-z0-9_-]{43}$/, { message: "not a shell handoff" })
 		.optional(),
+	/** a deck page (spool#265): its talk played on the stage, from `frame` when that is one of its slides */
+	deck: z.string().refine(isPagePath, { message: "not a page name" }).optional(),
 });
 
 /**
@@ -660,6 +664,21 @@ export function createDaemonApp({
 	/** Whether this machine has decks on (spool#265), read fresh as Record's switch is. */
 	const deckOn = () => experimentsOn(settings.read().entries).includes("deck");
 	// spool#265: every deck kept laid out whatever hand changed it, while the experiment is on
+	const stagePlay = createStagePlay({
+		on: () => deckOn(),
+		resolve: (c, name) => resolveProject(c, name),
+		compile: (root, frames, start) => playerCompiler.getPlayable(root, frames, start),
+		played: (root) => {
+			playedRoots.add(root);
+			keepPlayerWarm(root);
+		},
+		projectCapability: (root) => projectCapability(root),
+		issue: (project, key) => issuePlayerHandoff(project, key, "default"),
+		consume: (token, project, key) => consumePlayerHandoff(token, project, key, "default"),
+		renderOrigin: () => renderOrigin,
+		controlToken,
+		protect: (c) => protectControlDocument(c),
+	});
 	const deckKeeper = createDeckKeeper({
 		subscribe: (root, listener) => hub.subscribe(root, listener),
 		on: deckOn,
@@ -1623,7 +1642,10 @@ export function createDaemonApp({
 			}),
 		)
 		.route("/api/p", exportRoutes({ resolve: resolveProject, htmlExport }))
-		.route("/api/p", deckRoutes({ resolve: resolveProject, on: deckOn, keeper: deckKeeper, hub }))
+		.route(
+			"/api/p",
+			deckRoutes({ resolve: resolveProject, on: deckOn, keeper: deckKeeper, hub, stage: stagePlay.address }),
+		)
 		.route("/api", outsideRoutes({ outside, resolve: resolveProject, spoolDir, origin: () => controlOrigin }))
 		.get("/covers/:project/:frame/:hash", async (c) => {
 			const name = c.req.param("project");
@@ -1916,8 +1938,18 @@ export function createDaemonApp({
 			}),
 			async (c) => {
 				const name = c.req.param("project");
-				const { frame, scenario, shell, handoff, record, recording } = c.req.valid("query");
+				const { frame, scenario, shell, handoff, record, recording, deck } = c.req.valid("query");
 				const controlRequest = hostClass(c.req.url) === "control";
+				if (deck !== undefined) {
+					return stagePlay.play(c, {
+						project: name,
+						deck,
+						control: controlRequest,
+						...(frame === undefined ? {} : { frame }),
+						...(shell === undefined ? {} : { shell }),
+						...(handoff === undefined ? {} : { handoff }),
+					});
+				}
 				const shellRender = !controlRequest && shell === "1";
 				const shellDocument = (body: string, status: number) =>
 					new Response(body, { status, headers: { "content-type": "text/html; charset=UTF-8" } });
@@ -2153,6 +2185,9 @@ export function createDaemonApp({
 			return c.body(await vendorReactJs());
 		})
 		.get("/player-assets/player-shell.js", (c) => serveRuntime(c, vendorPlayerShellJs, false))
+		.get("/player-assets/deck-stage.js", async (c) =>
+			deckOn() ? serveRuntime(c, vendorDeckStageHostJs, false) : c.text("Not Found", 404),
+		)
 		.get("/player-assets/fonts/:file", (c) => {
 			const file = chromeFontFile(c.req.param("file"));
 			if (file === undefined) return c.text("no such font", 404);

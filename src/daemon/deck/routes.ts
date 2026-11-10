@@ -5,6 +5,7 @@ import { answeringDiskRefusals, type ResolveProject, withProject } from "../proj
 import { changeDeck } from "./change";
 import { deckPages, deckReadOf, readPage } from "./disk";
 import type { DeckKeeper } from "./keeper";
+import { type StageAddress, stageOf } from "./stage-play";
 
 /**
  * A project's decks over HTTP, mounted under `/api/p` (spool#265): one read of every deck, and the one change every
@@ -15,6 +16,8 @@ export function deckRoutes(deps: {
 	on: () => boolean;
 	keeper: Pick<DeckKeeper, "watch" | "settleAll" | "problems">;
 	hub: Pick<ChangeHub, "publish">;
+	/** a fresh address of a deck's stage document, for a window of spool's to embed */
+	stage: (project: string, root: string, page: string) => StageAddress | { message: string };
 }) {
 	return new Hono()
 		.get("/:project/decks", (c) => {
@@ -38,6 +41,27 @@ export function deckRoutes(deps: {
 					return answer;
 				});
 				return "response" in read ? read.response : c.json(read.value);
+			});
+		})
+		.get("/:project/deck-stage", (c) => {
+			// the talk a deck's stage plays, read again by a host to know whether a change to the deck changed it
+			if (!deps.on()) return c.notFound();
+			const page = c.req.query("page");
+			if (page === undefined) return c.text("a stage's talk is asked for as ?page=", 400);
+			return withProject(c, deps.resolve, (root) => {
+				const talk = stageOf(root, page);
+				return "message" in talk ? c.text(talk.message, 404) : c.json(talk);
+			});
+		})
+		.post("/:project/deck-stage", async (c) => {
+			if (!deps.on()) return c.notFound();
+			const body: unknown = await c.req.json().catch(() => undefined);
+			const page = typeof body === "object" && body !== null ? (body as { page?: unknown }).page : undefined;
+			if (typeof page !== "string") return c.text('a stage is asked for as { "page" }', 400);
+			const project = c.req.param("project");
+			return withProject(c, deps.resolve, (root) => {
+				const stage = deps.stage(project, root, page);
+				return "message" in stage ? c.text(stage.message, 404) : c.json(stage);
 			});
 		})
 		.post("/:project/deck", async (c) => {
