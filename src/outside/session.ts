@@ -43,6 +43,11 @@ export interface OutsideSession {
 	readonly changed: readonly string[];
 	/** stopped short: interrupted, or the model's API failed */
 	readonly stopped: boolean;
+	/**
+	 * it put a hand on a frame or wrote one this turn: only then is it drawn, so an agent asked
+	 * about code in the repo stays off the canvas
+	 */
+	readonly touched: boolean;
 	readonly terminal: Terminal;
 	/** tools started and not yet finished, a long command among them */
 	readonly busy: number;
@@ -192,6 +197,7 @@ export function startSession(
 		said: null,
 		changed: [],
 		stopped: false,
+		touched: false,
 		terminal,
 		busy: 0,
 		started: at,
@@ -244,6 +250,7 @@ export function foldHook(
 				said: null,
 				changed: [],
 				stopped: false,
+				touched: false,
 				busy: 0,
 				started: at,
 				ended: null,
@@ -266,6 +273,7 @@ export function foldHook(
 			const frame = touched.files.map(frameAt).find((one): one is string => one !== null) ?? null;
 			return {
 				...next,
+				touched: session.touched || frame !== null,
 				hands: withHand(
 					session.hands,
 					agent,
@@ -284,7 +292,7 @@ export function foldHook(
 				const frame = frameAt(file);
 				if (frame !== null && !changed.includes(frame)) changed.push(frame);
 			}
-			return { ...next, changed };
+			return { ...next, changed, touched: session.touched || changed.length > 0 };
 		}
 		case "PermissionRequest":
 			return { ...base, state: "waiting", wants: tool === "" ? null : wantsOf(tool, input), ended: null };

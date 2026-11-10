@@ -123,6 +123,8 @@ describe("a Claude Code session, folded from its hooks", () => {
 		]);
 		expect(there).toMatchObject({
 			name: "tidy the menu",
+			// asked nothing about a frame yet: heard, not drawn
+			touched: false,
 			state: "waiting",
 			wants: "ask you something",
 			tasks: [
@@ -133,16 +135,26 @@ describe("a Claude Code session, folded from its hooks", () => {
 	});
 
 	it("leaves a frame as it goes to work elsewhere, and keeps its place through a command", () => {
-		const there = run([
+		const code = run([
 			["UserPromptSubmit", { prompt: "tidy" }],
-			["PreToolUse", edit("cart")],
+			["PreToolUse", { tool_name: "Read", tool_input: { file_path: `${ROOT}/src/app.ts` } }],
 		]) as OutsideSession;
+		expect(code.touched).toBe(false);
+		const there = run([["PreToolUse", edit("cart")]], code) as OutsideSession;
+		expect(there.touched).toBe(true);
 		expect(run([["PreToolUse", { tool_name: "Bash", tool_input: { command: "pnpm test" } }]], there)?.hands).toEqual(
 			there.hands,
 		);
-		expect(
-			run([["PreToolUse", { tool_name: "Read", tool_input: { file_path: `${ROOT}/src/app.ts` } }]], there)?.hands,
-		).toEqual([]);
+		// gone from the frame, it stays drawn for the rest of the turn, through what the harness feeds in
+		const away = run(
+			[
+				["PreToolUse", { tool_name: "Read", tool_input: { file_path: `${ROOT}/src/app.ts` } }],
+				["UserPromptSubmit", { prompt: "<task-notification>\n<task-id>b1</task-id>" }],
+			],
+			there,
+		);
+		expect(away).toMatchObject({ hands: [], touched: true });
+		expect(run([["UserPromptSubmit", { prompt: "now the api" }]], away as OutsideSession)?.touched).toBe(false);
 	});
 
 	it("counts a session interrupted where no hook could say so as stopped, once it sits idle", () => {

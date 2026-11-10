@@ -36,7 +36,7 @@ export interface OutsideView {
 	readonly connected: Readonly<Record<Harness, Connection>>;
 }
 
-export interface OutsideSessionView extends Omit<OutsideSession, "root" | "terminal" | "busy"> {
+export interface OutsideSessionView extends Omit<OutsideSession, "root" | "terminal" | "busy" | "touched"> {
 	/** the terminal app, named, for Open <app>; null when it can't be brought forward from here */
 	readonly app: string | null;
 }
@@ -223,8 +223,9 @@ export function createOutside({
 		const at = now();
 		const shown: OutsideSessionView[] = [];
 		for (const session of sessions.values()) {
-			if (session.root !== root || !sessionLive(session, at)) continue;
-			const { root: _root, terminal, busy: _busy, ...rest } = session;
+			// heard from its first hook, drawn only once it touches a frame this turn
+			if (session.root !== root || !session.touched || !sessionLive(session, at)) continue;
+			const { root: _root, terminal, busy: _busy, touched: _touched, ...rest } = session;
 			shown.push({ ...rest, app: appOf(terminal) });
 		}
 		shown.sort((a, b) => b.started - a.started);

@@ -8,7 +8,7 @@ import { createOutside, type OutsideView } from "./outside";
 const FRAME = "export default function Frame() { return <div />; }";
 
 describe("hooks from a connected harness", () => {
-	it("take only spool's own hook secret, never a page's request, and draw on the project's canvas", async () => {
+	it("take only spool's own hook secret, never a page's request, and draw on the project's canvas once at a frame", async () => {
 		const spoolDir = makeTempDir();
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "cart", FRAME);
@@ -32,6 +32,9 @@ describe("hooks from a connected harness", () => {
 		expect((await hook(edit, { "x-spool-hook": "wrong" })).status).toBe(401);
 		expect((await hook(edit, { "x-spool-hook": token, origin: "https://example.com" })).status).toBe(403);
 		expect((await hook(edit, { "x-spool-hook": token, "x-spool-term": "ghostty" })).status).toBe(204);
+		// another, asked about code and no frame, is heard but not drawn
+		const code = { session_id: "s2", cwd: root, hook_event_name: "UserPromptSubmit", prompt: "fix the api" };
+		expect((await hook(code, { "x-spool-hook": token })).status).toBe(204);
 
 		const view = (await (await app.request(`/api/p/${name}/outside`)).json()) as OutsideView;
 		expect(view.sessions).toMatchObject([
