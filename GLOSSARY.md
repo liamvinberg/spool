@@ -176,6 +176,26 @@ _Avoid_: held, blocked, read-only
 
 **Accel**: The one modifier a platform binds its own commands to: cmd on Apple, ctrl everywhere else, never a hardcoded meta key. Spool's own gestures all live behind it, because spool never takes a plain key from a live frame — every ordinary key belongs to the prototype being used, its own `esc` included.
 
+### Decks
+
+**Deck**: A page whose folder holds a `deck.json`, while the `deck` experiment is on: a presentation laid out on the canvas. The file names the talk's size and its slides in order, one name per line so two people's edits merge; spool writes every frame's place into its sidecar from that, so a reader that knows nothing of decks, an older spool or spool.page sees the same page. Its `version` names the layout rules, and a spool lays out only a version it knows. _Avoid_: presentation file, slideshow
+
+**Talk**: A deck's slides in order, as its `deck.json` lists them, and the size they all share. _Avoid_: sequence, playlist
+
+**Band**: The strip behind a deck's top row, where the talk stands; a frame on it plays in the talk and a frame off it does not. _Avoid_: rail, track, timeline
+
+**Slide**: A frame in a deck's talk. A frame of another shape keeps its size and is shown fitted and centred in its slot. _Avoid_: page (a page is the folder)
+
+**Loose frame**: A frame on a deck's page that is not in its talk, set in a cell of the grid under the band: a draft, a version not chosen, a slide taken out. It keeps its notes. _Avoid_: draft, unused frame
+
+**Beat**: One step of a slide, named in its literal `ui.beats([...])` list. A slide that names none has one; wherever nothing steps it, it reads as its last. _Avoid_: build, step, fragment
+
+**Notes (of a slide)**: The `notes.md` beside a slide's `frame.tsx`, one paragraph per beat. They belong to the place in the talk: a frame traded into a slide's place takes them over. A frame never imports its notes. _Avoid_: speaker notes file, comments
+
+**Room**: The window the audience sees while a deck is presented: the slide alone, with no controls and no cursor. _Avoid_: audience view, projector window
+
+**Presenter view**: Spool's own window while a deck is presented, and the one authority over where the talk is: the clock, the slide live, what the next key plays, this beat's notes and a bar per slide. _Avoid_: speaker view, console
+
 ### Agent surface
 
 **Verbs**: The read-only agent CLI: `selection`, `flows`, `shot`, `logs`, `url`, `skill`. Agents author by writing frame files, never through a spool command.
