@@ -35,6 +35,7 @@ export default defineConfig([
 			"frame-runtime": "src/runtime/frame-runtime.ts",
 			"player-shell-runtime": "src/runtime/player-shell-runtime.tsx",
 			"jsx-dev-runtime": "src/runtime/jsx-dev-runtime.ts",
+			"deck-stage-host": "src/runtime/deck-stage-host.ts",
 		},
 		format: "esm",
 		platform: "browser",

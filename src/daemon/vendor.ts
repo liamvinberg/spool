@@ -125,8 +125,11 @@ export const vendorSpoolJsxJs: () => Promise<VendorModule> = lazyBuild(() => ven
 
 export const vendorPlayerShellJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("player-shell-runtime"));
 
+/** A deck's stage host (spool#265): the page on spool's origin that holds a talk's stage at its play address. */
+export const vendorDeckStageHostJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("deck-stage-host"));
+
 async function vendorRuntime(
-	name: "frame-runtime" | "player-shell-runtime" | "jsx-dev-runtime",
+	name: "frame-runtime" | "player-shell-runtime" | "jsx-dev-runtime" | "deck-stage-host",
 ): Promise<VendorModule> {
 	const js = await runtimeJs(name);
 	return { js, etag: `"spool-${createHash("sha256").update(js).digest("hex").slice(0, 32)}"` };
