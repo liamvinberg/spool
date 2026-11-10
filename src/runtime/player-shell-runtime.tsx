@@ -4,8 +4,9 @@ import { SPOOL_MARK_PATH } from "../brand";
 import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
-import { fittedBox, playRoom, readFit, writeFit } from "./player-fit";
+import { heldBox, playRoom, readStart, writeStart } from "./player-fit";
 import { createPlayerRecorder, type NotedHands, type PlayerRecorder } from "./player-recorder";
+import type { Held } from "./player-size-model";
 import { type ClipAspect, shapedBox } from "./record-protocol";
 
 /**
@@ -17,8 +18,8 @@ import { type ClipAspect, shapedBox } from "./record-protocol";
  * It is the played tab (#227): a control-origin document whose whole job is to
  * be the page around the frame, so the URL, the title and the edge bar live out
  * here where frame code cannot reach them. The frame itself is sized by this
- * side too — the authored width as a cap, the real viewport below it — because
- * the iframe's box is the viewport the runtime inside it measures.
+ * side too — at the size it plays at, which the chrome chooses — because the
+ * iframe's box is the viewport the runtime inside it measures.
  */
 
 interface FrameGeometry {
@@ -175,7 +176,16 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	let mountedFrame = config.start;
 	let generation = 0;
 	let stateSequence = 0;
+	/**
+	 * The shell's own geometry revisions, one for every change that crosses the
+	 * port: the bridge's and the shell's own replays alike. The bridge numbers
+	 * its revisions for itself, so they are kept apart (`bridgePending`,
+	 * `bridgeApplied`): a replay on every step of a pull never makes the
+	 * canvas's next change look stale.
+	 */
 	let geometryRevision = 0;
+	let bridgePending = 0;
+	let bridgeApplied = 0;
 	let geometryAppliedRevision = 0;
 	let geometryReadyRevision = 0;
 	let geometrySettleRevision = 0;
@@ -190,8 +200,14 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	let latestGeometry: { revision: number; frames: { name: string; w: number; h: number }[] } | undefined;
 	/** The clip shape the frame is played at while Record's panel is up or it records (spool#221). */
 	let shapedAs: ClipAspect | null = typeof config.record === "object" ? config.record.start : null;
-	/** Fitted to the window, or laid out at its real size (spool#553). */
-	let fitting = readFit();
+	/**
+	 * What this play rests at (spool#264): As drawn or Window, as this browser
+	 * last picked, until another size is chosen. A row's own size is read from
+	 * the row, so a pick carries none.
+	 */
+	let held: Held = { id: readStart(), size: { w: 0, h: 0 } };
+	/** The box the frame on show is laid out at while the chrome moves it, or null resting at `held`. */
+	let laying: FrameGeometry | null = null;
 	/**
 	 * Geometry as the canvas authored it. `config.frames` holds the played box
 	 * instead — see `playedBox` below — and a window that changes size re-derives one
@@ -337,27 +353,27 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	};
 
 	/**
-	 * The box the page really gives a frame. Responsive (#227): the authored
-	 * width as a cap and the real viewport below it, over the whole height of the
-	 * window less the 30px bar both shells wear. Fitted (spool#553, spool#263):
-	 * the authored box, or a long page's width over the window's height, drawn
-	 * smaller by the chrome where the window is. Either way this
-	 * is what the iframe is laid out at and what the runtime inside it will
-	 * measure, since a scale does not change a viewport — which is why every w/h
-	 * that crosses the port is in this space and not the authored one, and why
-	 * being 30px out here wedges the reveal shut.
+	 * The box the page really gives a frame: at the size it plays at
+	 * (spool#264), the authored box as drawn (a long page its width over the
+	 * window's height, spool#263), the room under the 30px bar both shells wear
+	 * at Window, a device's or a pulled size, drawn smaller by the chrome where
+	 * the window is; and the frame on show at whatever the chrome lays it out at
+	 * while it moves. This is what the iframe is laid out at and what the
+	 * runtime inside it will measure, since a scale does not change a viewport —
+	 * which is why every w/h that crosses the port is in this space and not the
+	 * authored one, and why being 30px out here wedges the reveal shut.
 	 */
-	const playedBox = (geometry: FrameGeometry): FrameGeometry => {
+	const playedBox = (name: string, geometry: FrameGeometry): FrameGeometry => {
 		const room = playRoom({ vw: window.innerWidth, vh: window.innerHeight });
 		// a frame played at a clip's shape lays itself out in that shape (spool#221)
 		if (shapedAs !== null) return shapedBox(shapedAs, room, geometry);
-		if (fitting) return fittedBox(geometry, room);
-		return { w: Math.min(room.w, geometry.w), h: room.h };
+		if (laying !== null && name === snapshot.frame) return laying;
+		return heldBox(held, geometry, room);
 	};
 	const playedList = (frames: { name: string; w: number; h: number }[]) =>
-		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame) } : frame));
+		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame.name, frame) } : frame));
 	const playedRecord = (frames: Record<string, FrameGeometry>): Record<string, FrameGeometry> =>
-		Object.fromEntries(Object.entries(frames).map(([name, geometry]) => [name, playedBox(geometry)]));
+		Object.fromEntries(Object.entries(frames).map(([name, geometry]) => [name, playedBox(name, geometry)]));
 	config.frames = playedRecord(config.frames);
 
 	const controller: PlayerController = {
@@ -374,14 +390,21 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		},
 		dismissExternal: () => command("dismiss-external"),
 		close: () => host.close(),
-		fit: {
-			on: () => fitting,
-			set: (on) => {
-				if (on === fitting) return;
-				fitting = on;
-				writeFit(on);
+		size: {
+			held: () => held,
+			authored: (frame) => {
+				const found = authoredGeometry.find((each) => each.name === frame);
+				return found === undefined ? { w: 1440, h: 900 } : { w: found.w, h: found.h };
+			},
+			hold: (next) => {
+				held = next;
+				if (next.id === "drawn" || next.id === "window") writeStart(next.id);
 				geometryReplay();
-				notify();
+			},
+			lay: (box) => {
+				if (box === laying || (box !== null && laying !== null && box.w === laying.w && box.h === laying.h)) return;
+				laying = box;
+				geometryReplay();
 			},
 		},
 	};
@@ -447,8 +470,9 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	};
 
 	const geometryPending = (revision: number) => {
-		if (!Number.isInteger(revision) || revision <= geometryRevision) return;
-		geometryRevision = revision;
+		if (!Number.isInteger(revision) || revision <= bridgePending) return;
+		bridgePending = revision;
+		geometryRevision += 1;
 		if (!revealed) {
 			geometryReadyRevision = 0;
 			reconcileVisibility();
@@ -459,19 +483,31 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	const geometryApplied = (revision: number, authored: { name: string; w: number; h: number }[]) => {
 		if (
 			!Number.isInteger(revision) ||
-			revision < geometryRevision ||
-			revision <= geometryAppliedRevision ||
+			revision < bridgePending ||
+			revision <= bridgeApplied ||
 			!Array.isArray(authored)
 		) {
 			return;
 		}
-		// The cap is taken once, here at the door: everything downstream — what is
-		// stored, what is compared against a cut, what crosses the port — is in
-		// played space, and only the replay ever looks at the authored numbers.
+		bridgeApplied = revision;
+		bridgePending = revision;
 		authoredGeometry = authored;
-		const frames = playedList(authored);
-		geometryRevision = revision;
+		publishGeometry();
+	};
+
+	/**
+	 * Hand the runtime the played boxes of the authored numbers last applied, at
+	 * a revision of the shell's own. The played box is taken once, here at the
+	 * door: everything downstream — what is stored, what is compared against a
+	 * cut, what crosses the port — is in played space, and only this ever looks
+	 * at the authored numbers.
+	 */
+	const publishGeometry = () => {
+		const revision = geometryRevision + 1;
+		const frames = playedList(authoredGeometry);
 		geometryAppliedRevision = revision;
+		// geometry the bridge still has on its way is newer than this, so nothing is ready until it lands
+		geometryRevision = bridgePending > bridgeApplied ? revision + 1 : revision;
 		if (!revealed) geometryReadyRevision = 0;
 		latestGeometry = { revision, frames };
 		if (pendingNavigation?.kind === "transition" && transitionGeometryChanged(pendingNavigation, frames)) {
@@ -490,15 +526,11 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	};
 
 	/**
-	 * Hand the shell the geometry it already holds, at a revision it has not
-	 * seen. The authored numbers are what is replayed, so a window that has
-	 * changed size since they arrived re-derives the played box from them.
+	 * Hand the runtime the geometry the shell already holds, played again: a
+	 * window that has changed size, or a size chosen or moving, re-derives the
+	 * played box from the authored numbers.
 	 */
-	const geometryReplay = () => {
-		const revision = geometryRevision + 1;
-		geometryPending(revision);
-		geometryApplied(revision, authoredGeometry);
-	};
+	const geometryReplay = publishGeometry;
 
 	const onWindowMessage = (event: MessageEvent) => {
 		if (event.source !== host.frame()?.contentWindow || !isRecord(event.data)) return;

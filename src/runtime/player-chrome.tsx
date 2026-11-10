@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { accelChord } from "./accel-chord";
 import { ExternalLinkDialog } from "./external-link-dialog";
 import { accelLabel } from "./platform-keys";
-import { fittedScale, type PlayerFit, playRoom } from "./player-fit";
+import { fittedScale, type PlayerSize, playRoom } from "./player-fit";
 import {
 	barLayout,
 	DESK_BAR_PX,
@@ -14,6 +14,7 @@ import {
 	type Viewport,
 } from "./player-page";
 import type { PlayerRecorder } from "./player-recorder";
+import { SizeDesk, SizeGrips, SizeMenu, useSizing } from "./player-size";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_WARN_MS } from "./record-protocol";
 
 /**
@@ -23,10 +24,11 @@ import { CLIP_ASPECTS, type ClipAspect, RECORD_WARN_MS } from "./record-protocol
  * height is whatever its content is. Below the cap the frame's own breakpoints
  * fire and its own padding compresses; a frame that makes no accommodation
  * overflows the way that site would in production. That is responsive, and it
- * is one of two ways to play: by default a frame is fitted instead (spool#553,
- * spool#263), laid out at its authored size, centred, and shrunk where the
- * window is smaller, and the bar's middle says the size and switches between
- * the two.
+ * is how the bare player plays. A player that can choose the size plays a frame
+ * at its authored size instead (spool#553, spool#263), centred, and shrunk where
+ * the window is smaller; or at the window's size, a device's, or one pulled by
+ * hand (spool#264). The bar's middle says the size and opens the list of them,
+ * and the frame's edges pull.
  *
  * The only chrome is the bar along the top, the same 30px the Mac app's window
  * wears: the frame's name, the size it plays at, copy link and close. It is
@@ -55,9 +57,17 @@ export interface PlayerController {
 	walk(frame: string, back?: boolean): void;
 	dismissExternal(): void;
 	close(): void;
-	/** Fit and responsive, where this player can fit: absent, a frame is always played responsive. */
-	fit?: PlayerFit;
+	/** The size frames play at, where this player can choose it: absent, a frame is always played responsive. */
+	size?: PlayerSize;
 }
+
+/** What a player that cannot choose a size is held at: nothing, so nothing is laid or kept. */
+const UNSIZED: PlayerSize = {
+	held: () => ({ id: "drawn", size: { w: 1, h: 1 } }),
+	authored: () => ({ w: 1, h: 1 }),
+	hold: () => {},
+	lay: () => {},
+};
 
 /** A frame as the player's bar names it: the place it is in, when it says one, and its name there. */
 export interface FrameSaid {
@@ -109,12 +119,13 @@ export function Player({
 	const recording = recorder?.view().kind === "recording";
 	const viewport = useViewport();
 	const room = playRoom(viewport);
-	// a frame played at a clip's shape has a box of its own, which is never fitted
-	const fit = boxed ? undefined : controller.fit;
-	const fitted = fit?.on() === true;
-	const scale = fitted ? fittedScale({ w, h }, room) : 1;
-	// the box the frame is laid out in, which the bar says: responsive, the window's own below the cap
-	const laid = fitted ? { w, h } : { w: Math.min(viewport.vw, w), h: room.h };
+	// a frame played at a clip's shape has a box of its own, with no size to choose
+	const size = boxed ? undefined : controller.size;
+	const scale = size === undefined ? 1 : fittedScale({ w, h }, room);
+	const drawn = { w: w * scale, h: h * scale };
+	// a narrow window keeps the readout, the one way to the list, without its word, and has no desk to pull on
+	const narrow = !barLayout(viewport.vw).word;
+	const sizing = useSizing(controller.size ?? UNSIZED, frame, room, drawn, scale, narrow);
 	const Screen = frames[frame];
 	// Which shell this document is in, asked once: a window the app made and
 	// handed a bridge draws the bar it was sized for, and everything else is the
@@ -146,7 +157,19 @@ export function Player({
 			said={named}
 			viewport={viewport}
 			loading={loading}
-			{...(fit === undefined ? {} : { fit: { on: fitted, laid, scale, set: (on: boolean) => fit.set(on) } })}
+			{...(size === undefined
+				? {}
+				: {
+						middle: (
+							<SizeMenu
+								sizing={sizing}
+								laid={{ w, h }}
+								scale={scale}
+								quiet={sizing.pulling}
+								tip={<Tip label="Play it at another size" />}
+							/>
+						),
+					})}
 			{...(recorder === undefined ? {} : { recorder })}
 			{...(desk === null ? { onClose: close, closeLabel, exitKey, linkable } : { desk })}
 		/>
@@ -164,12 +187,12 @@ export function Player({
 			// Written here rather than left to `max-width` so the shell's iframe is
 			// exactly the box the runtime inside it will measure, which is what the
 			// geometry handshake compares against. A frame played at a clip's shape
-			// gets its height too, centred, and a fitted one its whole box, drawn
+			// gets its height too, centred, and a sized one its whole box, drawn
 			// smaller: a scale is the one thing the frame's viewport never sees.
 			style={
 				boxed
 					? { width: w, height: h }
-					: fitted
+					: size !== undefined
 						? {
 								width: w,
 								height: h,
@@ -178,23 +201,37 @@ export function Player({
 									? { transform: `scale(${scale})`, transformOrigin: "0 0", "--spool-scale": scale }
 									: {}),
 							}
-						: { width: laid.w }
+						: { width: Math.min(viewport.vw, w) }
 			}
 		>
 			{host ?? (Screen === undefined ? null : <Screen key={arrival} />)}
 		</div>
 	);
 
+	const pulled = size !== undefined && !narrow;
 	return (
-		<div className="spool-page has-bar">
+		<div
+			className={sizing.pulling && pulled ? "spool-page has-bar is-pulling" : "spool-page has-bar"}
+			style={sizing.pulling && pulled ? { cursor: sizing.cursor } : undefined}
+		>
+			{pulled && <SizeDesk sizing={sizing} drawn={drawn} />}
 			{/* the room the shrunk frame takes, so the page centres it and never scrolls past it; worn by every frame
-			    and only sized when fitted, since a screen that moved in the tree would reload the frame inside it */}
+			    and only sized when sized, since a screen that moved in the tree would reload the frame inside it */}
 			<div
-				className={fitted ? "spool-fitted" : "spool-fitted is-off"}
-				style={fitted ? { width: w * scale, height: h * scale } : undefined}
+				className={
+					size === undefined
+						? "spool-fitted is-off"
+						: sizing.filling
+							? "spool-fitted"
+							: sizing.grip?.hit === true
+								? "spool-fitted is-ringed is-hot"
+								: "spool-fitted is-ringed"
+				}
+				style={size === undefined ? undefined : { width: drawn.w, height: drawn.h }}
 			>
 				{screen}
 			</div>
+			{pulled && <SizeGrips sizing={sizing} drawn={drawn} />}
 			{externalHref !== null && (
 				<ExternalLinkDialog
 					href={externalHref}
@@ -309,15 +346,15 @@ function Tip({ label, chord }: { label: string; chord?: string }) {
  * In a tab it is the same strip with what only a tab needs: copy link, and
  * close, whose tooltip names the key that does the same.
  *
- * The frame's name is the only thing on the left. The middle says the size the
- * frame is laid out at, and how far it is drawn smaller when it is, always and
- * live while the window is resized: the size a frame plays at is the first
- * thing to check about it, and a still window is when it is read. Pressed, it
- * switches fit and responsive. A player that cannot fit, and a frame played at
- * a clip's shape, have nothing there. Below
- * {@link DESK_BAR_WIDE_PX} the project prefix and the size go too: a phone
- * frame's window is 390 wide and the frame's name is the only thing in there
- * worth its space.
+ * The frame's name is the only thing on the left. The middle, dead centre,
+ * says the size the frame is laid out at, and how far it is drawn smaller when
+ * it is, always and live: the size a frame plays at is the first thing to check
+ * about it, and a still window is when it is read. Pressed, it opens the list
+ * of sizes (spool#264). A player that cannot choose a size, and a frame played
+ * at a clip's shape, have nothing there. Below {@link DESK_BAR_WIDE_PX} the
+ * project prefix goes and the readout drops its word: a phone frame's window
+ * is 390 wide, and the readout is the only way to the list. The frame's name
+ * gives way before it.
  */
 function TopBar({
 	said,
@@ -329,12 +366,12 @@ function TopBar({
 	exitKey = EXIT_KEY,
 	linkable = false,
 	recorder,
-	fit,
+	middle,
 }: {
 	said: FrameSaid;
 	viewport: Viewport;
-	/** Fit or responsive, with the box the frame is laid out in and the scale it is drawn at. */
-	fit?: { on: boolean; laid: { w: number; h: number }; scale: number; set(on: boolean): void };
+	/** The size and its list (`SizeMenu`), where the frame's size can be chosen. */
+	middle?: ReactNode;
 	/** The frame is being compiled or fetched: said in the bar, since the screen has nothing to show yet. */
 	loading: boolean;
 	/** The app's window, when this is its title bar. */
@@ -360,22 +397,7 @@ function TopBar({
 				{layout.project && said.place !== null && <span className="spool-bar-project">{said.place} /</span>}
 				<span className="spool-bar-name">{said.name}</span>
 			</span>
-			{layout.size && fit !== undefined && (
-				<span className="spool-bar-tipped spool-bar-fit">
-					<button type="button" className="spool-bar-share" onClick={() => fit.set(!fit.on)}>
-						{sizeSaid(fit)}
-					</button>
-					<Tip
-						label={
-							!fit.on
-								? "At the window's size. Click to play it at its own size"
-								: percent(fit.scale) < 100
-									? "Shrunk to fit the window. Click to play it at the window's size"
-									: "At its own size. Click to play it at the window's size"
-						}
-					/>
-				</span>
-			)}
+			{middle ?? <span />}
 			<span className="spool-bar-end">
 				{loading && (
 					<span className="spool-bar-hint spool-bar-loading" role="status">
@@ -404,18 +426,6 @@ function TopBar({
 			</span>
 		</div>
 	);
-}
-
-/** A scale as the bar says it, in whole percent. */
-function percent(scale: number): number {
-	return Math.round(scale * 100);
-}
-
-/** The size a frame is laid out at, with how far it is drawn smaller or that it follows the window. */
-function sizeSaid({ on, laid, scale }: { on: boolean; laid: { w: number; h: number }; scale: number }): string {
-	const size = `${laid.w} × ${laid.h}`;
-	if (!on) return `${size} · responsive`;
-	return percent(scale) < 100 ? `${size} · ${percent(scale)}%` : size;
 }
 
 /**
