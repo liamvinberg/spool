@@ -24,6 +24,8 @@ import { pageSegments, pageWithin, ROOT_PAGE } from "../../page-path";
 export const PAGE_ROW = 28;
 export const FRAME_ROW = 28;
 export const LIST_PAD = 8;
+/** The hairline between the two runs of a page whose frames are drawn in two (a deck's talk and its loose frames). */
+export const LINE = 12;
 
 /** One depth step: TreeRow's space-3. */
 export const INDENT = 12;
@@ -81,6 +83,11 @@ export interface PageRow extends RowPlace {
 	 * a second number for the same thing.
 	 */
 	readonly count: number;
+	/**
+	 * The hairline its frames are drawn in two runs around, while it is open (spool#265: a deck's talk, then its loose
+	 * frames): it stands before its frame `at`, `LINE` tall from `top`.
+	 */
+	readonly line?: { readonly at: number; readonly top: number };
 }
 
 export interface FrameRow extends RowPlace {
@@ -162,6 +169,8 @@ export function railRows(
 	waiting: ReadonlyMap<string, number> = new Map(),
 	/** the page the list is the contents of: the root page, or where a shared canvas starts (spool#230) */
 	from: string = ROOT_PAGE,
+	/** pages whose frames are drawn in two runs, a hairline between: how many frames the first run holds */
+	lines: ReadonlyMap<string, number> = new Map(),
 ): RailRow[] {
 	const rows: RailRow[] = [];
 	let top = 0;
@@ -169,10 +178,16 @@ export function railRows(
 	 * One page's own, in the order every page draws them: its frames, then its pages, `depth` in: the page rows
 	 * standing above them, which is the segments of the page's path when the list starts at the root page.
 	 */
-	function contents(page: string, depth: number): void {
+	function contents(page: string, depth: number, line?: (top: number) => void): void {
 		const frames = framesByPage.get(page) ?? [];
 		const held = pages.get(page) ?? [];
+		const split = line === undefined || frames.length === 0 ? undefined : lines.get(page);
+		const drawLine = () => {
+			line?.(top);
+			top += LINE;
+		};
 		frames.forEach((frame, at) => {
+			if (at === split) drawLine();
 			const under = below !== null && below.frame === frame.name ? below.height : 0;
 			rows.push({
 				kind: "frame",
@@ -192,6 +207,7 @@ export function railRows(
 			});
 			top += FRAME_ROW + under;
 		});
+		if (split !== undefined && split >= frames.length) drawLine();
 		for (const [at, child] of held.entries()) block(child, page, depth, at, held.length, at === held.length - 1);
 		if (born !== page) return;
 		rows.push({
@@ -207,6 +223,9 @@ export function railRows(
 		top += PAGE_ROW;
 	}
 	/** A page's frames and every frame under its own pages. */
+	function framesIn(page: string): number {
+		return (framesByPage.get(page) ?? []).length;
+	}
 	function within(page: string): number {
 		const held = pages.get(page) ?? [];
 		return (
@@ -217,7 +236,7 @@ export function railRows(
 	}
 	function block(page: string, parent: string, depth: number, index: number, siblings: number, tail: boolean): void {
 		const open = expanded.has(page);
-		rows.push({
+		const row: PageRow = {
 			kind: "page",
 			page,
 			parent,
@@ -229,9 +248,20 @@ export function railRows(
 			count: within(page),
 			top,
 			height: PAGE_ROW,
-		});
+		};
+		rows.push(row);
 		top += PAGE_ROW;
-		if (open) contents(page, depth + 1);
+		if (!open) return;
+		const at = lines.get(page);
+		contents(
+			page,
+			depth + 1,
+			at === undefined
+				? undefined
+				: (top) => {
+						rows[rows.indexOf(row)] = { ...row, line: { at: Math.min(at, framesIn(page)), top } };
+					},
+		);
 	}
 	// the root page has no row of its own: the list is its contents, so nothing
 	// here opens it and nothing shuts it
@@ -241,7 +271,12 @@ export function railRows(
 
 export function listHeight(rows: readonly RailRow[]): number {
 	const last = rows.at(-1);
-	return last === undefined ? 0 : last.top + last.height + (last.kind === "frame" ? last.below : 0);
+	if (last === undefined) return 0;
+	const end = last.top + last.height + (last.kind === "frame" ? last.below : 0);
+	// a page whose second run is empty ends on its hairline
+	const page = last.kind === "frame" ? rows.find((row) => row.kind === "page" && row.page === last.page) : last;
+	const line = page?.kind === "page" ? page.line : undefined;
+	return line === undefined ? end : Math.max(end, line.top + LINE);
 }
 
 /**
@@ -259,6 +294,8 @@ export type Landing =
 			readonly index: number;
 			readonly depth: number;
 			readonly y: number;
+			/** on a page drawn in two runs: whether it lands in the first, above the hairline */
+			readonly before?: boolean;
 	  }
 	| {
 			readonly kind: "pages";
@@ -272,7 +309,8 @@ export function sameLanding(a: Landing | null, b: Landing | null): boolean {
 	if (a === null || b === null) return a === b;
 	if (a.kind !== b.kind) return false;
 	if (a.kind === "into") return b.kind === "into" && a.page === b.page;
-	if (a.kind === "frames") return b.kind === "frames" && a.page === b.page && a.index === b.index;
+	if (a.kind === "frames")
+		return b.kind === "frames" && a.page === b.page && a.index === b.index && a.before === b.before;
 	return b.kind === "pages" && a.page === b.page && a.index === b.index;
 }
 
@@ -383,18 +421,24 @@ function landingY(rows: readonly RailRow[], page: string, kind: "frame" | "page"
  * that page's frames lands at the start of its pages. Neither is a clamp
  * against the person: it is where the row will actually be drawn.
  */
-function landingOf(rows: readonly RailRow[], slot: Slot, kind: "frame" | "page"): Landing {
+function landingOf(rows: readonly RailRow[], slot: Slot, kind: "frame" | "page", contentY: number): Landing {
 	if (slot.into) return { kind: "into", page: slot.page };
 	const after = slot.after;
 	if (kind === "frame") {
 		const index = after === null ? 0 : after.kind === "frame" ? after.index + 1 : framesIn(rows, slot.page).length;
-		return {
+		const landing = {
 			kind: "frames",
 			page: slot.page,
 			index,
 			depth: depthIn(slot.page),
 			y: landingY(rows, slot.page, "frame", index),
-		};
+		} as const;
+		const holder = rows.find((row) => row.kind === "page" && row.page === slot.page);
+		const line = holder?.kind === "page" ? holder.line : undefined;
+		if (line === undefined) return landing;
+		// the gap at the hairline is the end of the first run above its middle, and the start of the second under it
+		const before = index < line.at || (index === line.at && contentY < line.top + LINE / 2);
+		return { ...landing, before, ...(before && index === line.at ? { y: line.top } : {}) };
 	}
 	const index = after !== null && after.kind === "page" ? after.index + 1 : 0;
 	return {
@@ -426,7 +470,7 @@ function landingAt(
 	// top of the root page's own
 	const slots = slotsAt(rows, gapAt(rows, contentY, at), kind);
 	const pick = choose(slots, wanted);
-	return pick === undefined ? null : landingOf(rows, pick, kind);
+	return pick === undefined ? null : landingOf(rows, pick, kind, contentY);
 }
 
 /**

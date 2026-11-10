@@ -6,6 +6,7 @@ import {
 	guideX,
 	INDENT,
 	type Landing,
+	LINE,
 	landingGuideX,
 	listHeight,
 	PAGE_ROW,
@@ -273,6 +274,49 @@ describe("where dragged frames land", () => {
 			depth: 1,
 			y: listHeight(rows),
 		});
+	});
+});
+
+/** spool#265: a deck page's rows are its talk, a hairline, then its loose frames */
+describe("a page drawn in two runs", () => {
+	const deck = new Map<string, readonly string[]>([[ROOT_PAGE, ["talk"]]]);
+	const frames = new Map<string, readonly RailFrame[]>([
+		[ROOT_PAGE, []],
+		["talk", [html("talk/title"), html("talk/close"), html("talk/spare")]],
+	]);
+	const split = railRows(deck, frames, new Set(["talk"]), null, null, new Map(), ROOT_PAGE, new Map([["talk", 2]]));
+	const page = split[0];
+	const line = page?.kind === "page" ? page.line : undefined;
+
+	it("draws the hairline after the first run and pushes the second down under it", () => {
+		expect(line).toEqual({ at: 2, top: PAGE_ROW + 2 * FRAME_ROW });
+		expect(split[3]?.top).toBe(PAGE_ROW + 2 * FRAME_ROW + LINE);
+		// a run with nothing after it still ends on its hairline
+		const talkOnly = new Map([...frames, ["talk", [html("talk/title")]]]);
+		const alone = railRows(
+			deck,
+			talkOnly,
+			new Set(["talk"]),
+			null,
+			null,
+			new Map(),
+			ROOT_PAGE,
+			new Map([["talk", 1]]),
+		);
+		expect(listHeight(alone)).toBe(PAGE_ROW + FRAME_ROW + LINE);
+	});
+
+	it("reads the hairline's upper half as the end of the first run, its lower half as the start of the second", () => {
+		const top = line?.top ?? 0;
+		expect(frameLanding(split, top + 2)).toMatchObject({ page: "talk", index: 2, before: true, y: top });
+		expect(frameLanding(split, top + LINE - 2)).toMatchObject({
+			page: "talk",
+			index: 2,
+			before: false,
+			y: split[3]?.top,
+		});
+		expect(frameLanding(split, (split[1]?.top ?? 0) + 2)).toMatchObject({ index: 0, before: true });
+		expect(frameLanding(split, listHeight(split) + 10)).toMatchObject({ index: 3, before: false });
 	});
 });
 
