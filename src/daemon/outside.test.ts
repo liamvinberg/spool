@@ -8,7 +8,7 @@ import { createOutside, type OutsideView } from "./outside";
 const FRAME = "export default function Frame() { return <div />; }";
 
 describe("hooks from a connected harness", () => {
-	it("take only spool's own hook secret, never a page's request, and draw on the project's canvas once at a frame", async () => {
+	it("take only spool's own hook secret, never a page's request, and draw on the project's canvas once it changes the design", async () => {
 		const spoolDir = makeTempDir();
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "cart", FRAME);
@@ -32,13 +32,22 @@ describe("hooks from a connected harness", () => {
 		expect((await hook(edit, { "x-spool-hook": "wrong" })).status).toBe(401);
 		expect((await hook(edit, { "x-spool-hook": token, origin: "https://example.com" })).status).toBe(403);
 		expect((await hook(edit, { "x-spool-hook": token, "x-spool-term": "ghostty" })).status).toBe(204);
-		// another, asked about code and no frame, is heard but not drawn
+		// another, writing a test's frames outside the design, is heard but not drawn
 		const code = { session_id: "s2", cwd: root, hook_event_name: "UserPromptSubmit", prompt: "fix the api" };
 		expect((await hook(code, { "x-spool-hook": token })).status).toBe(204);
+		const fixture = {
+			tool_name: "Bash",
+			tool_input: { command: "cat > test/frames/cart/frame.tsx <<'EOF'\nx\nEOF" },
+		};
+		await hook({ ...code, hook_event_name: "PreToolUse", ...fixture }, { "x-spool-hook": token });
+		// a third, writing a shared file, is drawn at no frame
+		const shared = { tool_name: "Write", tool_input: { file_path: join(root, "design", "shared", "ui.tsx") } };
+		await hook({ session_id: "s3", cwd: root, hook_event_name: "PreToolUse", ...shared }, { "x-spool-hook": token });
 
 		const view = (await (await app.request(`/api/p/${name}/outside`)).json()) as OutsideView;
-		expect(view.sessions).toMatchObject([
+		expect([...view.sessions].sort((a, b) => a.id.localeCompare(b.id))).toMatchObject([
 			{ id: "claude:s1", state: "working", hands: [{ who: "claude", act: "editing", frame: "cart" }] },
+			{ id: "claude:s3", hands: [] },
 		]);
 	});
 });

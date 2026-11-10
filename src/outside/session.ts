@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { Harness, Terminal } from "./harness";
 
@@ -44,10 +45,11 @@ export interface OutsideSession {
 	/** stopped short: interrupted, or the model's API failed */
 	readonly stopped: boolean;
 	/**
-	 * it put a hand on a frame or wrote one this turn: only then is it drawn, so an agent asked
-	 * about code in the repo stays off the canvas
+	 * it wrote to this project's design this turn, a frame's files or the shared folder's, or a
+	 * designer of its worked: only then is it drawn, so an agent reading, or asked about code,
+	 * stays off the canvas
 	 */
-	readonly touched: boolean;
+	readonly drawn: boolean;
 	readonly terminal: Terminal;
 	/** tools started and not yet finished, a long command among them */
 	readonly busy: number;
@@ -59,8 +61,18 @@ export interface OutsideSession {
 /** What a hook payload says, read loosely: every harness sends a little differently. */
 export type Payload = Readonly<Record<string, unknown>>;
 
-/** Which frame a file is in, by the project's own frames; null for a file outside them. */
-export type FrameAt = (file: string) => string | null;
+/**
+ * Where a file is in the project's design, by its own folders: in a frame, or under the design
+ * folder's `shared/`; null for a file outside both. A path relative to the design folder is one
+ * the spool CLI named.
+ */
+export type DesignAt = (file: string) => { readonly frame: string } | "shared" | null;
+
+/**
+ * What a subagent that designs is called, as the loom skill names it and agent-hub's designer
+ * workers follow: its first word draws the session, before it has written anything.
+ */
+export const DESIGNER = "designer";
 
 const NAME_MAX = 60;
 const SAID_MAX = 1_500;
@@ -92,13 +104,14 @@ function record(value: unknown): Payload {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Payload) : {};
 }
 
-/** The files a tool call names, absolute, and whether it writes them. */
-export function filesOf(
-	harness: Harness,
-	tool: string,
-	input: Payload,
-	cwd: string,
-): { files: readonly string[]; writes: boolean } | null {
+/** The files a tool call reads and writes, absolute. */
+export interface ToolFiles {
+	readonly read: readonly string[];
+	readonly written: readonly string[];
+}
+
+/** The files a tool call names, absolute, and which of them it writes. */
+export function filesOf(harness: Harness, tool: string, input: Payload, cwd: string): ToolFiles | null {
 	const at = (path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
 	const name = tool.toLowerCase();
 	if (harness === "codex" && name === "apply_patch") {
@@ -106,16 +119,16 @@ export function filesOf(
 		const files = [...patch.matchAll(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm)].map((match) =>
 			at((match[1] ?? "").trim()),
 		);
-		return { files, writes: true };
+		return { read: [], written: files };
 	}
 	const command = text(input.command);
-	if (command !== null && ["bash", "shell", "exec_command", "local_shell"].includes(name)) return framesIn(command);
+	if (command !== null && ["bash", "shell", "exec_command", "local_shell"].includes(name))
+		return shellFiles(command, cwd);
 	const path = text(input.file_path) ?? text(input.notebook_path) ?? text(input.path);
 	if (path === null) return null;
-	if (["read", "view", "cat", "ls", "glob", "grep", "find"].includes(name))
-		return { files: [at(path)], writes: false };
+	if (["read", "view", "cat", "ls", "glob", "grep", "find"].includes(name)) return { read: [at(path)], written: [] };
 	if (["write", "edit", "multiedit", "notebookedit", "create"].includes(name))
-		return { files: [at(path)], writes: true };
+		return { read: [], written: [at(path)] };
 	return null;
 }
 
@@ -139,18 +152,125 @@ function listOf(tool: string, input: Payload): OutsideTask[] | null {
 	});
 }
 
+/** Commands that write every file they name, and those that write only the last: a copy's target. */
+const WRITES_ALL = new Set(["mv", "rm", "rmdir", "touch", "mkdir", "tee", "truncate", "unlink", "ln", "patch"]);
+const WRITES_LAST = new Set(["cp", "rsync", "install"]);
+/** git's verbs that change the files they name */
+const GIT_WRITES = new Set(["rm", "mv", "restore", "checkout"]);
+/** Words that run the command after them: `sudo cp …` copies. */
+const RUNNERS = new Set(["sudo", "env", "command", "exec", "time", "nice", "xargs"]);
+/** Code that writes a file itself, in a heredoc or a quoted script: Python's open(…, "w"), Node's writeFileSync. */
+const SCRIPT_WRITES = /\bopen\([^)]*,\s*['"][wax]|\bwrite(?:_text|_bytes|File|FileSync)?\(|\bappendFileSync\(/;
+/** A shell command's words, quotes, redirects and the marks between commands. */
+const TOKEN = /'[^']*'?|"(?:[^"\\]|\\.)*"?|\d*>&-?\d*|&?>>?|\d+>>?|&&|\|\||[;&|\n()]|[<>]+|(?:[^\s'";&|()<>\\]|\\.)+/g;
+/** A path inside a script's text, with at least one slash */
+const PATH_IN = /(?:^|[\s'"`=(:,[{])((?:~|\.{1,2})?\/?[\w.@+-]+(?:\/[\w.@+*-]+)+\/?)/g;
+
+/** A command's shell lines apart from its heredocs' bodies, which are what the scripts it runs say. */
+function heredocs(command: string): { shell: string; bodies: string[] } {
+	const shell: string[] = [];
+	const bodies: string[] = [];
+	const ends: string[] = [];
+	let body: string[] = [];
+	for (const line of command.split("\n")) {
+		if (ends.length > 0) {
+			if (line.trim() !== ends[0]) body.push(line);
+			else {
+				ends.shift();
+				bodies.push(body.join("\n"));
+				body = [];
+			}
+			continue;
+		}
+		shell.push(line);
+		for (const match of line.matchAll(/(?<!<)<<-?\s*(['"]?)([\w.-]+)\1/g)) ends.push(match[2] ?? "");
+	}
+	if (body.length > 0) bodies.push(body.join("\n"));
+	return { shell: shell.join("\n"), bodies };
+}
+
+function unquote(token: string): string {
+	if (token.startsWith("'")) return token.slice(1, token.endsWith("'") && token.length > 1 ? -1 : undefined);
+	const bare = token.startsWith('"')
+		? token.slice(1, token.endsWith('"') && token.length > 1 ? -1 : undefined)
+		: token;
+	return bare.replace(/\\(.)/g, "$1");
+}
+
+/** The verb words of a spool CLI call, `spool …` or the checkout's `pnpm -s dev …`; null for another command. */
+function spoolVerb(name: string, words: readonly string[]): readonly string[] | null {
+	if (name === "spool") return words;
+	if (name === "pnpm" && words[0] === "dev") return words.slice(1);
+	if (["npx", "pnpx", "bunx"].includes(name) && (words[0] === "spool" || words[0] === "spool.page"))
+		return words.slice(1);
+	return null;
+}
+
 /**
- * The frames a shell command names, as `frames/<name>/…` paths the project's frames
- * folder resolves (agents often write a frame with a heredoc), and whether it seems to
- * write them. A guess from the command's words: a hand on a frame, never a file read.
+ * The files a shell command names, resolved against where it runs (and where a `cd` in it moves to), and which
+ * of them it writes: a redirect's target, a copy's, what `mv`, `rm`, `sed -i` and their like name, what a script
+ * that writes files names, and a frame `spool comments add` comments on (as its path under the design folder).
+ * A guess from the command's words, never a shell's parse: what it can't tell is a read.
  */
-function framesIn(command: string): { files: readonly string[]; writes: boolean } | null {
-	const files = [...command.matchAll(/(?:^|[\s'"=(:])(?:[\w.@~/-]*\/)?(frames\/[\w.@-]+(?:\/[\w.@-]+)*)/g)].map(
-		(match) => match[1] ?? "",
-	);
-	if (files.length === 0) return null;
-	const plain = command.replace(/\d?>&\d/g, "").replace(/[\d&]?>\s*\/dev\/null/g, "");
-	return { files, writes: /(?:>|\btee\b|\bsed\s+-i|\bcp\b|\bmv\b|\btouch\b|\.write|open\([^)]*['"][wa])/.test(plain) };
+function shellFiles(command: string, cwd: string): ToolFiles | null {
+	const { shell, bodies } = heredocs(command);
+	const read: string[] = [];
+	const written: string[] = [];
+	/** folders a `cd` went to, where a script writes what it names relatively */
+	const went: string[] = [];
+	const scripts = [...bodies];
+	let base = cwd;
+	const at = (path: string) => resolve(base, path === "~" || path.startsWith("~/") ? homedir() + path.slice(1) : path);
+	const segments: string[][] = [[]];
+	for (const token of shell.match(TOKEN) ?? [])
+		if (/^(?:&&|\|\||[;&|\n()])$/.test(token)) segments.push([]);
+		else segments.at(-1)?.push(token);
+	for (const tokens of segments) {
+		const words: { word: string; quoted: boolean }[] = [];
+		for (let i = 0; i < tokens.length; i++) {
+			const token = tokens[i] ?? "";
+			if (/^(?:\d*|&)>>?$/.test(token)) {
+				const target = tokens[++i];
+				if (target !== undefined) written.push(at(unquote(target)));
+			} else if (token === "<") {
+				const source = tokens[++i];
+				if (source !== undefined) read.push(at(unquote(source)));
+			} else if (token.startsWith("<")) i++;
+			else if (!/^\d*>&/.test(token)) {
+				const quoted = /^['"]/.test(token);
+				const word = unquote(token);
+				// a quoted word with spaces in it is a script's text, or a pattern's: never a file itself
+				if (quoted && /\s/.test(word)) scripts.push(word);
+				else if (word !== "") words.push({ word, quoted });
+			}
+		}
+		while (words[0] !== undefined && (RUNNERS.has(words[0].word) || /^\w+=/.test(words[0].word))) words.shift();
+		const [first, ...rest] = words;
+		if (first === undefined) continue;
+		const name = basename(first.word);
+		const named = rest.filter((one) => !one.word.startsWith("-"));
+		const paths = named.map((one) => one.word);
+		const verb = spoolVerb(name, paths);
+		if (name === "cd") {
+			if (paths[0] !== undefined) {
+				base = at(paths[0]);
+				went.push(base);
+			}
+		} else if (WRITES_ALL.has(name)) written.push(...paths.map(at));
+		else if (name === "git" && GIT_WRITES.has(paths[0] ?? "")) written.push(...paths.slice(1).map(at));
+		else if ((name === "sed" || name === "perl") && rest.some((one) => /^-[a-z]*i|^--in-place/.test(one.word)))
+			written.push(...named.filter((one) => !one.quoted).map((one) => at(one.word)));
+		else if (WRITES_LAST.has(name) && paths.length >= 2) {
+			read.push(...paths.slice(0, -1).map(at));
+			written.push(at(paths.at(-1) ?? ""));
+		} else if (verb?.[0] === "comments" && verb[1] === "add" && verb[2] !== undefined)
+			written.push(`frames/${verb[2]}`);
+		else read.push(...paths.filter((path) => path.includes("/") || /\.\w+$/.test(path)).map(at));
+	}
+	const inScripts = scripts.flatMap((script) => [...script.matchAll(PATH_IN)].map((match) => at(match[1] ?? "")));
+	if (scripts.some((script) => SCRIPT_WRITES.test(script))) written.push(...inScripts, ...went);
+	else read.push(...inScripts, ...went);
+	return read.length === 0 && written.length === 0 ? null : { read, written };
 }
 
 /** What a tool asks permission for, as the line says it after "wants to". */
@@ -197,13 +317,19 @@ export function startSession(
 		said: null,
 		changed: [],
 		stopped: false,
-		touched: false,
+		drawn: false,
 		terminal,
 		busy: 0,
 		started: at,
 		at,
 		ended: null,
 	};
+}
+
+/** The first frame among places in the design. */
+function frameOf(places: readonly ReturnType<DesignAt>[]): string | null {
+	for (const place of places) if (place !== null && place !== "shared") return place.frame;
+	return null;
 }
 
 function withHand(hands: readonly OutsideHand[], agent: string, hand: OutsideHand | null): readonly OutsideHand[] {
@@ -220,13 +346,15 @@ export function foldHook(
 	event: string,
 	payload: Payload,
 	at: number,
-	frameAt: FrameAt,
+	designAt: DesignAt,
 ): OutsideSession | null {
 	const cwd = text(payload.cwd) ?? session.root;
 	const agentId = text(payload.agent_id);
 	const agent = agentId ?? "main";
 	const who = agentId === null ? session.harness : cut((text(payload.agent_type) ?? "agent").toLowerCase(), 24);
-	const base = { ...session, at };
+	// a designer's first word draws it, whatever it goes on to do
+	const designer = text(payload.agent_type)?.toLowerCase() === DESIGNER;
+	const base = { ...session, at, drawn: session.drawn || designer };
 	const tool = text(payload.tool_name) ?? "";
 	const input = record(payload.tool_input);
 	// any word from it but a wait means it is past the wait
@@ -250,7 +378,7 @@ export function foldHook(
 				said: null,
 				changed: [],
 				stopped: false,
-				touched: false,
+				drawn: false,
 				busy: 0,
 				started: at,
 				ended: null,
@@ -268,31 +396,33 @@ export function foldHook(
 				busy: session.busy + 1,
 				...(listed === null ? {} : { tasks: listed }),
 			};
-			const touched = filesOf(session.harness, tool, input, cwd);
-			if (touched === null) return next;
-			const frame = touched.files.map(frameAt).find((one): one is string => one !== null) ?? null;
+			const files = filesOf(session.harness, tool, input, cwd);
+			if (files === null) return next;
+			// a write to the design draws it, a shared file's with no hand; a read's hand shows once it is drawn
+			const written = files.written.map(designAt).filter((one) => one !== null);
+			const editing = frameOf(written);
+			const frame = editing ?? frameOf(files.read.map(designAt));
 			return {
 				...next,
-				touched: session.touched || frame !== null,
+				drawn: next.drawn || written.length > 0,
 				hands: withHand(
 					session.hands,
 					agent,
-					frame === null ? null : { agent, who, act: touched.writes ? "editing" : "reading", frame },
+					frame === null ? null : { agent, who, act: editing === null ? "reading" : "editing", frame },
 				),
 			};
 		}
 		case "PostToolUse":
 		case "PostToolUseFailure": {
 			const next = { ...going(base), busy: Math.max(0, session.busy - 1) };
-			const touched = filesOf(session.harness, tool, input, cwd);
-			if (touched === null || !touched.writes || event === "PostToolUseFailure" || payload.failed === true)
-				return next;
+			const files = filesOf(session.harness, tool, input, cwd);
+			if (files === null || event === "PostToolUseFailure" || payload.failed === true) return next;
 			const changed = [...session.changed];
-			for (const file of touched.files) {
-				const frame = frameAt(file);
+			for (const file of files.written) {
+				const frame = frameOf([designAt(file)]);
 				if (frame !== null && !changed.includes(frame)) changed.push(frame);
 			}
-			return { ...next, changed, touched: session.touched || changed.length > 0 };
+			return { ...next, changed, drawn: next.drawn || changed.length > 0 };
 		}
 		case "PermissionRequest":
 			return { ...base, state: "waiting", wants: tool === "" ? null : wantsOf(tool, input), ended: null };
