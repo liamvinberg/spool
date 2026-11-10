@@ -571,3 +571,21 @@ describe("the played page and its bar (#227)", () => {
 		expect(close).toHaveBeenCalled();
 	});
 });
+
+describe("a slide in ordinary play", () => {
+	it("shows its last beat, since nothing steps it", async () => {
+		const harness = makeHarness();
+		writeFrame(
+			harness.root,
+			"slide",
+			`import { ui } from "spool";
+export default function Slide() {
+	const beat = ui.beats(["title", "price", "date"]);
+	return <output>{beat.name}</output>;
+}
+`,
+		);
+		await loadPlayerDocument(harness, "?frame=slide");
+		await waitForText("output", "date");
+	});
+});

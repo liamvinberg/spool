@@ -12,6 +12,26 @@ export interface SpoolUi {
 	 * and no scenario or walk resets it.
 	 */
 	knobs<const S extends KnobSchema>(schema: S): KnobRead<S>;
+	/**
+	 * A slide's beats (spool#265), named in order in a list written out in the call, and the beat the talk has it on.
+	 * Read in the slide's component, as `ui.use()` is: the slide draws again when the talk steps. Wherever nothing
+	 * steps it (the canvas, a still, ordinary play) it reads as its last beat, so it shows complete.
+	 */
+	beats<const Names extends readonly [string, ...string[]]>(names: Names): Beat<Names[number]>;
+	/**
+	 * Marks the slide live (spool#265): a click on it reaches it rather than advancing the talk, and Tab can hand it
+	 * the keyboard. Called in the slide's component.
+	 */
+	live(): void;
+}
+
+/** The beat a slide is on. */
+export interface Beat<Name extends string = string> {
+	readonly name: Name;
+	/** from 0 */
+	readonly index: number;
+	/** whether the talk is at or past this beat */
+	reached(name: Name): boolean;
 }
 
 /** A choice in a segmented, select, pictures, icon or image knob. */
