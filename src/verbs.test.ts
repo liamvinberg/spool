@@ -257,7 +257,7 @@ describe("skill", () => {
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText(["vibes"])).toThrowError(SpoolError);
 		expect(() => skillText(["vibes"])).toThrowError(
-			/comments, flows, frames, history, import, knobs, projects, references, scenarios, shaders, sharing, styling, team, verbs/,
+			/comments, deck, flows, frames, history, import, knobs, projects, references, scenarios, shaders, sharing, styling, team, verbs/,
 		);
 		expect(() => skillText(["frames", "vibes"])).toThrowError(/no skill topic "vibes"/);
 	});
@@ -399,6 +399,12 @@ describe("skill", () => {
 		expect(skillText([], off)).not.toMatch(/^ {2}knobs /m);
 		expect(skillText(["knobs"], off)).toContain("`spool experiments on knobs` turns it on");
 		expect(skillText(["knobs"])).not.toContain("spool experiments on");
+		// decks are experimental, so off until a machine turns them on
+		const decks = (id: string) => id === "deck";
+		expect(skillText()).not.toMatch(/^ {2}deck /m);
+		expect(skillText([], decks)).toMatch(/^ {2}deck {2,}\S/m);
+		expect(skillText(["deck"], decks)).toContain("ui.beats(names)");
+		expect(skillText(["deck"], decks)).not.toContain("spool experiments on");
 	});
 
 	it("indexes every topic as its own overview row", () => {
