@@ -2,7 +2,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { join, relative } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { DeckChange, DeckChangeAnswer, DecksRead } from "../../deck/wire";
+import { switchExperiment } from "../../experiments-verb";
 import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writePageFrame } from "../../test-helpers";
+import { createSettingsStore } from "../settings";
 import { reconcileDeck } from "./change";
 
 /**
@@ -334,6 +336,60 @@ describe("a deck on disk", () => {
 		);
 		// not as a frame named after the file
 		expect(seen).not.toContainEqual({ kind: "frame", frame: "talk/deck.json" });
+	});
+
+	it("stops laying out a page another hand keeps moving back, says so, and starts again when its deck changes", async () => {
+		const deck = deckProject();
+		for (const folder of ["a", "b"]) writePageFrame(deck.root, "talk", folder, tsx(folder));
+		await deck.change({ kind: "make", page: "talk", slides: ["a", "b"] });
+		// another machine, missing a frame this one has, keeps putting b in the slot it lays b in
+		const theirs = json(box(0, 0));
+		for (let round = 0; round < 3; round++) {
+			writeDesignFile(deck.root, "frames/talk/b/frame.json", theirs);
+			await vi.waitFor(() => expect(deck.sidecar("b")).toEqual(box(1440, 0)), { timeout: 5_000 });
+		}
+		writeDesignFile(deck.root, "frames/talk/b/frame.json", theirs);
+		await wait(QUIET);
+		expect(deck.sidecar("b")).toEqual(box(0, 0));
+		expect((await deck.decks()).decks[0]?.problems).toEqual([{ kind: "looping", name: "talk/b" }]);
+		writeDesignFile(deck.root, "frames/talk/deck.json", json({ version: 1, slides: ["b", "a"] }));
+		await vi.waitFor(() => expect(deck.sidecar("a")).toEqual(box(1440, 0)), { timeout: 5_000 });
+		expect((await deck.decks()).decks[0]?.problems).toEqual([]);
+	});
+
+	it("catches every deck up when the daemon starts or the switch is flipped, with nobody reading decks", async () => {
+		// a deck written while no daemon ran, and a change it died inside whose notes a hand wrote over since
+		const started = deckProject({
+			before: (root) => {
+				writePageFrame(root, "talk", "a", tsx("a"));
+				writePageFrame(root, "talk", "b", tsx("b"));
+				writeDesignFile(root, "frames/talk/a/frame.json", json(box(0, 0)));
+				writeDesignFile(root, "frames/talk/b/frame.json", json(box(1440, 0)));
+				writeDesignFile(root, "frames/talk/deck.json", json({ version: 1, slides: ["b", "a"] }));
+				writeDesignFile(root, "frames/talk/a/notes.md", "Written since.\n");
+				const step = { path: "frames/talk/a/notes.md", before: "Before.\n", after: "After.\n" };
+				writeDesignFile(root, ".spool/deck-changes/one.json", JSON.stringify({ page: "talk", steps: [step] }));
+			},
+		});
+		await vi.waitFor(() => expect(started.sidecar("b")).toEqual(box(0, 0)), { timeout: 5_000 });
+		expect(started.sidecar("a")).toEqual(box(1440, 0));
+		expect(readFileSync(join(started.page, "a/notes.md"), "utf8")).toBe("Written since.\n");
+		expect((await started.decks()).decks[0]?.problems).toEqual([{ kind: "interrupted", name: "talk" }]);
+
+		// switched on by the CLI behind the daemon's back: frames born on the deck take its places, at its size
+		const flipped = deckProject({ on: false });
+		writePageFrame(flipped.root, "talk", "a", tsx("a"));
+		writeDesignFile(flipped.root, "frames/talk/deck.json", json({ version: 1, slides: ["b", "a"] }));
+		await wait(QUIET);
+		expect(flipped.sidecar("a")).toBeUndefined();
+		switchExperiment(createSettingsStore(flipped.spoolDir), "deck", true);
+		await vi.waitFor(() => expect(flipped.sidecar("a")).toEqual(box(0, 0)), { timeout: 5_000 });
+		writePageFrame(flipped.root, "talk", "b", tsx("b"));
+		const frames = (await (await flipped.app.request(`/api/p/${flipped.name}/frames`)).json()) as {
+			frames: { name: string; x: number; y: number; w: number; h: number }[];
+		};
+		expect(frames.frames.find((frame) => frame.name === "talk/b")).toMatchObject(box(0, 0));
+		await vi.waitFor(() => expect(flipped.sidecar("a")).toEqual(box(1440, 0)), { timeout: 5_000 });
 	});
 
 	it("answers nothing and writes nothing with the experiment off", async () => {

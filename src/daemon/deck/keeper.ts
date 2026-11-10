@@ -1,8 +1,13 @@
+import { watch } from "node:fs";
+import { DECK_FILE } from "../../deck/deck-file";
 import { type Box, placesOf, settle } from "../../deck/layout";
-import { pageParent, ROOT_PAGE } from "../../page-path";
+import type { DeckProblem } from "../../deck/wire";
+import { pageParent, pageUnder, ROOT_PAGE } from "../../page-path";
+import { realDesignDir } from "../design-path";
 import type { ChangeEvent } from "../events";
 import { reconcileDeck } from "./change";
-import { deckFileOf, deckFramesOf, deckPages, holdsDeck, readPage } from "./disk";
+import { deckFileOf, deckFramesOf, deckPages, holdsDeck, readDesignFile, readPage } from "./disk";
+import { recoverDeckChanges } from "./journal";
 
 /**
  * Keeping every deck laid out (spool#265) whatever hand changed it: an agent writing `deck.json` or a frame, a
@@ -10,30 +15,84 @@ import { deckFileOf, deckFramesOf, deckPages, holdsDeck, readPage } from "./disk
  * quiet for a moment, reconciles it, which writes only the sidecars whose place differs. Its own writes come back as
  * changes too, and reconcile them to nothing, which is where the echo ends.
  *
- * Only while the experiment is on: off, nothing here reads or writes, and a deck page is an ordinary page.
+ * Only while the experiment is on: off, nothing here reads or writes, and a deck page is an ordinary page. Switched on
+ * while the daemon runs, from Settings or the CLI, every deck is caught up as at a start.
  */
 
 /** How long a deck's page has to be quiet before it is laid out: a burst of writes is one reconcile, after the last. */
 export const DECK_QUIET_MS = 300;
+
+/**
+ * When another hand keeps putting a frame back where this spool does not lay it (another machine whose frames differ,
+ * another spool's layout), the two would write over each other for as long as both run. The same rewrite of the same
+ * frame this many times inside this window, with the deck's file unchanged, is taken for that, and the page is left
+ * alone until its `deck.json` changes or the daemon restarts.
+ */
+export const LOOP_WRITES = 3;
+export const LOOP_WINDOW_MS = 30_000;
 
 /** The projects whose decks this daemon keeps, and whether it keeps them now; asked by `deckPlaceOf`. */
 const kept = new Map<string, () => boolean>();
 
 export function createDeckKeeper(deps: {
 	subscribe: (root: string, listener: (event: ChangeEvent) => void) => () => void;
-	/** Whether the experiment is on, read fresh, so a switch flipped in Settings holds at once. */
+	/** Whether the experiment is on, read fresh, so a switch flipped in Settings or the CLI holds at once. */
 	on: () => boolean;
 	quietMs?: number;
+	now?: () => number;
 	log?: (line: string) => void;
 }) {
 	const watches = new Map<string, () => void>();
 	const waiting = new Map<string, { root: string; timer: NodeJS.Timeout }>();
 	const quiet = deps.quietMs ?? DECK_QUIET_MS;
+	const now = deps.now ?? Date.now;
+	/** per page: the deck's file as last laid out, and each frame's last rewrite, how often and since when */
+	const fights = new Map<
+		string,
+		{ deck: string | null; frames: Map<string, { rewrite: string; count: number; since: number }> }
+	>();
+	/** pages left alone, with the frames fought over */
+	const stuck = new Map<string, string[]>();
+	/** projects with a change stopped half way that a hand wrote over since, by page */
+	const interrupted = new Map<string, Set<string>>();
+	const keyOf = (root: string, page: string) => `${root}\0${page}`;
+
+	function deckBytes(root: string, page: string): string | null {
+		try {
+			return readDesignFile(realDesignDir(root), `frames/${page}/${DECK_FILE}`);
+		} catch {
+			return null;
+		}
+	}
 
 	function run(root: string, page: string): void {
 		if (!deps.on()) return;
+		const key = keyOf(root, page);
 		try {
-			reconcileDeck(root, page);
+			const deck = deckBytes(root, page);
+			const seen = fights.get(key);
+			if (seen === undefined || seen.deck !== deck) {
+				fights.set(key, { deck, frames: new Map() });
+				stuck.delete(key);
+			}
+			if (stuck.has(key)) return;
+			const fight = fights.get(key)?.frames ?? new Map();
+			const at = now();
+			const fought: string[] = [];
+			for (const { folder, from, to } of reconcileDeck(root, page)) {
+				const rewrite = `${from ?? ""}\0${to}`;
+				const last = fight.get(folder);
+				const count =
+					last !== undefined && last.rewrite === rewrite && at - last.since <= LOOP_WINDOW_MS ? last.count + 1 : 1;
+				fight.set(folder, { rewrite, count, since: count === 1 ? at : (last?.since ?? at) });
+				if (count >= LOOP_WRITES) fought.push(folder);
+			}
+			if (fought.length > 0) {
+				stuck.set(key, fought);
+				deps.log?.(
+					`stopped laying out deck "${page}": another hand keeps moving ${fought.join(", ")} back (another machine or spool)`,
+				);
+			}
 		} catch (error) {
 			// a project whose design folder went strange keeps nothing laid out, and never takes the daemon down
 			deps.log?.(`could not lay out deck "${page}": ${error instanceof Error ? error.message : String(error)}`);
@@ -41,7 +100,7 @@ export function createDeckKeeper(deps: {
 	}
 
 	function soon(root: string, page: string): void {
-		const key = `${root}\0${page}`;
+		const key = keyOf(root, page);
 		const held = waiting.get(key);
 		if (held !== undefined) clearTimeout(held.timer);
 		const timer = setTimeout(() => {
@@ -61,39 +120,66 @@ export function createDeckKeeper(deps: {
 		}
 	}
 
-	/** Keep one project's decks: idempotent, so every read of a project's decks can ask. */
+	/**
+	 * Keep one project's decks: idempotent, so every read of a project's decks can ask. The first time, a change the
+	 * daemon died inside is put back and every deck is laid out once the quiet period has passed, so what changed while
+	 * nobody kept the project is caught up without anyone asking.
+	 */
 	function watch(root: string): void {
 		kept.set(root, deps.on);
-		if (watches.has(root)) return;
+		if (watches.has(root) || !deps.on()) return;
 		watches.set(
 			root,
 			deps.subscribe(root, (event) => heard(root, event)),
 		);
+		try {
+			const designDir = realDesignDir(root);
+			interrupted.set(root, new Set(recoverDeckChanges(designDir, deps.log)));
+			for (const page of deckPages(root)) soon(root, page);
+		} catch (error) {
+			deps.log?.(`could not catch up decks in ${root}: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	function stop(root: string): void {
 		watches.get(root)?.();
 		watches.delete(root);
-		kept.delete(root);
+		interrupted.delete(root);
 		for (const [key, held] of waiting) {
 			if (held.root !== root) continue;
 			clearTimeout(held.timer);
 			waiting.delete(key);
 		}
+		for (const key of [...fights.keys(), ...stuck.keys()]) {
+			if (!key.startsWith(`${root}\0`)) continue;
+			fights.delete(key);
+			stuck.delete(key);
+		}
 	}
 
 	return {
 		watch,
-		/** The projects to keep, as the registry has them now: none while the experiment is off. */
+		/** The projects to keep, as the registry has them now: none is watched while the experiment is off. */
 		keeping(roots: readonly string[]): void {
-			const wanted = deps.on() ? roots : [];
-			for (const root of [...watches.keys()]) if (!wanted.includes(root)) stop(root);
-			for (const root of wanted) watch(root);
+			const on = deps.on();
+			for (const root of [...kept.keys()]) if (!roots.includes(root)) kept.delete(root);
+			for (const root of [...watches.keys()]) if (!on || !roots.includes(root)) stop(root);
+			for (const root of roots) watch(root);
 		},
 		/** Every deck of a project laid out now, as a read of its decks first does. */
 		settleAll(root: string): void {
 			if (!deps.on()) return;
 			for (const page of deckPages(root)) run(root, page);
+		},
+		/** What the keeper knows is wrong with a deck that its files do not say. */
+		problems(root: string, page: string): DeckProblem[] {
+			return [
+				...(stuck.get(keyOf(root, page)) ?? []).map((folder) => ({
+					kind: "looping" as const,
+					name: pageUnder(page, folder),
+				})),
+				...(interrupted.get(root)?.has(page) === true ? [{ kind: "interrupted" as const, name: page }] : []),
+			];
 		},
 		close(): void {
 			for (const root of [...watches.keys()]) stop(root);
@@ -102,6 +188,22 @@ export function createDeckKeeper(deps: {
 }
 
 export type DeckKeeper = ReturnType<typeof createDeckKeeper>;
+
+/**
+ * The experiment switched in `config.json` by whatever hand, Settings or `spool experiments`: `changed` is called on
+ * every write of it, and asks the experiment fresh. Nothing when the folder cannot be watched.
+ */
+export function watchDeckSwitch(spoolDir: string, changed: () => void): () => void {
+	try {
+		const watcher = watch(spoolDir, (_event, filename) => {
+			if (filename === null || String(filename).startsWith("config.json")) changed();
+		});
+		watcher.on("error", () => {});
+		return () => watcher.close();
+	} catch {
+		return () => {};
+	}
+}
 
 /**
  * Where a frame born on a deck's page goes, for the projection placing a frame that has no place yet: its slot or cell,

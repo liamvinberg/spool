@@ -63,7 +63,7 @@ import { commentRoutes, teamPeople } from "./comment-routes";
 import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
 import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
-import { createDeckKeeper } from "./deck/keeper";
+import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
 import { deckRoutes } from "./deck/routes";
 import { DesignBoundaryError, designRelativePath, realDesignDir } from "./design-path";
 import {
@@ -673,6 +673,8 @@ export function createDaemonApp({
 	const fsIndex = { home: home ?? homedir(), spoolDir };
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
 	deckKeeper.keeping(registeredRoots());
+	// the deck switch flipped by the CLI writes config.json behind the daemon's back, so it is watched for
+	const deckSwitch = watchDeckSwitch(spoolDir, () => deckKeeper.keeping(registeredRoots()));
 
 	// the app-level channel: registry and session changes, fanned to every page
 	const appListeners = new Set<(event: AppEvent) => void>();
@@ -2743,6 +2745,7 @@ export function createDaemonApp({
 			const compiled = playerCompiler.close();
 			machineStateWatch.stop();
 			history.close();
+			deckSwitch();
 			deckKeeper.close();
 			teamSync.close();
 			projectShares.close();

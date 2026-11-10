@@ -13,7 +13,7 @@ import type { DeckKeeper } from "./keeper";
 export function deckRoutes(deps: {
 	resolve: ResolveProject;
 	on: () => boolean;
-	keeper: Pick<DeckKeeper, "watch" | "settleAll">;
+	keeper: Pick<DeckKeeper, "watch" | "settleAll" | "problems">;
 	hub: Pick<ChangeHub, "publish">;
 }) {
 	return new Hono()
@@ -30,8 +30,9 @@ export function deckRoutes(deps: {
 						const found = readPage(root, page);
 						const deck = found === undefined ? undefined : deckReadOf(found);
 						if (deck === undefined) continue;
-						if ("why" in deck) unread.push(deck);
-						else decks.push(deck);
+						const known = deps.keeper.problems(root, page);
+						if ("why" in deck) unread.push({ ...deck, problems: [...deck.problems, ...known] });
+						else decks.push({ ...deck, problems: [...deck.problems, ...known] });
 					}
 					const answer: DecksRead = { decks, unread };
 					return answer;
