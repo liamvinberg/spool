@@ -130,13 +130,18 @@ export function ViewerPlayer({
 				if (!walkable(latest.current.frames, reaches.current, frame)) return;
 				session.current = null;
 				const now = played.current;
+				const before =
+					now.drawn === now.arrival ? { frame: now.frame, arrival: now.arrival, src: now.src } : now.previous;
+				const there = geometry(frame);
+				const standIn = before === null ? null : geometry(before.frame);
 				set({
 					frame,
 					arrival: now.arrival + 1,
 					src: latest.current.documentOf(frame),
 					externalHref: null,
-					previous:
-						now.drawn === now.arrival ? { frame: now.frame, arrival: now.arrival, src: now.src } : now.previous,
+					// the screen walked from stands in only in a box its own size: in another it would be laid out again,
+					// squeezed or stretched, for as long as the next one takes to draw (spool#263)
+					previous: standIn !== null && standIn.w === there.w && standIn.h === there.h ? before : null,
 				});
 				latest.current.onWalked(frame);
 			},
