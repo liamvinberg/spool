@@ -105,17 +105,18 @@ export function FrameAgentsMark({ name, agents }: { name: string; agents: readon
 			data-frame-agents={name}
 			data-frame-agents-state={waiting === undefined ? "working" : "waiting"}
 			title={agents.map((one) => one.says).join("\n")}
-			className={`pointer-events-auto flex shrink-0 items-center gap-1 type-detail ${
+			className={`pointer-events-auto flex min-w-3 shrink-[10000] items-center gap-1 type-detail ${
 				lead.color !== null ? "" : waiting === undefined ? "text-secondary" : "text-primary"
 			}`}
 			style={tint}
 		>
 			{waiting === undefined ? (
-				<SpinRing className="size-3" />
+				<SpinRing className="size-3 shrink-0" />
 			) : (
-				<StatusMark status="waiting" className="[&>svg]:text-current" />
+				<StatusMark status="waiting" className="shrink-0 [&>svg]:text-current" />
 			)}
-			<span className="hidden @min-[120px]/row:inline">{word}</span>
+			{/* a long word, as `designer editing`, gives way before the frame's name does */}
+			<span className="hidden min-w-0 truncate @min-[120px]/row:inline">{word}</span>
 		</span>
 	);
 }
