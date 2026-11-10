@@ -339,8 +339,9 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	/**
 	 * The box the page really gives a frame. Responsive (#227): the authored
 	 * width as a cap and the real viewport below it, over the whole height of the
-	 * window less the 30px bar both shells wear. Fitted (spool#553): never less
-	 * than the authored size, shrunk by the chrome until it fits. Either way this
+	 * window less the 30px bar both shells wear. Fitted (spool#553, spool#263):
+	 * the authored box, or a long page's width over the window's height, drawn
+	 * smaller by the chrome where the window is. Either way this
 	 * is what the iframe is laid out at and what the runtime inside it will
 	 * measure, since a scale does not change a viewport — which is why every w/h
 	 * that crosses the port is in this space and not the authored one, and why
@@ -382,7 +383,6 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 				geometryReplay();
 				notify();
 			},
-			authored: (frame) => authoredGeometry.find((each) => each.name === frame) ?? { w: 1440, h: 900 },
 		},
 	};
 

@@ -95,7 +95,7 @@ it("opens a tab whose page is a real document, and walks the URL with it", { tim
 	expect(await canvas.evaluate(() => location.pathname)).toBe(`/p/${project.name}`);
 });
 
-it("wears the bar for good, says the window's size while it is resized, and fits a frame bigger than it", {
+it("wears the bar for good, plays a frame at its own size, centred, and says the size it plays at", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -113,23 +113,21 @@ it("wears the bar for good, says the window's size while it is resized, and fits
 		expect(await played.locator(gone).count(), gone).toBe(0);
 	}
 
-	// a still window says nothing about its size
-	const size = played.locator(".spool-bar-size");
-	expect(await size.evaluate((el) => getComputedStyle(el).opacity)).toBe("0");
-	// a resize says it, at the new size, and it goes once the window settles
-	await played.setViewportSize({ width: 1100, height: 800 });
-	await expect.poll(() => size.evaluate((el) => el.classList.contains("is-on")), { timeout: 5_000 }).toBe(true);
-	expect(await size.innerText()).toBe("1100 × 800");
-	await expect.poll(() => size.evaluate((el) => el.classList.contains("is-on")), { timeout: 5_000 }).toBe(false);
+	// a frame smaller than the window plays at exactly its authored 800 × 700, never
+	// stretched, centred in the room under the bar, and the bar says so while still
+	const fit = played.locator(".spool-bar-fit button");
+	const screen = played.locator(".spool-screen");
+	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toBe("800 × 700");
+	await expect
+		.poll(() => screen.boundingBox(), { timeout: 5_000 })
+		.toEqual({ x: 240, y: 115, width: 800, height: 700 });
 
 	// a window smaller than the frame fits it (spool#553): laid out at its authored
-	// 800 × 700, all of it shown smaller, and the bar says how much smaller
+	// 800 × 700, all of it shown smaller, and the bar says how much smaller as it changes
 	await played.setViewportSize({ width: 600, height: 500 });
-	const fit = played.locator(".spool-bar-fit button");
 	const inner = played.frameLocator("iframe");
-	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toMatch(/^(600 × 500\s*)?67%$/);
+	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toBe("800 × 700 · 67%");
 	await expect.poll(() => inner.locator("#measure").textContent(), { timeout: 30_000 }).toBe("800");
-	const screen = played.locator(".spool-screen");
 	await expect.poll(async () => (await screen.boundingBox())?.height, { timeout: 5_000 }).toBeCloseTo(470, 0);
 	// pressed, it plays responsive instead: the frame lays out at the window's own width,
 	// the same document resized rather than a reload that would lose where the reader was
@@ -137,7 +135,7 @@ it("wears the bar for good, says the window's size while it is resized, and fits
 	await fit.click();
 	await expect.poll(() => inner.locator("#measure").textContent(), { timeout: 30_000 }).toBe("600");
 	expect(await inner.locator("#measure").evaluate(() => "stayed" in window)).toBe(true);
-	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toMatch(/responsive$/);
+	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toBe("600 × 470 · responsive");
 	// and the pick outlives the page
 	await played.reload();
 	await expect

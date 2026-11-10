@@ -3,11 +3,10 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { accelChord } from "./accel-chord";
 import { ExternalLinkDialog } from "./external-link-dialog";
 import { accelLabel } from "./platform-keys";
-import { fittedScale, overflows, type PlayerFit, playRoom } from "./player-fit";
+import { fittedScale, type PlayerFit, playRoom } from "./player-fit";
 import {
 	barLayout,
 	DESK_BAR_PX,
-	DESK_RESIZE_MS,
 	DESK_RESTORED_MS,
 	type DeskWindow,
 	deskWindow,
@@ -24,13 +23,14 @@ import { CLIP_ASPECTS, type ClipAspect, RECORD_WARN_MS } from "./record-protocol
  * height is whatever its content is. Below the cap the frame's own breakpoints
  * fire and its own padding compresses; a frame that makes no accommodation
  * overflows the way that site would in production. That is responsive, and it
- * is one of two ways to play: by default a frame bigger than the window is
- * fitted instead (spool#553), laid out at its authored size and shrunk until
- * all of it shows, and the bar's middle switches between the two.
+ * is one of two ways to play: by default a frame is fitted instead (spool#553,
+ * spool#263), laid out at its authored size, centred, and shrunk where the
+ * window is smaller, and the bar's middle says the size and switches between
+ * the two.
  *
  * The only chrome is the bar along the top, the same 30px the Mac app's window
- * wears: the frame's name, copy link and close, and the window's size while it
- * is being resized. It is always worn: at 30px it costs less than a page's own
+ * wears: the frame's name, the size it plays at, copy link and close. It is
+ * always worn: at 30px it costs less than a page's own
  * nav, and a bar that can be put away is a way home that can be lost. Styling
  * lives in the served document's chrome stylesheet; this component owns
  * structure and wiring.
@@ -113,6 +113,8 @@ export function Player({
 	const fit = boxed ? undefined : controller.fit;
 	const fitted = fit?.on() === true;
 	const scale = fitted ? fittedScale({ w, h }, room) : 1;
+	// the box the frame is laid out in, which the bar says: responsive, the window's own below the cap
+	const laid = fitted ? { w, h } : { w: Math.min(viewport.vw, w), h: room.h };
 	const Screen = frames[frame];
 	// Which shell this document is in, asked once: a window the app made and
 	// handed a bridge draws the bar it was sized for, and everything else is the
@@ -144,9 +146,7 @@ export function Player({
 			said={named}
 			viewport={viewport}
 			loading={loading}
-			{...(fit !== undefined && overflows(fit.authored(frame), room)
-				? { fit: { on: fitted, scale, set: (on: boolean) => fit.set(on) } }
-				: {})}
+			{...(fit === undefined ? {} : { fit: { on: fitted, laid, scale, set: (on: boolean) => fit.set(on) } })}
 			{...(recorder === undefined ? {} : { recorder })}
 			{...(desk === null ? { onClose: close, closeLabel, exitKey, linkable } : { desk })}
 		/>
@@ -154,9 +154,11 @@ export function Player({
 
 	const screen = (
 		<div
-			className={
-				boxed ? (recording ? "spool-screen is-shaped is-recording" : "spool-screen is-shaped") : "spool-screen"
-			}
+			className={[
+				"spool-screen",
+				...(boxed ? ["is-shaped"] : []),
+				...(boxed && recording ? ["is-recording"] : []),
+			].join(" ")}
 			// Responsive, the authored width as a cap and the real viewport below it.
 			// Written here rather than left to `max-width` so the shell's iframe is
 			// exactly the box the runtime inside it will measure, which is what the
@@ -173,7 +175,7 @@ export function Player({
 								minHeight: 0,
 								...(scale < 1 ? { transform: `scale(${scale})`, transformOrigin: "0 0" } : {}),
 							}
-						: { width: Math.min(viewport.vw, w) }
+						: { width: laid.w }
 			}
 		>
 			{host ?? (Screen === undefined ? null : <Screen key={arrival} />)}
@@ -304,10 +306,13 @@ function Tip({ label, chord }: { label: string; chord?: string }) {
  * In a tab it is the same strip with what only a tab needs: copy link, and
  * close, whose tooltip names the key that does the same.
  *
- * The frame's name is the only thing on the left. The window's size is said in
- * the middle while the window is being resized, and goes once it settles: it is
- * an answer to "how wide is this now", which nobody asks of a still window.
- * Below {@link DESK_BAR_WIDE_PX} the project prefix and the size go too: a phone
+ * The frame's name is the only thing on the left. The middle says the size the
+ * frame is laid out at, and how far it is drawn smaller when it is, always and
+ * live while the window is resized: the size a frame plays at is the first
+ * thing to check about it, and a still window is when it is read. Pressed, it
+ * switches fit and responsive. A player that cannot fit, and a frame played at
+ * a clip's shape, have nothing there. Below
+ * {@link DESK_BAR_WIDE_PX} the project prefix and the size go too: a phone
  * frame's window is 390 wide and the frame's name is the only thing in there
  * worth its space.
  */
@@ -325,8 +330,8 @@ function TopBar({
 }: {
 	said: FrameSaid;
 	viewport: Viewport;
-	/** Fit or responsive, offered when the frame is bigger than the window, the one case where they differ. */
-	fit?: { on: boolean; scale: number; set(on: boolean): void };
+	/** Fit or responsive, with the box the frame is laid out in and the scale it is drawn at. */
+	fit?: { on: boolean; laid: { w: number; h: number }; scale: number; set(on: boolean): void };
 	/** The frame is being compiled or fetched: said in the bar, since the screen has nothing to show yet. */
 	loading: boolean;
 	/** The app's window, when this is its title bar. */
@@ -338,7 +343,6 @@ function TopBar({
 	recorder?: PlayerRecorder;
 }) {
 	const layout = barLayout(viewport.vw);
-	const resizing = useResizing(viewport);
 	// Said once and then gone, the way a toast is; pressing reset ends it early
 	// because the thing it was announcing has just been undone.
 	const [restored, setRestored] = useState(desk?.restored ?? false);
@@ -356,25 +360,17 @@ function TopBar({
 			{layout.size && fit !== undefined && (
 				<span className="spool-bar-tipped spool-bar-fit">
 					<button type="button" className="spool-bar-share" onClick={() => fit.set(!fit.on)}>
-						{resizing && (
-							<span className="spool-bar-fit-size">
-								{viewport.vw} × {viewport.vh}
-							</span>
-						)}
-						{fit.on ? `${Math.round(fit.scale * 100)}%` : "responsive"}
+						{sizeSaid(fit)}
 					</button>
 					<Tip
 						label={
-							fit.on
-								? "Shrunk to fit. Click to play it at the window's own size"
-								: "At the window's own size. Click to fit the whole frame"
+							!fit.on
+								? "At the window's size. Click to play it at its own size"
+								: percent(fit.scale) < 100
+									? "Shrunk to fit the window. Click to play it at the window's size"
+									: "At its own size. Click to play it at the window's size"
 						}
 					/>
-				</span>
-			)}
-			{layout.size && fit === undefined && (
-				<span className={resizing ? "spool-bar-size is-on" : "spool-bar-size"} aria-hidden={!resizing}>
-					{viewport.vw} × {viewport.vh}
 				</span>
 			)}
 			<span className="spool-bar-end">
@@ -405,6 +401,18 @@ function TopBar({
 			</span>
 		</div>
 	);
+}
+
+/** A scale as the bar says it, in whole percent. */
+function percent(scale: number): number {
+	return Math.round(scale * 100);
+}
+
+/** The size a frame is laid out at, with how far it is drawn smaller or that it follows the window. */
+function sizeSaid({ on, laid, scale }: { on: boolean; laid: { w: number; h: number }; scale: number }): string {
+	const size = `${laid.w} × ${laid.h}`;
+	if (!on) return `${size} · responsive`;
+	return percent(scale) < 100 ? `${size} · ${percent(scale)}%` : size;
 }
 
 /**
@@ -583,24 +591,6 @@ function RecordingTime({ since, onStop }: { since: number; onStop: () => void })
 			<Tip label="Stop recording" />
 		</span>
 	);
-}
-
-/**
- * Whether the window is being resized: true from a change of size until it has
- * held still for {@link DESK_RESIZE_MS}. The size the bar mounts at is not a
- * resize, so a window opened at any size says nothing.
- */
-function useResizing({ vw, vh }: Viewport): boolean {
-	const [resizing, setResizing] = useState(false);
-	const first = useRef(`${vw}x${vh}`);
-	useEffect(() => {
-		if (first.current === `${vw}x${vh}`) return;
-		first.current = "";
-		setResizing(true);
-		const timer = window.setTimeout(() => setResizing(false), DESK_RESIZE_MS);
-		return () => window.clearTimeout(timer);
-	}, [vw, vh]);
-	return resizing;
 }
 
 /**

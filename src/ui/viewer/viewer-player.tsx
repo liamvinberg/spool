@@ -148,7 +148,6 @@ export function ViewerPlayer({
 					writeFit(on);
 					set({});
 				},
-				authored,
 			},
 			close() {
 				if (closing.current) return;
@@ -166,7 +165,7 @@ export function ViewerPlayer({
 						: [
 								{ transform: "none", opacity: 1 },
 								{
-									transform: grownFrom(back, shownWidth(geometry(played.current.frame), fitting.current)),
+									transform: grownFrom(back, shownAt(geometry(played.current.frame), fitting.current)),
 									opacity: 1,
 								},
 							],
@@ -204,10 +203,7 @@ export function ViewerPlayer({
 		grown.current = true;
 		if (el === null || from === null || reducedMotion()) return;
 		el.animate(
-			[
-				{ transform: grownFrom(from, shownWidth(controller.geometry(start), fitting.current)) },
-				{ transform: "none" },
-			],
+			[{ transform: grownFrom(from, shownAt(controller.geometry(start), fitting.current)) }, { transform: "none" }],
 			GROW,
 		);
 		backdrop.current?.animate([{ opacity: 0 }, { opacity: 1 }], GROW);
@@ -417,16 +413,22 @@ function room() {
 	return playRoom({ vw: window.innerWidth, vh: window.innerHeight });
 }
 
-/** How wide the played frame stands on screen, for the glide to start and end on. */
-function shownWidth(box: { w: number; h: number }, fitted: boolean): number {
-	return fitted ? box.w * fittedScale(box, room()) : Math.min(window.innerWidth, box.w);
+/**
+ * Where the played frame stands on screen, for the glide to start and end on: fitted, its box drawn at its scale
+ * and centred in the room both ways; responsive, the window's width below the cap, from the top of the room.
+ */
+function shownAt(box: { w: number; h: number }, fitted: boolean): { left: number; top: number; width: number } {
+	const space = room();
+	const scale = fitted ? fittedScale(box, space) : 1;
+	const width = fitted ? box.w * scale : Math.min(window.innerWidth, box.w);
+	const top = fitted ? (space.h - box.h * scale) / 2 : 0;
+	return { left: (window.innerWidth - width) / 2, top: DESK_BAR_PX + top, width };
 }
 
-/** The transform that puts the played page, standing `width` wide, where its frame stands on the canvas. */
-function grownFrom(spot: Box, width: number): string {
-	const scale = spot.w / width;
-	const left = (window.innerWidth - width) / 2;
-	return `translate(${spot.x - left * scale}px, ${spot.y - DESK_BAR_PX * scale}px) scale(${scale})`;
+/** The transform that puts the played page, its frame standing at `shown`, where that frame stands on the canvas. */
+function grownFrom(spot: Box, shown: { left: number; top: number; width: number }): string {
+	const scale = spot.w / shown.width;
+	return `translate(${spot.x - shown.left * scale}px, ${spot.y - shown.top * scale}px) scale(${scale})`;
 }
 
 export function reducedMotion(): boolean {
