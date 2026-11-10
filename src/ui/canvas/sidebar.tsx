@@ -28,6 +28,7 @@ import {
 	renamePage,
 } from "../api";
 import { cn } from "../cn";
+import { DeckGlyph, DeckHairline, type DeckRailKit, PresentButton, useDeckRail } from "../deck/deck-rail";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { DotsIcon, FolderIcon, FrameIcon } from "../icons";
@@ -64,6 +65,7 @@ import {
 	framesBetween,
 	guideX,
 	type Landing,
+	LINE,
 	LIST_PAD,
 	landingGuideX,
 	listHeight,
@@ -289,6 +291,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	dropPage = null,
 	peeked = null,
 	onPlaced,
+	deck,
 }: {
 	project: string;
 	/** Every named page's path, sorted; the root page is implied and has no row. */
@@ -368,6 +371,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	peeked?: string | null;
 	/** frames let go on a spot of a peek have landed: the canvas, which owns the plane, writes where they stand */
 	onPlaced?: (rects: Record<string, Geometry>) => void;
+	/** the project's decks (spool#265), with the experiment on: a deck page's rows are its talk, a hairline, its loose frames */
+	deck?: DeckRailKit | undefined;
 }) {
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 	const [order, setOrder] = useState<CanvasOrder>({});
@@ -445,25 +450,34 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 
 	/** Each page's own pages, arranged; the root page's are the top level. */
 	const pageTree = useMemo(() => mergePageTree(order.pages, pages), [order.pages, pages]);
+	const decks = useDeckRail(deck);
+	// what a drop reads of the decks, without the drag's handlers being made again each time a deck is read
+	const decksNow = useRef(decks);
+	decksNow.current = decks;
 	/** Every named page, in rail order. The root page is not one of them: it has no row. */
 	const orderedPages = useMemo(() => flatPages(pageTree), [pageTree]);
 
-	const framesByPage = useMemo(() => {
+	const [framesByPage, deckLines] = useMemo(() => {
 		const byPage = new Map<string, readonly RailFrame[]>();
+		/** each deck page's talk, which its rows are drawn first of, over a hairline (spool#265) */
+		const lines = new Map<string, number>();
 		for (const page of [ROOT_PAGE, ...orderedPages]) {
 			// a page's list names its frames by their own folder, the way it names
 			// its pages, so the merge is leaf against leaf and the row is the path
 			const here = framesOnPage(frames, page);
+			const names = mergeOrder(
+				order.frames?.[page],
+				here.map((frame) => pageName(frame.name)),
+			).map((leaf) => pageUnder(page, leaf));
+			const talk = decks.arrange(page, names);
+			if (talk !== undefined) lines.set(page, talk.talk);
 			byPage.set(
 				page,
-				mergeOrder(
-					order.frames?.[page],
-					here.map((frame) => pageName(frame.name)),
-				).map((leaf) => ({ name: pageUnder(page, leaf) }) satisfies RailFrame),
+				(talk?.names ?? names).map((name) => ({ name }) satisfies RailFrame),
 			);
 		}
-		return byPage;
-	}, [orderedPages, frames, order.frames]);
+		return [byPage, lines] as const;
+	}, [orderedPages, frames, order.frames, decks]);
 
 	const waitingByPage = useMemo(() => {
 		const byPage = new Map<string, number>();
@@ -483,8 +497,10 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 				born,
 				belowFrame === null ? null : { frame: belowFrame, height: belowHeight },
 				waitingByPage,
+				ROOT_PAGE,
+				deckLines,
 			),
-		[pageTree, framesByPage, expanded, born, belowFrame, belowHeight, waitingByPage],
+		[pageTree, framesByPage, expanded, born, belowFrame, belowHeight, waitingByPage, deckLines],
 	);
 	/** the row the room under it belongs to, open or folding */
 	const underRow = under === null ? undefined : rows.find((row) => row.kind === "frame" && row.name === under.frame);
@@ -983,6 +999,26 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	);
 
 	/**
+	 * New presentation (spool#265): a deck page holding the starter, made whole by the daemon in one change and named
+	 * fresh at the end of the pages it belongs to; the canvas opens it. It was nowhere a moment ago, so its undo is the
+	 * staged delete, the same as New page's.
+	 */
+	const newPresentation = useCallback(
+		async (parent: string) => {
+			setMenu(null);
+			const path = await decks.make(parent, claimedBy);
+			if (path === null) return;
+			const held = pagesIn(parent);
+			storeOrder(withPageOrder(now.current.order, parent, insertAt(held, [pageName(path)], held.length)));
+			setExpanded((was) => new Set([...was, ...pageChain(path)]));
+			setCursor(`page:${path}`);
+			onRecord?.({ kind: "mint", staged: { frames: [], page: path } });
+		},
+		[decks, claimedBy, pagesIn, storeOrder, onRecord],
+	);
+	const presentDeck = useCallback((page: string) => decks.present(page), [decks]);
+
+	/**
 	 * Commit what was typed.
 	 *
 	 * A name the project already holds is refused where it was typed: the rail is
@@ -1438,6 +1474,14 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 			const names = [...current.names];
 			const sources = new Set(names.map((name) => pageHolding(name)));
 			const index = target.kind === "frames" ? target.index : (now.current.framesByPage.get(page)?.length ?? 0);
+			// a deck page's rows are its talk and its grid (spool#265): the drop is the deck change it makes
+			if (sources.size === 1 && sources.has(page) && decksNow.current.isDeck(page)) {
+				if (target.kind !== "frames") return;
+				void decksNow.current.drop(page, names, index, target.before === true).then((entry) => {
+					if (entry !== undefined) onRecord?.(entry);
+				});
+				return;
+			}
 			if (sources.size === 1 && sources.has(page)) {
 				const before = leavesOn(page);
 				const after = reorder(before, names.map(pageName), index);
@@ -1794,7 +1838,11 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 				    when everything is already shut */}
 				<PaneMore
 					label="Pages options"
-					items={[{ label: "Collapse all", disabled: expanded.size === 0, onSelect: collapseAll }]}
+					items={[
+						// spool#265: a deck page holding the starter, the header's other way to make a page
+						...(decks.on ? [{ label: "New presentation", onSelect: () => void newPresentation(ROOT_PAGE) }] : []),
+						{ label: "Collapse all", disabled: expanded.size === 0, onSelect: collapseAll },
+					]}
 				/>
 			</PaneActions>
 			<div
@@ -1853,6 +1901,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 									((landing?.kind === "into" && landing.page === row.page) || dropPage === row.page)
 								}
 								springing={row.kind === "page" && springing === row.page}
+								deck={row.kind === "page" && decks.isDeck(row.page)}
+								onPresent={presentDeck}
 								rename={rename}
 								onPress={rowPress}
 								onActivate={rowActivate}
@@ -1864,6 +1914,19 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 							/>
 						);
 					})}
+
+					{rows.map((row) =>
+						row.kind !== "page" || row.line === undefined ? null : (
+							<DeckHairline
+								key={`line:${row.page}`}
+								top={row.line.top}
+								spine={guideX(row.depth + 1)}
+								room={gapY !== null && row.line.top + LINE > gapY ? ROOM : 0}
+								carrying={kit !== null}
+								tail={(framesByPage.get(row.page)?.length ?? 0) > row.line.at}
+							/>
+						),
+					)}
 
 					{under === null || underRow?.kind !== "frame" ? null : (
 						<div
@@ -1935,10 +1998,13 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 							movable={menuMove !== null && menuMove.names.length > 0 && menuTargets.length > 0}
 							unseen={menuUnseen}
 							shareable={onSharePage !== undefined}
+							presentations={decks.on}
 							onClose={() => setMenu(null)}
 							actions={{
 								share: () => onSharePage?.(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
 								newPage: () => newPage(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
+								newPresentation: () =>
+									void newPresentation(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
 								newPageWith: () => {
 									// inside the page holding them: the frames are meant to stay where
 									// they are and gain a folder, not travel to the top level
@@ -2069,6 +2135,8 @@ const RailTreeRow = memo(function RailTreeRow({
 	peeked,
 	into,
 	springing,
+	deck = false,
+	onPresent,
 	rename,
 	onPress,
 	onActivate,
@@ -2099,6 +2167,10 @@ const RailTreeRow = memo(function RailTreeRow({
 	into: boolean;
 	/** a drag is resting here: the chevron counts the rest out */
 	springing: boolean;
+	/** the page is a deck (spool#265): its icon says so */
+	deck?: boolean;
+	/** a deck page's one action */
+	onPresent?: ((page: string) => void) | undefined;
 	rename: RenameHandle | null;
 	onPress: (event: React.PointerEvent<HTMLElement>, row: RailRow) => void;
 	onActivate: (row: PageRow | FrameRow) => void;
@@ -2131,7 +2203,7 @@ const RailTreeRow = memo(function RailTreeRow({
 					: row.page === ROOT_PAGE
 						? {}
 						: { guide: row.last ? "last" : "mid" })}
-				icon={page ? FolderIcon : FrameIcon}
+				icon={page ? (deck ? DeckGlyph : FolderIcon) : FrameIcon}
 				mono
 				label={
 					rename === null ? (
@@ -2164,9 +2236,20 @@ const RailTreeRow = memo(function RailTreeRow({
 				meta={page && !row.open && rename === null ? row.count : undefined}
 				// the row's menu, reachable without a right click (#229)
 				trailing={
-					rename === null ? <RowMenuButton label={label} onMenu={(event) => onMenu(event, target)} /> : undefined
+					rename !== null ? undefined : deck && page && onPresent !== undefined ? (
+						<>
+							<PresentButton onPresent={() => onPresent(row.page)} />
+							{/* the menu still comes up under the pointer, beside Present rather than in its place */}
+							<span className="flex opacity-0 group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100">
+								<RowMenuButton label={label} onMenu={(event) => onMenu(event, target)} />
+							</span>
+						</>
+					) : (
+						<RowMenuButton label={label} onMenu={(event) => onMenu(event, target)} />
+					)
 				}
-				reveal
+				// an open deck's Present stands in view, as its one action
+				reveal={!(deck && page && onPresent !== undefined)}
 				// something outside this rail is pointing at this page: the finder's pick, or
 				// a row in the agent rail naming a frame that is not on screen (#194)
 				data-page-lit={lit ? "" : undefined}

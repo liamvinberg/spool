@@ -73,7 +73,8 @@ export async function sendDeckChange(project: string, change: DeckChange): Promi
 		});
 		if (!response.ok) return { kind: "refused", status: response.status, message: await response.text() };
 		const answer = (await response.json()) as DeckChangeAnswer;
-		return answer.changed
+		// a page the change made was nowhere before it, and its undo is the Trash's, which the caller records
+		return answer.changed && answer.made !== true
 			? { kind: "done", answer, entry: { kind: "deck", page: change.page, undo: answer.undo, redo: answer.redo } }
 			: { kind: "done", answer };
 	} catch (error) {

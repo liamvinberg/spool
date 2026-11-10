@@ -62,7 +62,7 @@ import {
 	subscribeSse,
 	writeKnob,
 } from "../api";
-import { tellDeckChange, tellFrameChange } from "../deck/deck-api";
+import { type DeckEntry, tellDeckChange, tellFrameChange } from "../deck/deck-api";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
@@ -1925,6 +1925,21 @@ function CanvasField({
 		say: (message) => setNotice({ kind: "error", message }),
 	});
 	const deckOwns = deckPage.owns;
+	// what the Pages rail and Properties show of a deck: its rows, its notes, New presentation
+	const deckKit = useMemo(
+		() =>
+			deckPage.reads === null
+				? undefined
+				: {
+						project,
+						reads: deckPage.reads,
+						record: (entry: DeckEntry) => deckLive.current.record(entry),
+						say: (message: string) => setNotice({ kind: "error", message }),
+						made: (page: string) => void deckLive.current.made(page),
+					},
+		[project, deckPage.reads],
+	);
+	const deckLive = useRef({ record: (_entry: DeckEntry) => {}, made: async (_page: string) => {} });
 
 	const nudge = useCallback(
 		(dx: number, dy: number) => {
@@ -3020,6 +3035,16 @@ function CanvasField({
 		},
 		[clearCanvasSelection, recordDeparture, switchToPage, store],
 	);
+	deckLive.current = {
+		record: recordEntry,
+		// New presentation (spool#265): the page it made is opened once the canvas knows it, since a page it does not
+		// know sends it home, and a talk just made is the agent's to write, so the composer asks what it is about
+		made: async (page) => {
+			await refetchFrames();
+			activatePageFromTree(page);
+			setAgentRequest({ id: crypto.randomUUID(), thread: deck.get().open, hint: "What's the talk about?" });
+		},
+	};
 	/** ⏎, ⌘↓ and a click on a row of the list: inside a page, as into a frame (#265) */
 	const goInsidePage = useCallback(
 		(page: string) => {
@@ -5756,6 +5781,7 @@ function CanvasField({
 					dropPage={peeking.target?.at === "tree" ? peeking.target.page : null}
 					peeked={peeking.peek?.from === "tree" ? peeking.peek.page : null}
 					onPlaced={placeLanded}
+					deck={deckKit}
 				/>
 			),
 		},

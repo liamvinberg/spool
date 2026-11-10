@@ -36,6 +36,8 @@ export interface RailMenuState {
 
 export interface RailMenuActions {
 	readonly newPage: () => void;
+	/** a deck page holding the starter slides (spool#265), offered while decks are on */
+	readonly newPresentation: () => void;
 	readonly newPageWith: () => void;
 	readonly rename: () => void;
 	readonly duplicate: () => void;
@@ -87,11 +89,16 @@ export function menuEntries(
 		unseen: number;
 		/** whether this project can share its pages from here: signed in, and editing it */
 		shareable?: boolean;
+		/** whether decks are on (spool#265): New presentation stands beside New page */
+		presentations?: boolean;
 	},
 ): readonly Entry[] {
+	const presentation =
+		at.presentations === true ? [{ run: "newPresentation", label: "New presentation" } as const] : [];
 	if (target.kind === "empty") {
 		return [
 			{ run: "newPage", label: "New page" },
+			...presentation,
 			// the root page has no row of its own: this list is its, so its frames are shared from here
 			...(at.shareable === true ? [{ run: "share", label: "Share…" } as const] : []),
 			{ run: "paste", label: "Paste", keys: hotkeyKey("sidebar.paste"), off: !at.pasteable },
@@ -105,6 +112,7 @@ export function menuEntries(
 	if (target.kind === "page") {
 		return [
 			{ run: "newPage", label: "New page" },
+			...presentation,
 			// sharing starts where the work is: one page, others added in the sheet
 			...(at.shareable === true ? [{ run: "share", label: "Share…" } as const] : []),
 			{ rule: true },
@@ -149,6 +157,7 @@ export function RailMenu({
 	movable,
 	unseen,
 	shareable = false,
+	presentations = false,
 	actions,
 	onClose,
 }: {
@@ -158,6 +167,7 @@ export function RailMenu({
 	movable: boolean;
 	unseen: number;
 	shareable?: boolean;
+	presentations?: boolean;
 	actions: RailMenuActions;
 	onClose: () => void;
 }) {
@@ -169,7 +179,7 @@ export function RailMenu({
 		return () => window.removeEventListener("resize", onClose);
 	}, [onClose]);
 
-	const entries = menuEntries(menu.target, { pasteable, selection, movable, unseen, shareable });
+	const entries = menuEntries(menu.target, { pasteable, selection, movable, unseen, shareable, presentations });
 	const height = heightOf(entries);
 	const flipX = menu.x + MENU_WIDTH > window.innerWidth - SCREEN_MARGIN;
 	const flipY = menu.y + height > window.innerHeight - SCREEN_MARGIN;
