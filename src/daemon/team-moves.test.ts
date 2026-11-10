@@ -534,6 +534,28 @@ describe("Move to team", () => {
 		expect(await asked.json()).toEqual({ branches: [], checkedOnly: null });
 	});
 
+	it("moves a project in no git repo, and follows it after", async () => {
+		const cloud = fakeTeam();
+		const root = realpathSync(makeTempDir());
+		const state = join(makeTempDir(), ".spool");
+		initProject(root, state);
+		writeFrame(root, "home", "export default () => <h1>Home</h1>;\n");
+		const daemon = makeApp(state, { cloud: cloud.machine("ana").cloud, teamNotice: () => {} });
+
+		const moved = await daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: root }),
+		});
+
+		expect(moved.status, await moved.clone().text()).toBe(200);
+		const name = (JSON.parse(readFileSync(join(root, "spool.json"), "utf8")) as { project: string }).project
+			.split("/")
+			.at(-1) as string;
+		writeFrame(root, "news", "export default () => <h1>News</h1>;\n");
+		await until(() => cloud.file(name, "frames/news/frame.tsx")?.includes("News") === true, 10_000);
+	});
+
 	it("carries a solo project's shares over to the team project, so links already sent keep working", {
 		timeout: 30_000,
 	}, async () => {

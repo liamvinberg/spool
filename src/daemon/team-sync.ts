@@ -189,6 +189,8 @@ export interface LocalCopyOptions {
 	accountOf?: (token: string) => Promise<string>;
 	/** The project ended for this machine. The copy has stopped; ending it is its owner's. */
 	ended?: () => void;
+	/** The copy's folder may be going, being removed (#243): the copy has stopped, sent nothing it lost and writes nothing more into it. */
+	folderGoing?: () => void;
 	/** The team has no paid time left, so the copy goes local until it pays. The copy has stopped; stopping it is its owner's. */
 	goneLocal?: () => void;
 	/**
@@ -409,6 +411,21 @@ const SENDING_SAID_MS = 10_000;
 const SENDING_RETOLD_MS = 5_000;
 /** How long the copy's record waits for more changes before it is written: a catch-up of many files is one write. */
 const RECORD_MS = 250;
+/**
+ * How long nothing more may go from a copy's design/ before what went is judged (#243). A removal of the folder
+ * deletes it a file at a time while its root still stands, and only once the burst is over can it be told from a
+ * person's delete: held that long, a delete costs a moment; sent wrongly, it costs the team its files.
+ */
+const GONE_QUIET_MS = 2_000;
+/** How many quiet spells a judgement waits for git to finish before it judges without it. */
+const GIT_WAITS = 5;
+/**
+ * How often a copy looks at what stands beside its design/. What stood there one look ago is what a removal is judged
+ * against, so a removal takes something it holds, while a file deleted beside design/ a while ago is forgotten.
+ */
+const BESIDE_LOOK_MS = 15_000;
+/** What the team says about who is here, which never touches design/ and never waits on it. */
+const PRESENCE_FRAMES = new Set(["presences", "presence-hidden"]);
 /** How long the watcher's burst for one save is let settle before the files are read. */
 const SETTLE_MS = 50;
 /** A file this big must have been still for longer before it is read: it may be being written in many pieces. */
@@ -633,6 +650,42 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	// a local copy whose folder went (a worktree removed) is neither read from nor written to: what it lacks is no
 	// delete, and nothing comes down into it. Its spool.json going is not that: an old branch checked out has none
 	const present = () => existsSync(options.root);
+
+	// --- a folder going (#243): a removal deletes design/ a file at a time while its root still stands, so what goes from
+	// disk is held until the folder is quiet, and is a delete only if the copy still stands whole by then ---
+
+	const rooted = () => isProjectRoot(options.root);
+	/** What stood beside design/ at the last two looks, and at the last: a removal takes something the first holds. */
+	let beside = besideDesign(options.root);
+	let besideNow = beside;
+	/** Paths the team holds that went from disk: each a delete, or git's doing to put back, once the copy is judged. */
+	const missing = new Set<string>();
+	/** Everything the team said while something was held: heard once the copy is judged whole, never into a going folder. */
+	let unheard: (string | ArrayBuffer)[] = [];
+	/** The copy is to be judged once nothing more has gone from its design/ for `GONE_QUIET_MS`. */
+	let judging: NodeJS.Timeout | undefined;
+	/** How many times a judgement has waited for git to finish. */
+	let gitWaits = 0;
+	/** The held paths are being looked at again, the copy judged whole: what they lack is a delete now. */
+	let judged = false;
+	/** The copy's folder was found going: it stopped, and nothing more is written into it. */
+	let left = false;
+	const looking = live
+		? setInterval(() => {
+				// a removal under way is judged against what stood before it began
+				if (missing.size > 0) return;
+				const now = besideDesign(options.root);
+				beside = besideNow.filter((name) => now.includes(name));
+				besideNow = now;
+			}, BESIDE_LOOK_MS)
+		: undefined;
+	looking?.unref?.();
+	/** design/.spool has stood, made before or by this copy: it is never made again, and its going is a removal's. */
+	let spoolStood = existsSync(join(designDir, ".spool"));
+	/** Whether the copy's folder is whole enough to be written into: see `standsIntact`. */
+	const intact = () => standsIntact(options.root, spoolStood);
+	/** Whether the copy's folder stands whole: intact, and with everything that stood beside design/ at the last two looks. */
+	const whole = () => intact() && besideStands(options.root, beside);
 	/** The copy has looked at everything git may have done while it wasn't watching, and watches now. */
 	let watching = false;
 	/** A change to the record not written yet: a burst of files lands as one write, not one per file. */
@@ -641,7 +694,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (recording !== undefined) clearTimeout(recording);
 		recording = undefined;
 		if (watching) state.watched = Date.now();
-		if (present()) writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
+		// never into a folder that may be going, and never into a .spool made again: what changed meanwhile is written
+		// once the copy is judged whole
+		if (left || missing.size > 0 || !present() || (live && !intact())) return;
+		writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
+		spoolStood = true;
 	};
 	const persistSoon = () => {
 		recording ??= setTimeout(persist, RECORD_MS);
@@ -650,11 +707,14 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const isIdle = () =>
 		caughtUp &&
 		!holding &&
+		judging === undefined &&
+		unheard.length === 0 &&
 		checking === undefined &&
 		inflight.size === 0 &&
 		outgoing.length === 0 &&
 		yielding.size === 0 &&
 		changed.size === 0 &&
+		missing.size === 0 &&
 		restoring.size === 0 &&
 		deferred.size === 0 &&
 		waiting.size === 0;
@@ -1028,6 +1088,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const check = (path: string) => {
 		if (holding) return;
 		if (!travels(path) || restoring.has(path) || !present() || isPaused()) return;
+		// a check that waited (for git, an answer, room) looks at the folder again: one going is judged, not written to
+		if (live && !intact()) {
+			changed.add(path);
+			return judgeSoon();
+		}
 		if (!ownWork && guard.busy() && !gitStale) {
 			deferred.add(path);
 			waitForGit();
@@ -1045,6 +1110,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		// the very save the team just set aside: it is kept in its mark, and the team's version is on its way over it
 		if (yielding.has(path) && yielding.get(path) === hash) return;
 		const known = state.files[path];
+		// gone from disk while the team holds it: neither sent nor put back until the folder is quiet and judged whole
+		if (live && !judged && bytes === undefined && known !== undefined && known.hash !== null)
+			return holdMissing(path);
 		if (hash !== (known?.hash ?? null) && gitWrote(path, bytes)) return restore(path, bytes);
 		held.delete(path);
 		if (hash === (known?.hash ?? null)) {
@@ -1054,6 +1122,64 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		}
 		if (!fits(bytes?.byteLength ?? 0) && untilRoom() > 0) return wait(path);
 		send(path, bytes);
+	};
+
+	/** A path the team holds went from disk: held, and the copy judged once its folder has been quiet a moment. */
+	const holdMissing = (path: string) => {
+		missing.add(path);
+		judgeSoon();
+	};
+
+	/**
+	 * Judge the copy once nothing more has gone from its design/ for `GONE_QUIET_MS`. Only something going puts it off,
+	 * so a removal is judged when it is over or has stopped, however long it takes, and a busy agent's writes never are.
+	 */
+	const judgeSoon = () => {
+		if (judging !== undefined) clearTimeout(judging);
+		judging = setTimeout(judge, GONE_QUIET_MS);
+		judging.unref?.();
+	};
+
+	/**
+	 * The burst is over: a copy that still stands whole lost those files by a hand, and each goes now as a delete, or
+	 * as git's doing put back. One whose folder is going stops here, having sent and written nothing.
+	 */
+	const judge = () => {
+		judging = undefined;
+		if (closed) return;
+		// what the watcher said and nobody has looked at yet is part of the burst
+		if (settle !== undefined) return judgeSoon();
+		if (!whole()) return leave();
+		// a canvas gone with nothing of git's doing in it is a folder going in another order, as a Mac's disk lists it:
+		// only what git took out is put back, once git has finished, or has been waited for a while
+		if (vanished() && guard.busy() && gitWaits++ < GIT_WAITS) return judgeSoon();
+		gitWaits = 0;
+		if (vanished() && !guard.wrote("canvas.json", undefined)) return leave();
+		const paths = [...missing];
+		missing.clear();
+		judged = true;
+		try {
+			for (const path of paths) check(path);
+			if (changed.size > 0) checkChanged();
+		} finally {
+			judged = false;
+			// what the team said meanwhile is heard even when a check failed: it is the copy's catch-up
+			persistSoon();
+			for (const data of unheard.splice(0)) handle(data);
+			wake();
+		}
+	};
+
+	/** The copy's folder is going: it stops where it is, its record as it last was, and its owner forgets it. */
+	const leave = () => {
+		left = true;
+		missing.clear();
+		unheard = [];
+		shut();
+		notice(
+			`Stopped syncing ${options.root}: its folder or its design/ is going, so nothing it lost went to ${link.team}.`,
+		);
+		options.folderGoing?.();
 	};
 
 	// --- the git guard: what git writes into design/ never goes up; the team's version comes back over it ---
@@ -1160,7 +1286,18 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		settle = undefined;
 		const paths = [...changed];
 		changed.clear();
-		if (!caughtUp) return;
+		// the whole folder went at once: nothing it held is a delete, and its owner forgets it
+		if (live && !present()) return leave();
+		// the folder is losing what a removal takes, connected or not: what changed waits for it to be judged
+		if (live && !intact()) {
+			for (const path of paths) changed.add(path);
+			return judgeSoon();
+		}
+		// not caught up, nothing is checked till the catch-up is: what the team holds going still puts the team's frames off
+		if (!caughtUp) {
+			if (paths.some((path) => heldGone(path))) judgeSoon();
+			return hear();
+		}
 		for (const path of paths) {
 			// .spool and every other dot-folder are this machine's alone
 			const dotted = path.split("/").some((segment) => segment.startsWith("."));
@@ -1172,7 +1309,17 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		}
 		// a design/ removed whole may be named as nothing more than itself
 		if (vanished()) checkEverything();
+		hear();
 		wake();
+	};
+
+	/** A path the team holds, gone from disk: what a removal is made of. */
+	const heldGone = (path: string) => (state.files[path]?.hash ?? null) !== null && !existsSync(join(designDir, path));
+
+	/** What the team said while the watcher's burst settled, heard now that nothing is held. */
+	const hear = () => {
+		if (closed || judging !== undefined || missing.size > 0) return;
+		for (const data of unheard.splice(0)) handle(data);
 	};
 
 	/** A teammate's save, or the team's version of a path in a catch-up. */
@@ -1505,11 +1652,24 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const handle = (data: string | ArrayBuffer) => {
 		// a frame the socket had in hand when this copy stopped is for nobody: its folder may be gone already
 		if (closed) return;
+		// nothing the team says is acted on while the folder may be going: something gone from disk is held, or the
+		// folder lacks what a removal takes. It is heard once the copy is judged whole, or never, its head unmoved
+		if (live && (judging !== undefined || missing.size > 0 || !intact())) {
+			unheard.push(data);
+			if (judging === undefined) judgeSoon();
+			return;
+		}
 		const framed = decodeFrame(data);
 		if (framed === null) return;
 		const { message, bytes } = framed;
 		if (message.type === "presence") return presence.hear(message);
 		if (comments.hear(message, bytes)) return;
+		// nor, of what touches design/, while the watcher has news not yet looked at of a file the team holds gone: it may
+		// be a removal's first. Who is here and what they said never waits
+		if (live && settle !== undefined && !PRESENCE_FRAMES.has(String(message.type)) && [...changed].some(heldGone)) {
+			unheard.push(data);
+			return;
+		}
 		if (message.type === "presences") return presence.tick(message);
 		if (message.type === "presence-hidden") return presence.hidden(message);
 		if (message.type === "welcome") {
@@ -1683,6 +1843,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				for (const waiter of matching.splice(0)) waiter.reject(new MatchOffline());
 				dirty.clear();
 				yielding.clear();
+				// what this connection said and wasn't heard comes again with the next catch-up, from the head on record
+				unheard = [];
 				presence.lost();
 				comments.lost();
 				if (closed) return;
@@ -1809,18 +1971,46 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	 */
 	const follow = () => {
 		const ignore = join(designDir, ".gitignore");
-		if (present() && existsSync(designDir) && readLocal(".gitignore")?.toString() !== TEAM_GITIGNORE)
+		if (rooted() && existsSync(designDir) && readLocal(".gitignore")?.toString() !== TEAM_GITIGNORE)
 			writeAtomic(ignore, TEAM_GITIGNORE);
 		watch?.close();
 		watch = watchTree(
 			designDir,
 			(filename) => {
+				// something more went while the copy waits to be judged: it waits for that to stop
+				// (a temp file renamed, or this copy's own writes in .spool, never put it off)
+				if (judging !== undefined && (filename === null || heldGone(filename.split(sep).join("/")))) judgeSoon();
 				if (filename === null) return;
 				changed.add(filename.split(sep).join("/"));
 				settle ??= setTimeout(checkChanged, SETTLE_MS);
 			},
 			() => notice(`stopped watching ${designDir}; restart spool to sync it again`),
 		);
+	};
+
+	/** Stop following: nothing more is sent, heard or watched, and the record is written as it stands, if it may be. */
+	const shut = () => {
+		closed = true;
+		if (retry !== undefined) clearTimeout(retry);
+		if (settle !== undefined) clearTimeout(settle);
+		if (gitWait !== undefined) clearTimeout(gitWait);
+		if (asking !== undefined) clearImmediate(asking);
+		if (shipping !== undefined) clearImmediate(shipping);
+		gaps?.close();
+		if (judging !== undefined) clearTimeout(judging);
+		if (looking !== undefined) clearInterval(looking);
+		// when this copy stopped watching: whatever git does from now is checked when it is followed again
+		if (watching || recording !== undefined) persist();
+		guard.close();
+		if (resume !== undefined) clearTimeout(resume);
+		if (flushing !== undefined) clearTimeout(flushing);
+		if (offlineTimer !== undefined) clearTimeout(offlineTimer);
+		for (const waiter of matching.splice(0)) waiter.reject(new MatchOffline());
+		watch?.close();
+		socket?.close();
+		socket = undefined;
+		comments.lost();
+		waiters = [];
 	};
 
 	if (live) follow();
@@ -1878,27 +2068,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			}, TURN_SETTLE_MS);
 			said.unref?.();
 		},
-		close: () => {
-			closed = true;
-			if (retry !== undefined) clearTimeout(retry);
-			if (settle !== undefined) clearTimeout(settle);
-			if (gitWait !== undefined) clearTimeout(gitWait);
-			if (asking !== undefined) clearImmediate(asking);
-			if (shipping !== undefined) clearImmediate(shipping);
-			gaps?.close();
-			// when this copy stopped watching: whatever git does from now is checked when it is followed again
-			if (watching || recording !== undefined) persist();
-			guard.close();
-			if (resume !== undefined) clearTimeout(resume);
-			if (flushing !== undefined) clearTimeout(flushing);
-			if (offlineTimer !== undefined) clearTimeout(offlineTimer);
-			for (const waiter of matching.splice(0)) waiter.reject(new MatchOffline());
-			watch?.close();
-			socket?.close();
-			socket = undefined;
-			comments.lost();
-			waiters = [];
-		},
+		close: shut,
 	};
 }
 
@@ -2039,6 +2209,13 @@ function copyPresence(
 const GONE_LOCAL_ASK_MS = 60_000;
 /** How soon a copy gone local asks again when spool.page couldn't be reached: doubling each time, up to how often it asks. */
 const GONE_LOCAL_RETRY_MS = 60_000;
+/** How often a copy whose folder was found going looks again: forgotten once the folder is gone, followed if it is back. */
+const LEFT_LOOK_MS = 10_000;
+
+/** A root whose folder is gone from a parent still there: removed, rather than on a drive not mounted now. */
+function folderGone(root: string): boolean {
+	return !existsSync(root) && existsSync(dirname(root));
+}
 
 /** A copy's link, and the request that asks spool.page about it. */
 interface Linked {
@@ -2068,6 +2245,11 @@ export function createTeamSync(deps: {
 	onGoneLocal?: (root: string) => void;
 	/** A local copy ended because its project was moved out of its team. */
 	onEnded?: (root: string) => void;
+	/**
+	 * A local copy's folder is gone, a worktree removed or deleted (#243): this machine forgets the project. Only roots
+	 * whose folder is gone from a parent that is still there, so a copy on a drive not mounted now is kept.
+	 */
+	forget?: (root: string) => void;
 	/** A local copy follows its project to a new address, renamed or moved elsewhere on another Mac (spool#411). */
 	onForwarded?: (root: string, from: ProjectLink, to: ProjectLink) => void;
 	/** Who else is in a local copy's project changed as its tab shows it; nobody once the copy stops. */
@@ -2078,6 +2260,8 @@ export function createTeamSync(deps: {
 	goneLocalAskMs?: number;
 	/** How soon it asks again when spool.page couldn't be reached, doubling up to `goneLocalAskMs`: a minute. */
 	goneLocalRetryMs?: number;
+	/** How often a copy whose folder was found going looks again: `LEFT_LOOK_MS`, unless a test can't wait. */
+	leftLookMs?: number;
 	/** How long a copy goes without a caught-up connection before it says it is offline: `OFFLINE_MS`, unless a test can't wait. */
 	offlineMs?: number;
 	/** How long a copy paused for an update first waits to ask again: `UPDATE_ASK_MS`, unless a test can't wait. */
@@ -2115,6 +2299,15 @@ export function createTeamSync(deps: {
 	const held = new Set<string>();
 	/** What each root's agent was last told didn't travel, so its next command says only what is new. */
 	const toldAgent = new Map<string, Set<string>>();
+	/**
+	 * Copies whose folder was found going (#243), each with what its root held at the last look: forgotten once the
+	 * folder is gone; followed again once it is intact with its canvas, and its root held the same at two looks, as
+	 * after `rm -rf design` and a fetch, or a file deleted beside design/ taken for a removal. A removal that stopped
+	 * half way is no project any more, or has no canvas, and stays here till the rest of it is deleted.
+	 */
+	const left = new Map<string, string | undefined>();
+	/** The roots the registry holds, as the daemon last said. */
+	let registered: readonly string[] = [];
 	let closed = false;
 	const say = deps.notice ?? ((message: string) => console.error(`spool: ${message}`));
 	/** A copy's link and how to ask spool.page about it, resolved once each time it is followed or asked after. */
@@ -2181,6 +2374,42 @@ export function createTeamSync(deps: {
 		copies.delete(root);
 		deps.onRoster?.(root, []);
 	};
+
+	/** A copy's folder is gone: this machine forgets it, in its synced copies and its registry. */
+	const forget = (root: string) => {
+		left.delete(root);
+		synced.forget(root);
+		if (registered.includes(root)) deps.forget?.(root);
+	};
+
+	/** A copy's folder was found going: it stops, and is looked at again until it is gone or whole once more. */
+	const leave = (root: string) => {
+		drop(root);
+		hops.delete(root);
+		left.set(root, undefined);
+		if (folderGone(root)) forget(root);
+	};
+
+	/** Each copy found going, looked at again: forgotten once its folder is gone, followed once it is whole again. */
+	const lookAtLeft = () => {
+		for (const [root, before] of left) {
+			if (folderGone(root)) {
+				forget(root);
+				continue;
+			}
+			const now = rootListing(root);
+			left.set(root, now);
+			const link = followedLink(root);
+			if (closed || link === undefined || !registered.includes(root) || held.has(root)) continue;
+			// intact as a removal leaves nothing: design/.gitignore too, which following it would write again into a
+			// removal stalled half way, making it look whole
+			if (now !== before || !standsIntact(root, true) || !existsSync(join(root, "design", "canvas.json"))) continue;
+			left.delete(root);
+			follow(root, link);
+		}
+	};
+	const lookingAtLeft = setInterval(lookAtLeft, deps.leftLookMs ?? LEFT_LOOK_MS);
+	lookingAtLeft.unref?.();
 
 	const end = (root: string, link: ProjectLink) => {
 		drop(root);
@@ -2312,6 +2541,7 @@ export function createTeamSync(deps: {
 					seen: askSeen(deps.spoolDir, link, at.request),
 					accountOf: accountOf(at),
 					ended: () => end(root, link),
+					folderGoing: () => leave(root),
 					goneLocal: () => void stop(root, at),
 					moved: (to) => forward(root, link, to),
 					movedOut: () => void endMovedOut(root, at),
@@ -2405,8 +2635,12 @@ export function createTeamSync(deps: {
 	return {
 		keeping(roots: readonly string[]): void {
 			if (closed) return;
+			registered = roots;
+			// copies whose folder went while nobody followed them, a worktree removed with the daemon down, are forgotten
+			const gone = synced.roots().filter(folderGone);
 			const wanted = roots.filter(
-				(root) => followedLink(root) !== undefined && existsSync(join(root, "design", "canvas.json")),
+				(root) =>
+					followedLink(root) !== undefined && existsSync(join(root, "design", "canvas.json")) && !left.has(root),
 			);
 			for (const root of [...copies.keys()]) if (!wanted.includes(root)) drop(root);
 			for (const root of stopped.keys())
@@ -2425,6 +2659,7 @@ export function createTeamSync(deps: {
 					void ask(root);
 				}
 			}
+			for (const root of gone) forget(root);
 		},
 		/** Every copy of a team gone local asks at once whether the team pays again, as when it is said to. */
 		recheck(team: string): void {
@@ -2587,6 +2822,7 @@ export function createTeamSync(deps: {
 		close(): void {
 			closed = true;
 			clearInterval(asking);
+			clearInterval(lookingAtLeft);
 			for (const root of retries.keys()) settle(root);
 			for (const copy of copies.values()) copy.close();
 			copies.clear();
@@ -2946,6 +3182,49 @@ export function travellingFiles(root: string): string[] {
 
 function digest(bytes: Uint8Array): string {
 	return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** What a copy's root and its design/ hold, to tell a folder that settled from one still going. */
+function rootListing(root: string): string {
+	return JSON.stringify([besideDesign(root).sort(), safeList(join(root, "design")).sort()]);
+}
+
+function safeList(dir: string): string[] {
+	try {
+		return readdirSync(dir);
+	} catch {
+		return [];
+	}
+}
+
+/** What stands beside a copy's design/ in its root: nothing once the root is gone. */
+function besideDesign(root: string): string[] {
+	try {
+		return readdirSync(root).filter((name) => name !== "design");
+	} catch {
+		return [];
+	}
+}
+
+/** A root that is a project still: a checkout, or a folder with its spool.json. A removal takes both in the end. */
+function isProjectRoot(root: string): boolean {
+	return existsSync(join(root, ".git")) || existsSync(join(root, "spool.json"));
+}
+
+/**
+ * Whether a local copy's folder is intact (#243): its root a project still (a checkout, or a folder with its
+ * spool.json), and design/ still holding the team's .gitignore that following it writes, and its .spool folder once
+ * `spoolStood` says it has stood. A removal takes them all in the end, and on devobee's disk the root's before design/, and design/.gitignore first in
+ * it; a person deleting files in design/, or git taking design/ out of a checkout, leaves them.
+ */
+function standsIntact(root: string, spoolStood: boolean): boolean {
+	if (!isProjectRoot(root) || !existsSync(join(root, "design", ".gitignore"))) return false;
+	return !spoolStood || existsSync(join(root, "design", ".spool"));
+}
+
+/** Whether all of `beside` still stands beside a copy's design/. */
+function besideStands(root: string, beside: readonly string[]): boolean {
+	return beside.every((name) => existsSync(join(root, name)));
 }
 
 /** Every regular file under a design-relative folder that could travel, never through a dot-folder. */
