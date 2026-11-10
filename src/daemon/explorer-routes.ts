@@ -82,8 +82,14 @@ export function explorerRoutes(deps: {
 	trash: (paths: string[]) => Promise<void>;
 	/** Frames and pages renamed or moved: a team project's comments follow them (spool#160). */
 	moved?: (root: string, moved: Moved) => void;
+	/** A deck's talk follows its frames renamed, moved away or trashed (spool#265), in the same request. */
+	deck?: {
+		moved: (root: string, moved: Moved) => void;
+		trashed: (root: string, frames: readonly string[]) => void;
+	};
 }) {
 	const said = (root: string) => (done: { moved: Moved }) => {
+		deps.deck?.moved(root, done.moved);
 		deps.moved?.(root, done.moved);
 		return new Response(null, { status: 204 });
 	};
@@ -245,6 +251,7 @@ export function explorerRoutes(deps: {
 					}
 					// the whole folder moves; the OS Trash owns restore from here (#7)
 					await deps.trash([...pageDirs, ...dirs]);
+					if (frames.length > 0) answeringDiskRefusals(c, () => deps.deck?.trashed(root, frames));
 					// a page that is gone leaves the canvas nowhere to be, and its camera
 					// and its place in the rail nothing to describe (#228)
 					if (pages.length > 0) {

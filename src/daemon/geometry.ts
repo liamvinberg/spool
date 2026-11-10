@@ -62,7 +62,7 @@ export function writePlacement(file: string, geometry: Geometry, designDir: stri
 	return roundedGeometry(placed);
 }
 
-function geometryBytes(geometry: Geometry): string {
+export function geometryBytes(geometry: Geometry): string {
 	return `${JSON.stringify(roundedGeometry(geometry), null, "\t")}\n`;
 }
 

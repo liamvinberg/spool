@@ -1,5 +1,6 @@
 import { join, sep } from "node:path";
 import type { Cover } from "../cover";
+import { type DeckPageChange, deckOfPath } from "./deck/paths";
 import { realDesignDir } from "./design-path";
 import type { OutsideView } from "./outside";
 import { isPageFolder } from "./projection";
@@ -40,6 +41,7 @@ export type ChangeEvent =
 	| FrameChange
 	| SharedChange
 	| GeometryChange
+	| DeckPageChange
 	// a cover was written: the image rides along, so a canvas can swap addresses
 	// without re-reading the projection. Absent means it could not be read back,
 	// and the canvas falls back to a frames read.
@@ -81,6 +83,8 @@ export interface ChangeHubDeps {
 	 * nobody using it, so nothing means every frame.
 	 */
 	framesUsing(root: string, path: string): string[] | undefined;
+	/** Whether the `deck` experiment is on, which makes a page's `deck.json` and a slide's notes a deck's change. */
+	decks?: () => boolean;
 }
 
 const DEBOUNCE_MS = 40;
@@ -141,9 +145,12 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 			watcher = watchTree(
 				designDir,
 				(filename) => {
-					const event = classify(designDir, filename, (path) => deps.framesUsing(root, path));
+					const event =
+						(deps.decks?.() === true ? deckOfPath(designDir, filename) : undefined) ??
+						classify(designDir, filename, (path) => deps.framesUsing(root, path));
 					if (event === undefined) return;
 					if (event.kind === "frame") pending.set(`frame ${event.frame}`, event);
+					else if (event.kind === "deck") pending.set(`deck ${event.page}`, event);
 					// a move and an edit to the same frame are two facts about it, so a
 					// sidecar keeps its own slot rather than collapsing into the source one
 					else if (event.kind === "geometry") pending.set(`geometry ${event.frame}`, event);
