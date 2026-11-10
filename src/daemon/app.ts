@@ -19,7 +19,7 @@ import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
 import { hooksMade, readHookToken, writeHookTarget } from "../outside/install";
 import { isFramePath, isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
-import { lookupProjectByName, readRegistry } from "../registry";
+import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "../runtime/record-protocol";
 import { experimentsOn } from "../settings/experiments";
 import { appearanceOf, themeInline } from "../settings/registry";
@@ -245,6 +245,8 @@ export interface DaemonOptions {
 	goneLocalAskMs?: number;
 	/** How soon such a copy asks again when spool.page couldn't be reached, doubling up to how often it asks: a minute. */
 	goneLocalRetryMs?: number;
+	/** How often a copy whose folder was found going looks again, to be forgotten or followed once more: 10 s (#243). */
+	leftLookMs?: number;
 	/** How often a project whose design/ moved into a team this account can't edit asks again: a minute. */
 	movedAskMs?: number;
 	/** How long a team project's copy goes without a connection before its canvas says it is offline: 30 s (#205). */
@@ -433,6 +435,7 @@ export function createDaemonApp({
 	teamNotice = (message) => console.error(`spool: ${message}`),
 	goneLocalAskMs,
 	goneLocalRetryMs,
+	leftLookMs,
 	movedAskMs,
 	offlineMs,
 	updateAskMs,
@@ -740,6 +743,9 @@ export function createDaemonApp({
 		},
 		// a copy whose project moved out of its team ended: its cover says so
 		onEnded: () => emitAppEvent({ kind: "registry" }),
+		// a copy whose folder is gone, a worktree removed (#243), is forgotten as `spool remove` forgets one: the registry's
+		// watch says so to everything that keeps a project, the copies included
+		forget: (root) => void forgetResolvedProject(spoolDir, root),
 		// a copy in the team's own folder takes its project's new name, as one renamed here does (spool#411)
 		onForwarded: (root, from, to) => void followRename(root, from, to),
 		// who else is in a team project, for its tab while another is focused (task 139)
@@ -748,6 +754,7 @@ export function createDaemonApp({
 		onComments: (root) => hub.publish(root, { kind: "comments" }),
 		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
 		...(goneLocalRetryMs === undefined ? {} : { goneLocalRetryMs }),
+		...(leftLookMs === undefined ? {} : { leftLookMs }),
 		...(offlineMs === undefined ? {} : { offlineMs }),
 		...(updateAskMs === undefined ? {} : { updateAskMs }),
 		...(updateHow === undefined ? {} : { updateHow }),

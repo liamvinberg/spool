@@ -827,18 +827,25 @@ describe("the git guard", () => {
 		expect(status(ben.root)).toEqual([]);
 	});
 
-	it("refills a design/ that vanished whole, and keeps following it", async () => {
-		const { cloud, ana, ben } = await twoEditors();
+	it("stops following a design/ removed whole, sends and writes nothing, and follows it again once fetched", async () => {
+		const { cloud, ana, ben } = await twoEditors({ leftLookMs: 100 });
 		writeFrame(ana.root, "home", "team's home\n");
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
 		const saves = cloud.saves("checkout").length;
 
 		rmSync(join(ben.root, "design"), { recursive: true });
+		writeFrame(ana.root, "away", "while ben's design/ is gone\n");
+		await until(() => cloud.file("checkout", "frames/away/frame.tsx") !== undefined);
+		await new Promise((wake) => setTimeout(wake, 1_500));
+		expect(existsSync(join(ben.root, "design"))).toBe(false);
+		expect(cloud.saves("checkout").length).toBe(saves + 1);
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe("team's home\n");
 
-		await until(() => cloud.paths("checkout").every((path) => same(ana.root, ben.root, path)));
-		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
-		await new Promise((wake) => setTimeout(wake, 300));
-		expect(cloud.saves("checkout").length).toBe(saves);
+		await fetchLocalCopy(ben.root, ben.state, {
+			origin: TEAM_ORIGIN,
+			request: ben.machine.request,
+			openSocket: ben.machine.openSocket,
+		});
 		writeFrame(ben.root, "home", "ben's home\n");
 		await until(() => read(ana.root, "frames/home/frame.tsx").toString() === "ben's home\n");
 	});
