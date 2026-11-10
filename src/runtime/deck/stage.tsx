@@ -367,6 +367,9 @@ export function bootStage(runtime: StageRuntime): void {
 
 	/** A command or a session arrived: the stage now owes the room the picture it names. */
 	function arrived(): void {
+		// a slide that mounted threw by the end of the swap that put it on: one that throws on a key after it, however
+		// soon, threw on screen, and keeps its picture rather than taking the room back to a slide let go
+		revealed = undefined;
 		const at = picture().at;
 		const copy = copies.get(keyOf(at.slide, takeOf(at.slide, picture().takes)));
 		pending = { at, arrived: performance.now(), ready: ready(copy), frames: 0 };
