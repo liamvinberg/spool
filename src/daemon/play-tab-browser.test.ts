@@ -118,6 +118,9 @@ it("wears the bar for good, plays a frame at its own size, centred, and says the
 	const fit = played.locator(".spool-bar-fit button");
 	const screen = played.locator(".spool-screen");
 	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toBe("800 × 700");
+	// in the middle of the bar, which is the middle of the window
+	const readout = await fit.boundingBox();
+	expect(Math.abs((readout?.x ?? 0) + (readout?.width ?? 0) / 2 - 640)).toBeLessThanOrEqual(1);
 	await expect
 		.poll(() => screen.boundingBox(), { timeout: 5_000 })
 		.toEqual({ x: 240, y: 115, width: 800, height: 700 });
