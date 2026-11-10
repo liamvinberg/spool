@@ -44,6 +44,23 @@ export interface ExportedFile {
 	filename: string;
 }
 
+/** Frames packed for a file that opens from disk with nothing behind it. */
+export interface PackedFrames {
+	/** the composition and spool's runtime as one module */
+	js: string;
+	/** every stylesheet by its resource, its fonts and images inlined */
+	styles: ReadonlyMap<string, string>;
+	/** each frame's stylesheet resource */
+	styleOf: Record<string, string>;
+	fonts: string | undefined;
+	transitions: string | undefined;
+	importMap: object;
+	/** the default scenario's state */
+	state: object;
+	/** what else names a daemon URL, inlined the same way */
+	inline: (text: string) => Promise<string>;
+}
+
 export type ExportAnswer<T> =
 	| { kind: "ok"; value: T }
 	/** No such frame. */
@@ -91,6 +108,29 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 			...(ref.page === undefined ? {} : { page: ref.page }),
 		}));
 
+		const packed = await pack(root, refs);
+		if (packed.kind !== "ok") return packed;
+		const { js, styles, styleOf, fonts, transitions, importMap, state } = packed.value;
+		const poster = start.cover === undefined ? undefined : stillOf(root, frame, start.cover.hash);
+		const config = {
+			project,
+			projectCapability: "",
+			start: frame,
+			scenario: "default",
+			frames: Object.fromEntries(included.map((ref) => [ref.name, { w: ref.w, h: ref.h }])),
+			styles: styleOf,
+			exported: { state },
+		};
+		const html = exportDocument({ config, width: start.w, js, styles, fonts, transitions, importMap, poster });
+		return { kind: "ok", value: { html, filename: exportFilename(project, frame) } };
+	}
+
+	/**
+	 * These frames composed as the player composes them and packed for a file: one module with React beside it in the
+	 * import map, every stylesheet, font and image inlined, and the default scenario's state. A frame that does not
+	 * compile refuses the whole, named.
+	 */
+	async function pack(root: string, refs: PlayerFrameRef[]): Promise<ExportAnswer<PackedFrames>> {
 		const composed = await compose(root, refs);
 		if (composed.kind !== "ok") return composed;
 		const bundle = composed.value;
@@ -100,29 +140,21 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 		for (const resource of bundle.styles.values()) {
 			if (!styles.has(resource)) styles.set(resource, await inline(bundle.chunks.get(resource) ?? ""));
 		}
-		const poster = start.cover === undefined ? undefined : readCoverImage(root, frame, start.cover.hash);
 		const scenario = readScenario(root, "default");
 		const state = scenario.kind === "ok" ? ((JSON.parse(scenario.json) as { state?: object }).state ?? {}) : {};
-		const config = {
-			project,
-			projectCapability: "",
-			start: frame,
-			scenario: "default",
-			frames: Object.fromEntries(included.map((ref) => [ref.name, { w: ref.w, h: ref.h }])),
-			styles: Object.fromEntries(bundle.styles),
-			exported: { state },
+		return {
+			kind: "ok",
+			value: {
+				js,
+				styles,
+				styleOf: Object.fromEntries(bundle.styles),
+				fonts: bundle.fonts === undefined ? undefined : await inline(bundle.fonts),
+				transitions: bundle.transitions,
+				importMap: exportImportMap(bundle.importMap, await vendorReactJs()),
+				state,
+				inline,
+			},
 		};
-		const html = exportDocument({
-			config,
-			width: start.w,
-			js,
-			styles,
-			fonts: bundle.fonts === undefined ? undefined : await inline(bundle.fonts),
-			transitions: bundle.transitions,
-			importMap: exportImportMap(bundle.importMap, await vendorReactJs()),
-			poster: poster === undefined ? undefined : `data:${poster.type};base64,${poster.bytes.toString("base64")}`,
-		});
-		return { kind: "ok", value: { html, filename: exportFilename(project, frame) } };
 	}
 
 	/** The player's composition of these frames, built whole into one module rather than split. */
@@ -168,7 +200,7 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 		}
 	}
 
-	return { plan, html };
+	return { plan, html, pack };
 }
 
 export type HtmlExport = ReturnType<typeof createHtmlExport>;
@@ -220,6 +252,12 @@ function exportImportMap(importMap: object, react: string): object {
 		),
 	);
 	return { ...map, imports: { ...imports, ...Object.fromEntries(REACT_SPECIFIERS.map((spec) => [spec, reactUrl])) } };
+}
+
+/** A frame's still as the canvas last drew it, as a data: URL. */
+export function stillOf(root: string, frame: string, hash: string): string | undefined {
+	const poster = readCoverImage(root, frame, hash);
+	return poster === undefined ? undefined : `data:${poster.type};base64,${poster.bytes.toString("base64")}`;
 }
 
 /** The file's name: `<project>-<frame>.html`, a page's slashes as dashes. */
@@ -334,14 +372,7 @@ function exportDocument({
 	importMap: object;
 	poster: string | undefined;
 }): string {
-	const opening = config.styles[config.start];
-	// every frame's sheet is here; only the screen on show applies its own
-	const sheets = [...styles]
-		.map(
-			([resource, css]) =>
-				`<style data-spool-frame-style="${escapeHtml(frameOf(config.styles, resource))}" data-spool-style-resource="${escapeHtml(resource)}"${resource === opening ? "" : ' media="not all"'}>${escapeInlineStyle(css)}</style>`,
-		)
-		.join("\n");
+	const sheets = frameSheets(styles, config.styles, config.styles[config.start]);
 	// the still the frame was last seen as, until the live frame replaces it
 	const still =
 		poster === undefined
@@ -380,6 +411,20 @@ ${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</st
 const EXPORT_PAGE_RULES = `html, body, #root, .spool-page, .spool-screen { height: 100%; }
 body { margin: 0; background: #0e0e0e linear-gradient(Canvas, Canvas) top center / min(100%, var(--spool-screen-w)) 1px repeat-y; }
 .spool-screen { position: relative; z-index: 0; isolation: isolate; width: 100%; max-width: var(--spool-screen-w); margin: 0 auto; color: CanvasText; view-transition-name: spool-screen; }`;
+
+/** Every frame's sheet, as the runtime finds them; only the one `opening` names applies, the screen on show's. */
+export function frameSheets(
+	styles: ReadonlyMap<string, string>,
+	styleOf: Record<string, string>,
+	opening: string | undefined,
+): string {
+	return [...styles]
+		.map(
+			([resource, css]) =>
+				`<style data-spool-frame-style="${escapeHtml(frameOf(styleOf, resource))}" data-spool-style-resource="${escapeHtml(resource)}"${resource === opening ? "" : ' media="not all"'}>${escapeInlineStyle(css)}</style>`,
+		)
+		.join("\n");
+}
 
 /** The first frame a stylesheet is the closure of: the attribute the runtime falls back on. */
 function frameOf(styles: Record<string, string>, resource: string): string {
