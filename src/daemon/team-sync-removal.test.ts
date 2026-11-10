@@ -4,6 +4,7 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	rmdirSync,
 	rmSync,
 	statSync,
@@ -11,7 +12,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { fetchLocalCopy } from "../open";
 import { readRegistry } from "../registry";
 import { TEAM_ORIGIN } from "../team-sync-test-harness";
@@ -190,9 +191,16 @@ describe("a followed copy's folder removed", () => {
 });
 
 describe("deletes in a copy that stays whole", () => {
-	it("all reach the team, fifty at once", async () => {
+	it("all reach the team, fifty at once, while the daemon keeps writing its own files", async () => {
 		const { cloud, ben, lane } = await followedLane();
 		const parts = Array.from({ length: 50 }, (_, at) => `shared/ui/spool/part-${at}.tsx`);
+		// its own writes, as a canvas being worked in makes: a temp file renamed over one in .spool
+		const own = setInterval(() => {
+			const temp = join(lane, "design", ".spool", `work.json.${Date.now()}.tmp`);
+			writeFileSync(temp, "{}\n");
+			renameSync(temp, join(lane, "design", ".spool", "work.json"));
+		}, 300);
+		onTestFinished(() => clearInterval(own));
 
 		for (const path of parts) rmSync(join(lane, "design", path));
 

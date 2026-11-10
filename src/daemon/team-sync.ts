@@ -424,6 +424,8 @@ const GIT_WAITS = 5;
  * against, so a removal takes something it holds, while a file deleted beside design/ a while ago is forgotten.
  */
 const BESIDE_LOOK_MS = 15_000;
+/** What the team says about who is here, which never touches design/ and never waits on it. */
+const PRESENCE_FRAMES = new Set(["presences", "presence-hidden"]);
 /** How long the watcher's burst for one save is let settle before the files are read. */
 const SETTLE_MS = 50;
 /** A file this big must have been still for longer before it is read: it may be being written in many pieces. */
@@ -694,7 +696,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (watching) state.watched = Date.now();
 		// never into a folder that may be going, and never into a .spool made again: what changed meanwhile is written
 		// once the copy is judged whole
-		if (left || missing.size > 0 || !intact()) return;
+		if (left || missing.size > 0 || !present() || (live && !intact())) return;
 		writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
 		spoolStood = true;
 	};
@@ -705,6 +707,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const isIdle = () =>
 		caughtUp &&
 		!holding &&
+		judging === undefined &&
+		unheard.length === 0 &&
 		checking === undefined &&
 		inflight.size === 0 &&
 		outgoing.length === 0 &&
@@ -1084,6 +1088,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const check = (path: string) => {
 		if (holding) return;
 		if (!travels(path) || restoring.has(path) || !present() || isPaused()) return;
+		// a check that waited (for git, an answer, room) looks at the folder again: one going is judged, not written to
+		if (live && !intact()) {
+			changed.add(path);
+			return judgeSoon();
+		}
 		if (!ownWork && guard.busy() && !gitStale) {
 			deferred.add(path);
 			waitForGit();
@@ -1284,7 +1293,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			for (const path of paths) changed.add(path);
 			return judgeSoon();
 		}
-		if (!caughtUp) return;
+		// not caught up, nothing is checked till the catch-up is: what the team holds going still puts the team's frames off
+		if (!caughtUp) {
+			if (paths.some((path) => heldGone(path))) judgeSoon();
+			return hear();
+		}
 		for (const path of paths) {
 			// .spool and every other dot-folder are this machine's alone
 			const dotted = path.split("/").some((segment) => segment.startsWith("."));
@@ -1296,7 +1309,17 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		}
 		// a design/ removed whole may be named as nothing more than itself
 		if (vanished()) checkEverything();
+		hear();
 		wake();
+	};
+
+	/** A path the team holds, gone from disk: what a removal is made of. */
+	const heldGone = (path: string) => (state.files[path]?.hash ?? null) !== null && !existsSync(join(designDir, path));
+
+	/** What the team said while the watcher's burst settled, heard now that nothing is held. */
+	const hear = () => {
+		if (closed || judging !== undefined || missing.size > 0) return;
+		for (const data of unheard.splice(0)) handle(data);
 	};
 
 	/** A teammate's save, or the team's version of a path in a catch-up. */
@@ -1641,6 +1664,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const { message, bytes } = framed;
 		if (message.type === "presence") return presence.hear(message);
 		if (comments.hear(message, bytes)) return;
+		// nor, of what touches design/, while the watcher has news not yet looked at of a file the team holds gone: it may
+		// be a removal's first. Who is here and what they said never waits
+		if (live && settle !== undefined && !PRESENCE_FRAMES.has(String(message.type)) && [...changed].some(heldGone)) {
+			unheard.push(data);
+			return;
+		}
 		if (message.type === "presences") return presence.tick(message);
 		if (message.type === "presence-hidden") return presence.hidden(message);
 		if (message.type === "welcome") {
@@ -1949,7 +1978,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			designDir,
 			(filename) => {
 				// something more went while the copy waits to be judged: it waits for that to stop
-				if (judging !== undefined && (filename === null || !existsSync(join(designDir, filename)))) judgeSoon();
+				// (a temp file renamed, or this copy's own writes in .spool, never put it off)
+				if (judging !== undefined && (filename === null || heldGone(filename.split(sep).join("/")))) judgeSoon();
 				if (filename === null) return;
 				changed.add(filename.split(sep).join("/"));
 				settle ??= setTimeout(checkChanged, SETTLE_MS);
@@ -2371,6 +2401,8 @@ export function createTeamSync(deps: {
 			left.set(root, now);
 			const link = followedLink(root);
 			if (closed || link === undefined || !registered.includes(root) || held.has(root)) continue;
+			// intact as a removal leaves nothing: design/.gitignore too, which following it would write again into a
+			// removal stalled half way, making it look whole
 			if (now !== before || !standsIntact(root, true) || !existsSync(join(root, "design", "canvas.json"))) continue;
 			left.delete(root);
 			follow(root, link);
