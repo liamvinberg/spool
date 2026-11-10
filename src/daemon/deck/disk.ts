@@ -12,10 +12,12 @@ import {
 import { join } from "node:path";
 import { DECK_FILE, type DeckFileRead, parseDeckFile } from "../../deck/deck-file";
 import { type DeckFrame, settle } from "../../deck/layout";
-import type { DeckProblem, DeckRead, UnreadDeck } from "../../deck/wire";
+import { NOTES_FILE, notesByBeat } from "../../deck/notes";
+import type { DeckProblem, DeckRead, DeckSlide, UnreadDeck } from "../../deck/wire";
 import { isPagePath, isSafeName, pageUnder } from "../../page-path";
 import { realDesignDir, resolveDesignPath } from "../design-path";
 import { parseSidecar } from "../sidecar";
+import { readSlideSource } from "./slide-source";
 
 /**
  * A deck's page as the disk has it (spool#265), and the one way the daemon writes into it: a file written whole in a
@@ -129,12 +131,33 @@ export function deckReadOf(page: DeckPage): DeckRead | UnreadDeck | undefined {
 		...file.repeated.map((folder) => ({ kind: "repeated" as const, name: named(folder) })),
 		...unreadable.map((folder) => ({ kind: "unreadable" as const, name: named(folder) })),
 	];
+	const slides = deck.line.map((folder) => {
+		const { slide, unread, extra } = slideOf(page, folder);
+		if (unread) problems.push({ kind: "beats", name: slide.name });
+		if (extra) problems.push({ kind: "notes", name: slide.name });
+		return slide;
+	});
 	return {
 		page: page.page,
 		size: deck.talk,
-		slides: deck.line.map((folder) => ({ name: named(folder) })),
+		slides,
 		loose: deck.loose.map((spot) => ({ name: named(spot.folder), cell: { col: spot.col, row: spot.row } })),
 		problems,
+	};
+}
+
+/**
+ * One slide as its files say: the beats and live its source names, and its notes by beat. `unread` says its beats are
+ * not written so they can be read, `extra` that its notes run past its last beat.
+ */
+function slideOf(page: DeckPage, folder: string): { slide: DeckSlide; unread: boolean; extra: boolean } {
+	const dir = join(page.dir, folder);
+	const source = readSlideSource(readText(page.designDir, join(dir, "frame.tsx")) ?? "");
+	const { notes, extra } = notesByBeat(readText(page.designDir, join(dir, NOTES_FILE)) ?? null, source.beats.length);
+	return {
+		slide: { name: pageUnder(page.page, folder), beats: source.beats, live: source.live, notes },
+		unread: source.unread !== undefined,
+		extra,
 	};
 }
 

@@ -1,6 +1,7 @@
 import { applyRule } from "../../deck/changes";
 import { DECK_FILE, type DeckFile, deckFileBytes, newDeckFile, parseDeckFile, withAbsent } from "../../deck/deck-file";
 import { type Deck, placesOf, placesToWrite, reconcilePlan, settle } from "../../deck/layout";
+import { withBeatNotes } from "../../deck/notes";
 import type { DeckChange, DeckChangeAnswer, DeckFiles, DeckRead } from "../../deck/wire";
 import { isPagePath, pageParent, ROOT_PAGE } from "../../page-path";
 import { realDesignDir } from "../design-path";
@@ -21,6 +22,7 @@ import {
 	writeDesignFile,
 } from "./disk";
 import { commitSteps, recoverDeckChanges, type Step } from "./journal";
+import { readSlideSource } from "./slide-source";
 
 /**
  * Everything the daemon writes for a deck (spool#265), each kept whole: reconciling a page after any hand changed it,
@@ -110,6 +112,7 @@ export function changeDeck(root: string, change: DeckChange): DeckChangeAnswer |
 	const found = readPage(root, change.page) as DeckPage;
 	if (change.kind === "make") return make(found, change.slides ?? [], change.size);
 	if (change.kind === "restore") return restore(found, change);
+	if (change.kind === "notes") return notes(found, change);
 	// what any hand left unsettled is laid out first, as keeping in step rather than as this change, so the undo
 	// returns to a deck that is already laid out and stays where it lands
 	reconcileDeck(root, change.page);
@@ -150,6 +153,30 @@ function make(
 }
 
 /**
+ * One beat's words written into a frame's notes, the file made or removed as it needs. Its beats are counted from its
+ * source as the deck read counts them; nothing else on the page is read or written, so a write in flight elsewhere on
+ * it does not hold the words back.
+ */
+function notes(page: DeckPage, change: Extract<DeckChange, { kind: "notes" }>): DeckChangeAnswer | DeckRefusal {
+	const read = deckFileOf(page);
+	if (read === undefined) return refuse(404, `page "${page.page}" is no deck: it holds no ${"deck.json"}`);
+	if (read.kind !== "deck")
+		return refuse(409, `page "${page.page}"'s deck.json is not one this spool reads now, so it writes nothing there`);
+	if (!page.frames.some((frame) => frame.folder === change.frame))
+		return refuse(404, `no frame "${change.frame}" on page "${page.page}"`);
+	const source = readDesignFile(page.designDir, designPath(page, change.frame, "frame.tsx")) ?? "";
+	const beats = readSlideSource(source).beats.length;
+	const before = notesOf(page, change.frame);
+	const after = withBeatNotes(before, change.beat, beats, change.text);
+	const deck = page.bytes ?? null;
+	return commitFiles(
+		page,
+		{ deck, sidecars: {}, notes: { [change.frame]: before } },
+		{ deck, sidecars: {}, notes: { [change.frame]: after } },
+	);
+}
+
+/**
  * One change's files, written as one transaction: a trade's notes, then every place that moves, then `deck.json`. The
  * answer's undo and redo carry the files as the change found and left them, each refused once they hold something else.
  */
@@ -181,7 +208,7 @@ type Files = { deck: string | null; sidecars: Record<string, string | null>; not
 
 /** `from` to `to` written as one transaction, and the answer that undoes and redoes it. */
 function commitFiles(page: DeckPage, from: Files, to: Files): DeckChangeAnswer {
-	assertDeckBytes(to.deck);
+	if (to.deck !== from.deck) assertDeckBytes(to.deck);
 	const steps: Step[] = [
 		...Object.keys(to.notes).map((folder) => ({
 			path: designPath(page, folder, "notes.md"),

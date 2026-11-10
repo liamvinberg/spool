@@ -13,6 +13,9 @@ import { reconcileDeck } from "./change";
  */
 
 const tsx = (label: string) => `export default function Frame() {\n\treturn <p>${label}</p>;\n}\n`;
+/** a slide naming its beats, written out or not, and maybe live */
+const beatsTsx = (list: string, live = false) =>
+	`import { ui as spool } from "spool";\nconst NAMES = ["one", "two"] as const;\nexport default function Slide() {\n\tconst beat = spool.beats(${list});\n${live ? "\tspool.live();\n" : ""}\treturn <p>{beat.name}</p>;\n}\n`;
 const json = (value: unknown) => `${JSON.stringify(value, null, "\t")}\n`;
 const box = (x: number, y: number, w = 1280, h = 720) => ({ x, y, w, h });
 const QUIET = 900;
@@ -241,6 +244,56 @@ describe("a deck on disk", () => {
 		expect(fresh.files()["loose/notes.md"]).toBe("One's words.\n");
 	});
 
+	it("writes one beat's notes and undoes them to the exact bytes, with no frame reloaded or pictured for them", async () => {
+		const deck = deckProject();
+		writePageFrame(deck.root, "talk", "a", beatsTsx('["title", "price", "date"]'));
+		writePageFrame(deck.root, "talk", "b", tsx("b"));
+		await deck.change({ kind: "make", page: "talk", slides: ["a", "b"] });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await deck.app.request(`/api/p/${deck.name}/events`, { signal: controller.signal }));
+		expect((await events.next()).event).toBe("hello");
+		// what making the deck wrote is heard first
+		await events.drain(QUIET);
+		const notes = () => deck.files()["a/notes.md"];
+
+		// the file is made for the first words, a beat before them standing empty
+		const first = await deck.change({ kind: "notes", page: "talk", frame: "a", beat: 1, text: "Then the price." });
+		expect(notes()).toBe("-\n\nThen the price.\n");
+		expect(first.answer?.deck?.slides[0]?.notes).toEqual(["", "Then the price.", ""]);
+		const second = await deck.change({ kind: "notes", page: "talk", frame: "a", beat: 0, text: "Hold it up." });
+		expect(notes()).toBe("Hold it up.\n\nThen the price.\n");
+		// the same words again are no change, and no undo entry
+		const same = await deck.change({ kind: "notes", page: "talk", frame: "a", beat: 0, text: "Hold it up." });
+		expect(same.answer?.changed).toBe(false);
+		expect((await deck.change({ kind: "notes", page: "talk", frame: "ghost", beat: 0, text: "x" })).status).toBe(404);
+
+		// each undoes to the exact bytes, the first to no file at all, and redoes
+		expect((await deck.change(second.answer?.undo as DeckChange)).status).toBe(200);
+		expect(notes()).toBe("-\n\nThen the price.\n");
+		expect((await deck.change(first.answer?.undo as DeckChange)).status).toBe(200);
+		expect(notes()).toBeUndefined();
+		await deck.change(first.answer?.redo as DeckChange);
+		expect(notes()).toBe("-\n\nThen the price.\n");
+		// the words emptied, the file goes
+		await deck.change({ kind: "notes", page: "talk", frame: "a", beat: 1, text: "" });
+		expect(notes()).toBeUndefined();
+		// a loose frame's notes are written the same way, and a deck change of no kind spool knows is refused
+		expect((await deck.change({ kind: "notes", page: "talk", frame: "b", beat: 0, text: "Spare." })).status).toBe(
+			200,
+		);
+
+		// what the window heard: the deck, never the frame whose notes these are, so it neither reloads nor is shot again
+		const heard: unknown[] = [];
+		try {
+			for (;;) heard.push((await events.next(QUIET)).data);
+		} catch {
+			// quiet
+		}
+		expect(heard).toContainEqual({ kind: "deck", page: "talk" });
+		expect(heard.filter((event) => (event as { kind: string }).kind !== "deck")).toEqual([]);
+	});
+
 	it("keeps the talk in step through rename, move, trash, restore and duplicate", async () => {
 		const deck = deckProject();
 		for (const folder of ["a", "b", "c", "d"]) writePageFrame(deck.root, "talk", folder, tsx(folder));
@@ -283,7 +336,11 @@ describe("a deck on disk", () => {
 
 	it("reads every deck, says what is wrong with one, and tells the window a deck changed", async () => {
 		const deck = deckProject();
-		for (const folder of ["a", "b", "loose"]) writePageFrame(deck.root, "talk", folder, tsx(folder));
+		writePageFrame(deck.root, "talk", "a", beatsTsx('["title", "price", "date"] as const'));
+		writePageFrame(deck.root, "talk", "b", beatsTsx("NAMES", true));
+		writePageFrame(deck.root, "talk", "loose", tsx("loose"));
+		writeDesignFile(deck.root, "frames/talk/a/notes.md", "Hold it up.\n\n-\n\nSay the date.\n\nThank them.\n");
+		writeDesignFile(deck.root, "frames/talk/b/notes.md", "Words.\n");
 		writeDesignFile(deck.root, "frames/talk/deck.json", json({ slides: ["b", "ghost", "a", "b"] }));
 		writePageFrame(deck.root, "later", "x", tsx("x"));
 		writeDesignFile(deck.root, "frames/later/deck.json", json({ version: 9, slides: ["x"] }));
@@ -296,11 +353,22 @@ describe("a deck on disk", () => {
 				{
 					page: "talk",
 					size: { w: 1280, h: 720 },
-					slides: [{ name: "talk/b" }, { name: "talk/a" }],
+					slides: [
+						// beats it names by a constant are no beats the rail can know: it reads as one, and says why
+						{ name: "talk/b", beats: [], live: true, notes: ["Words."] },
+						{
+							name: "talk/a",
+							beats: ["title", "price", "date"],
+							live: false,
+							notes: ["Hold it up.", "", "Say the date.\n\nThank them."],
+						},
+					],
 					loose: [{ name: "talk/loose", cell: { col: 0, row: 1 } }],
 					problems: [
 						{ kind: "missing", name: "talk/ghost" },
 						{ kind: "repeated", name: "talk/b" },
+						{ kind: "beats", name: "talk/b" },
+						{ kind: "notes", name: "talk/a" },
 					],
 				},
 			],

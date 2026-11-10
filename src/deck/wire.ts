@@ -9,10 +9,22 @@ import type { Cell } from "./layout";
  * as `deck.json` names them; frames in a read are named by their path, as the canvas names them.
  */
 
-/** One slide of the talk, in order. The next tickets add its beats, whether it is live and its notes by beat. */
+/** One slide of the talk, in order. */
 export interface DeckSlide {
 	/** the frame's path, as the canvas names it */
 	readonly name: string;
+	/**
+	 * the beats its `ui.beats` call names, in order, read from its source; none when it names none (or names them so
+	 * they cannot be read without running it, a `beats` problem), and it then plays as one beat
+	 */
+	readonly beats: readonly string[];
+	/** whether it calls `ui.live()`: clicks reach it rather than advancing the talk */
+	readonly live: boolean;
+	/**
+	 * its `notes.md` by beat, one entry per beat it plays (at least one), "" for a beat with no words; paragraphs past
+	 * its last beat are the last beat's too
+	 */
+	readonly notes: readonly string[];
 }
 
 /** A frame on a deck's page that is not in the talk, and the cell it rests in. */
@@ -32,9 +44,12 @@ export interface DeckLoose {
  *   put back is kept in `design/.spool/deck-changes/`.
  * - `unparsed`: the page's `deck.json` does not parse. While it is being written that passes; one a merge left broken
  *   stays, and is somebody's to mend: nothing on the page is laid out or written until it parses.
+ * - `beats`: a slide's `ui.beats` list is not written out as a literal list of distinct names, so its beats cannot be
+ *   known before it runs; it reads as one beat.
+ * - `notes`: a slide's `notes.md` has more paragraphs than the slide has beats; the rest show with its last beat.
  */
 export type DeckProblem = {
-	readonly kind: "missing" | "repeated" | "unreadable" | "looping" | "interrupted" | "unparsed";
+	readonly kind: "missing" | "repeated" | "unreadable" | "looping" | "interrupted" | "unparsed" | "beats" | "notes";
 	readonly name: string;
 };
 
@@ -71,6 +86,17 @@ export type DeckChange =
 	| (DeckRule & { readonly page: string })
 	/** the page becomes a deck whose talk is these frames, in order (none: an empty talk) */
 	| { readonly kind: "make"; readonly page: string; readonly slides?: readonly string[]; readonly size?: Size }
+	/**
+	 * the words of one beat of a frame's notes, `beat` counted from 0: its `notes.md` is made, rewritten, or removed
+	 * once no beat has words left
+	 */
+	| {
+			readonly kind: "notes";
+			readonly page: string;
+			readonly frame: string;
+			readonly beat: number;
+			readonly text: string;
+	  }
 	/**
 	 * the deck's files put from `from` to `to`, and refused when they no longer hold `from`: an undo or redo never
 	 * writes over what any hand did since, and the same undo sent twice does nothing the second time
@@ -168,6 +194,10 @@ export function parseDeckChange(value: unknown): DeckChange | undefined {
 			if (slides === undefined || (value.size !== undefined && to === undefined)) return undefined;
 			return { kind: "make", page, slides, ...(to === undefined ? {} : { size: to }) };
 		}
+		case "notes":
+			return folder(value.frame) && whole(value.beat) && value.beat >= 0 && typeof value.text === "string"
+				? { kind: "notes", page, frame: value.frame, beat: value.beat, text: value.text }
+				: undefined;
 		case "restore": {
 			const from = deckFiles(value.from);
 			const to = deckFiles(value.to);
