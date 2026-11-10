@@ -2169,7 +2169,7 @@ const RailTreeRow = memo(function RailTreeRow({
 	springing: boolean;
 	/** the page is a deck (spool#265): its icon says so */
 	deck?: boolean;
-	/** a deck page's one action */
+	/** a deck page's one action, on the page in front */
 	onPresent?: ((page: string) => void) | undefined;
 	rename: RenameHandle | null;
 	onPress: (event: React.PointerEvent<HTMLElement>, row: RailRow) => void;
@@ -2236,7 +2236,7 @@ const RailTreeRow = memo(function RailTreeRow({
 				meta={page && !row.open && rename === null ? row.count : undefined}
 				// the row's menu, reachable without a right click (#229)
 				trailing={
-					rename !== null ? undefined : deck && page && onPresent !== undefined ? (
+					rename !== null ? undefined : deck && active && onPresent !== undefined ? (
 						<>
 							<PresentButton onPresent={() => onPresent(row.page)} />
 							{/* the menu still comes up under the pointer, beside Present rather than in its place */}
@@ -2249,7 +2249,7 @@ const RailTreeRow = memo(function RailTreeRow({
 					)
 				}
 				// an open deck's Present stands in view, as its one action
-				reveal={!(deck && page && onPresent !== undefined)}
+				reveal={!(deck && active && onPresent !== undefined)}
 				// something outside this rail is pointing at this page: the finder's pick, or
 				// a row in the agent rail naming a frame that is not on screen (#194)
 				data-page-lit={lit ? "" : undefined}
