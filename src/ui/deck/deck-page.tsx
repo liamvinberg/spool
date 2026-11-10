@@ -57,7 +57,13 @@ export interface DeckPage {
 	/** Whether the page in front is a deck, read when called: for handlers made before the deck was read. */
 	owns(): boolean;
 	/** What `DeckLayer` draws: the talk's size, where a held frame lands, and whether that is in the talk. */
-	readonly view: { readonly talk: Size; readonly landing: Box | null; readonly lifted: boolean };
+	/** `sending`: a drop's change is out, and its undo entry not yet in. */
+	readonly view: {
+		readonly talk: Size;
+		readonly landing: Box | null;
+		readonly lifted: boolean;
+		readonly sending: boolean;
+	};
 }
 
 interface Holding {
@@ -237,7 +243,11 @@ export function useDeckPage({
 	const talk = read?.size;
 	const landing = aim?.aim?.landing ?? null;
 	const lifted = aim?.aim?.band === true;
-	const view = useMemo(() => ({ talk: talk ?? { w: 1280, h: 720 }, landing, lifted }), [talk, landing, lifted]);
+	const sending = pending !== null;
+	const view = useMemo(
+		() => ({ talk: talk ?? { w: 1280, h: 720 }, landing, lifted, sending }),
+		[talk, landing, lifted, sending],
+	);
 
 	return { on, read, reads, numberOf, playOf, playTitleOf, hold, drop, cancel, walk, owns, view };
 }
@@ -251,7 +261,13 @@ export function DeckLayer({ deck, camera, store }: { deck: DeckPage; camera: Cam
 	if (!deck.on) return null;
 	return (
 		<>
-			<Band camera={camera} talk={deck.view.talk} lifted={deck.view.lifted} away={entered !== null} />
+			<Band
+				camera={camera}
+				talk={deck.view.talk}
+				lifted={deck.view.lifted}
+				sending={deck.view.sending}
+				away={entered !== null}
+			/>
 			<Landing camera={camera} landing={deck.view.landing} />
 		</>
 	);
@@ -262,7 +278,19 @@ export function DeckLayer({ deck, camera, store }: { deck: DeckPage; camera: Cam
  * the slides' labels to the same room under the slides, so it runs past the last slide, which is where a frame joins
  * the end. It is the panel's surface on the canvas, with no edge of its own; held over, it lifts one hover step.
  */
-function Band({ camera, talk, lifted, away }: { camera: CameraStore; talk: Size; lifted: boolean; away: boolean }) {
+function Band({
+	camera,
+	talk,
+	lifted,
+	sending,
+	away,
+}: {
+	camera: CameraStore;
+	talk: Size;
+	lifted: boolean;
+	sending: boolean;
+	away: boolean;
+}) {
 	const band = useRef<HTMLDivElement | null>(null);
 	useCameraFollow(
 		camera,
@@ -279,6 +307,7 @@ function Band({ camera, talk, lifted, away }: { camera: CameraStore; talk: Size;
 		<div
 			ref={band}
 			data-deck-band=""
+			data-deck-sending={sending ? "" : undefined}
 			aria-hidden="true"
 			className={cn(
 				"pointer-events-none absolute inset-x-0 bg-surface-panel transition-opacity duration-slow ease-out",

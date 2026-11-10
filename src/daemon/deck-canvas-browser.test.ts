@@ -10,7 +10,7 @@ const slide = (words: string) => `export default function Slide() {
 `;
 
 // spool#265: on a deck page the canvas's own snapping stands down, and a frame let go sends the deck's change
-it("trades a loose frame into the talk on a deck page, and undoes it on the one stack", {
+it("trades a loose frame into the talk and takes a slide out on a deck page, each one undo", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -21,6 +21,14 @@ it("trades a loose frame into the talk on a deck page, and undoes it on the one 
 		writeFrame(project.root, `talk/${folder}`, slide(folder));
 		writeDesignFile(project.root, `frames/talk/${folder}/frame.json`, JSON.stringify({ ...at, w: 1280, h: 720 }));
 	}
+	writeDesignFile(project.root, "frames/talk/b/notes.md", "What b's place says.\n");
+	const notesOf = (folder: string) => {
+		try {
+			return readFileSync(join(project.root, "design", "frames", "talk", folder, "notes.md"), "utf8");
+		} catch {
+			return null;
+		}
+	};
 	const deckFile = join(project.root, "design", "frames", "talk", "deck.json");
 	writeDesignFile(
 		project.root,
@@ -39,20 +47,38 @@ it("trades a loose frame into the talk on a deck page, and undoes it on the one 
 	await page.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
 	await expect.poll(() => page.locator('[data-slide-number="2"]').textContent()).toBe("2");
 
-	// the loose frame's middle, held over the middle of the second slide
-	const from = await pagePointOf(page, { x: 640, y: 1360 + 360 });
-	const to = await pagePointOf(page, { x: 1440 + 640, y: 360 });
-	await page.mouse.move(from.x, from.y);
-	await page.mouse.down();
-	await page.mouse.move(to.x, to.y, { steps: 12 });
-	await page.locator("[data-deck-landing]").waitFor();
-	await page.mouse.up();
+	/** hold the frame whose middle is at `from` and let go with its middle at `to`, in page pixels */
+	const drag = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
+		const start = await pagePointOf(page, from);
+		const end = await pagePointOf(page, to);
+		await page.mouse.move(start.x, start.y);
+		await page.mouse.down();
+		await page.mouse.move(end.x, end.y, { steps: 12 });
+		await page.locator("[data-deck-landing]").waitFor();
+		const answered = page.waitForResponse((response) => response.url().endsWith("/deck"));
+		await page.mouse.up();
+		await answered;
+		// and its undo entry is in
+		await page.locator("[data-deck-band]:not([data-deck-sending])").waitFor();
+	};
+
+	// the loose frame, onto the middle of the second slide: they trade, and the place's notes stay with the place
+	await drag({ x: 640, y: 1360 + 360 }, { x: 1440 + 640, y: 360 });
 	await expect.poll(slides).toEqual(["a", "x"]);
-	// the answer is in once the frame's label numbers it, and with it the undo entry
+	expect(notesOf("x")).toBe("What b's place says.\n");
 	await page.locator('[data-frame-label="talk/x"] [data-slide-number="2"]').waitFor();
 	// a slide's size is the talk's: no resize handles on it
 	expect(await page.locator("[data-handle]").count()).toBe(0);
 
+	// the first slide, dragged down off the band into the empty cell beside b: it leaves the talk
+	await drag({ x: 640, y: 360 }, { x: 1440 + 640, y: 1360 + 360 });
+	await expect.poll(slides).toEqual(["x"]);
+	await page.locator('[data-frame-label="talk/x"] [data-slide-number="1"]').waitFor();
+
+	await page.keyboard.press("Control+z");
+	await expect.poll(slides).toEqual(["a", "x"]);
+	await page.locator('[data-frame-label="talk/a"] [data-slide-number="1"]').waitFor();
 	await page.keyboard.press("Control+z");
 	await expect.poll(slides).toEqual(["a", "b"]);
+	await expect.poll(() => notesOf("b")).toBe("What b's place says.\n");
 });
