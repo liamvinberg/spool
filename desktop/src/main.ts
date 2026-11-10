@@ -301,6 +301,43 @@ function holdingPage(heading: string, detail: string): string {
 	return `data:text/html;charset=utf-8,${encodeURIComponent(body)}`;
 }
 
+/**
+ * The page the window shows while it waits on a daemon: the canvas's boot
+ * curtain drawn before the canvas exists (task 568), the mark winding beside one
+ * line in the machine's voice. It stands where Home's curtain will, in the middle
+ * of the page beside the 208px sidebar and under the 44px tabs, holds back for
+ * the same 160ms gate, and keys its winding to the clock, so when Home takes over
+ * the mark stays put, the turn carries on and only the words change.
+ */
+function waitingPage(line: string): string {
+	const mark = readFileSync(join(__dirname, "../assets/update-mark.svg"), "utf8").replace(/<title>.*?<\/title>/, "");
+	const body = `<!doctype html><meta charset="utf-8"><title>Spool</title><style>
+		html,body{height:100%;margin:0}
+		body{background:#0e0e0e;color:#94918d;font:400 12px/16px "Fragment Mono",ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-font-smoothing:antialiased}
+		main{position:fixed;left:calc(50% + 104px);top:calc(50% - 18px);transform:translate(-50%,-50%);width:180px;display:flex;align-items:center;gap:10px;animation:in 180ms ease-out 160ms both}
+		@media (max-width:720px){main{left:calc(50% + 32px)}}
+		.mark{position:relative;width:19px;height:25px;flex-shrink:0}
+		.mark svg{position:absolute;inset:0;width:100%;height:100%}
+		.mark svg:first-child{opacity:.14}
+		.mark svg:last-child{animation:wind 1500ms ease-in-out infinite alternate}
+		.line{white-space:nowrap}
+		.count{color:#6c6a67;opacity:0;transition:opacity 260ms cubic-bezier(.22,.61,.36,1)}
+		@keyframes in{from{opacity:0}}
+		@keyframes wind{from{clip-path:inset(100% 0 0 0)}to{clip-path:inset(0 0 0 0)}}
+	</style><main role="status"><span class="mark">${mark}${mark}</span><span class="line">${escapeHtml(line)}<span class="count"></span></span></main>
+	<script>
+		document.querySelector(".mark svg:last-child").style.animationDelay = "-" + (Date.now() % 3000) + "ms";
+		const from = Date.now(), count = document.querySelector(".count");
+		setInterval(() => {
+			const seconds = Math.floor((Date.now() - from) / 1000);
+			if (seconds < 3) return;
+			count.textContent = " \u00b7 " + seconds + "s";
+			count.style.opacity = 1;
+		}, 250);
+	</script>`;
+	return `data:text/html;charset=utf-8,${encodeURIComponent(body)}`;
+}
+
 /** These strings carry a filesystem path, and a path can hold anything. */
 function escapeHtml(text: string): string {
 	return text.replace(/[&<>]/g, (character) => `&#${character.codePointAt(0)};`);
@@ -507,9 +544,7 @@ async function showCanvas(raise: boolean): Promise<void> {
 		// Spool the person just opened. A daemon that will not exit is adopted after
 		// all, and the tray says which version it is on.
 		log("daemon", "replacing", `pid=${current.pid}`, `v${current.version}`, `bundle=v${version()}`);
-		void showing.loadURL(
-			holdingPage("Updating Spool", `The daemon was on ${current.version}. This copy carries ${version()}.`),
-		);
+		void showing.loadURL(waitingPage(`updating spool to ${version()}`));
 		const stopped = await daemon.stop(current.pid);
 		if (!stopped) {
 			log("daemon", "FAIL did not exit", `pid=${current.pid}`, "adopting it as it is");
@@ -517,7 +552,7 @@ async function showCanvas(raise: boolean): Promise<void> {
 			return;
 		}
 	} else {
-		void showing.loadURL(holdingPage("Starting Spool", "The canvas opens as soon as the daemon answers."));
+		void showing.loadURL(waitingPage("starting spool"));
 	}
 	if (shuttingDown) return;
 	const started = await startBundled();
@@ -694,9 +729,7 @@ async function bringBack(showing: BrowserWindow): Promise<void> {
 		missed = 0;
 		if (shuttingDown || showing.isDestroyed()) return;
 		// off the daemon's address first, or pointing the window back at it is taken for already there
-		await showing
-			.loadURL(holdingPage("Spool stopped", "Starting it again. The canvas opens as soon as it answers."))
-			.catch(() => {});
+		await showing.loadURL(waitingPage("restarting spool")).catch(() => {});
 		await openCanvas(false);
 		if (daemon.gone(DIRECTORY)) gaveUp = true;
 	} finally {
@@ -734,9 +767,7 @@ async function connectRemote(on: boolean): Promise<void> {
 			return;
 		}
 		showing.setTitle(NAME);
-		await showing
-			.loadURL(holdingPage("Opening Spool", "The canvas on this Mac opens as soon as its daemon answers."))
-			.catch(() => {});
+		await showing.loadURL(waitingPage("opening spool")).catch(() => {});
 		gaveUp = false;
 		await openCanvas(false);
 	} finally {
@@ -795,7 +826,7 @@ function showRemote(showing: BrowserWindow): void {
 	const page =
 		status.state === "failed"
 			? holdingPage(`Can't reach ${remote.name}`, `${sentence(status.reason)}. Trying again.`)
-			: holdingPage(`Connecting to ${remote.name}`, "The canvas opens as soon as it answers.");
+			: waitingPage(`connecting to ${remote.name}`);
 	if (showing.webContents.getURL() !== page) void showing.loadURL(page).catch(() => {});
 }
 
