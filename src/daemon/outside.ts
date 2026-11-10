@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { HARNESSES, type Harness, type Terminal } from "../outside/harness";
 import { type Connection, connection } from "../outside/install";
@@ -12,9 +12,11 @@ import {
 	sessionLive,
 	startSession,
 } from "../outside/session";
+import { localCopyOf } from "../team-project";
 import { PRESENCE_AGENT_WORK, PRESENCE_NAME, type PresenceAgent, readPresenceAgent } from "../team-sync-protocol";
 import { realDesignDir } from "./design-path";
 import { frameDirectories } from "./projection";
+import { followedLink } from "./team-sync";
 
 /**
  * Agents working in a project from outside spool, as the daemon keeps them (task 531).
@@ -115,6 +117,8 @@ export function createOutside({
 	run?: (command: string, args: readonly string[]) => Promise<void>;
 }): Outside {
 	const sessions = new Map<string, OutsideSession>();
+	/** the checkout each session's files are in, when it is another copy of its project's team project */
+	const checkouts = new Map<string, string>();
 	const noticed = new Map<string, Map<Harness, Noticed>>();
 	const pending = new Map<string, ReturnType<typeof setTimeout>>();
 	const memoryFile = join(spoolDir, "outside.json");
@@ -144,6 +148,24 @@ export function createOutside({
 			)
 				best = root;
 		return best;
+	};
+
+	/**
+	 * The project a session at `path` is drawn on, and the folder its files are in: the registered root holding it,
+	 * or else, walking up to the checkout's `spool.json`, a registered copy of the team project it names. A sibling
+	 * checkout of a team project holds the same frames by the same names, a second behind.
+	 */
+	const homeOf = (path: string): { root: string; checkout: string } | null => {
+		const root = rootOf(path);
+		if (root !== null) return { root, checkout: root };
+		for (let at = path; ; at = dirname(at)) {
+			const link = localCopyOf(at);
+			if (link !== undefined) {
+				const copy = roots().find((one) => followedLink(one)?.url === link.url);
+				return copy === undefined ? null : { root: copy, checkout: at };
+			}
+			if (dirname(at) === at) return null;
+		}
 	};
 
 	/** each root's frames by folder, read again at most every two seconds */
@@ -263,6 +285,7 @@ export function createOutside({
 		for (const [id, session] of sessions)
 			if (!sessionLive(session, at)) {
 				sessions.delete(id);
+				checkouts.delete(id);
 				touched.add(session.root);
 			}
 		for (const root of touched) tell(root, false);
@@ -282,15 +305,20 @@ export function createOutside({
 				const cwd = typeof payload.cwd === "string" ? payload.cwd : null;
 				const input = payload.tool_input as Payload | undefined;
 				const path = typeof input?.file_path === "string" ? input.file_path : null;
-				const root = (cwd === null ? null : rootOf(cwd)) ?? (path === null ? null : rootOf(path));
-				if (root === null) return false;
+				const home = (cwd === null ? null : homeOf(cwd)) ?? (path === null ? null : homeOf(path));
+				if (home === null) return false;
 				// nothing to show of a session that only ends
 				if (event === "SessionEnd") return true;
-				session = startSession(id, harness, root, terminal, at);
+				session = startSession(id, harness, home.root, terminal, at);
+				if (home.checkout !== home.root) checkouts.set(id, home.checkout);
 			}
-			const next = foldHook({ ...session, terminal }, event, payload, at, frameAtFor(session.root));
-			if (next === null) sessions.delete(id);
-			else sessions.set(id, next);
+			const frameAt = frameAtFor(checkouts.get(id) ?? session.root);
+			const next = foldHook({ ...session, terminal }, event, payload, at, frameAt);
+			if (next !== null) sessions.set(id, next);
+			else {
+				sessions.delete(id);
+				checkouts.delete(id);
+			}
 			// a connected harness is not one to ask about any more
 			noticed.get(session.root)?.delete(harness);
 			tell(session.root, next === null || next.state !== "working" || session.state !== "working");

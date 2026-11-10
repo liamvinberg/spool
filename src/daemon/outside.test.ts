@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { hookToken } from "../outside/install";
+import { parseProjectLink, writeProjectLink } from "../team-project";
 import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
 import { createOutside, type OutsideView } from "./outside";
 
@@ -36,6 +37,49 @@ describe("hooks from a connected harness", () => {
 		expect(view.sessions).toMatchObject([
 			{ id: "claude:s1", state: "working", hands: [{ who: "claude", act: "editing", frame: "cart" }] },
 		]);
+	});
+});
+
+describe("an agent in another checkout of a team project open here", () => {
+	it("draws on the copy open here, its frames read from its own checkout, unless a registered root holds it", () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const team = parseProjectLink("https://spool.page/devosurf/shop");
+		if (team === undefined) throw new Error("bad link");
+		const open = makeProject(spoolDir);
+		writeProjectLink(open.root, team);
+		// a worktree of the same repo, with its own copy of design/ and a frame that has not reached this copy yet
+		const sibling = makeTempDir();
+		writeProjectLink(sibling, team);
+		writeFrame(sibling, "receipt", FRAME);
+		const elsewhere = makeTempDir();
+		writeProjectLink(elsewhere, { ...team, url: "https://spool.page/devosurf/other", project: "other" });
+		const roots = [open.root];
+		const keeper = createOutside({ spoolDir, roots: () => roots, publish: () => {}, env: { HOME: home } });
+		onTestFinished(() => keeper.close());
+		const edit = (id: string, cwd: string) =>
+			keeper.hook(
+				"pi",
+				{
+					session_id: id,
+					cwd: join(cwd, "src"),
+					hook_event_name: "PreToolUse",
+					tool_name: "edit",
+					tool_input: { path: join(cwd, "design", "frames", "receipt", "frame.tsx") },
+				},
+				{ name: null, bundle: null },
+			);
+
+		expect(edit("s1", sibling)).toBe(true);
+		expect(keeper.view(open.root).sessions).toMatchObject([
+			{ id: "pi:s1", hands: [{ who: "pi", act: "editing", frame: "receipt" }] },
+		]);
+		expect(edit("s2", elsewhere)).toBe(false);
+
+		roots.push(sibling);
+		expect(edit("s3", sibling)).toBe(true);
+		expect(keeper.view(sibling).sessions.map((one) => one.id)).toEqual(["pi:s3"]);
+		expect(keeper.view(open.root).sessions.map((one) => one.id)).toEqual(["pi:s1"]);
 	});
 });
 
