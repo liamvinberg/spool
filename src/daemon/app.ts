@@ -688,6 +688,8 @@ export function createDaemonApp({
 			projectShares.keeping(registeredRoots());
 			iconKeeping();
 		}
+		// decks are kept from the moment their switch is flipped in Settings, and no longer once it is off
+		if (event.kind === "settings") deckKeeper.keeping(registeredRoots());
 		for (const listener of appListeners) listener(event);
 	};
 	// a project's icon changed on disk, by whatever hand: its card takes the new one on every page

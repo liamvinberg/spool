@@ -187,9 +187,12 @@ describe("a deck on disk", () => {
 			expect(done.answer?.changed).toBe(true);
 			const after = deck.files();
 			expect(after).not.toEqual(before);
+			// a change lands where reconcile would leave it, so nothing moves it after
+			expect(reconcileDeck(deck.root, "talk")).toEqual([]);
 			const undone = await deck.change(done.answer?.undo as DeckChange);
 			expect(undone.status).toBe(200);
 			expect(deck.files()).toEqual(before);
+			expect(reconcileDeck(deck.root, "talk")).toEqual([]);
 			await deck.change(done.answer?.redo as DeckChange);
 			expect(deck.files()).toEqual(after);
 		}

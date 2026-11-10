@@ -84,10 +84,11 @@ export function createDeckKeeper(deps: {
 
 	return {
 		watch,
-		/** The projects to keep, as the registry has them now. */
+		/** The projects to keep, as the registry has them now: none while the experiment is off. */
 		keeping(roots: readonly string[]): void {
-			for (const root of [...watches.keys()]) if (!roots.includes(root)) stop(root);
-			for (const root of roots) watch(root);
+			const wanted = deps.on() ? roots : [];
+			for (const root of [...watches.keys()]) if (!wanted.includes(root)) stop(root);
+			for (const root of wanted) watch(root);
 		},
 		/** Every deck of a project laid out now, as a read of its decks first does. */
 		settleAll(root: string): void {
