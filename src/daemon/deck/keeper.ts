@@ -5,6 +5,7 @@ import type { DeckProblem } from "../../deck/wire";
 import { pageParent, pageUnder, ROOT_PAGE } from "../../page-path";
 import { realDesignDir } from "../design-path";
 import type { ChangeEvent } from "../events";
+import { parseSidecar } from "../sidecar";
 import { reconcileDeck } from "./change";
 import { deckFileOf, deckFramesOf, deckPages, holdsDeck, readDesignFile, readPage } from "./disk";
 import { recoverDeckChanges } from "./journal";
@@ -23,7 +24,7 @@ import { recoverDeckChanges } from "./journal";
 export const DECK_QUIET_MS = 300;
 
 /**
- * When another hand keeps putting a frame back where this spool does not lay it (another machine whose frames differ,
+ * When another hand keeps putting a frame back, placed, where this spool does not lay it (another machine whose frames differ,
  * another spool's layout), the two would write over each other for as long as both run. The same rewrite of the same
  * frame this many times inside this window, with the deck's file unchanged, is taken for that, and the page is left
  * alone until its `deck.json` changes or the daemon restarts.
@@ -82,6 +83,11 @@ export function createDeckKeeper(deps: {
 			const at = now();
 			const fought: string[] = [];
 			for (const { folder, from, to } of reconcileDeck(root, page)) {
+				// only a place written over is a fight: a size stated again, as an agent states a slide's, is not
+				if (!placed(from)) {
+					fight.delete(folder);
+					continue;
+				}
 				const rewrite = `${from ?? ""}\0${to}`;
 				const last = fight.get(folder);
 				const count =
@@ -197,6 +203,16 @@ export function createDeckKeeper(deps: {
 }
 
 export type DeckKeeper = ReturnType<typeof createDeckKeeper>;
+
+/** Whether a sidecar's bytes place their frame, rather than only size it or say nothing. */
+function placed(bytes: string | undefined): boolean {
+	if (bytes === undefined) return false;
+	try {
+		return parseSidecar(JSON.parse(bytes)).kind === "placed";
+	} catch {
+		return false;
+	}
+}
 
 /**
  * The experiment switched in `config.json` by whatever hand, Settings or `spool experiments`: `changed` is called on

@@ -342,6 +342,12 @@ describe("a deck on disk", () => {
 		const deck = deckProject();
 		for (const folder of ["a", "b"]) writePageFrame(deck.root, "talk", folder, tsx(folder));
 		await deck.change({ kind: "make", page: "talk", slides: ["a", "b"] });
+		// an agent stating a slide's size again and again is no fight: it is laid out every time
+		for (let round = 0; round < 4; round++) {
+			writeDesignFile(deck.root, "frames/talk/a/frame.json", json({ w: 1280, h: 720 }));
+			await vi.waitFor(() => expect(deck.sidecar("a")).toEqual(box(0, 0)), { timeout: 5_000 });
+		}
+		expect((await deck.decks()).decks[0]?.problems).toEqual([]);
 		// another machine, missing a frame this one has, keeps putting b in the slot it lays b in
 		const theirs = json(box(0, 0));
 		for (let round = 0; round < 3; round++) {
