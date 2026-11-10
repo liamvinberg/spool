@@ -5798,6 +5798,7 @@ function CanvasField({
 						onGeometry: setFrameGeometry,
 						onGeometryPreview: previewFrameGeometry,
 						onGeometryCommit: commitFrameGeometry,
+						deck: deckKit,
 						// off, frames still run on their code's values: only the rail's section goes
 						knobs: experimentOn("knobs")
 							? {

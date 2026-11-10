@@ -3,6 +3,7 @@ import { pageName } from "../../page-path";
 import type { Geometry, RungRead } from "../api";
 import { readRungs } from "../api";
 import { cn } from "../cn";
+import { DeckFrameSections, type DeckPropertiesKit } from "../deck/deck-properties";
 import { Menu, MenuItem } from "../primitives/overlays";
 import { Bar, ScrollArea, Section } from "../primitives/structure";
 import { type KnobsActs, KnobsSection } from "./knobs-section";
@@ -72,6 +73,8 @@ export interface PropertiesActs {
 	onGeometryCommit: (name: string, before: Geometry) => void;
 	/** the held frame's knobs (#220), under its geometry */
 	knobs?: KnobsActs | undefined;
+	/** a frame on a deck page (spool#265): its place is the deck's, and a slide's size and notes the talk's */
+	deck?: DeckPropertiesKit | undefined;
 }
 
 export function PropertiesRail({
@@ -201,7 +204,16 @@ function Body({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
 		return <Empty says={`${held.kind === "elements" ? held.count : 1} elements`} />;
 	return (
 		<>
-			<FrameGeometry key={name} name={name} geometry={geometry} acts={acts} />
+			{acts.deck === undefined ? (
+				<FrameGeometry key={name} name={name} geometry={geometry} acts={acts} />
+			) : (
+				<DeckFrameSections
+					kit={acts.deck}
+					name={name}
+					geometry={geometry}
+					ordinary={(only) => <FrameGeometry key={name} name={name} geometry={geometry} acts={acts} only={only} />}
+				/>
+			)}
 			{acts.knobs === undefined ? null : <KnobsSection frame={name} acts={acts.knobs} />}
 		</>
 	);
@@ -304,7 +316,18 @@ const AXES = [
 	{ key: "h", of: "size" },
 ] as const;
 
-function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geometry; acts: PropertiesActs }) {
+function FrameGeometry({
+	name,
+	geometry,
+	acts,
+	only,
+}: {
+	name: string;
+	geometry: Geometry;
+	acts: PropertiesActs;
+	/** one section of the two: a deck's frame takes its place from the deck */
+	only?: "size" | undefined;
+}) {
 	// what the scrub started from: a whole drag is one write and one undo slot,
 	// exactly as a corner drag is, so the file waits for the pointer to lift
 	const scrubbed = useRef<Geometry | null>(null);
@@ -333,7 +356,7 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 	};
 	return (
 		<>
-			{(["position", "size"] as const).map((section) => (
+			{(only === undefined ? (["position", "size"] as const) : [only]).map((section) => (
 				<Section key={section} title={section} meta="frame.json">
 					{AXES.filter((axis) => axis.of === section).map((axis) => (
 						<Row
