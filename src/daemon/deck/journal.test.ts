@@ -52,7 +52,7 @@ describe.skipIf(process.getuid?.() === 0)("a deck change written as one transact
 });
 
 describe("a deck change the daemon died inside", () => {
-	it("is put back where its files still hold what it found or wrote, and kept where a hand wrote since", () => {
+	it("is put back whole while its files hold what it found or wrote, and left whole where a hand wrote since", () => {
 		const disk = fixture();
 		// died after the notes traded and before deck.json: as a crash leaves it
 		writeFileSync(join(disk.designDir, "frames/talk/x/notes.md"), "WORDS OF S\n");
@@ -65,13 +65,14 @@ describe("a deck change the daemon died inside", () => {
 		expect(disk.read("frames/talk/s/notes.md")).toBe("WORDS OF S\n");
 		expect(disk.records()).toEqual([]);
 
-		// the same, but a hand has written x's notes since: those words stand, the rest goes back, the record stays
+		// the same, but a hand has written x's notes since: nothing goes back, so no note is left on the wrong frame,
+		// and the record stays
 		writeFileSync(join(disk.designDir, "frames/talk/x/notes.md"), "NEW WORDS\n");
 		writeFileSync(join(disk.designDir, "frames/talk/s/notes.md"), "WORDS OF X\n");
 		writeFileSync(join(disk.designDir, ".spool/deck-changes/two.json"), record);
 		expect(recoverDeckChanges(disk.designDir)).toEqual(["talk"]);
 		expect(disk.read("frames/talk/x/notes.md")).toBe("NEW WORDS\n");
-		expect(disk.read("frames/talk/s/notes.md")).toBe("WORDS OF S\n");
+		expect(disk.read("frames/talk/s/notes.md")).toBe("WORDS OF X\n");
 		expect(disk.records()).toEqual(["two.json"]);
 	});
 

@@ -58,10 +58,10 @@ export function commitSteps(designDir: string, page: string, steps: readonly Ste
 }
 
 /**
- * Every change the daemon died inside, put back as it was before it: a file is put back where it still holds the
- * bytes of before or after the change, or is gone, so a hand's write since is never overwritten. A record whose files
- * all stand as before goes; one a hand has written over since stays, as the copy of the words it held, and its page
- * is answered.
+ * Every change the daemon died inside, put back as it was before it, whole or not at all: only while every one of its
+ * files still holds the bytes of before or after the change, or is gone, so a hand's write since is never overwritten
+ * and a change is never left half put back. One a hand has written over since stays as it is, its record kept as the
+ * copy of the words it held, and its page is answered.
  */
 export function recoverDeckChanges(designDir: string, log?: (line: string) => void): string[] {
 	const dir = join(designDir, RECORDS);
@@ -83,19 +83,19 @@ export function recoverDeckChanges(designDir: string, log?: (line: string) => vo
 			rmSync(file, { force: true });
 			continue;
 		}
+		// all or nothing: put back where a hand wrote one of its files since, and the rest would no longer match it
 		let whole = true;
-		for (const step of [...record.steps].reverse()) {
-			try {
+		const back: Step[] = [];
+		try {
+			for (const step of record.steps) {
 				const now = readDesignFile(designDir, step.path);
 				if (now === step.before) continue;
-				if (now !== step.after && now !== null) {
-					whole = false;
-					continue;
-				}
-				putBack(designDir, step);
-			} catch {
-				whole = false;
+				if (now === step.after || now === null) back.push(step);
+				else whole = false;
 			}
+			if (whole) for (const step of back.reverse()) putBack(designDir, step);
+		} catch {
+			whole = false;
 		}
 		if (whole) {
 			rmSync(file, { force: true });
