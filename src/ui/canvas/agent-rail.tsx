@@ -101,6 +101,8 @@ export interface AgentRequest {
 	prepared?: { intent: string; text: string; selection: readonly SelectionEntry[] };
 	/** A comment sent from its card (spool#172): a chip in the composer, which runs nothing until the person sends. */
 	comment?: Chip;
+	/** What the composer asks while it waits for the first words: New presentation's "What's the talk about?" */
+	hint?: string;
 }
 
 /**
@@ -462,6 +464,7 @@ export function AgentRail({
 							finished={threads.finished}
 							answering={asking?.kind === "ask" ? asking.request : null}
 							request={active && request?.thread === open ? request.id : undefined}
+							hint={active && request?.thread === open ? request.hint : undefined}
 							strip={stripOf(
 								Object.values(holding.prepared ?? {}).length
 									? Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection)

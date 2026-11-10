@@ -199,6 +199,7 @@ export function Composer({
 	thread,
 	ready,
 	request,
+	hint,
 	permissions,
 	menu,
 	onMenu,
@@ -230,6 +231,11 @@ export function Composer({
 	thread: string;
 	ready: boolean;
 	request: string | undefined;
+	/**
+	 * What the request handing the person here asks them (spool#265's "What's the talk about?"): the field says it
+	 * instead of what it is for, until the next request or the first thing said.
+	 */
+	hint?: string | undefined;
 	permissions: PermissionDeck | undefined;
 	menu: "models" | "permissions" | null;
 	onMenu: (menu: "models" | "permissions" | null) => void;
@@ -295,6 +301,9 @@ export function Composer({
 	const currentThread = useRef(thread);
 	currentThread.current = thread;
 	const field = useRef<HTMLTextAreaElement>(null);
+	/** the request something was said to, whose hint has been answered */
+	const [spoken, setSpoken] = useState<string | undefined>(undefined);
+	const asked = request !== undefined && spoken !== request ? hint : undefined;
 	useEffect(() => {
 		if (!request) return;
 		let second = 0;
@@ -374,6 +383,7 @@ export function Composer({
 		// alone (#234): a rail whose threads are still arriving has nowhere to put them, and
 		// a box cleared over that is a sentence gone with no way back to it
 		if (!took) return false;
+		setSpoken(request);
 		onDraft("");
 		onAttach(() => []);
 		return true;
@@ -399,7 +409,7 @@ export function Composer({
 	const says =
 		comments.length > 0 && answering === null
 			? `Enter to deal with ${comments.length === 1 ? "it" : "them"}, or say what to do`
-			: fieldSays(answering, finished, cutting);
+			: ((answering === null ? asked : undefined) ?? fieldSays(answering, finished, cutting));
 	const file = useRef<HTMLInputElement>(null);
 	const showRing = context !== null && context >= CONTEXT_SHOWN_AT;
 	// what each control in the footer last drew, so one on its way out still draws it
