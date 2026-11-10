@@ -160,7 +160,8 @@ it("wears the bar for good, plays a frame at its own size, centred, says the siz
 	await played.mouse.move(edge.x + 110, edge.y, { steps: 8 });
 	await played.mouse.up();
 	await expect.poll(measured, { timeout: 30_000 }).toBe("610");
-	expect(await size.textContent()).toBe("610 × 844");
+	// the words of the stops it crossed have gone
+	await expect.poll(() => size.textContent(), { timeout: 5_000 }).toBe("610 × 844");
 	// a double-click on the edge springs it back to its own size
 	const pulled = await screen.boundingBox();
 	await played.mouse.dblclick((pulled?.x ?? 0) + (pulled?.width ?? 0) + 6, edge.y);
