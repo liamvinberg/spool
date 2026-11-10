@@ -64,6 +64,7 @@ import {
 } from "../api";
 import { type DeckEntry, tellDeckChange, tellFrameChange } from "../deck/deck-api";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
+import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
 import { isLetGo } from "../gone-projects";
@@ -1936,10 +1937,15 @@ function CanvasField({
 						record: (entry: DeckEntry) => deckLive.current.record(entry),
 						say: (message: string) => setNotice({ kind: "error", message }),
 						made: (page: string) => void deckLive.current.made(page),
+						capture: (page: string, frame: string) => deckLive.current.capture(page, frame),
 					},
 		[project, deckPage.reads],
 	);
-	const deckLive = useRef({ record: (_entry: DeckEntry) => {}, made: async (_page: string) => {} });
+	const deckLive = useRef({
+		record: (_entry: DeckEntry) => {},
+		made: async (_page: string) => {},
+		capture: (_page: string, _frame: string): Promise<CapturedFrame> => Promise.reject(new Error("not yet")),
+	});
 
 	const nudge = useCallback(
 		(dx: number, dy: number) => {
@@ -3043,6 +3049,12 @@ function CanvasField({
 			await refetchFrames();
 			activatePageFromTree(page);
 			setAgentRequest({ id: crypto.randomUUID(), thread: deck.get().open, hint: "What's the talk about?" });
+		},
+		// a slide for the talk's PDF (spool#275) is captured as the canvas draws it, so its page is opened first
+		capture: async (page, frame) => {
+			if (store.get().activePage !== page) activatePageFromTree(page);
+			await onCanvas(store, frame);
+			return captureFrame(frame);
 		},
 	};
 	/** ⏎, ⌘↓ and a click on a row of the list: inside a page, as into a frame (#265) */
@@ -6300,6 +6312,15 @@ function CanvasField({
 							at={menu}
 							project={project}
 							capture={captureFrame}
+							talk={
+								deckPage.read === undefined || deckPage.read.slides.length === 0
+									? undefined
+									: {
+											project,
+											page: deckPage.read.page,
+											slides: deckPage.read.slides.map((slide) => slide.name),
+										}
+							}
 							onClose={() => setMenu(null)}
 							tidyLabel={selected.length > 1 ? `Tidy ${selected.length} frames` : "Tidy page"}
 							onTidy={() => {

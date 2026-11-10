@@ -52,6 +52,8 @@ export interface RailMenuActions {
 	readonly markAllSeen: () => void;
 	/** Share the page with outsiders: offered only where this project can share. */
 	readonly share: () => void;
+	/** a deck page's talk as a PDF or one HTML file (spool#275), offered on a deck page's row */
+	readonly exportTalk: () => void;
 }
 
 type Entry =
@@ -91,6 +93,8 @@ export function menuEntries(
 		shareable?: boolean;
 		/** whether decks are on (spool#265): New presentation stands beside New page */
 		presentations?: boolean;
+		/** whether the page is a deck with a talk to export (spool#275) */
+		talk?: boolean;
 	},
 ): readonly Entry[] {
 	const presentation =
@@ -123,6 +127,8 @@ export function menuEntries(
 			{ run: "moveTo", label: "Move to page…", off: !at.movable },
 			{ run: "paste", label: "Paste", keys: hotkeyKey("sidebar.paste"), off: !at.pasteable },
 			{ rule: true },
+			// a deck's talk leaves as a file from here as from the canvas's export, last before the Trash as there
+			...(at.talk === true ? [{ run: "exportTalk", label: "Export talk…" } as const] : []),
 			{ run: "trash", label: "Move to Trash", keys: hotkeyKey("sidebar.trash") },
 		];
 	}
@@ -158,6 +164,7 @@ export function RailMenu({
 	unseen,
 	shareable = false,
 	presentations = false,
+	talk = false,
 	actions,
 	onClose,
 }: {
@@ -168,6 +175,7 @@ export function RailMenu({
 	unseen: number;
 	shareable?: boolean;
 	presentations?: boolean;
+	talk?: boolean;
 	actions: RailMenuActions;
 	onClose: () => void;
 }) {
@@ -179,7 +187,15 @@ export function RailMenu({
 		return () => window.removeEventListener("resize", onClose);
 	}, [onClose]);
 
-	const entries = menuEntries(menu.target, { pasteable, selection, movable, unseen, shareable, presentations });
+	const entries = menuEntries(menu.target, {
+		pasteable,
+		selection,
+		movable,
+		unseen,
+		shareable,
+		presentations,
+		talk,
+	});
 	const height = heightOf(entries);
 	const flipX = menu.x + MENU_WIDTH > window.innerWidth - SCREEN_MARGIN;
 	const flipY = menu.y + height > window.innerHeight - SCREEN_MARGIN;

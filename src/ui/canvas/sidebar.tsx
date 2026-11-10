@@ -29,6 +29,7 @@ import {
 } from "../api";
 import { cn } from "../cn";
 import { DeckGlyph, DeckHairline, type DeckRailKit, PresentButton, useDeckRail } from "../deck/deck-rail";
+import { TalkExportMenu } from "../deck/talk-export";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { DotsIcon, FolderIcon, FrameIcon } from "../icons";
@@ -390,6 +391,12 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 		readonly y: number;
 		readonly kind: "page" | "frame";
 		readonly names: readonly string[];
+	} | null>(null);
+	/** a deck page's talk being exported from its row (spool#275), and where its menu stands */
+	const [exportingTalk, setExportingTalk] = useState<{
+		readonly x: number;
+		readonly y: number;
+		readonly page: string;
 	} | null>(null);
 	const [kit, setKit] = useState<DragKit | null>(null);
 	const [landing, setLanding] = useState<Landing | null>(null);
@@ -1999,8 +2006,14 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 							unseen={menuUnseen}
 							shareable={onSharePage !== undefined}
 							presentations={decks.on}
+							talk={menu.target.kind === "page" && decks.talk(menu.target.page) !== undefined}
 							onClose={() => setMenu(null)}
 							actions={{
+								// where the menu stood, as the move's picker opens in its place
+								exportTalk: () => {
+									if (menu.target.kind === "page")
+										setExportingTalk({ x: menu.x, y: menu.y, page: menu.target.page });
+								},
 								share: () => onSharePage?.(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
 								newPage: () => newPage(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
 								newPresentation: () =>
@@ -2034,6 +2047,23 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 						/>,
 						document.body,
 					)}
+
+			{exportingTalk === null
+				? null
+				: (() => {
+						const talk = decks.talk(exportingTalk.page);
+						return talk === undefined
+							? null
+							: createPortal(
+									<TalkExportMenu
+										at={exportingTalk}
+										talk={talk}
+										capture={(frame) => decks.capture(talk.page, frame)}
+										onClose={() => setExportingTalk(null)}
+									/>,
+									document.body,
+								);
+					})()}
 
 			{moving === null
 				? null

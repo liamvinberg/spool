@@ -175,3 +175,12 @@ export async function walkDeck(
 ): Promise<DeckSent> {
 	return changeDeck(project, reads, way === "undo" ? entry.undo : entry.redo);
 }
+
+/** A deck's talk as one HTML file that plays from disk (spool#275), or why it can't be built: a slide that won't compile. */
+export async function fetchTalkHtml(project: string, page: string): Promise<Uint8Array> {
+	const response = await controlFetch(
+		`/api/p/${encodeURIComponent(project)}/deck-export?page=${encodeURIComponent(page)}`,
+	);
+	if (!response.ok) throw new Error((await response.text()) || "The talk could not be exported. Try again.");
+	return new Uint8Array(await response.arrayBuffer());
+}

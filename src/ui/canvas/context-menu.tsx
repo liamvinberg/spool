@@ -18,6 +18,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { type ExportPlan, fetchExportPlan } from "../api";
+import { type Talk, TalkChoice, useTalkExport } from "../deck/talk-export";
 import { desktopWindow } from "../desktop-window";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { hotkeyKey } from "../hotkeys";
@@ -45,6 +46,7 @@ export function ContextMenu({
 	project,
 	exportable,
 	capture,
+	talk,
 	tidyLabel,
 	onTidy,
 	onPlay,
@@ -62,6 +64,8 @@ export function ContextMenu({
 	exportable: readonly string[] | null;
 	/** one frame's picture as the canvas draws it, for PNG and PDF */
 	capture: (frame: string) => Promise<CapturedFrame>;
+	/** the talk of the deck page in front (spool#275), exported above the selection; absent on any other page */
+	talk?: Talk | undefined;
 	tidyLabel: string;
 	onTidy: () => void;
 	onPlay: () => void;
@@ -83,6 +87,7 @@ export function ContextMenu({
 	const [format, setFormat] = useState<ExportFormat>(last);
 	const [scope, setScope] = useState<ExportScope>("flow");
 	const [plans, setPlans] = useState<ReadonlyMap<string, ExportPlan>>(new Map());
+	const talkExport = useTalkExport(talk, capture, exporting);
 	const frames = exportable ?? [];
 	const framesKey = frames.join("\n");
 	const past = step !== "menu";
@@ -176,15 +181,28 @@ export function ContextMenu({
 					<MenuItem label="Move to Trash" shortcut={hotkeyKey("canvas.trash")} onClick={onTrash} />
 				</>
 			) : step === "choice" ? (
-				<ExportChoice
-					format={format}
-					onFormat={setFormat}
-					scope={scope}
-					onScope={setScope}
-					reach={reach}
-					target={exportTarget(project, frames, format)}
-					onExport={run}
-				/>
+				<>
+					{talk === undefined ? null : (
+						<>
+							<TalkChoice
+								format={talkExport.format}
+								onFormat={talkExport.setFormat}
+								file={talkExport.file}
+								onExport={talkExport.run}
+							/>
+							<MenuSeparator />
+						</>
+					)}
+					<ExportChoice
+						format={format}
+						onFormat={setFormat}
+						scope={scope}
+						onScope={setScope}
+						reach={reach}
+						target={exportTarget(project, frames, format)}
+						onExport={run}
+					/>
+				</>
 			) : (
 				exporting.view
 			)}

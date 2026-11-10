@@ -1,11 +1,13 @@
 import { useMemo, useSyncExternalStore } from "react";
 import type { DeckChange, DeckRead, DecksRead } from "../../deck/wire";
 import { pageUnder } from "../../page-path";
+import type { CapturedFrame } from "../canvas/frame-export";
 import { cn } from "../cn";
 import { IconButton } from "../primitives/actions";
 import { changeDeck, type DeckEntry, type DeckReads } from "./deck-api";
 import { folderOf } from "./deck-drag";
 import { presentDeck } from "./present";
+import type { Talk } from "./talk-export";
 
 /**
  * A deck in the Pages rail (spool#265, the team canvas's `app/spool-deck`): what the rail asks of a page that is a
@@ -26,6 +28,8 @@ export interface DeckRailKit {
 	readonly say: (message: string) => void;
 	/** New presentation made a page: the canvas opens it and hands the person to the agent */
 	readonly made: (page: string) => void;
+	/** a slide of a deck page as the canvas draws it, for the talk's PDF (spool#275): the page is opened first if need be */
+	readonly capture: (page: string, frame: string) => Promise<CapturedFrame>;
 }
 
 export interface DeckRail {
@@ -48,6 +52,10 @@ export interface DeckRail {
 	drop(page: string, names: readonly string[], index: number, before: boolean): Promise<DeckEntry | undefined>;
 	/** Present the talk from its start. */
 	present(page: string): void;
+	/** A deck page's talk, to export (spool#275); nothing for a page that is no deck or has no slides yet. */
+	talk(page: string): Talk | undefined;
+	/** A slide of a deck page as the canvas draws it, for the talk's PDF. */
+	capture(page: string, frame: string): Promise<CapturedFrame>;
 	/** New presentation inside `parent`: the page it made, named fresh, or null when it was refused. */
 	make(parent: string, claimed: (path: string) => boolean): Promise<string | null>;
 }
@@ -100,6 +108,15 @@ function deckRail(kit: DeckRailKit | undefined, reads: DeckReads | null, decks: 
 				return undefined;
 			}
 			return sent.entry;
+		},
+		talk(page) {
+			const deck = deckOf(page);
+			if (kit === undefined || deck === undefined || deck.slides.length === 0) return undefined;
+			return { project: kit.project, page, slides: deck.slides.map((slide) => slide.name) };
+		},
+		capture(page, frame) {
+			if (kit === undefined) return Promise.reject(new Error("decks are off"));
+			return kit.capture(page, frame);
 		},
 		present(page) {
 			const first = deckOf(page)?.slides[0];
