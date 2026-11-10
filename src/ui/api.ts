@@ -139,7 +139,7 @@ const fallbackCaptureOrigin =
 export const captureOrigin =
 	typeof uiWindow?.__SPOOL_CAPTURE_ORIGIN__ === "string" ? uiWindow.__SPOOL_CAPTURE_ORIGIN__ : fallbackCaptureOrigin;
 
-function controlFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+export function controlFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
 	const headers = new Headers(init?.headers);
 	headers.set("X-Spool-Control", controlToken);
 	const request = fetch(input, { ...init, headers });
