@@ -1537,6 +1537,10 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 		};
 	}, [verbs, copy, paste, duplicateNames, landOutside]);
 
+	// the window's pointer is listened to once, for the rail's life: a drag outlives the handlers its drop is made
+	// with, which are made again whenever the list is, and listening again would stop the drag's frames mid-carry
+	const stopDragNow = useRef(stopDrag);
+	stopDragNow.current = stopDrag;
 	useEffect(() => {
 		const onMove = (event: PointerEvent) => {
 			const current = live.current;
@@ -1550,9 +1554,9 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 			if (current.active) event.preventDefault();
 		};
 		const onUp = (event: PointerEvent) => {
-			if (live.current?.pointerId === event.pointerId) stopDrag(true);
+			if (live.current?.pointerId === event.pointerId) stopDragNow.current(true);
 		};
-		const onCancel = () => stopDrag(false);
+		const onCancel = () => stopDragNow.current(false);
 		window.addEventListener("pointermove", onMove, { passive: false });
 		window.addEventListener("pointerup", onUp);
 		window.addEventListener("pointercancel", onCancel);
@@ -1562,7 +1566,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 			window.removeEventListener("pointercancel", onCancel);
 			if (ticking.current !== null) cancelAnimationFrame(ticking.current);
 		};
-	}, [stopDrag]);
+	}, []);
 
 	function pressRow(event: React.PointerEvent<HTMLElement>, row: RailRow) {
 		// the empty list behind the rows drops the cursor on a press; a row owns its own
