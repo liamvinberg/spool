@@ -74,6 +74,13 @@ export interface PlayerShellHost {
 export interface PlayerShellView {
 	/** The player is not ready to be seen — booting, cutting, or resettling. */
 	hidden: boolean;
+	/**
+	 * A cut after the first reveal: the screen walked from stays on show, inert,
+	 * until the next has painted. The runtime mounts the next in the frame the
+	 * viewport reaches its size, before paint, so nothing in between is drawn:
+	 * hidden, the screen's white backing would show through instead.
+	 */
+	holding: boolean;
 	/** The player has been seen once: what hides it from here on is a walk, never the boot. */
 	revealed: boolean;
 	loadError: string | undefined;
@@ -1002,7 +1009,13 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		controller,
 		...(recorder === undefined ? {} : { recorder }),
 		shaped: () => shapedAs !== null,
-		view: () => ({ hidden, revealed, loadError, loadEscape }),
+		view: () => ({
+			hidden,
+			holding: revealed && cut !== undefined && geometrySettleRevision === 0,
+			revealed,
+			loadError,
+			loadEscape,
+		}),
 		loaded: () => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE),
 		geometryPending,
 		geometryApplied,
@@ -1162,7 +1175,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 
 	function Host() {
 		useSyncExternalStore(shell.controller.subscribe, shell.controller.version);
-		const { hidden, revealed, loadError, loadEscape } = shell.view();
+		const { hidden, holding, revealed, loadError, loadEscape } = shell.view();
 		if (loadError !== undefined) {
 			return (
 				<div className="spool-player-error" role="alert">
@@ -1191,7 +1204,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 					// (#185). inert keeps what visibility used to guarantee — no clicks,
 					// no focus — while the frame stays rendered underneath.
 					inert={hidden}
-					style={{ opacity: hidden ? 0 : 1 }}
+					style={{ opacity: hidden && !holding ? 0 : 1 }}
 				/>
 				<Arrival arrived={revealed} />
 			</>

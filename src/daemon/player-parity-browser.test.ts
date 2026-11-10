@@ -43,43 +43,6 @@ async function walkFromHistory(page: Page, name: string, times = 1): Promise<voi
 	);
 }
 
-async function installPlayerMountGate(page: Page): Promise<void> {
-	await page.addInitScript(() => {
-		if (window.top !== window) return;
-		const nativePostMessage = MessagePort.prototype.postMessage;
-		const held: { port: MessagePort; message: unknown }[] = [];
-		let holding = false;
-		Object.defineProperty(MessagePort.prototype, "postMessage", {
-			configurable: true,
-			value(this: MessagePort, message: unknown) {
-				const candidate = message as { spool?: unknown; command?: unknown } | null;
-				if (
-					holding &&
-					candidate !== null &&
-					typeof candidate === "object" &&
-					candidate.spool === "player-command" &&
-					candidate.command === "mount"
-				) {
-					held.push({ port: this, message });
-					return;
-				}
-				nativePostMessage.call(this, message);
-			},
-		});
-		Object.defineProperty(window, "__spoolMountGate", {
-			value: {
-				hold() {
-					holding = true;
-				},
-				release() {
-					holding = false;
-					for (const entry of held.splice(0)) nativePostMessage.call(entry.port, entry.message);
-				},
-			},
-		});
-	});
-}
-
 async function installPlayerGeometryGate(page: Page): Promise<void> {
 	await page.addInitScript(() => {
 		if (window.top !== window) return;
@@ -650,6 +613,19 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 		new MutationObserver(record).observe(screen, { attributes: true, attributeFilter: ["style"] });
 		Object.defineProperty(window, "__spoolCutTrace", { value: trace });
 	});
+	await live.evaluate(() => {
+		// after layout and before paint, behind the runtime's own observer: what the first paint at a size would show
+		const laidOut: string[] = [];
+		Object.defineProperty(window, "__spoolLaidOut", { value: laidOut });
+		const probe = document.createElement("div");
+		probe.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none";
+		document.documentElement.append(probe);
+		new ResizeObserver(() =>
+			laidOut.push(
+				`${innerWidth}×${innerHeight} ${document.querySelector("#first-viewport") === null ? "from" : "to"}`,
+			),
+		).observe(probe);
+	});
 	await playerFrame.locator("#to-cross").click();
 	await playerFrame.getByText("cross").waitFor();
 	await player.waitForFunction(
@@ -666,13 +642,14 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	expect(
 		await live.evaluate(() => (window as unknown as { __spoolTransitions: () => number }).__spoolTransitions()),
 	).toBe(1);
+	// a cut keeps the screen walked from on show, never hidden over the screen's white, and the screen walked to is
+	// in by the first paint at its size: nothing but the one or the other is ever drawn
 	const cutTrace = await player.evaluate(() => (window as unknown as { __spoolCutTrace: string[] }).__spoolCutTrace);
-	const hidden = cutTrace.findIndex((entry) => entry.startsWith("0:"));
-	const resized = cutTrace.findIndex((entry) => entry.includes("720px"));
-	const revealed = cutTrace.findIndex((entry, index) => index > resized && entry.startsWith("1:"));
-	expect(hidden).toBeGreaterThanOrEqual(0);
-	expect(resized).toBeGreaterThan(hidden);
-	expect(revealed).toBeGreaterThan(resized);
+	expect(cutTrace.some((entry) => entry.includes("720px"))).toBe(true);
+	expect(cutTrace.filter((entry) => !entry.startsWith("1:"))).toEqual([]);
+	const laidOut = await live.evaluate(() => (window as unknown as { __spoolLaidOut: string[] }).__spoolLaidOut);
+	expect(laidOut).toContain("720×480 to");
+	expect(laidOut).not.toContain("720×480 from");
 
 	const geometryRefresh = player.waitForResponse(
 		(response) => new URL(response.url()).pathname === `/api/p/${project.name}/frames`,
@@ -1567,7 +1544,6 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
-	await installPlayerMountGate(page);
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=from`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-target").waitFor();
@@ -1576,16 +1552,14 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "from",
 	);
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolMountGate: { hold(): void };
-			}
-		).__spoolMountGate.hold();
+	// the destination mounts the moment the viewport is its size: held off it, the cut stays in flight
+	await page.locator("#spool-player").evaluate((host) => {
+		host.style.width = "390px";
+		host.style.height = "844px";
 	});
 
 	await inner.locator("#to-target").click();
-	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.inert === true);
 
 	const geometryRefresh = page.waitForResponse(
 		(response) => new URL(response.url()).pathname === `/api/p/${project.name}/frames`,
@@ -1601,18 +1575,15 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 		() => {
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
-			return host?.style.opacity === "0" && screen?.style.width === "600px";
+			return host?.inert === true && screen?.style.width === "600px";
 		},
 		undefined,
 		{ timeout: 5_000 },
 	);
 
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolMountGate: { release(): void };
-			}
-		).__spoolMountGate.release();
+	await page.locator("#spool-player").evaluate((host) => {
+		host.style.removeProperty("width");
+		host.style.removeProperty("height");
 	});
 	await page.waitForFunction(
 		() =>
@@ -1716,7 +1687,6 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
-	await installPlayerMountGate(page);
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	await page.waitForFunction(
 		() =>
@@ -1751,15 +1721,13 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 		expect(response.status).toBe(204);
 	};
 	const inner = page.frameLocator("#spool-player");
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolMountGate: { hold(): void };
-			}
-		).__spoolMountGate.hold();
+	// the destination mounts the moment the viewport is its size: held off it, the cut stays in flight
+	await page.locator("#spool-player").evaluate((host) => {
+		host.style.width = "390px";
+		host.style.height = "844px";
 	});
 	await inner.locator("#to-target").click();
-	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.inert === true);
 
 	await updateGeometry(500, 500);
 	await firstCaptured;
@@ -1795,12 +1763,9 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 	// width is the only number spool imposes: the page's height is its content's
 	expect(await page.locator(".spool-screen").evaluate((screen) => (screen as HTMLElement).style.width)).toBe("600px");
 
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolMountGate: { release(): void };
-			}
-		).__spoolMountGate.release();
+	await page.locator("#spool-player").evaluate((host) => {
+		host.style.removeProperty("width");
+		host.style.removeProperty("height");
 	});
 	await page.waitForFunction(
 		() =>
@@ -2973,7 +2938,7 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 		.toEqual({ width: 390, height: 844 });
 
 	await inner.locator("#to-target").click();
-	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.inert === true);
 	await page.locator("#spool-player").evaluate((host) => {
 		host.style.removeProperty("width");
 		host.style.removeProperty("height");

@@ -110,6 +110,18 @@ export function ViewerPlayer({
 	 */
 	const held = useRef<Held>({ id: readStart(), size: { w: 0, h: 0 } });
 	const laying = useRef<Size | null>(null);
+	const { authored, boxOf } = useMemo(() => {
+		const authored = (frame: string) => {
+			const found = latest.current.frames.find((each) => each.name === frame);
+			return { w: found?.w ?? 1440, h: found?.h ?? 900 };
+		};
+		/** The box a frame plays at. */
+		const boxOf = (frame: string) =>
+			laying.current !== null && frame === played.current.frame
+				? laying.current
+				: heldBox(held.current, authored(frame), room());
+		return { authored, boxOf };
+	}, []);
 
 	const controller = useMemo<PlayerController>(() => {
 		const set = (next: Partial<Played>) => {
@@ -117,14 +129,13 @@ export function ViewerPlayer({
 			version.current += 1;
 			for (const listener of listeners.current) listener();
 		};
-		const authored = (frame: string) => {
-			const found = latest.current.frames.find((each) => each.name === frame);
-			return { w: found?.w ?? 1440, h: found?.h ?? 900 };
+		// the box on show: the screen walked from keeps its own until the next has drawn
+		const geometry = (frame: string) => {
+			const now = played.current;
+			return frame === now.frame && now.drawn !== now.arrival && now.previous !== null
+				? boxOf(now.previous.frame)
+				: boxOf(frame);
 		};
-		const geometry = (frame: string) =>
-			laying.current !== null && frame === played.current.frame
-				? laying.current
-				: heldBox(held.current, authored(frame), room());
 		return {
 			subscribe(listener) {
 				listeners.current.add(listener);
@@ -140,16 +151,13 @@ export function ViewerPlayer({
 				const now = played.current;
 				const before =
 					now.drawn === now.arrival ? { frame: now.frame, arrival: now.arrival, src: now.src } : now.previous;
-				const there = geometry(frame);
-				const standIn = before === null ? null : geometry(before.frame);
 				set({
 					frame,
 					arrival: now.arrival + 1,
 					src: latest.current.documentOf(frame),
 					externalHref: null,
-					// the screen walked from stands in only in a box its own size: in another it would be laid out again,
-					// squeezed or stretched, for as long as the next one takes to draw (spool#263)
-					previous: standIn !== null && standIn.w === there.w && standIn.h === there.h ? before : null,
+					// the screen walked from stands in, in its own box, never laid out again in the next one's (spool#263)
+					previous: before,
 				});
 				latest.current.onWalked(frame);
 			},
@@ -194,8 +202,8 @@ export function ViewerPlayer({
 				leaving.onfinish = () => latest.current.onClosed();
 			},
 		};
-		// the controller is the player's for as long as it is open
-	}, []);
+		// the controller is the player's for as long as it is open: what it reads is in refs
+	}, [authored, boxOf]);
 
 	// the URL naming another frame while open (back and forward) walks to it
 	useEffect(() => {
@@ -289,6 +297,7 @@ export function ViewerPlayer({
 							<PlayedDocument
 								iframe={iframe}
 								played={now}
+								box={boxOf(now.frame)}
 								cover={waiting ? cover : undefined}
 								onLoad={drew.loaded}
 							/>
@@ -302,16 +311,19 @@ export function ViewerPlayer({
 
 /**
  * The played frame's document, a fresh one for every arrival, hidden until it draws: the screen walked from stays on
- * top until then, or the frame's cover where there is no screen before it.
+ * show until then, the box still its own, or the frame's cover where there is no screen before it. The next one is
+ * laid out meanwhile at `box`, its own, so the box changes and it shows in one paint, already drawn at its size.
  */
 function PlayedDocument({
 	iframe,
 	played,
+	box,
 	cover,
 	onLoad,
 }: {
 	iframe: { current: HTMLIFrameElement | null };
 	played: Played;
+	box: Size;
 	cover: string | undefined;
 	onLoad: (arrival: number) => void;
 }) {
@@ -330,6 +342,7 @@ function PlayedDocument({
 			)}
 			{documents.map((document) => {
 				const current = document.arrival === arrival;
+				const shown = !current || drawn === arrival;
 				return (
 					<iframe
 						key={document.arrival}
@@ -346,7 +359,7 @@ function PlayedDocument({
 						inert={!current}
 						className="absolute inset-0 block h-full w-full border-0"
 						// hidden by opacity, never visibility, which would hold back the very drawing it waits for
-						style={{ opacity: !current || drawn === arrival ? 1 : 0 }}
+						style={shown ? { opacity: 1 } : { opacity: 0, width: box.w, height: box.h }}
 						onLoad={current ? () => onLoad(document.arrival) : undefined}
 					/>
 				);
