@@ -69,6 +69,25 @@ export interface StageRuntime {
 
 const deck = window.__SPOOL_PLAY__?.deck;
 const embedded = window.parent !== window;
+/**
+ * The talk exported as one file (spool#275): nobody hosts it, and there is no room to freeze, no screen to swap and no
+ * presenter to tell. F is full screen there, and Esc leaves it.
+ */
+const inFile = deck !== undefined && window.__SPOOL_PLAY__?.exported !== undefined;
+
+/** A key a file carries out itself: true when it was one. */
+function fileKey(next: KeyCommand): boolean {
+	if (next.kind === "freeze") {
+		if (document.fullscreenElement === null) void document.documentElement.requestFullscreen?.().catch(() => {});
+		else void document.exitFullscreen().catch(() => {});
+		return true;
+	}
+	if (next.kind === "escape") {
+		if (document.fullscreenElement !== null) void document.exitFullscreen().catch(() => {});
+		return true;
+	}
+	return next.kind === "swap" || next.kind === "help";
+}
 
 let sendToHost: ((message: StageMessage) => void) | undefined;
 let hostListener: ((data: unknown) => void) | undefined;
@@ -578,6 +597,7 @@ export function bootStage(runtime: StageRuntime): void {
 			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 			return;
 		}
+		if (inFile && fileKey(next)) return;
 		const forHost = next.kind === "escape" || next.kind === "swap" || next.kind === "help";
 		if (forHost || mode === "follow") {
 			post({ spool: "stage-command", command: next });
