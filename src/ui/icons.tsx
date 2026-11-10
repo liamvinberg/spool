@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { SPOOL_MARK_PATH } from "../brand";
 
 /**
@@ -5,9 +6,9 @@ import { SPOOL_MARK_PATH } from "../brand";
  * (#13). The ribbon is the logo, thread-red vector, exported verbatim.
  */
 
-export function RibbonMark({ className }: { className?: string }) {
+export function RibbonMark({ className, style }: { className?: string; style?: CSSProperties }) {
 	return (
-		<svg viewBox="250 182 524 660" className={className} aria-hidden="true">
+		<svg viewBox="250 182 524 660" className={className} style={style} aria-hidden="true">
 			<path d={SPOOL_MARK_PATH} fillRule="evenodd" fill="var(--color-mark)" />
 		</svg>
 	);

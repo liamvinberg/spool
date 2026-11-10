@@ -1,5 +1,6 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HerePerson, type ProjectCard, type TeamProjectOnMac, thumbnailUrl } from "./api";
+import { BootCurtain } from "./canvas/boot-screen";
 import { cn } from "./cn";
 import { FindNav, FoundHead, finds, NARROW_NAV, ProjectsHead, type Sort, useFoundPlace } from "./home-find";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
@@ -277,7 +278,8 @@ export function Home({
 		</main>
 	);
 	// the page fades up as each place comes in: the search is one place however its words change
-	const shown = loading && (team === undefined || recent || searching) ? <main aria-busy="true" /> : page;
+	const waiting = loading && (team === undefined || recent || searching);
+	const shown = waiting ? <main aria-busy="true" /> : page;
 	return (
 		<HomeShell
 			switcher={
@@ -303,6 +305,8 @@ export function Home({
 				)
 			}
 			foot={account ?? <span>On this Mac</span>}
+			// each place's load has a curtain of its own, at the spot the Mac app's waiting page drew it
+			curtain={<BootCurtain key={place ?? "own"} ready={!waiting} waitingOn="loading projects" />}
 		>
 			{place === undefined ? shown : <PlaceIn key={searching ? "search" : place}>{shown}</PlaceIn>}
 		</HomeShell>
@@ -386,6 +390,7 @@ export function HomeShell({
 	nav,
 	foot,
 	underTabs = true,
+	curtain,
 	children,
 }: {
 	switcher?: ReactNode;
@@ -393,12 +398,14 @@ export function HomeShell({
 	foot: ReactNode;
 	/** Whether the window's tab strip stands above it, as in the Mac app. */
 	underTabs?: boolean;
+	/** What stands over the page while it loads: it keeps to the window's height however long the page grows. */
+	curtain?: ReactNode;
 	/** The page: a `main`. */
 	children: ReactNode;
 }) {
 	return (
 		<div className="pj-body h-full overflow-auto bg-surface-window text-primary [scrollbar-width:thin] [scrollbar-color:var(--color-line-strong)_transparent]">
-			<div className="pj-layout grid min-h-full grid-cols-[208px_minmax(0,1fr)] [@media(max-width:720px)]:grid-cols-[64px_minmax(0,1fr)]">
+			<div className="pj-layout relative grid min-h-full grid-cols-[208px_minmax(0,1fr)] [@media(max-width:720px)]:grid-cols-[64px_minmax(0,1fr)]">
 				<aside
 					className={cn(
 						"pj-navigation sticky top-0 z-10 flex flex-col border-r border-line-default bg-surface-window px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]",
@@ -420,6 +427,16 @@ export function HomeShell({
 					</div>
 				</aside>
 				{children}
+				{curtain && (
+					<div
+						className={cn(
+							"pointer-events-none absolute top-0 right-0 left-[208px] [@media(max-width:720px)]:left-[64px]",
+							underTabs ? "h-[calc(100vh-44px)]" : "h-dvh",
+						)}
+					>
+						{curtain}
+					</div>
+				)}
 			</div>
 		</div>
 	);

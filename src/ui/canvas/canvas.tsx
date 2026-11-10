@@ -6346,7 +6346,7 @@ function CanvasField({
 					{/* the wait before the projection lands (#244): the field used to render
 				    nothing at all until the daemon answered, so a slow reply and a project
 				    with no frames in it were the same picture. */}
-					<BootCurtain ready={loaded} />
+					<BootCurtain ready={loaded} waitingOn={`opening ${project}`} />
 					{projectEmpty && (
 						<div data-canvas-empty="" className="pointer-events-none absolute inset-0">
 							<ProjectEmpty
