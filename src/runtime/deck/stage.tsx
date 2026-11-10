@@ -498,7 +498,7 @@ export function bootStage(runtime: StageRuntime): void {
 		const before = room ? roomPicture(session) : session;
 		session = next;
 		const after = picture();
-		if (JSON.stringify(after.state) !== JSON.stringify(runtime.state.read())) runtime.state.seed(after.state);
+		if (JSON.stringify(after.state) !== JSON.stringify(runtime.state.read())) seed(after.state);
 		if (mode === "own") post({ spool: "stage-session", session });
 		const moved =
 			before.at.slide !== after.at.slide ||
@@ -512,9 +512,26 @@ export function bootStage(runtime: StageRuntime): void {
 		take(stepSession(session, next, talk));
 	}
 
+	/** `ui.state` put in place by the stage itself, which is no slide writing it. */
+	let seeding = false;
+	function seed(state: StageState): void {
+		seeding = true;
+		try {
+			runtime.state.seed(state);
+		} finally {
+			seeding = false;
+		}
+	}
+
+	// what a slide writes to `ui.state` is the talk's: kept here when this stage owns the session, sent to the host
+	// that does otherwise, and heard back with the next session it hands over. A room holding its picture is a still.
 	runtime.state.subscribe(() => {
-		if (mode !== "own" || !opened) return;
-		take(stepSession(session, { kind: "state", state: runtime.state.read() }, talk));
+		if (!opened || seeding || (room && session.frozen !== null)) return;
+		const state = runtime.state.read();
+		if (mode === "own") take(stepSession(session, { kind: "state", state }, talk));
+		else if (JSON.stringify(state) !== JSON.stringify(session.state)) {
+			post({ spool: "stage-command", command: { kind: "state", state } });
+		}
 	});
 
 	function fromHost(data: unknown): void {
@@ -532,7 +549,7 @@ export function bootStage(runtime: StageRuntime): void {
 			if (next !== undefined) next = { ...next, at: clampAt(talk, next.at) };
 			underWay = next !== undefined;
 			session = next ?? openSession(talk, session.at, runtime.state.read());
-			runtime.state.seed(picture().state);
+			seed(picture().state);
 			if (mode === "own") post({ spool: "stage-session", session });
 			arrived();
 			return;

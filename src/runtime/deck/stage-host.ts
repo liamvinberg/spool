@@ -41,7 +41,10 @@ export interface StageHostEvents {
 	slides?(slides: readonly SlideReadiness[]): void;
 	/** a command carried out: where, whether the slide was ready, how long it took */
 	shown?(shown: StageShown): void;
-	/** a command for the host: escape, swap and help always, and every command while the stage follows */
+	/**
+	 * a command for the host: escape, swap and help always, and every command while the stage follows, what a slide
+	 * wrote to `ui.state` among them (`{ kind: "state" }`), for the session's owner to step
+	 */
 	command?(command: KeyCommand): void;
 	/** the stage could not be opened, or a new build of it could not, and why; what was showing stays */
 	refused?(why: string): void;
