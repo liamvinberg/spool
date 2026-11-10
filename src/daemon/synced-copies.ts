@@ -13,6 +13,10 @@ export interface SyncedCopies {
 	before(root: string, url: string): boolean;
 	/** A copy at `root` caught up with the project at `url`. */
 	now(root: string, url: string): void;
+	/** Every root this machine has synced a copy at. */
+	roots(): string[];
+	/** The copy at `root` is gone, its folder with it (#243): a copy made there later is a new one. */
+	forget(root: string): void;
 }
 
 export function syncedCopies(spoolDir: string): SyncedCopies {
@@ -33,17 +37,27 @@ export function syncedCopies(spoolDir: string): SyncedCopies {
 		}
 		return known;
 	};
+	const write = (copies: Record<string, string>) => {
+		try {
+			writeAtomic(file, `${JSON.stringify(copies, null, "\t")}\n`);
+		} catch {
+			// a state folder that can't be written leaves a lost record to the Get it rule
+		}
+	};
 	return {
 		before: (root, url) => read()[root] === url,
 		now(root, url) {
 			const copies = read();
 			if (copies[root] === url) return;
 			copies[root] = url;
-			try {
-				writeAtomic(file, `${JSON.stringify(copies, null, "\t")}\n`);
-			} catch {
-				// a state folder that can't be written leaves a lost record to the Get it rule
-			}
+			write(copies);
+		},
+		roots: () => Object.keys(read()),
+		forget(root) {
+			const copies = read();
+			if (!Object.hasOwn(copies, root)) return;
+			delete copies[root];
+			write(copies);
 		},
 	};
 }
