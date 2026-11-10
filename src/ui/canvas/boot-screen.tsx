@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { RibbonMark } from "../icons";
 import { type Curtain, EXIT_MS, GATE_MS, MIN_SHOWN_MS, nextCurtain } from "./boot-clock";
 
@@ -8,17 +8,23 @@ import { type Curtain, EXIT_MS, GATE_MS, MIN_SHOWN_MS, nextCurtain } from "./boo
  *
  * Before this the field rendered nothing at all for as long as the daemon took,
  * so a slow answer and a project with no frames in it were the same picture.
- * What it draws is the mark winding on and off, and nothing else: the count,
- * the names and the layout all arrive together with `/frames`, so anything the
- * curtain claimed about the project would be a claim it could not have checked.
+ * What it draws is the mark winding on and off beside one line of what spool is
+ * waiting on (`opening kaffe`, `loading projects`), the same at every wait while
+ * spool boots (task 568). It says nothing more: the count, the names and the
+ * layout all arrive together with `/frames`, so anything more the curtain
+ * claimed about the project would be a claim it could not have checked.
  *
  * The mark is the loader rather than a shape invented for the waiting. It is
  * gated at both ends: `boot-clock.ts` carries the durations and why they are
  * what they are.
  */
 
-export function BootCurtain({ ready }: { ready: boolean }) {
+export function BootCurtain({ ready, waitingOn }: { ready: boolean; waitingOn: string }) {
 	const phase = useCurtain(ready);
+	const seconds = useSecondsShown(phase !== null);
+	// the winding is keyed to the clock, so the next page's curtain carries the turn on
+	// from where the Mac app's waiting page, or the last curtain, left it
+	const [windAt] = useState(() => `-${Date.now() % WIND_TURN_MS}ms`);
 	if (phase === null) return null;
 	return (
 		<div
@@ -27,14 +33,47 @@ export function BootCurtain({ ready }: { ready: boolean }) {
 				phase === "leaving" ? "animate-boot-out" : "animate-boot-in"
 			}`}
 		>
-			<div className="relative h-[68px] w-[54px]">
-				{/* the ribbon at a fraction of its weight: the thread is laid into a mark
-				    that is already standing there, rather than drawn out of nothing */}
-				<RibbonMark className="absolute inset-0 h-full w-full opacity-[0.14]" />
-				<RibbonMark className="animate-boot-wind absolute inset-0 h-full w-full" />
+			{/* the mark holds one spot whatever the line says, so a new page's words never move it:
+			    the row is the mark and a fixed run of room the words may overflow */}
+			<div role="status" className="flex w-[180px] items-center gap-2.5 text-secondary type-detail">
+				<span className="relative h-[25px] w-[19px] shrink-0">
+					{/* the ribbon at a fraction of its weight: the thread is laid into a mark
+					    that is already standing there, rather than drawn out of nothing */}
+					<RibbonMark className="absolute inset-0 h-full w-full opacity-[0.14]" />
+					<RibbonMark
+						className="animate-boot-wind absolute inset-0 h-full w-full"
+						style={{ animationDelay: windAt }}
+					/>
+				</span>
+				<span className="whitespace-nowrap">
+					{waitingOn}
+					{/* a slow wait counts, so it reads as slow rather than stuck */}
+					<span
+						className={`text-tertiary transition-opacity duration-slow ease-out ${seconds >= COUNT_FROM_S ? "" : "opacity-0"}`}
+					>
+						{` · ${seconds}s`}
+					</span>
+				</span>
 			</div>
 		</div>
 	);
+}
+
+/** one full wind on and off, as `--animate-boot-wind` runs it */
+const WIND_TURN_MS = 3000;
+/** the wait the line starts counting at */
+const COUNT_FROM_S = 3;
+
+/** Whole seconds since the curtain reached the screen. */
+function useSecondsShown(shown: boolean): number {
+	const [seconds, setSeconds] = useState(0);
+	useEffect(() => {
+		if (!shown) return;
+		const from = Date.now();
+		const timer = window.setInterval(() => setSeconds(Math.floor((Date.now() - from) / 1000)), 250);
+		return () => window.clearInterval(timer);
+	}, [shown]);
+	return seconds;
 }
 
 /**
