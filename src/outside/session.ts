@@ -63,8 +63,7 @@ export type Payload = Readonly<Record<string, unknown>>;
 
 /**
  * Where a file is in the project's design, by its own folders: in a frame, or under the design
- * folder's `shared/`; null for a file outside both. A path relative to the design folder is one
- * the spool CLI named.
+ * folder's `shared/`; null for a file outside both.
  */
 export type DesignAt = (file: string) => { readonly frame: string } | "shared" | null;
 
@@ -197,19 +196,10 @@ function unquote(token: string): string {
 	return bare.replace(/\\(.)/g, "$1");
 }
 
-/** The verb words of a spool CLI call, `spool …` or the checkout's `pnpm -s dev …`; null for another command. */
-function spoolVerb(name: string, words: readonly string[]): readonly string[] | null {
-	if (name === "spool") return words;
-	if (name === "pnpm" && words[0] === "dev") return words.slice(1);
-	if (["npx", "pnpx", "bunx"].includes(name) && (words[0] === "spool" || words[0] === "spool.page"))
-		return words.slice(1);
-	return null;
-}
-
 /**
  * The files a shell command names, resolved against where it runs (and where a `cd` in it moves to), and which
  * of them it writes: a redirect's target, a copy's, what `mv`, `rm`, `sed -i` and their like name, what a script
- * that writes files names, and a frame `spool comments add` comments on (as its path under the design folder).
+ * that writes files names. The spool CLI writes no frame, so none of its verbs counts.
  * A guess from the command's words, never a shell's parse: what it can't tell is a read.
  */
 function shellFiles(command: string, cwd: string): ToolFiles | null {
@@ -250,7 +240,6 @@ function shellFiles(command: string, cwd: string): ToolFiles | null {
 		const name = basename(first.word);
 		const named = rest.filter((one) => !one.word.startsWith("-"));
 		const paths = named.map((one) => one.word);
-		const verb = spoolVerb(name, paths);
 		if (name === "cd") {
 			if (paths[0] !== undefined) {
 				base = at(paths[0]);
@@ -263,9 +252,7 @@ function shellFiles(command: string, cwd: string): ToolFiles | null {
 		else if (WRITES_LAST.has(name) && paths.length >= 2) {
 			read.push(...paths.slice(0, -1).map(at));
 			written.push(at(paths.at(-1) ?? ""));
-		} else if (verb?.[0] === "comments" && verb[1] === "add" && verb[2] !== undefined)
-			written.push(`frames/${verb[2]}`);
-		else read.push(...paths.filter((path) => path.includes("/") || /\.\w+$/.test(path)).map(at));
+		} else read.push(...paths.filter((path) => path.includes("/") || /\.\w+$/.test(path)).map(at));
 	}
 	const inScripts = scripts.flatMap((script) => [...script.matchAll(PATH_IN)].map((match) => at(match[1] ?? "")));
 	if (scripts.some((script) => SCRIPT_WRITES.test(script))) written.push(...inScripts, ...went);

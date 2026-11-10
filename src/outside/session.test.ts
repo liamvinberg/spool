@@ -234,10 +234,6 @@ describe("the files a tool call names", () => {
 			read: [],
 			written: [`${DESIGN}/frames/cart`],
 		});
-		expect(shell(`pnpm -s dev comments add cart "too tight" && spool shot menu`)).toEqual({
-			read: [],
-			written: ["frames/cart"],
-		});
-		expect(shell("spool shot menu")).toBeNull();
+		expect(shell(`pnpm -s dev comments add cart "too tight" && spool shot menu`)).toBeNull();
 	});
 });

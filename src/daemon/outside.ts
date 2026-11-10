@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { HARNESSES, type Harness, type Terminal } from "../outside/harness";
 import { type Connection, connection } from "../outside/install";
@@ -189,7 +189,7 @@ export function createOutside({
 		// the design folder as an agent names it, through a link or not
 		const named = [...new Set([join(root, "design"), designDir])];
 		return (path) => {
-			let file: string | null = isAbsolute(path) ? null : join(designDir, path);
+			let file: string | null = null;
 			for (const dir of named)
 				if (file === null && (path === dir || path.startsWith(`${dir}${sep}`)))
 					file = join(designDir, relative(dir, path));
