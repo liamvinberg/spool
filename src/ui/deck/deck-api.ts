@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { DeckChange, DeckChangeAnswer, DeckRead, DecksRead } from "../../deck/wire";
+import { pageParent } from "../../page-path";
 import { controlFetch } from "../api";
 import { experimentOn } from "../experiments";
 
@@ -20,6 +21,18 @@ export const DECK_CHANGE = "spool-deck-change";
 /** The daemon said a deck page changed: every reader of the project's decks reads again. */
 export function tellDeckChange(page: string): void {
 	window.dispatchEvent(new CustomEvent(DECK_CHANGE, { detail: page }));
+}
+
+/** The window event a frame's change is passed on as, with the page holding it in `detail`. */
+const DECK_FRAME = "spool-deck-frame";
+
+/**
+ * A frame changed on disk, its source or its place: when its page is a deck the deck is read again, since a frame
+ * written onto a deck page from outside is a loose frame the deck did not hold before, and the gestures on the page
+ * ask the deck where it stands.
+ */
+export function tellFrameChange(frame: string): void {
+	window.dispatchEvent(new CustomEvent(DECK_FRAME, { detail: pageParent(frame) }));
 }
 
 /** One undo entry: a deck change's answer, run back with `undo` and forward with `redo`. */
@@ -122,8 +135,15 @@ export function useDeckReads(project: string): DeckReads | null {
 		if (reads === null) return;
 		void reads.refresh();
 		const changed = () => void reads.refresh();
+		const framed = (event: Event) => {
+			if (reads.deckOf((event as CustomEvent<string>).detail) !== undefined) void reads.refresh();
+		};
 		window.addEventListener(DECK_CHANGE, changed);
-		return () => window.removeEventListener(DECK_CHANGE, changed);
+		window.addEventListener(DECK_FRAME, framed);
+		return () => {
+			window.removeEventListener(DECK_CHANGE, changed);
+			window.removeEventListener(DECK_FRAME, framed);
+		};
 	}, [reads]);
 	return reads;
 }

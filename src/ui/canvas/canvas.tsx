@@ -62,7 +62,7 @@ import {
 	subscribeSse,
 	writeKnob,
 } from "../api";
-import { tellDeckChange } from "../deck/deck-api";
+import { tellDeckChange, tellFrameChange } from "../deck/deck-api";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
@@ -3364,6 +3364,8 @@ function CanvasField({
 					}
 					if (event.kind === "comments") window.dispatchEvent(new CustomEvent(COMMENTS_CHANGE));
 					if (event.kind === "deck") tellDeckChange((data as { page: string }).page);
+					if ((event.kind === "frame" || event.kind === "geometry") && event.frame !== undefined)
+						tellFrameChange(event.frame);
 					// a save here or a teammate's arriving is the team's history by now, or nearly (spool#187)
 					if (["frame", "shared", "geometry", "set-aside"].includes(event.kind))
 						window.dispatchEvent(new CustomEvent(HISTORY_CHANGE));
