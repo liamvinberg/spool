@@ -188,18 +188,22 @@ export function useSizing(
 	}, [frame, drag, rest.w, rest.h, w, h]);
 
 	// Resting, the frame follows what it rests at. The window follows the window, the way a page does: at it or
-	// previewing it, a resize is followed exactly.
+	// previewing it, a resize is followed exactly; going there, or back there, springs like any other size.
 	const following = drag === null && (open ? active === "window" : held.id === "window");
 	const resting = drag === null && !open;
+	const roomWas = useRef(room);
 	useLayoutEffect(() => {
+		const resized = roomWas.current.w !== room.w || roomWas.current.h !== room.h;
+		roomWas.current = room;
 		if (following) {
+			if (!resized) return;
 			w.jump(room.w);
 			h.jump(room.h);
 		} else if (resting && !w.moving() && !h.moving()) {
 			w.jump(rest.w);
 			h.jump(rest.h);
 		}
-	}, [following, resting, rest.w, rest.h, room.w, room.h, w, h]);
+	}, [following, resting, rest.w, rest.h, room, w, h]);
 
 	const goTo = (to: Size, by: "menu" | "pull") => {
 		const spring = by === "menu" ? MENU_SPRING : PULL_SPRING;
