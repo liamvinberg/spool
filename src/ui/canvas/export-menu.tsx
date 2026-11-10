@@ -58,6 +58,8 @@ export interface Exported {
 	bytes: number;
 	/** where the Mac app saved it, for Show in Finder; a plain browser never says */
 	path?: string | undefined;
+	/** what could not be captured and is left out of the file, said beside where it saved */
+	left?: readonly string[] | undefined;
 }
 
 /**
@@ -72,7 +74,7 @@ export async function exportFrames(
 ): Promise<Exported> {
 	const { project, frames, format } = request;
 	const total = frames.length + (format === "pdf" ? 1 : 0);
-	const files: { name: string; type: string; bytes: Uint8Array }[] = [];
+	const files: BuiltFile[] = [];
 	const captured: CapturedFrame[] = [];
 	for (const [index, frame] of frames.entries()) {
 		progress({ done: index, total, detail: frames.length > 1 ? frame : undefined });
@@ -97,7 +99,18 @@ export async function exportFrames(
 		});
 	}
 	progress({ done: total, total });
+	return saveFiles(files);
+}
 
+/** A file an export built, before it is handed to the browser. */
+export interface BuiltFile {
+	name: string;
+	type: string;
+	bytes: Uint8Array;
+}
+
+/** Hand the files to the browser to download, and in the Mac app wait for it to say where each one landed. */
+export async function saveFiles(files: readonly BuiltFile[]): Promise<Exported> {
 	const bridge = desktopWindow();
 	const saved = landed(
 		files.map((file) => file.name),
@@ -299,7 +312,7 @@ export function ExportChoice({
 }
 
 /** the file name, its extension rising anew as the format changes; a long one gives way before its extension */
-function FileName({ file }: { file: string }) {
+export function FileName({ file }: { file: string }) {
 	const dot = file.lastIndexOf(".");
 	if (dot === -1) return <>{file}</>;
 	const extension = file.slice(dot);
@@ -346,6 +359,8 @@ export function ExportSaved({
 	onReveal: () => void;
 	onClose: () => void;
 }) {
+	// a file missing a page stays up until it is read
+	const left = exported.left ?? [];
 	return (
 		<div className="group/saved relative flex flex-col">
 			<div className="flex flex-col gap-0.5 px-2 pt-1.5 pb-2">
@@ -359,6 +374,11 @@ export function ExportSaved({
 					<span className="min-w-0 truncate">{exported.file}</span>
 					<span className="shrink-0 whitespace-pre"> · {fileSize(exported.bytes)}</span>
 				</span>
+				{left.length === 0 ? null : (
+					<span role="status" className="pl-6 text-danger-strong type-detail [overflow-wrap:anywhere]">
+						Left out {left.join(", ")}: {left.length === 1 ? "it" : "they"} couldn’t be captured
+					</span>
+				)}
 			</div>
 			{finder && exported.path !== undefined ? (
 				<>
@@ -366,11 +386,13 @@ export function ExportSaved({
 					<MenuItem label="Show in Finder" shortcut="↵" onClick={onReveal} />
 				</>
 			) : null}
-			<Drain
-				duration={SAVED_MS}
-				className="-inset-x-1 -bottom-1 group-hover/saved:[animation-play-state:paused]"
-				onAnimationEnd={onClose}
-			/>
+			{left.length > 0 ? null : (
+				<Drain
+					duration={SAVED_MS}
+					className="-inset-x-1 -bottom-1 group-hover/saved:[animation-play-state:paused]"
+					onAnimationEnd={onClose}
+				/>
+			)}
 		</div>
 	);
 }
