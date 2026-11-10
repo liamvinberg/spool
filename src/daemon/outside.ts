@@ -1,20 +1,22 @@
 import { execFile } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { HARNESSES, type Harness, type Terminal } from "../outside/harness";
 import { type Connection, connection } from "../outside/install";
 import {
-	type FrameAt,
+	type DesignAt,
 	foldHook,
 	type OutsideSession,
 	type Payload,
 	sessionLive,
 	startSession,
 } from "../outside/session";
+import { localCopyOf } from "../team-project";
 import { PRESENCE_AGENT_WORK, PRESENCE_NAME, type PresenceAgent, readPresenceAgent } from "../team-sync-protocol";
 import { realDesignDir } from "./design-path";
 import { frameDirectories } from "./projection";
+import { followedLink } from "./team-sync";
 
 /**
  * Agents working in a project from outside spool, as the daemon keeps them (task 531).
@@ -34,7 +36,7 @@ export interface OutsideView {
 	readonly connected: Readonly<Record<Harness, Connection>>;
 }
 
-export interface OutsideSessionView extends Omit<OutsideSession, "root" | "terminal" | "busy"> {
+export interface OutsideSessionView extends Omit<OutsideSession, "root" | "terminal" | "busy" | "drawn"> {
 	/** the terminal app, named, for Open <app>; null when it can't be brought forward from here */
 	readonly app: string | null;
 }
@@ -115,6 +117,8 @@ export function createOutside({
 	run?: (command: string, args: readonly string[]) => Promise<void>;
 }): Outside {
 	const sessions = new Map<string, OutsideSession>();
+	/** the checkout each session's files are in, when it is another copy of its project's team project */
+	const checkouts = new Map<string, string>();
 	const noticed = new Map<string, Map<Harness, Noticed>>();
 	const pending = new Map<string, ReturnType<typeof setTimeout>>();
 	const memoryFile = join(spoolDir, "outside.json");
@@ -146,9 +150,27 @@ export function createOutside({
 		return best;
 	};
 
+	/**
+	 * The project a session at `path` is drawn on, and the folder its files are in: the registered root holding it,
+	 * or else, walking up to the checkout's `spool.json`, a registered copy of the team project it names. A sibling
+	 * checkout of a team project holds the same frames by the same names, a second behind.
+	 */
+	const homeOf = (path: string): { root: string; checkout: string } | null => {
+		const root = rootOf(path);
+		if (root !== null) return { root, checkout: root };
+		for (let at = path; ; at = dirname(at)) {
+			const link = localCopyOf(at);
+			if (link !== undefined) {
+				const copy = roots().find((one) => followedLink(one)?.url === link.url);
+				return copy === undefined ? null : { root: copy, checkout: at };
+			}
+			if (dirname(at) === at) return null;
+		}
+	};
+
 	/** each root's frames by folder, read again at most every two seconds */
 	const folders = new Map<string, { at: number; dirs: Map<string, string> }>();
-	const frameAtFor = (root: string): FrameAt => {
+	const designAtFor = (root: string): DesignAt => {
 		let known = folders.get(root);
 		if (known === undefined || now() - known.at > 2_000) {
 			const dirs = new Map<string, string>();
@@ -157,25 +179,33 @@ export function createOutside({
 			folders.set(root, known);
 		}
 		const { dirs } = known;
-		let framesDir: string | null = null;
+		let designDir: string;
 		try {
-			framesDir = join(realDesignDir(root), "frames");
-		} catch {}
+			designDir = realDesignDir(root);
+		} catch {
+			return () => null;
+		}
+		const framesDir = join(designDir, "frames");
+		// the design folder as an agent names it, through a link or not
+		const named = [...new Set([join(root, "design"), designDir])];
 		return (path) => {
-			// a shell command's `frames/<name>/…`, wherever it ran from
-			const file =
-				!isAbsolute(path) && path.startsWith("frames/") && framesDir !== null
-					? join(framesDir, path.slice(7))
-					: path;
+			let file: string | null = null;
+			for (const dir of named)
+				if (file === null && (path === dir || path.startsWith(`${dir}${sep}`)))
+					file = join(designDir, relative(dir, path));
+			if (file === null) return null;
+			if (file.startsWith(`${join(designDir, "shared")}${sep}`)) return "shared";
 			for (let at = file; at.length > 1; at = at.slice(0, Math.max(at.lastIndexOf(sep), 1))) {
 				const name = dirs.get(at);
-				if (name !== undefined) return name;
+				if (name !== undefined) return { frame: name };
 				if (at === framesDir) break;
 			}
-			// a frame being written for the first time is known to no list yet: its folder names it
-			if (framesDir !== null && file.startsWith(`${framesDir}${sep}`)) {
+			// a frame being written for the first time is known to no list yet: its folder names it, or the folder
+			// itself, as a page's that a shell went into
+			if (file.startsWith(`${framesDir}${sep}`)) {
 				const rest = relative(framesDir, file).split(sep);
-				if (rest.length >= 2) return rest.slice(0, -1).join("/");
+				const folder = /\.\w+$/.test(rest.at(-1) ?? "") ? rest.slice(0, -1) : rest;
+				if (folder.length > 0) return { frame: folder.join("/") };
 			}
 			return null;
 		};
@@ -201,8 +231,9 @@ export function createOutside({
 		const at = now();
 		const shown: OutsideSessionView[] = [];
 		for (const session of sessions.values()) {
-			if (session.root !== root || !sessionLive(session, at)) continue;
-			const { root: _root, terminal, busy: _busy, ...rest } = session;
+			// heard from its first hook, drawn only once it changes the design this turn or a designer of its works
+			if (session.root !== root || !session.drawn || !sessionLive(session, at)) continue;
+			const { root: _root, terminal, busy: _busy, drawn: _drawn, ...rest } = session;
 			shown.push({ ...rest, app: appOf(terminal) });
 		}
 		shown.sort((a, b) => b.started - a.started);
@@ -263,6 +294,7 @@ export function createOutside({
 		for (const [id, session] of sessions)
 			if (!sessionLive(session, at)) {
 				sessions.delete(id);
+				checkouts.delete(id);
 				touched.add(session.root);
 			}
 		for (const root of touched) tell(root, false);
@@ -282,15 +314,20 @@ export function createOutside({
 				const cwd = typeof payload.cwd === "string" ? payload.cwd : null;
 				const input = payload.tool_input as Payload | undefined;
 				const path = typeof input?.file_path === "string" ? input.file_path : null;
-				const root = (cwd === null ? null : rootOf(cwd)) ?? (path === null ? null : rootOf(path));
-				if (root === null) return false;
+				const home = (cwd === null ? null : homeOf(cwd)) ?? (path === null ? null : homeOf(path));
+				if (home === null) return false;
 				// nothing to show of a session that only ends
 				if (event === "SessionEnd") return true;
-				session = startSession(id, harness, root, terminal, at);
+				session = startSession(id, harness, home.root, terminal, at);
+				if (home.checkout !== home.root) checkouts.set(id, home.checkout);
 			}
-			const next = foldHook({ ...session, terminal }, event, payload, at, frameAtFor(session.root));
-			if (next === null) sessions.delete(id);
-			else sessions.set(id, next);
+			const designAt = designAtFor(checkouts.get(id) ?? session.root);
+			const next = foldHook({ ...session, terminal }, event, payload, at, designAt);
+			if (next !== null) sessions.set(id, next);
+			else {
+				sessions.delete(id);
+				checkouts.delete(id);
+			}
 			// a connected harness is not one to ask about any more
 			noticed.get(session.root)?.delete(harness);
 			tell(session.root, next === null || next.state !== "working" || session.state !== "working");
