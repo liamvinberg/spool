@@ -92,7 +92,7 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
 .spool-bar-project { color: #6c6a67; white-space: nowrap; }
 .spool-bar-name { overflow: hidden; color: #94918d; white-space: nowrap; text-overflow: ellipsis; }
 /* the size the frame plays at, and fit or responsive (spool#553, spool#263), always in the size's place */
-.spool-bar-fit { position: absolute; left: 50%; translate: -50% 0; }
+.spool-bar-tipped.spool-bar-fit { position: absolute; left: 50%; translate: -50% 0; }
 .spool-bar-fit .spool-bar-share { color: #94918d; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .spool-bar-fit .spool-bar-share:hover { color: #f0efed; }
 .spool-bar-fit .spool-bar-tip { right: auto; left: 50%; translate: -50% 0; white-space: nowrap; }
