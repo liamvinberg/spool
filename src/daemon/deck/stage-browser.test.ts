@@ -1,5 +1,6 @@
 import type { Frame, Page } from "playwright-core";
 import { expect, it } from "vitest";
+import type { StageSession } from "../../deck/stage-session";
 import type { SlideReadiness, StageShown } from "../../deck/stage-wire";
 import { testBrowser } from "../../test-browser";
 import { serveProject, writeDesignFile } from "../../test-helpers";
@@ -40,12 +41,17 @@ async function tapStage(page: Page): Promise<void> {
 	});
 }
 
-type Said = { spool: "stage-shown"; shown: StageShown } | { spool: "stage-slides"; slides: SlideReadiness[] };
+type Said =
+	| { spool: "stage-shown"; shown: StageShown }
+	| { spool: "stage-slides"; slides: SlideReadiness[] }
+	| { spool: "stage-session"; session: StageSession };
 
 const said = (page: Page) =>
 	page.evaluate(() => ((window as unknown as { __stage?: unknown[][] }).__stage ?? []) as Said[][]);
 const shownBy = (messages: Said[] | undefined) =>
 	(messages ?? []).flatMap((message) => (message.spool === "stage-shown" ? [message.shown] : []));
+const sessionBy = (messages: Said[] | undefined) =>
+	(messages ?? []).flatMap((message) => (message.spool === "stage-session" ? [message.session] : [])).at(-1);
 const slidesBy = (messages: Said[] | undefined) =>
 	(messages ?? []).flatMap((message) => (message.spool === "stage-slides" ? [message.slides] : [])).at(-1) ?? [];
 
@@ -219,6 +225,11 @@ it("plays the hard talk end to end: each step ready before its key and on in a f
 			expect(shown.held, `${frame} beat ${step.beat} was put on screen`).toBe(true);
 		}
 		if (step.probe !== undefined) await cameWhole(page, step.probe);
+		if (frame === "talk/live") {
+			// a live slide takes a click, what it writes to `ui.state` is the talk's, and the keys go on from inside it
+			await stageFrame(page).locator("[data-spool-stage-shown] #more").click();
+			await expect.poll(async () => sessionBy((await said(page)).at(-1))?.state).toEqual({ count: 1 });
+		}
 	}
 	await after(1000);
 	const read = readScreen(await screen.stop());
