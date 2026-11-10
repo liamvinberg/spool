@@ -156,6 +156,7 @@ export function Player({
 		<div
 			className={[
 				"spool-screen",
+				...(host === undefined ? [] : ["is-hosted"]),
 				...(boxed ? ["is-shaped"] : []),
 				...(boxed && recording ? ["is-recording"] : []),
 			].join(" ")}
@@ -173,7 +174,9 @@ export function Player({
 								width: w,
 								height: h,
 								minHeight: 0,
-								...(scale < 1 ? { transform: `scale(${scale})`, transformOrigin: "0 0" } : {}),
+								...(scale < 1
+									? { transform: `scale(${scale})`, transformOrigin: "0 0", "--spool-scale": scale }
+									: {}),
 							}
 						: { width: laid.w }
 			}

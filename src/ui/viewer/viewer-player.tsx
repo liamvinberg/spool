@@ -305,7 +305,8 @@ function PlayedDocument({
 	const { frame, arrival, src, drawn, previous } = played;
 	const documents = previous === null ? [{ frame, arrival, src }] : [{ frame, arrival, src }, previous];
 	return (
-		<div className="relative bg-white" style={{ height: fitted ? "100%" : `calc(100vh - ${DESK_BAR_PX}px)` }}>
+		// no white of its own: the screen's backing stands behind it, stopping short of the edge (spool#263)
+		<div className="relative" style={{ height: fitted ? "100%" : `calc(100vh - ${DESK_BAR_PX}px)` }}>
 			{cover !== undefined && (
 				<img
 					src={cover}
@@ -330,7 +331,7 @@ function PlayedDocument({
 						title={current ? document.frame : `${document.frame}, before`}
 						sandbox="allow-scripts"
 						inert={!current}
-						className="absolute inset-0 block h-full w-full border-0 bg-white"
+						className="absolute inset-0 block h-full w-full border-0"
 						// hidden by opacity, never visibility, which would hold back the very drawing it waits for
 						style={{ opacity: !current || drawn === arrival ? 1 : 0 }}
 						onLoad={current ? () => onLoad(document.arrival) : undefined}

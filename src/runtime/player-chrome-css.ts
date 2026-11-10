@@ -57,6 +57,15 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
 .spool-page.has-bar .spool-screen { min-height: calc(100vh - 30px); }
 /* a fitted frame (spool#553, spool#263): its box drawn at its scale, centred in the room both ways */
 .spool-fitted { margin: auto; overflow: hidden; }
+/* a screen holding its frame's document in an iframe. The browser puts the
+   iframe on whole device pixels, so at a fractional scale a white backing
+   reaching the box's edge shows beside a dark frame as a bright hairline
+   (spool#263): the backing, for a frame that paints no background of its own,
+   stops a pixel short of the edge, at whatever scale the box is drawn */
+.spool-screen.is-hosted {
+	--spool-inset: calc(2px / var(--spool-scale, 1));
+	background: linear-gradient(#fff, #fff) 50% 50% / calc(100% - var(--spool-inset)) calc(100% - var(--spool-inset)) no-repeat;
+}
 .spool-fitted.is-off { display: contents; }
 .spool-top {
 	position: fixed;
