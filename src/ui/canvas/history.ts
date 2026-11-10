@@ -1,3 +1,4 @@
+import type { DeckChange } from "../../deck/wire";
 import { movedOnto, pageWithin, ROOT_PAGE } from "../../page-path";
 import type { KnobPath, KnobValue } from "../../runtime/knob-protocol";
 import type { Geometry, HeldPatch } from "../api";
@@ -167,7 +168,10 @@ export type HistoryEntry =
 			readonly page: string;
 			readonly frames: readonly Moved[];
 			readonly lists: readonly OrderList[];
-	  };
+	  }
+	// one change to a deck page (spool#265), as the daemon answered it: the change that puts its files back, and the
+	// one that does it again. The daemon refuses either once another hand has written since, which is its check
+	| { readonly kind: "deck"; readonly page: string; readonly undo: DeckChange; readonly redo: DeckChange };
 
 export interface History {
 	undo: readonly HistoryEntry[];
@@ -398,6 +402,8 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 			return alive.frames.has(entry.frame) ? entry : undefined;
 		case "reorder":
 			return entry;
+		case "deck":
+			return alive.pages.has(entry.page) ? entry : undefined;
 		case "gather": {
 			// undo needs the page to still be there to empty, and redo needs the toast
 			// to still be holding it: putting a page back is un-staging it, exactly as
