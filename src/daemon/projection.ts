@@ -2,9 +2,10 @@ import { closeSync, constants, type Dirent, lstatSync, openSync, readdirSync, re
 import { type FileHandle, lstat, open, readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
-import { isFramePath, isSafeName, pageParent, pageUnder, ROOT_PAGE } from "../page-path";
+import { isFramePath, isSafeName, pageName, pageParent, pageUnder, ROOT_PAGE } from "../page-path";
 import { flatPages, mergePageTree } from "../ui/canvas/order";
 import { type CanvasOrder, readOrder } from "./canvas-order";
+import { deckPlaceOf } from "./deck/keeper";
 import { isWithin } from "./design-boundary";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, parseGeometry, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
@@ -503,7 +504,8 @@ function placeFrames(root: string, discovery: Discovery, reads: FrameReads): Pro
 			...placed.filter((candidate) => candidate.page === frame.page),
 			...placeholders.filter((one) => one.page === frame.page),
 		];
-		const geometry = { ...besideField(field), ...footprint };
+		// a deck's page places its own frames where the deck keeps them (spool#265)
+		const geometry = deckPlaceOf(root, frame.page, pageName(frame.name)) ?? { ...besideField(field), ...footprint };
 		// its birth is read once its sidecar is written, which on a filesystem
 		// keeping no birth time moves the folder's mtime it stands in for
 		try {

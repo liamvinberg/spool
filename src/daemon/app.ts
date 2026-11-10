@@ -62,6 +62,9 @@ import { commentsForPrompt } from "./comment-prompt";
 import { commentRoutes, teamPeople } from "./comment-routes";
 import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
+import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
+import { createDeckKeeper } from "./deck/keeper";
+import { deckRoutes } from "./deck/routes";
 import { DesignBoundaryError, designRelativePath, realDesignDir } from "./design-path";
 import {
 	captureWorkerCsp,
@@ -590,7 +593,10 @@ export function createDaemonApp({
 	/** the placeholder frames running turns hold for their designers, and the ones a last run left go (#369) */
 	const placeholders = createPlaceholderLedger(join(spoolDir, "placeholders.json"));
 	placeholders.sweep();
-	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
+	const hub = createChangeHub({
+		framesUsing: (root, path) => flowGraph.framesUsing(root, path),
+		decks: () => deckOn(),
+	});
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
 	const trashImpl = moveToTrash ?? (async (paths: string[]) => void (await trash(paths, { glob: false })));
@@ -635,7 +641,8 @@ export function createDaemonApp({
 				// only what the disk really did: a walk, a cover and a resolve pass
 				// are the daemon publishing on the same channel, and .spool is
 				// nobody's history
-				if (event.kind === "frame" || event.kind === "geometry" || event.kind === "shared") changed();
+				if (event.kind === "frame" || event.kind === "geometry" || event.kind === "shared" || event.kind === "deck")
+					changed();
 			}),
 		...(historyClock === undefined ? {} : { clock: historyClock }),
 		...(onHistoryNotice === undefined ? {} : { notice: onHistoryNotice }),
@@ -647,6 +654,14 @@ export function createDaemonApp({
 	if (firstRun) settleFirstRun(spoolDir, settings);
 	/** Whether this machine has Record on (spool#221), read fresh so a switch flipped in Settings holds at once. */
 	const recordOn = () => experimentsOn(settings.read().entries).includes("record");
+	/** Whether this machine has decks on (spool#265), read fresh as Record's switch is. */
+	const deckOn = () => experimentsOn(settings.read().entries).includes("deck");
+	// spool#265: every deck kept laid out whatever hand changed it, while the experiment is on
+	const deckKeeper = createDeckKeeper({
+		subscribe: (root, listener) => hub.subscribe(root, listener),
+		on: deckOn,
+		log: (line) => console.error(`spool: ${line}`),
+	});
 	/** The recording rendering now, which the next one waits behind. */
 	let recordings: Promise<void> = Promise.resolve();
 	/** How far the clip rendering now has got, 0 to 1, for the player's bar. */
@@ -657,6 +672,7 @@ export function createDaemonApp({
 	/** The home the folder chooser's search indexes, and the registry that marks its projects (#251/#277). */
 	const fsIndex = { home: home ?? homedir(), spoolDir };
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
+	deckKeeper.keeping(registeredRoots());
 
 	// the app-level channel: registry and session changes, fanned to every page
 	const appListeners = new Set<(event: AppEvent) => void>();
@@ -665,6 +681,7 @@ export function createDaemonApp({
 		// brings whatever design/ churn the daemon was not up for
 		if (event.kind === "registry" || event.kind === "project-renamed") {
 			history.keeping(registeredRoots());
+			deckKeeper.keeping(registeredRoots());
 			boothKeeping(registeredRoots());
 			teamSync.keeping(registeredRoots());
 			movedIn.keeping(registeredRoots());
@@ -856,7 +873,8 @@ export function createDaemonApp({
 		resolve: resolveProject,
 		watch: (root, saved) =>
 			hub.subscribe(root, (event) => {
-				if (event.kind === "frame" || event.kind === "shared" || event.kind === "geometry") saved();
+				if (event.kind === "frame" || event.kind === "shared" || event.kind === "geometry" || event.kind === "deck")
+					saved();
 			}),
 		owe: (root, frame, why) => {
 			if (selfOrigin !== undefined) booth.enqueue({ root, project: basename(root), frame, reason: why });
@@ -1594,6 +1612,7 @@ export function createDaemonApp({
 			}),
 		)
 		.route("/api/p", exportRoutes({ resolve: resolveProject, htmlExport }))
+		.route("/api/p", deckRoutes({ resolve: resolveProject, on: deckOn, keeper: deckKeeper, hub }))
 		.route("/api", outsideRoutes({ outside, resolve: resolveProject, spoolDir, origin: () => controlOrigin }))
 		.get("/covers/:project/:frame/:hash", async (c) => {
 			const name = c.req.param("project");
@@ -1797,6 +1816,14 @@ export function createDaemonApp({
 			explorerRoutes({
 				resolve: resolveProject,
 				trash: trashImpl,
+				deck: {
+					moved: (root, moved) => {
+						if (deckOn()) deckFollowsMoves(root, moved);
+					},
+					trashed: (root, frames) => {
+						if (deckOn()) deckFollowsTrash(root, frames);
+					},
+				},
 				moved: (root, moved) =>
 					teamSync.moved(root, {
 						...(moved.frames === undefined ? {} : { frames: [...moved.frames] }),
@@ -2714,6 +2741,7 @@ export function createDaemonApp({
 			const compiled = playerCompiler.close();
 			machineStateWatch.stop();
 			history.close();
+			deckKeeper.close();
 			teamSync.close();
 			projectShares.close();
 			movedIn.close();
