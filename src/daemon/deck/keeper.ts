@@ -43,6 +43,8 @@ export function createDeckKeeper(deps: {
 	log?: (line: string) => void;
 }) {
 	const watches = new Map<string, () => void>();
+	/** the projects this keeper answers `deckPlaceOf` for */
+	const mine = new Set<string>();
 	const waiting = new Map<string, { root: string; timer: NodeJS.Timeout }>();
 	const quiet = deps.quietMs ?? DECK_QUIET_MS;
 	const now = deps.now ?? Date.now;
@@ -127,6 +129,7 @@ export function createDeckKeeper(deps: {
 	 */
 	function watch(root: string): void {
 		kept.set(root, deps.on);
+		mine.add(root);
 		if (watches.has(root) || !deps.on()) return;
 		watches.set(
 			root,
@@ -162,7 +165,11 @@ export function createDeckKeeper(deps: {
 		/** The projects to keep, as the registry has them now: none is watched while the experiment is off. */
 		keeping(roots: readonly string[]): void {
 			const on = deps.on();
-			for (const root of [...kept.keys()]) if (!roots.includes(root)) kept.delete(root);
+			for (const root of [...mine]) {
+				if (roots.includes(root)) continue;
+				mine.delete(root);
+				kept.delete(root);
+			}
 			for (const root of [...watches.keys()]) if (!on || !roots.includes(root)) stop(root);
 			for (const root of roots) watch(root);
 		},
@@ -183,6 +190,8 @@ export function createDeckKeeper(deps: {
 		},
 		close(): void {
 			for (const root of [...watches.keys()]) stop(root);
+			for (const root of mine) kept.delete(root);
+			mine.clear();
 		},
 	};
 }
