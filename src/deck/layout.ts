@@ -73,14 +73,14 @@ export function cellBox(talk: Size, cell: Cell): Box {
 	return { x: cell.col * colStride(talk), y: cell.row * rowStride(talk) + UNDER_BAND, w: talk.w, h: talk.h };
 }
 
-/** A frame of `size` centred in `box`, in whole pixels. */
+/**
+ * A frame of `size` centred in `box`, in whole pixels: its size rounded first and centred as rounded, so the box it
+ * gives centres to itself again and a frame of a fractional size is placed once.
+ */
 export function centredIn(box: Box, size: Size): Box {
-	return {
-		x: box.x + Math.round((box.w - size.w) / 2),
-		y: box.y + Math.round((box.h - size.h) / 2),
-		w: Math.round(size.w),
-		h: Math.round(size.h),
-	};
+	const w = Math.round(size.w);
+	const h = Math.round(size.h);
+	return { x: box.x + Math.round((box.w - w) / 2), y: box.y + Math.round((box.h - h) / 2), w, h };
 }
 
 /** The cell under the band nearest a point on the page. */
