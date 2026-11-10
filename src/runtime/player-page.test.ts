@@ -3,11 +3,11 @@ import { barLayout, DESK_BAR_WIDE_PX, deskWindow } from "./player-page";
 
 describe("barLayout — what a bar this wide can carry (#275)", () => {
 	it("carries everything on a window a desktop frame opened", () => {
-		expect(barLayout(1200)).toEqual({ project: true, size: true });
+		expect(barLayout(1200)).toEqual({ project: true, word: true });
 	});
 
-	it("drops the project prefix and the size on a phone frame's window", () => {
-		expect(barLayout(390)).toEqual({ project: false, size: false });
+	it("drops the project prefix and the size's word on a phone frame's window", () => {
+		expect(barLayout(390)).toEqual({ project: false, word: false });
 	});
 
 	it("chooses at 520 and not a pixel earlier", () => {

@@ -44,8 +44,9 @@ export function useViewport(): Viewport {
 export const DESK_BAR_PX = 30;
 
 /**
- * Where the bar has to start choosing. Under this the frame's name is the one
- * thing worth its width, so the project prefix and the size readout go.
+ * Where the bar has to start choosing. Under this the project prefix goes and
+ * the size readout drops its word, and there is no desk round the frame to
+ * pull its edges on (spool#264).
  */
 export const DESK_BAR_WIDE_PX = 520;
 
@@ -76,9 +77,9 @@ export function deskWindow(): DeskWindow | null {
 }
 
 /** What a bar this wide carries. The frame's name is never one of the answers. */
-export function barLayout(width: number): { project: boolean; size: boolean } {
+export function barLayout(width: number): { project: boolean; word: boolean } {
 	const wide = width >= DESK_BAR_WIDE_PX;
-	return { project: wide, size: wide };
+	return { project: wide, word: wide };
 }
 
 /** How long the restore says so for before it fades, toast-length. */
