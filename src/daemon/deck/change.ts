@@ -1,12 +1,16 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { applyRule } from "../../deck/changes";
 import { DECK_FILE, type DeckFile, deckFileBytes, newDeckFile, parseDeckFile, withAbsent } from "../../deck/deck-file";
-import { type Deck, placesOf, placesToWrite, reconcilePlan, settle } from "../../deck/layout";
+import { type Deck, placesOf, placesToWrite, reconcilePlan, settle, slotBox } from "../../deck/layout";
 import { withBeatNotes } from "../../deck/notes";
 import type { DeckChange, DeckChangeAnswer, DeckFiles, DeckRead } from "../../deck/wire";
 import { isPagePath, pageParent, ROOT_PAGE } from "../../page-path";
-import { realDesignDir } from "../design-path";
+import { realDesignDir, resolveDesignPath } from "../design-path";
 import type { Moved } from "../frame-links";
 import { geometryBytes } from "../geometry";
+import { isPageFolder } from "../projection";
 import { parseSidecar } from "../sidecar";
 import {
 	assertDeckBytes,
@@ -23,6 +27,7 @@ import {
 } from "./disk";
 import { commitSteps, recoverDeckChanges, type Step } from "./journal";
 import { readSlideSource } from "./slide-source";
+import { STARTER } from "./starter";
 
 /**
  * Everything the daemon writes for a deck (spool#265), each kept whole: reconciling a page after any hand changed it,
@@ -106,6 +111,7 @@ export function reconcileDeck(root: string, page: string): Rewrite[] {
  * daemon died inside earlier is put back first, so a retry starts from files that are whole.
  */
 export function changeDeck(root: string, change: DeckChange): DeckChangeAnswer | DeckRefusal {
+	if (change.kind === "make" && change.starter === true) return makeStarter(root, change.page, change.size);
 	const first = readPage(root, change.page);
 	if (first === undefined) return refuse(404, `no page "${change.page}" on the canvas`);
 	recoverDeckChanges(first.designDir);
@@ -150,6 +156,60 @@ function make(
 		);
 	const file = newDeckFile(slides, size);
 	return write(page, deckFileBytes(file), settle(file.size, file.slides, frames));
+}
+
+/**
+ * New presentation: a page that is not there yet, made whole holding the starter's slides as its talk, their notes,
+ * their places and its `deck.json`. It is put together out of sight under `design/.spool/` and moved onto the canvas
+ * in one rename, so no watcher, sync or reader ever sees the page half made, and a failure leaves nothing behind.
+ */
+function makeStarter(
+	root: string,
+	page: string,
+	size: { w: number; h: number } | undefined,
+): DeckChangeAnswer | DeckRefusal {
+	if (!isPagePath(page)) return refuse(400, `not a page name: "${page}"`);
+	if (size !== undefined && (!Number.isFinite(size.w) || !Number.isFinite(size.h)))
+		return refuse(400, "a deck's size is two numbers");
+	const designDir = realDesignDir(root);
+	if (!isWhole(designDir)) return refuse(409, "this project's design/ is not whole, so nothing is made in it");
+	const parent = pageParent(page);
+	const frames = resolveDesignPath(designDir, join(designDir, "frames"));
+	// a page inside a page nothing holds has nowhere to be born, as with New page
+	if (parent !== ROOT_PAGE && !isPageFolder(join(frames, ...parent.split("/"))))
+		return refuse(404, `no page "${parent}" on the canvas`);
+	const target = join(frames, ...page.split("/"));
+	if (existsSync(target)) return refuse(409, `"${page}" is taken`);
+	const file = newDeckFile(
+		STARTER.map((slide) => slide.folder),
+		size,
+	);
+	const staged = join(designDir, ".spool", "deck-new", randomUUID());
+	const after: Files = { deck: deckFileBytes(file), sidecars: {}, notes: {} };
+	try {
+		mkdirSync(staged, { recursive: true });
+		for (const [index, slide] of STARTER.entries()) {
+			const dir = join(staged, slide.folder);
+			mkdirSync(dir);
+			writeFileSync(join(dir, "frame.tsx"), slide.source);
+			const sidecar = geometryBytes(slotBox(file.size, index));
+			writeFileSync(join(dir, "frame.json"), sidecar);
+			writeFileSync(join(dir, "notes.md"), slide.notes);
+			after.sidecars[slide.folder] = sidecar;
+			after.notes[slide.folder] = slide.notes;
+		}
+		writeFileSync(join(staged, DECK_FILE), after.deck as string);
+		renameSync(staged, target);
+	} finally {
+		rmSync(staged, { recursive: true, force: true });
+	}
+	const before: Files = {
+		deck: null,
+		sidecars: Object.fromEntries(Object.keys(after.sidecars).map((folder) => [folder, null])),
+		notes: Object.fromEntries(Object.keys(after.notes).map((folder) => [folder, null])),
+	};
+	const made = readPage(root, page) as DeckPage;
+	return { ...answerOf(made, true, before, after), made: true };
 }
 
 /**
@@ -223,18 +283,23 @@ function commitFiles(page: DeckPage, from: Files, to: Files): DeckChangeAnswer {
 		{ path: designPath(page, DECK_FILE), before: from.deck, after: to.deck },
 	];
 	commitSteps(page.designDir, page.page, steps);
+	return answerOf(
+		page,
+		steps.some((step) => step.before !== step.after),
+		from,
+		to,
+	);
+}
+
+/** The answer to a change that took a deck's files from `from` to `to`. */
+function answerOf(page: DeckPage, changed: boolean, from: Files, to: Files): DeckChangeAnswer {
 	const restoreTo = (one: DeckFiles, other: DeckFiles): DeckChange => ({
 		kind: "restore",
 		page: page.page,
 		from: one,
 		to: other,
 	});
-	return {
-		changed: steps.some((step) => step.before !== step.after),
-		deck: readDeck(page),
-		undo: restoreTo(to, from),
-		redo: restoreTo(from, to),
-	};
+	return { changed, deck: readDeck(page), undo: restoreTo(to, from), redo: restoreTo(from, to) };
 }
 
 /**

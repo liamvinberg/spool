@@ -84,8 +84,17 @@ export interface DecksRead {
  */
 export type DeckChange =
 	| (DeckRule & { readonly page: string })
-	/** the page becomes a deck whose talk is these frames, in order (none: an empty talk) */
-	| { readonly kind: "make"; readonly page: string; readonly slides?: readonly string[]; readonly size?: Size }
+	/**
+	 * the page becomes a deck whose talk is these frames, in order (none: an empty talk); with `starter`, a page that
+	 * is not there yet is made holding New presentation's five starter slides as its talk, and `slides` is left out
+	 */
+	| {
+			readonly kind: "make";
+			readonly page: string;
+			readonly slides?: readonly string[];
+			readonly size?: Size;
+			readonly starter?: true;
+	  }
 	/**
 	 * the words of one beat of a frame's notes, `beat` counted from 0: its `notes.md` is made, rewritten, or removed
 	 * once no beat has words left
@@ -116,10 +125,12 @@ export interface DeckFiles {
 /**
  * `POST /api/p/:project/deck`'s answer. `undo` and `redo` are changes to send back through the same route, which make
  * one undo entry; `changed` is false when nothing on disk moved, which needs no entry. `deck` is the page after the
- * change, `null` when it is no longer a deck.
+ * change, `null` when it is no longer a deck. `made` says the change made the page itself, which was nowhere before
+ * it: `undo` then only takes the deck's own files back, and the page's own undo is putting it in the Trash.
  */
 export interface DeckChangeAnswer {
 	readonly changed: boolean;
+	readonly made?: true;
 	readonly deck: DeckRead | null;
 	readonly undo: DeckChange;
 	readonly redo: DeckChange;
@@ -192,7 +203,14 @@ export function parseDeckChange(value: unknown): DeckChange | undefined {
 			const slides = value.slides === undefined ? [] : folders(value.slides);
 			const to = value.size === undefined ? undefined : size(value.size);
 			if (slides === undefined || (value.size !== undefined && to === undefined)) return undefined;
-			return { kind: "make", page, slides, ...(to === undefined ? {} : { size: to }) };
+			if (value.starter !== undefined && (value.starter !== true || slides.length > 0)) return undefined;
+			return {
+				kind: "make",
+				page,
+				slides,
+				...(to === undefined ? {} : { size: to }),
+				...(value.starter === true ? { starter: true } : {}),
+			};
 		}
 		case "notes":
 			return folder(value.frame) && whole(value.beat) && value.beat >= 0 && typeof value.text === "string"

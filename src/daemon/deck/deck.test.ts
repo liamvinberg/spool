@@ -244,6 +244,34 @@ describe("a deck on disk", () => {
 		expect(fresh.files()["loose/notes.md"]).toBe("One's words.\n");
 	});
 
+	it("makes New presentation's page whole in one change, its starter laid out with its beats and notes", async () => {
+		const deck = deckProject();
+		const made = await deck.change({ kind: "make", page: "talk", starter: true });
+		expect(made.status).toBe(200);
+		expect(made.answer?.made).toBe(true);
+		const slides = made.answer?.deck?.slides ?? [];
+		expect(slides.map((slide) => [slide.name, slide.beats, slide.live, slide.notes.length])).toEqual([
+			["talk/title", [], false, 1],
+			["talk/statement", [], false, 1],
+			["talk/live", [], true, 1],
+			["talk/number", ["number", "meaning"], false, 2],
+			["talk/close", [], false, 1],
+		]);
+		expect(made.answer?.deck?.problems).toEqual([]);
+		// every place is already where the deck keeps it, so nothing is written after the page lands
+		expect(reconcileDeck(deck.root, "talk")).toEqual([]);
+		expect(deck.sidecar("number")).toEqual(box(3 * 1440, 0));
+		// put together out of sight, and nothing of that is left
+		expect(readdirSync(join(deck.root, "design", ".spool", "deck-new"))).toEqual([]);
+
+		// a page that is there already, or inside one that is not, is never made
+		const files = deck.files();
+		expect((await deck.change({ kind: "make", page: "talk", starter: true })).status).toBe(409);
+		expect(deck.files()).toEqual(files);
+		expect((await deck.change({ kind: "make", page: "nowhere/talk", starter: true })).status).toBe(404);
+		expect(existsSync(join(deck.root, "design", "frames", "nowhere"))).toBe(false);
+	});
+
 	it("writes one beat's notes and undoes them to the exact bytes, with no frame reloaded or pictured for them", async () => {
 		const deck = deckProject();
 		writePageFrame(deck.root, "talk", "a", beatsTsx('["title", "price", "date"]'));
