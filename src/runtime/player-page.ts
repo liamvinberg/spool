@@ -81,8 +81,5 @@ export function barLayout(width: number): { project: boolean; size: boolean } {
 	return { project: wide, size: wide };
 }
 
-/** How long the window's size stays on the bar once a resize has stopped. */
-export const DESK_RESIZE_MS = 900;
-
 /** How long the restore says so for before it fades, toast-length. */
 export const DESK_RESTORED_MS = 2600;

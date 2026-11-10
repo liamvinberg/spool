@@ -55,8 +55,17 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
    more than a glance away, and nothing has to be found again */
 .spool-page.has-bar { box-sizing: border-box; padding-top: 30px; }
 .spool-page.has-bar .spool-screen { min-height: calc(100vh - 30px); }
-/* a fitted frame (spool#553): its box shrunk to the room, centred, and the screen inside drawn at that scale */
-.spool-fitted { margin: 0 auto; overflow: hidden; }
+/* a fitted frame (spool#553, spool#263): its box drawn at its scale, centred in the room both ways */
+.spool-fitted { margin: auto; overflow: hidden; }
+/* a screen holding its frame's document in an iframe. The browser puts the
+   iframe on whole device pixels, so at a fractional scale a white backing
+   reaching the box's edge shows beside a dark frame as a bright hairline
+   (spool#263): the backing, for a frame that paints no background of its own,
+   stops a pixel short of the edge, at whatever scale the box is drawn */
+.spool-screen.is-hosted {
+	--spool-inset: calc(2px / var(--spool-scale, 1));
+	background: linear-gradient(#fff, #fff) 50% 50% / calc(100% - var(--spool-inset)) calc(100% - var(--spool-inset)) no-repeat;
+}
 .spool-fitted.is-off { display: contents; }
 .spool-top {
 	position: fixed;
@@ -82,25 +91,10 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
 .spool-bar-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .spool-bar-project { color: #6c6a67; white-space: nowrap; }
 .spool-bar-name { overflow: hidden; color: #94918d; white-space: nowrap; text-overflow: ellipsis; }
-/* the window's size, said in the middle while it is being resized and gone once it settles */
-.spool-bar-size {
-	position: absolute;
-	left: 50%;
-	translate: -50% 0;
-	color: #94918d;
-	font-size: 11px;
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 180ms ease-out;
-}
-.spool-bar-size.is-on { opacity: 1; }
-/* fit or responsive (spool#553), in the size's place whenever the frame is bigger than the window */
+/* the size the frame plays at, and fit or responsive (spool#553, spool#263), always in the size's place */
 .spool-bar-fit { position: absolute; left: 50%; translate: -50% 0; }
 .spool-bar-fit .spool-bar-share { color: #94918d; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .spool-bar-fit .spool-bar-share:hover { color: #f0efed; }
-.spool-bar-fit-size { color: #6c6a67; }
 .spool-bar-fit .spool-bar-tip { right: auto; left: 50%; translate: -50% 0; white-space: nowrap; }
 .spool-bar-end { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .spool-bar-hint { color: #94918d; font-size: 11px; white-space: nowrap; }
@@ -352,6 +346,6 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
 	outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) {
-	.spool-bar-size, .spool-bar-icon, .spool-bar-tip { transition: none !important; }
+	.spool-bar-icon, .spool-bar-tip { transition: none !important; }
 }
 `;

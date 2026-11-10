@@ -596,15 +596,14 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
 	);
 	const live = player.frames().find((frame) => frame !== player.mainFrame()) as Frame;
-	// The played page is the authored width capped against the window and the
-	// window's own height less the bar (#227), so the bare document it is
-	// measured against has to be that box — the law is that one viewport renders
-	// one way, not that every surface hands a frame the same viewport.
-	await bare.setViewportSize({ width: 390, height: 870 });
+	// A frame the window has room for is played at its authored box (spool#263),
+	// the box the bare document was opened at, so it is measured against that —
+	// the law is that one viewport renders one way, not that every surface hands
+	// a frame the same viewport.
 	await bareFrame.locator("#probe").waitFor();
 	const barePlayedProbe = await read(bareFrame);
 	const playerProbe = await read(live);
-	expect(playerProbe.viewport).toEqual({ width: 390, height: 870 });
+	expect(playerProbe.viewport).toEqual({ width: 390, height: 844 });
 	expect(playerProbe).toEqual(barePlayedProbe);
 	expect(canvasProbe).toEqual(bareProbe);
 	const initialTrace = await player.evaluate(
@@ -661,8 +660,8 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 		{ timeout: 5_000 },
 	);
 	const crossProbe = await read(live);
-	expect(crossProbe.viewport).toEqual({ width: 720, height: 870 });
-	expect(await playerFrame.locator("#first-viewport").innerText()).toBe("720×870");
+	expect(crossProbe.viewport).toEqual({ width: 720, height: 480 });
+	expect(await playerFrame.locator("#first-viewport").innerText()).toBe("720×480");
 	expect(crossProbe.rect).toEqual({ width: 200, height: 100, x: bareProbe.rect.x, y: bareProbe.rect.y });
 	expect(
 		await live.evaluate(() => (window as unknown as { __spoolTransitions: () => number }).__spoolTransitions()),
@@ -686,8 +685,8 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	});
 	expect(liveGeometry.status).toBe(204);
 	await geometryRefresh;
-	await live.waitForFunction(() => innerWidth === 600 && innerHeight === 870, undefined, { timeout: 5_000 });
-	expect((await read(live)).viewport).toEqual({ width: 600, height: 870 });
+	await live.waitForFunction(() => innerWidth === 600 && innerHeight === 600, undefined, { timeout: 5_000 });
+	expect((await read(live)).viewport).toEqual({ width: 600, height: 600 });
 
 	// Stale generation, stale frame, wrong dimensions, malformed nested state,
 	// and a forged WindowProxy are all inert.
@@ -760,7 +759,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 			}),
 	);
-	expect((await read(live)).viewport).toEqual({ width: 600, height: 870 });
+	expect((await read(live)).viewport).toEqual({ width: 600, height: 600 });
 	expect(await player.locator(".spool-bar-name").textContent()).toBe("cross");
 	expect(await player.locator(".spool-external-dialog").count()).toBe(0);
 });
@@ -792,7 +791,7 @@ it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_00
 		await inner.locator("#constructor-frame").evaluate(() => ({ width: innerWidth, height: innerHeight })),
 	).toEqual({
 		width: 390,
-		height: 870,
+		height: 844,
 	});
 });
 
@@ -1168,7 +1167,7 @@ export default function Start() {
 	await inner.locator("#target").waitFor();
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 870,
+		height: 480,
 	});
 	await expect.poll(targetVerified).toBe(true);
 });
@@ -1363,7 +1362,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 870,
+		height: 600,
 	});
 	const visibleSizes = await page.evaluate(
 		() => (window as unknown as { __spoolVisibleSizes: string[] }).__spoolVisibleSizes,
@@ -1383,7 +1382,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	await inner.locator("#target").waitFor();
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 870,
+		height: 600,
 	});
 });
 
@@ -1416,7 +1415,7 @@ it("reveals the last valid geometry while live geometry transport retries", { ti
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 870,
+		height: 844,
 	});
 	await expect.poll(() => geometryRequests, { timeout: 5_000 }).toBeGreaterThanOrEqual(2);
 });
@@ -1444,7 +1443,7 @@ it("reveals the preflight geometry while the first live geometry request hangs",
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 870,
+		height: 844,
 	});
 });
 
@@ -1537,7 +1536,7 @@ export default function Start() {
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 640,
-		height: 870,
+		height: 640,
 	});
 });
 
@@ -1622,11 +1621,11 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 		undefined,
 		{ timeout: 5_000 },
 	);
-	expect(await inner.locator("#target-viewport").innerText()).toBe("600×870");
+	expect(await inner.locator("#target-viewport").innerText()).toBe("600×600");
 	expect(await inner.locator("#target-viewport").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual(
 		{
 			width: 600,
-			height: 870,
+			height: 600,
 		},
 	);
 
@@ -1688,7 +1687,7 @@ export default function Target() {
 	expect(await inner.locator("#attempts").innerText()).toBe("1");
 	expect(await inner.locator("#after").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 870,
+		height: 480,
 	});
 });
 
@@ -1810,10 +1809,10 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 		undefined,
 		{ timeout: 5_000 },
 	);
-	expect(await inner.locator("#target-viewport").innerText()).toBe("600×870");
+	expect(await inner.locator("#target-viewport").innerText()).toBe("600×600");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 870,
+		height: 600,
 	});
 });
 
@@ -1880,7 +1879,7 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 870,
+		height: 480,
 	});
 
 	await page.evaluate(() => {
@@ -1958,7 +1957,7 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 870,
+		height: 844,
 	});
 
 	await page.evaluate(() => {
@@ -2072,10 +2071,10 @@ it("reclassifies a queued transition when newer geometry arrives before runtime 
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 870,
+		height: 480,
 	});
 });
 
@@ -2131,7 +2130,7 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 
 	await page.evaluate(() => {
 		(
@@ -2141,7 +2140,7 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 		).__spoolTransitionGate.release();
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 });
 
 it("reclassifies newer geometry while a transition commit is held", { timeout: 60_000 }, async () => {
@@ -2209,7 +2208,7 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 
 	await page.evaluate(() => {
 		(
@@ -2220,7 +2219,7 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 	expect(await page.locator(".spool-bar-name").innerText()).toBe("target");
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 });
 
 it("settles newer geometry before revealing a transition whose apply is held", { timeout: 60_000 }, async () => {
@@ -2296,10 +2295,10 @@ it("settles newer geometry before revealing a transition whose apply is held", {
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#viewport").innerText()).toBe("720×870");
+	expect(await inner.locator("#viewport").innerText()).toBe("720×480");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 870,
+		height: 480,
 	});
 });
 
@@ -2412,7 +2411,7 @@ it("reveals a settling transition on geometry newer than the one it armed on", {
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#viewport").innerText()).toBe("640×870");
+	expect(await inner.locator("#viewport").innerText()).toBe("640×420");
 });
 
 it("runs a queued walk after a pending transition settles", { timeout: 60_000 }, async () => {
@@ -2987,7 +2986,7 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 870,
+		height: 480,
 	});
 });
 
@@ -3023,7 +3022,7 @@ export default function Start() {
 	await inner.locator("#next").waitFor();
 	expect(await inner.locator("#next").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 870,
+		height: 844,
 	});
 });
 
@@ -3095,10 +3094,10 @@ export default function Start() {
 		{ timeout: 5_000 },
 	);
 	await inner.locator("#next").waitFor();
-	expect(await inner.locator("#next-viewport").innerText()).toBe("720×870");
+	expect(await inner.locator("#next-viewport").innerText()).toBe("720×480");
 	expect(await inner.locator("#next").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 870,
+		height: 480,
 	});
 });
 
