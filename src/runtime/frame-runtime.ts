@@ -3,10 +3,12 @@ import * as React from "react";
 import { createElement, useLayoutEffect, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import type { StageConfig } from "../deck/stage-wire";
 import { isFramePath } from "../page-path";
 import { accelChord } from "./accel-chord";
 import { loadAssetImagesUnderCors } from "./asset-images";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
+import { bootStage, stageRefusesWalk } from "./deck/stage";
 import {
 	eachKnob,
 	isKnobSpec,
@@ -79,6 +81,8 @@ export interface PlayerConfig {
 	 * disk with no daemon behind it, so the scenario rides in it.
 	 */
 	exported?: { state: Record<string, unknown> };
+	/** A deck's talk, played on its stage (spool#265): the document holds the talk's slides and nothing else. */
+	deck?: StageConfig;
 }
 
 declare global {
@@ -773,6 +777,7 @@ async function walkTo(target: string, commit?: () => void): Promise<void> {
 }
 
 function navigate(target: string, patch?: Record<string, unknown>, transition?: string): void {
+	if (stageRefusesWalk()) return;
 	if (!isFramePath(target)) {
 		console.error(`spool: not a frame name: "${target}"`);
 		return;
@@ -824,6 +829,7 @@ function go(target: string, patch?: Record<string, unknown>): void {
 }
 
 function back(): void {
+	if (stageRefusesWalk()) return;
 	if (deferPlayerAction(back)) return;
 	const target = stack.at(-1);
 	if (target === undefined) return;
@@ -1691,8 +1697,13 @@ const playerController: PlayerController = {
  * composition code reaches for it, authored frames have no business with it.
  */
 export function brokenFrame(details: { frame: string; file: string; error: string }): ComponentType {
-	return () => createElement(BrokenFrame, details);
+	const component = () => createElement(BrokenFrame, details);
+	brokenScreens.set(component, details.error);
+	return component;
 }
+
+/** Why each stand-in stands in, so a stage can name it rather than draw it. */
+const brokenScreens = new WeakMap<ComponentType, string>();
 
 /**
  * A screen as the composition hands it over: the component itself, or a loader
@@ -1789,9 +1800,52 @@ export function bootPlayer(frames: Record<string, ScreenSource>): void {
 			screens[frame] = source as ComponentType;
 		}
 	}
+	if (play.deck !== undefined) {
+		bootStage(stageRuntime);
+		return;
+	}
 	if (screenLoaded(mountedFrame)) mountPlayer(play);
 	else void loadScreen(mountedFrame).then(() => mountPlayer(play));
 }
+
+/** What a deck's stage takes from this runtime: the slides' modules and styles, and `ui.state`. */
+const stageRuntime = {
+	async load(frame: string) {
+		const held = screens[frame];
+		if (held !== undefined) {
+			const why = brokenScreens.get(held);
+			return why === undefined ? { component: held } : { broken: why, when: "compile" as const };
+		}
+		const loader = screenLoaders.get(frame);
+		if (loader === undefined) return { broken: `no frame "${frame}" in this player`, when: "load" as const };
+		try {
+			const module = await loader();
+			screens[frame] = module.default;
+			return { component: module.default };
+		} catch (error) {
+			return {
+				broken: error instanceof Error ? error.stack || error.message : String(error),
+				when: "load" as const,
+			};
+		}
+	},
+	loadStyle: loadFrameStyle,
+	activateStyle: activateFrameStyles,
+	styleOf(frame: string) {
+		const resource = play?.styles?.[frame];
+		if (resource === undefined) return undefined;
+		return (
+			[...document.querySelectorAll<HTMLStyleElement>("style[data-spool-frame-style]")].find(
+				(style) => style.dataset.spoolStyleResource === resource,
+			) ?? undefined
+		);
+	},
+	state: {
+		read: () => JSON.parse(JSON.stringify(stateTarget)) as Record<string, unknown>,
+		seed: seedState,
+		subscribe,
+	},
+};
 
 function mountPlayer(config: PlayerConfig): void {
 	motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
