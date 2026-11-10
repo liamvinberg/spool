@@ -16,6 +16,7 @@ import { CheckIcon } from "../icons";
 import { Button } from "../primitives/actions";
 import { SpinRing, StatusMark } from "../primitives/display";
 import { TextAction } from "../primitives/feedback";
+import { Section } from "../primitives/structure";
 import { Said } from "./agent-said";
 import { useMotionScale } from "./agent-trail";
 import { type Box, toScreen } from "./camera";
@@ -28,8 +29,9 @@ import { UnseenMark } from "./unseen-mark";
  *
  * Once a harness is connected its sessions are one line each at the top right, under the
  * agent's own trail: what it was asked and how far its tasks are while it works, what it
- * wants and Open <terminal> while it waits, and what it changed once it is done, one press
- * from its last message and those frames. Its hands are on the frames' name rows
+ * wants and Open <terminal> while it waits, and what it changed once it is done. One press
+ * opens where its hands are, what it wrote so far and its tasks, or once done its last
+ * message and those frames. Its hands are on the frames' name rows
  * (`frame-agents`). Before that, an agent heard running `spool` here is offered once it
  * goes quiet, in a card under the frame written last.
  */
@@ -143,7 +145,6 @@ function OutsideLine({
 	const done = state === "done";
 	const tasks =
 		session.tasks.length === 0 ? null : `${session.tasks.filter((one) => one.done).length}/${session.tasks.length}`;
-	const openable = done || session.tasks.length > 0;
 	const unread = session.changed.some((frame) => unseen.has(frame));
 	const label = waiting
 		? waitWords(session)
@@ -195,12 +196,11 @@ function OutsideLine({
 			<span className="flex h-control-sm items-center gap-1.5 rounded-xs bg-surface-canvas">
 				<button
 					type="button"
-					aria-expanded={openable ? open : undefined}
+					aria-expanded={open}
 					aria-label={`${harness}: ${label}${tasks === null ? "" : `, ${tasks} tasks`}`}
-					onClick={() => (open ? close() : openable && setOpen(true))}
+					onClick={() => (open ? close() : setOpen(true))}
 					className={cn(
-						"flex h-control-sm items-center whitespace-nowrap rounded-xs px-1 transition-colors duration-fast ease-out focus-ring",
-						openable ? "hover:bg-state-hover-raised" : "cursor-default",
+						"flex h-control-sm items-center whitespace-nowrap rounded-xs px-1 transition-colors duration-fast ease-out hover:bg-state-hover-raised focus-ring",
 						open && "bg-state-selected",
 					)}
 				>
@@ -271,7 +271,7 @@ function OutsideLine({
 								}}
 							/>
 						) : (
-							<Tasks session={session} />
+							<Work session={session} tasks={tasks} unseen={unseen} onLand={onLand} />
 						)}
 					</motion.div>
 				) : null}
@@ -280,14 +280,130 @@ function OutsideLine({
 	);
 }
 
+/**
+ * The drop while it works or waits: where its hands are, what it wrote so far and its tasks. A frame
+ * pressed is landed on and the drop stays, as the session goes on under it.
+ */
+function Work({
+	session,
+	tasks,
+	unseen,
+	onLand,
+}: {
+	session: OutsideSessionView;
+	/** how far its tasks are, `2/5`; null with none */
+	tasks: string | null;
+	unseen: ReadonlyMap<string, Unseen>;
+	onLand: (frame: string) => void;
+}) {
+	const waiting = session.state === "waiting";
+	return (
+		<div className="flex flex-col">
+			<Section title="Where it is now" className="border-t-0 pt-1">
+				{session.hands.length === 0 ? (
+					<p className="px-3 pb-2.5 text-tertiary type-label">Not on any frame right now.</p>
+				) : (
+					<div className="flex flex-col px-1 pb-1">
+						{session.hands.map((hand) => (
+							<FrameButton
+								key={hand.agent}
+								frame={hand.frame}
+								mark={
+									waiting ? (
+										<StatusMark status="waiting" className="[&>svg]:text-primary" />
+									) : (
+										<SpinRing className="size-3 text-secondary" />
+									)
+								}
+								says={`${hand.who} ${hand.act}`}
+								fresh
+								onLand={onLand}
+							/>
+						))}
+					</div>
+				)}
+			</Section>
+			{session.changed.length === 0 ? null : (
+				<Section title="Changed so far" meta={session.changed.length} className="pt-1">
+					<div className="flex flex-col px-1 pb-1">
+						{session.changed.map((frame) => (
+							<Changed key={frame} frame={frame} unseen={unseen} onLand={onLand} />
+						))}
+					</div>
+				</Section>
+			)}
+			{tasks === null ? null : (
+				<Section title="Tasks" meta={tasks} className="pt-1">
+					<Tasks session={session} />
+				</Section>
+			)}
+		</div>
+	);
+}
+
+/** A frame in a drop, pressed to land on it: a mark, its name, and what is doing there. */
+function FrameButton({
+	frame,
+	mark,
+	says,
+	fresh,
+	onLand,
+	...rest
+}: {
+	frame: string;
+	mark: ReactNode;
+	says?: string;
+	/** news or work there: its name in primary ink */
+	fresh: boolean;
+	onLand: (frame: string) => void;
+	"data-outside-changed"?: string;
+}) {
+	return (
+		<button
+			type="button"
+			{...rest}
+			onClick={() => onLand(frame)}
+			className="flex h-row items-center gap-2 rounded-sm px-2 text-left transition-colors duration-fast ease-out hover:bg-state-hover-raised focus-ring"
+		>
+			<span className="flex size-3 items-center justify-center">{mark}</span>
+			<span className={cn("min-w-0 flex-1 truncate type-value", fresh ? "text-primary" : "text-secondary")}>
+				{frame}
+			</span>
+			{says === undefined ? null : <span className="shrink-0 text-tertiary type-label">{says}</span>}
+		</button>
+	);
+}
+
+/** A frame it wrote, with the dot of news nobody has looked at yet. */
+function Changed({
+	frame,
+	unseen,
+	onLand,
+}: {
+	frame: string;
+	unseen: ReadonlyMap<string, Unseen>;
+	onLand: (frame: string) => void;
+}) {
+	const mark = unseen.get(frame);
+	return (
+		<FrameButton
+			data-outside-changed={frame}
+			frame={frame}
+			mark={mark === undefined ? null : <UnseenMark mark={mark} />}
+			fresh={mark !== undefined}
+			onLand={onLand}
+		/>
+	);
+}
+
 function Tasks({ session }: { session: OutsideSessionView }) {
 	const now = session.tasks.findIndex((task) => !task.done);
 	return (
-		<div className="flex flex-col py-1">
+		<div className="flex flex-col pb-1">
 			{session.tasks.map((task, index) => {
 				const state = task.done ? "done" : index === now ? "now" : "next";
 				return (
-					<div key={task.id} className="flex h-row items-center gap-2.5 px-3">
+					<div key={task.id} className="flex h-row items-center gap-2 px-3">
 						<span className="flex size-3 shrink-0 items-center justify-center">
 							{state === "done" ? (
 								<CheckIcon className="size-3 text-tertiary" />
@@ -335,28 +451,9 @@ function Done({
 				</div>
 			)}
 			<div className={cn("flex flex-col p-1", session.said !== null && "border-line-default border-t")}>
-				{session.changed.map((frame) => {
-					const mark = unseen.get(frame);
-					const fresh = mark !== undefined;
-					return (
-						<button
-							key={frame}
-							type="button"
-							data-outside-changed={frame}
-							onClick={() => onLand(frame)}
-							className="flex h-row items-center gap-2 rounded-sm px-2 text-left transition-colors duration-fast ease-out hover:bg-state-hover-raised focus-ring"
-						>
-							<span className="flex size-3 items-center justify-center">
-								{mark === undefined ? null : <UnseenMark mark={mark} />}
-							</span>
-							<span
-								className={cn("min-w-0 flex-1 truncate type-value", fresh ? "text-primary" : "text-secondary")}
-							>
-								{frame}
-							</span>
-						</button>
-					);
-				})}
+				{session.changed.map((frame) => (
+					<Changed key={frame} frame={frame} unseen={unseen} onLand={onLand} />
+				))}
 			</div>
 		</div>
 	);
