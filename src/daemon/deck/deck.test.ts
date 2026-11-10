@@ -502,6 +502,7 @@ describe("a deck on disk", () => {
 		await wait(QUIET);
 		expect(deck.sidecar("a")).toBeUndefined();
 		expect((await deck.app.request(`/api/p/${deck.name}/decks`)).status).toBe(404);
+		expect((await deck.app.request(`/api/p/${deck.name}/deck-export?page=talk`)).status).toBe(404);
 		expect((await deck.change({ kind: "make", page: "talk" })).status).toBe(404);
 		expect((await deck.post("frames/rename", { from: "talk/a", to: "talk/c" })).status).toBe(204);
 		expect(JSON.parse(readFileSync(join(deck.page, "deck.json"), "utf8")).slides).toEqual(["b", "a"]);

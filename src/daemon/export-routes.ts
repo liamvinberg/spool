@@ -49,7 +49,7 @@ export function exportRoutes(deps: { resolve: ResolveProject; htmlExport: HtmlEx
 }
 
 /** A design/ that reaches outside itself is a frame that can't be built, said as the compile would. */
-async function refusing<T>(work: () => Promise<ExportAnswer<T>>): Promise<ExportAnswer<T>> {
+export async function refusing<T>(work: () => Promise<ExportAnswer<T>>): Promise<ExportAnswer<T>> {
 	try {
 		return await work();
 	} catch (error) {
@@ -58,7 +58,7 @@ async function refusing<T>(work: () => Promise<ExportAnswer<T>>): Promise<Export
 	}
 }
 
-function refused(
+export function refused(
 	c: { text: (text: string, status: 404 | 422) => Response },
 	answer: Exclude<ExportAnswer<unknown>, { kind: "ok" }>,
 ): Response {

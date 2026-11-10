@@ -66,6 +66,7 @@ import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
 import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
 import { deckRoutes } from "./deck/routes";
 import { createStagePlay } from "./deck/stage-play";
+import { talkFile } from "./deck/talk-file";
 import { DesignBoundaryError, designRelativePath, realDesignDir } from "./design-path";
 import {
 	captureWorkerCsp,
@@ -1644,7 +1645,14 @@ export function createDaemonApp({
 		.route("/api/p", exportRoutes({ resolve: resolveProject, htmlExport }))
 		.route(
 			"/api/p",
-			deckRoutes({ resolve: resolveProject, on: deckOn, keeper: deckKeeper, hub, stage: stagePlay.address }),
+			deckRoutes({
+				resolve: resolveProject,
+				on: deckOn,
+				keeper: deckKeeper,
+				hub,
+				stage: stagePlay.address,
+				talkFile: (root, project, page) => talkFile(htmlExport, root, project, page),
+			}),
 		)
 		.route("/api", outsideRoutes({ outside, resolve: resolveProject, spoolDir, origin: () => controlOrigin }))
 		.get("/covers/:project/:frame/:hash", async (c) => {

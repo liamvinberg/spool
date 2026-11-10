@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { type DeckRead, type DecksRead, parseDeckChange, type UnreadDeck } from "../../deck/wire";
 import type { ChangeHub } from "../events";
+import { refused, refusing } from "../export-routes";
+import type { ExportAnswer, ExportedFile } from "../html-export";
 import { answeringDiskRefusals, type ResolveProject, withProject } from "../project-route";
 import { changeDeck } from "./change";
 import { deckPages, deckReadOf, readPage } from "./disk";
@@ -18,6 +20,8 @@ export function deckRoutes(deps: {
 	hub: Pick<ChangeHub, "publish">;
 	/** a fresh address of a deck's stage document, for a window of spool's to embed */
 	stage: (project: string, root: string, page: string) => StageAddress | { message: string };
+	/** a deck's talk as one HTML file that plays from disk (spool#275) */
+	talkFile: (root: string, project: string, page: string) => Promise<ExportAnswer<ExportedFile>>;
 }) {
 	return new Hono()
 		.get("/:project/decks", (c) => {
@@ -51,6 +55,21 @@ export function deckRoutes(deps: {
 			return withProject(c, deps.resolve, (root) => {
 				const talk = stageOf(root, page);
 				return "message" in talk ? c.text(talk.message, 404) : c.json(talk);
+			});
+		})
+		.get("/:project/deck-export", (c) => {
+			// the talk as one file, downloaded: the HTML half of exporting a talk; its PDF is captured in the window
+			if (!deps.on()) return c.notFound();
+			const page = c.req.query("page");
+			if (page === undefined) return c.text("a talk's file is asked for as ?page=", 400);
+			const project = c.req.param("project");
+			return withProject(c, deps.resolve, async (root) => {
+				const answer = await refusing(() => deps.talkFile(root, project, page));
+				if (answer.kind !== "ok") return refused(c, answer);
+				const { html, filename } = answer.value;
+				c.header("content-disposition", `attachment; filename="${filename.replace(/["\\]/g, "_")}"`);
+				c.header("cache-control", "no-store");
+				return c.html(html);
 			});
 		})
 		.post("/:project/deck-stage", async (c) => {

@@ -125,7 +125,7 @@ export function createStagePlay(deps: StagePlayDeps) {
  * new one is: the browser's own cross-fade fades both at once, and when the two fades fall out of step on a busy
  * machine, the room's screen dims between slides.
  */
-const STAGE_CSS = `html { background: #000; }
+export const STAGE_CSS = `html { background: #000; }
 #root { position: absolute; inset: 0; }
 .spool-stage-slide { position: absolute; left: 0; top: 0; overflow: hidden; transform-origin: 0 0; z-index: 0; }
 .spool-stage-slide[data-spool-stage-shown] { z-index: 1; }
