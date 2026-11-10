@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { filesOf, foldHook, type OutsideSession, type Payload, sessionLive, startSession } from "./session";
 
 const ROOT = "/work/shop";
-const frameAt = (file: string) => /\/design\/frames\/([^/]+)\//.exec(file)?.[1] ?? null;
+// the shop's design, as the daemon reads its folders: a frame by its folder, the shared folder, nothing else
+const designAt = (file: string) => {
+	if (file.startsWith(`${ROOT}/design/shared/`)) return "shared" as const;
+	const frame = /^(?:\/work\/shop\/design\/)?frames\/([^/]+)/.exec(file)?.[1];
+	return frame === undefined ? null : { frame };
+};
 const start = () => startSession("claude:s1", "claude", ROOT, { name: "Ghostty", bundle: "com.mitchellh.ghostty" }, 0);
 
 function run(events: readonly [string, Payload][], from: OutsideSession = start()): OutsideSession | null {
@@ -10,7 +15,7 @@ function run(events: readonly [string, Payload][], from: OutsideSession = start(
 	let at = 1;
 	for (const [event, payload] of events) {
 		if (session === null) return null;
-		session = foldHook(session, event, { cwd: ROOT, ...payload }, at++, frameAt);
+		session = foldHook(session, event, { cwd: ROOT, ...payload }, at++, designAt);
 	}
 	return session;
 }
@@ -123,6 +128,8 @@ describe("a Claude Code session, folded from its hooks", () => {
 		]);
 		expect(there).toMatchObject({
 			name: "tidy the menu",
+			// changed nothing in the design yet: heard, not drawn
+			drawn: false,
 			state: "waiting",
 			wants: "ask you something",
 			tasks: [
@@ -132,17 +139,39 @@ describe("a Claude Code session, folded from its hooks", () => {
 		});
 	});
 
-	it("leaves a frame as it goes to work elsewhere, and keeps its place through a command", () => {
-		const there = run([
+	it("is drawn once it writes a frame, and leaves it as it goes to work elsewhere, keeping its place through a command", () => {
+		const shell = (command: string): Payload => ({ tool_name: "Bash", tool_input: { command } });
+		// reading the design, a frame's or a fixture's, and looking at a frame draw nothing
+		const looking = run([
 			["UserPromptSubmit", { prompt: "tidy" }],
-			["PreToolUse", edit("cart")],
+			["PreToolUse", { tool_name: "Read", tool_input: { file_path: `${ROOT}/src/app.ts` } }],
+			["PreToolUse", shell("cat > src/fixtures/frames/menu/frame.tsx <<'EOF'\nx\nEOF")],
+			["PreToolUse", shell(`grep -n "a > b" design/frames/menu/frame.tsx > /tmp/hits`)],
+			["PreToolUse", shell("spool shot menu && pnpm -s dev check menu")],
 		]) as OutsideSession;
+		expect(looking).toMatchObject({ drawn: false, hands: [{ act: "reading", frame: "menu" }] });
+		const there = run([["PreToolUse", edit("cart")]], looking) as OutsideSession;
+		expect(there.drawn).toBe(true);
 		expect(run([["PreToolUse", { tool_name: "Bash", tool_input: { command: "pnpm test" } }]], there)?.hands).toEqual(
 			there.hands,
 		);
-		expect(
-			run([["PreToolUse", { tool_name: "Read", tool_input: { file_path: `${ROOT}/src/app.ts` } }]], there)?.hands,
-		).toEqual([]);
+		// gone from the frame, it stays drawn for the rest of the turn, through what the harness feeds in
+		const away = run(
+			[
+				["PreToolUse", { tool_name: "Read", tool_input: { file_path: `${ROOT}/src/app.ts` } }],
+				["UserPromptSubmit", { prompt: "<task-notification>\n<task-id>b1</task-id>" }],
+			],
+			there,
+		);
+		expect(away).toMatchObject({ hands: [], drawn: true });
+		expect(run([["UserPromptSubmit", { prompt: "now the api" }]], away as OutsideSession)?.drawn).toBe(false);
+	});
+
+	it("is drawn by a write to the shared folder with no hand, and by a designer's first word", () => {
+		const shared = { tool_name: "Write", tool_input: { file_path: `${ROOT}/design/shared/ui/button.tsx` } };
+		expect(run([["PreToolUse", shared]])).toMatchObject({ drawn: true, hands: [], changed: [] });
+		expect(run([["SubagentStart", { agent_id: "d1", agent_type: "Designer" }]])?.drawn).toBe(true);
+		expect(run([["SubagentStart", { agent_id: "e1", agent_type: "Explore" }]])?.drawn).toBe(false);
 	});
 
 	it("counts a session interrupted where no hook could say so as stopped, once it sits idle", () => {
@@ -174,25 +203,37 @@ describe("the files a tool call names", () => {
 		const patch =
 			"*** Begin Patch\n*** Update File: design/frames/cart/frame.tsx\n@@\n*** Add File: design/frames/tip/frame.tsx\n*** End Patch";
 		expect(filesOf("codex", "apply_patch", { command: patch }, ROOT)).toEqual({
-			files: [`${ROOT}/design/frames/cart/frame.tsx`, `${ROOT}/design/frames/tip/frame.tsx`],
-			writes: true,
+			read: [],
+			written: [`${ROOT}/design/frames/cart/frame.tsx`, `${ROOT}/design/frames/tip/frame.tsx`],
 		});
 		expect(filesOf("pi", "read", { path: "design/frames/cart/frame.tsx" }, ROOT)).toEqual({
-			files: [`${ROOT}/design/frames/cart/frame.tsx`],
-			writes: false,
+			read: [`${ROOT}/design/frames/cart/frame.tsx`],
+			written: [],
 		});
 		expect(filesOf("pi", "bash", { command: "ls" }, ROOT)).toBeNull();
 	});
 
-	it("finds the frames a shell command names, and whether it writes them", () => {
-		const heredoc = "cd /work/shop/design; cat frames/cart/frame.json; cat > frames/cart/frame.tsx <<'EOF'\nx\nEOF";
-		expect(filesOf("claude", "Bash", { command: heredoc }, ROOT)).toEqual({
-			files: ["frames/cart/frame.json", "frames/cart/frame.tsx"],
-			writes: true,
+	it("finds the files a shell command names where it runs, and which of them it writes", () => {
+		const shell = (command: string) => filesOf("claude", "Bash", { command }, ROOT);
+		const DESIGN = `${ROOT}/design`;
+		expect(
+			shell("cd /work/shop/design; cat frames/cart/frame.json; cat > frames/cart/frame.tsx <<'EOF'\na > b\nEOF"),
+		).toEqual({
+			read: [`${DESIGN}/frames/cart/frame.json`, DESIGN],
+			written: [`${DESIGN}/frames/cart/frame.tsx`],
 		});
-		expect(filesOf("claude", "Bash", { command: "spool check design/frames/menu/frame.tsx 2>&1" }, ROOT)).toEqual({
-			files: ["frames/menu/frame.tsx"],
-			writes: false,
+		// a copy out of the design reads it; a quoted `>` is a pattern's
+		expect(
+			shell(`cp design/frames/cart/frame.tsx site/cart.tsx && grep -c "a > b" design/frames/menu/frame.tsx 2>&1`),
+		).toEqual({
+			read: [`${DESIGN}/frames/cart/frame.tsx`, `${DESIGN}/frames/menu/frame.tsx`],
+			written: [`${ROOT}/site/cart.tsx`],
 		});
+		// a script that writes files writes where it was taken to
+		expect(shell("cd design/frames/cart && python3 - <<'EOF'\np='frame.tsx'\nopen(p, 'w').write(s)\nEOF")).toEqual({
+			read: [],
+			written: [`${DESIGN}/frames/cart`],
+		});
+		expect(shell(`pnpm -s dev comments add cart "too tight" && spool shot menu`)).toBeNull();
 	});
 });

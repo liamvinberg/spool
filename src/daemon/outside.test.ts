@@ -1,13 +1,14 @@
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { hookToken } from "../outside/install";
+import { parseProjectLink, writeProjectLink } from "../team-project";
 import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
 import { createOutside, type OutsideView } from "./outside";
 
 const FRAME = "export default function Frame() { return <div />; }";
 
 describe("hooks from a connected harness", () => {
-	it("take only spool's own hook secret, never a page's request, and draw on the project's canvas", async () => {
+	it("take only spool's own hook secret, never a page's request, and draw on the project's canvas once it changes the design", async () => {
 		const spoolDir = makeTempDir();
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "cart", FRAME);
@@ -31,11 +32,66 @@ describe("hooks from a connected harness", () => {
 		expect((await hook(edit, { "x-spool-hook": "wrong" })).status).toBe(401);
 		expect((await hook(edit, { "x-spool-hook": token, origin: "https://example.com" })).status).toBe(403);
 		expect((await hook(edit, { "x-spool-hook": token, "x-spool-term": "ghostty" })).status).toBe(204);
+		// another, writing a test's frames outside the design, is heard but not drawn
+		const code = { session_id: "s2", cwd: root, hook_event_name: "UserPromptSubmit", prompt: "fix the api" };
+		expect((await hook(code, { "x-spool-hook": token })).status).toBe(204);
+		const fixture = {
+			tool_name: "Bash",
+			tool_input: { command: "cat > test/frames/cart/frame.tsx <<'EOF'\nx\nEOF" },
+		};
+		await hook({ ...code, hook_event_name: "PreToolUse", ...fixture }, { "x-spool-hook": token });
+		// a third, writing a shared file, is drawn at no frame
+		const shared = { tool_name: "Write", tool_input: { file_path: join(root, "design", "shared", "ui.tsx") } };
+		await hook({ session_id: "s3", cwd: root, hook_event_name: "PreToolUse", ...shared }, { "x-spool-hook": token });
 
 		const view = (await (await app.request(`/api/p/${name}/outside`)).json()) as OutsideView;
-		expect(view.sessions).toMatchObject([
+		expect([...view.sessions].sort((a, b) => a.id.localeCompare(b.id))).toMatchObject([
 			{ id: "claude:s1", state: "working", hands: [{ who: "claude", act: "editing", frame: "cart" }] },
+			{ id: "claude:s3", hands: [] },
 		]);
+	});
+});
+
+describe("an agent in another checkout of a team project open here", () => {
+	it("draws on the copy open here, its frames read from its own checkout, unless a registered root holds it", () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const team = parseProjectLink("https://spool.page/devosurf/shop");
+		if (team === undefined) throw new Error("bad link");
+		const open = makeProject(spoolDir);
+		writeProjectLink(open.root, team);
+		// a worktree of the same repo, with its own copy of design/ and a frame that has not reached this copy yet
+		const sibling = makeTempDir();
+		writeProjectLink(sibling, team);
+		writeFrame(sibling, "receipt", FRAME);
+		const elsewhere = makeTempDir();
+		writeProjectLink(elsewhere, { ...team, url: "https://spool.page/devosurf/other", project: "other" });
+		const roots = [open.root];
+		const keeper = createOutside({ spoolDir, roots: () => roots, publish: () => {}, env: { HOME: home } });
+		onTestFinished(() => keeper.close());
+		const edit = (id: string, cwd: string) =>
+			keeper.hook(
+				"pi",
+				{
+					session_id: id,
+					cwd: join(cwd, "src"),
+					hook_event_name: "PreToolUse",
+					tool_name: "edit",
+					tool_input: { path: join(cwd, "design", "frames", "receipt", "frame.tsx") },
+				},
+				{ name: null, bundle: null },
+			);
+
+		expect(edit("s1", sibling)).toBe(true);
+		expect(keeper.view(open.root).sessions).toMatchObject([
+			{ id: "pi:s1", hands: [{ who: "pi", act: "editing", frame: "receipt" }] },
+		]);
+		expect(edit("s2", elsewhere)).toBe(false);
+
+		roots.push(sibling);
+		expect(edit("s3", sibling)).toBe(true);
+		expect(keeper.view(sibling).sessions.map((one) => one.id)).toEqual(["pi:s3"]);
+		expect(keeper.view(open.root).sessions.map((one) => one.id)).toEqual(["pi:s1"]);
 	});
 });
 
