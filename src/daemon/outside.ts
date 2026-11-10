@@ -200,12 +200,12 @@ export function createOutside({
 				if (name !== undefined) return { frame: name };
 				if (at === framesDir) break;
 			}
-			// a frame being written for the first time is known to no list yet: its folder names it, or the folder
-			// itself, as a page's that a shell went into
+			// a frame being written for the first time is known to no list yet: its folder names it. A bare folder
+			// that is no frame is a page's, or one a shell went into: in the design, with no frame to stand at
 			if (file.startsWith(`${framesDir}${sep}`)) {
 				const rest = relative(framesDir, file).split(sep);
-				const folder = /\.\w+$/.test(rest.at(-1) ?? "") ? rest.slice(0, -1) : rest;
-				if (folder.length > 0) return { frame: folder.join("/") };
+				if (!/\.\w+$/.test(rest.at(-1) ?? "")) return "shared";
+				if (rest.length >= 2) return { frame: rest.slice(0, -1).join("/") };
 			}
 			return null;
 		};

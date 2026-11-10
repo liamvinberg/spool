@@ -63,7 +63,8 @@ export type Payload = Readonly<Record<string, unknown>>;
 
 /**
  * Where a file is in the project's design, by its own folders: in a frame, or under the design
- * folder's `shared/`; null for a file outside both.
+ * folder's `shared/` (said too of a page's folder, which is in the design and no frame); null for a
+ * file outside both.
  */
 export type DesignAt = (file: string) => { readonly frame: string } | "shared" | null;
 
