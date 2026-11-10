@@ -135,6 +135,71 @@ export function holdAt(raw: number, min: number, max: number, stops: number[]): 
 	return { v: even(raw), snap: null };
 }
 
+/** A pull as it was grabbed: which edge or corner, where (screen px from the desk's middle), and the size and scale it was at. */
+export interface Grab {
+	sx: Sign;
+	sy: Sign;
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	/** the scale the frame was drawn at when grabbed */
+	s: number;
+}
+
+/** What a pull holds the frame at, and whether it has let go into the window. */
+export interface Pulled {
+	w: number;
+	h: number;
+	snapW: number | null;
+	snapH: number | null;
+	toWindow: boolean;
+}
+
+/**
+ * The scale a pull turns screen px into layout px at. On an edge, the scale the side left alone draws the frame at,
+ * which is the scale it is drawn at for as far as the desk allows, so the edge stays under the pointer; at a corner,
+ * the scale it was grabbed at.
+ */
+function pullScale(grab: Grab, room: Size): number {
+	if (grab.sx !== 0 && grab.sy !== 0) return grab.s;
+	return grab.sx !== 0 ? Math.min(1, room.h / grab.h) : Math.min(1, room.w / grab.w);
+}
+
+/** The most a pull may make the frame: the room less a gutter of desk each way, at the scale it is drawn at. */
+function pullMost(grab: Grab, room: Size): Size {
+	const s = pullScale(grab, room);
+	return { w: (room.w - 2 * GUTTER) / s, h: (room.h - 2 * GUTTER) / s };
+}
+
+/**
+ * Where a pull holds the frame with the pointer at `px`, `py` (screen px from the desk's middle). Only what is pulled
+ * moves (task 565): an edge's side follows the pointer, holding on its stops, and the other side keeps its value, also
+ * when it is bigger than the room, the frame staying shrunk to show it; a corner moves both. Pulled past the most the
+ * desk allows, with the pointer at the window's own edge, it lets go into the window.
+ */
+export function pullAt(grab: Grab, px: number, py: number, own: Size, room: Size): Pulled {
+	const s = pullScale(grab, room);
+	const most = pullMost(grab, room);
+	const rawW = grab.w + (2 * (px - grab.x) * grab.sx) / s;
+	const rawH = grab.h + (2 * (py - grab.y) * grab.sy) / s;
+	const toWindow =
+		(grab.sx !== 0 && rawW > most.w && Math.abs(px) >= room.w / 2 - EDGE) ||
+		(grab.sy !== 0 && rawH > most.h && Math.abs(py) >= room.h / 2 - EDGE);
+	const fw = grab.sx === 0 ? { v: grab.w, snap: null } : holdAt(rawW, MIN.w, most.w, widthStops(own));
+	const fh = grab.sy === 0 ? { v: grab.h, snap: null } : holdAt(rawH, MIN.h, most.h, heightStops(own));
+	return { w: fw.v, h: fh.v, snapW: fw.snap, snapH: fh.snap, toWindow };
+}
+
+/** Where a pull rests once let go of at `at`: what was pulled back within what the desk allows, the rest as grabbed. */
+export function pullRest(grab: Grab, at: Size, room: Size): Size {
+	const most = pullMost(grab, room);
+	return {
+		w: grab.sx === 0 ? grab.w : clampEven(at.w, MIN.w, most.w),
+		h: grab.sy === 0 ? grab.h : clampEven(at.h, MIN.h, most.h),
+	};
+}
+
 /** While a pull holds on a stop, what the bar calls it: the device of that width, or `as drawn` on the frame's own size. */
 export function stopWord(w: number, h: number, own: Size): string | null {
 	if (w === own.w && h === own.h) return "as drawn";

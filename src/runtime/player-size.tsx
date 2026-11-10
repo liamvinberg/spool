@@ -9,24 +9,22 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import { heldBox, type PlayerSize } from "./player-fit";
 import {
 	ALONG_SPRING,
-	clampEven,
 	cursorFor,
 	DWELL_MS,
-	EDGE,
 	FADE,
 	FOLLOW_SPRING,
+	type Grab,
 	GUTTER,
 	type Held,
 	heightStops,
-	holdAt,
 	MENU_OUT_S,
 	MENU_SPRING,
-	MIN,
 	marked,
 	PULL_SPRING,
+	pullAt,
+	pullRest,
 	rows,
 	SETTLE_MS,
-	type Sign,
 	type Size,
 	type SizeId,
 	sizeOf,
@@ -52,16 +50,8 @@ import { Animated } from "./spring";
  * the box the chrome draws at every moment.
  */
 
-/** A pull on its way, from where it was grabbed: the size and the scale it started at, and what it holds on. */
-interface Drag {
-	sx: Sign;
-	sy: Sign;
-	x: number;
-	y: number;
-	w: number;
-	h: number;
-	/** the scale the frame was drawn at when grabbed: a screen px on the desk is 1 / s layout px */
-	s: number;
+/** A pull on its way, from where it was grabbed, and what it holds on. */
+interface Drag extends Grab {
 	snapW: number | null;
 	snapH: number | null;
 	toWindow: boolean;
@@ -246,15 +236,9 @@ export function useSizing(
 	const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
 		const { px, py } = local(event);
 		if (drag !== null) {
-			const maxW = (room.w - 2 * GUTTER) / drag.s;
-			const maxH = (room.h - 2 * GUTTER) / drag.s;
-			const rawW = drag.sx === 0 ? drag.w : drag.w + (2 * (px - drag.x) * drag.sx) / drag.s;
-			const rawH = drag.sy === 0 ? drag.h : drag.h + (2 * (py - drag.y) * drag.sy) / drag.s;
-			// pulled past the last size the desk allows, with the pointer at the window's own edge (or past it, the
-			// pointer is held), the box lets go into the window
-			const toWindow =
-				(drag.sx !== 0 && rawW > maxW && Math.abs(px) >= room.w / 2 - EDGE) ||
-				(drag.sy !== 0 && rawH > maxH && Math.abs(py) >= room.h / 2 - EDGE);
+			// past the most the desk allows, with the pointer at the window's own edge (or past it, the pointer is
+			// held), the box lets go into the window
+			const { w: fw, h: fh, snapW, snapH, toWindow } = pullAt(drag, px, py, own, room);
 			if (drag.sx === 0) along.to(px, ALONG_SPRING, still);
 			else if (drag.sy === 0) along.to(py, ALONG_SPRING, still);
 			if (toWindow) {
@@ -265,20 +249,16 @@ export function useSizing(
 				}
 				return;
 			}
-			const fw = holdAt(rawW, MIN.w, maxW, widthStops(own));
-			const fh = holdAt(rawH, MIN.h, maxH, heightStops(own));
 			if (drag.toWindow) settleUntil.current = performance.now() + SETTLE_MS;
 			if (performance.now() < settleUntil.current) {
 				// back from the window, the box springs to the hand before it follows it again
-				w.to(fw.v, FOLLOW_SPRING, still);
-				h.to(fh.v, FOLLOW_SPRING, still);
+				w.to(fw, FOLLOW_SPRING, still);
+				h.to(fh, FOLLOW_SPRING, still);
 			} else {
-				w.set(fw.v);
-				h.set(fh.v);
+				w.set(fw);
+				h.set(fh);
 			}
-			const snapW = drag.sx === 0 ? null : fw.snap;
-			const snapH = drag.sy === 0 ? null : fh.snap;
-			const moved = drag.moved || fw.v !== drag.w || fh.v !== drag.h;
+			const moved = drag.moved || fw !== drag.w || fh !== drag.h;
 			if (snapW !== drag.snapW || snapH !== drag.snapH || toWindow !== drag.toWindow || moved !== drag.moved) {
 				setDrag({ ...drag, snapW, snapH, toWindow, moved });
 			}
@@ -343,8 +323,7 @@ export function useSizing(
 			return;
 		}
 		if (!drag.moved) return;
-		const fw = clampEven(w.get(), MIN.w, (room.w - 2 * GUTTER) / drag.s);
-		const fh = clampEven(h.get(), MIN.h, (room.h - 2 * GUTTER) / drag.s);
+		const { w: fw, h: fh } = pullRest(drag, { w: w.get(), h: h.get() }, room);
 		if (fw !== w.get()) w.to(fw, PULL_SPRING, still);
 		if (fh !== h.get()) h.to(fh, PULL_SPRING, still);
 		size.hold(fw === own.w && fh === own.h ? { id: "drawn", size: own } : { id: null, size: { w: fw, h: fh } });

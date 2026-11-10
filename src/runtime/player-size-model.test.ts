@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { heightStops, holdAt, marked, stopWord, widthStops, zoneAt } from "./player-size-model";
+import {
+	fitScale,
+	heightStops,
+	holdAt,
+	marked,
+	pullAt,
+	pullRest,
+	stopWord,
+	widthStops,
+	zoneAt,
+} from "./player-size-model";
 
 const landing = { w: 1280, h: 720 };
 const room = { w: 1440, h: 870 };
@@ -26,6 +36,24 @@ describe("a pull", () => {
 		expect(holdAt(1004, 320, 1000, []).v).toBe(1004);
 		// far under the least: never more than 36 under it
 		expect(holdAt(0, 320, 1000, [])).toEqual({ v: 284, snap: null });
+	});
+
+	it("moves only the side pulled, its edge under the pointer, the other side kept past the room too", () => {
+		// Tablet in a room 872 tall: drawn at 73% for its 1194 height
+		const tall = { w: 1440, h: 872 };
+		const tablet = { w: 834, h: 1194 };
+		const s = fitScale(tablet, tall);
+		const edge = (tablet.w * s) / 2;
+		const grab = { sx: 1, sy: 0, x: edge + 6, y: 40, ...tablet, s } as const;
+		const held = pullAt(grab, edge + 56, 90, landing, tall);
+		expect(held.h).toBe(1194);
+		// drawn at the scale that height keeps it at, the edge has come the pointer's 50px, so it is still under it
+		expect(Math.abs((held.w * fitScale(held, tall)) / 2 - (edge + 50))).toBeLessThanOrEqual(1);
+		expect(pullRest(grab, held, tall)).toEqual({ w: held.w, h: 1194 });
+		// a corner moves both, as far as the desk has room for
+		const corner = pullAt({ ...grab, sy: 1, y: 300 }, edge + 56, 310, landing, tall);
+		expect(corner.h).toBeLessThan(1194);
+		expect(pullRest({ ...grab, sy: 1, y: 300 }, corner, tall).h).toBe(Math.round((tall.h - 24) / s / 2) * 2);
 	});
 
 	it("names the stop it holds on: the device of that width, or as drawn at the frame's own size", () => {
