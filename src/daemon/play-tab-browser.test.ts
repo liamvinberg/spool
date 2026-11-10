@@ -95,7 +95,7 @@ it("opens a tab whose page is a real document, and walks the URL with it", { tim
 	expect(await canvas.evaluate(() => location.pathname)).toBe(`/p/${project.name}`);
 });
 
-it("wears the bar for good, plays a frame at its own size, centred, and says the size it plays at", {
+it("wears the bar for good, plays a frame at its own size, centred, says the size it plays at, and plays it at another", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -115,11 +115,11 @@ it("wears the bar for good, plays a frame at its own size, centred, and says the
 
 	// a frame smaller than the window plays at exactly its authored 800 × 700, never
 	// stretched, centred in the room under the bar, and the bar says so while still
-	const fit = played.locator(".spool-bar-fit button");
+	const size = played.locator("button[aria-haspopup=menu]");
 	const screen = played.locator(".spool-screen");
-	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toBe("800 × 700");
+	await expect.poll(() => size.textContent(), { timeout: 5_000 }).toBe("800 × 700");
 	// in the middle of the bar, which is the middle of the window
-	const readout = await fit.boundingBox();
+	const readout = await size.boundingBox();
 	expect(Math.abs((readout?.x ?? 0) + (readout?.width ?? 0) / 2 - 640)).toBeLessThanOrEqual(1);
 	await expect
 		.poll(() => screen.boundingBox(), { timeout: 5_000 })
@@ -129,21 +129,44 @@ it("wears the bar for good, plays a frame at its own size, centred, and says the
 	// 800 × 700, all of it shown smaller, and the bar says how much smaller as it changes
 	await played.setViewportSize({ width: 600, height: 500 });
 	const inner = played.frameLocator("iframe");
-	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toBe("800 × 700 · 67%");
-	await expect.poll(() => inner.locator("#measure").textContent(), { timeout: 30_000 }).toBe("800");
+	const measured = () => inner.locator("#measure").textContent();
+	await expect.poll(() => size.textContent(), { timeout: 5_000 }).toBe("800 × 700 · 67%");
+	await expect.poll(measured, { timeout: 30_000 }).toBe("800");
 	await expect.poll(async () => (await screen.boundingBox())?.height, { timeout: 5_000 }).toBeCloseTo(470, 0);
-	// pressed, it plays responsive instead: the frame lays out at the window's own width,
-	// the same document resized rather than a reload that would lose where the reader was
+	// Window, from the list on the size (spool#264): the frame lays out at the window's own size, the same
+	// document resized rather than a reload that would lose where the reader was
 	await inner.locator("#measure").evaluate(() => Object.assign(window, { stayed: true }));
-	await fit.click();
-	await expect.poll(() => inner.locator("#measure").textContent(), { timeout: 30_000 }).toBe("600");
+	await size.click();
+	await played.getByRole("menuitemcheckbox", { name: /Window/ }).click();
+	await expect.poll(measured, { timeout: 30_000 }).toBe("600");
 	expect(await inner.locator("#measure").evaluate(() => "stayed" in window)).toBe(true);
-	await expect.poll(() => fit.innerText(), { timeout: 5_000 }).toBe("600 × 470 · responsive");
+	await expect.poll(() => size.textContent(), { timeout: 5_000 }).toBe("600 × 470 · window");
 	// and the pick outlives the page
 	await played.reload();
-	await expect
-		.poll(() => played.frameLocator("iframe").locator("#measure").textContent(), { timeout: 30_000 })
-		.toBe("600");
+	await expect.poll(measured, { timeout: 30_000 }).toBe("600");
+
+	// a device is played for real at its size, and the frame's edge pulls it to any other
+	await played.setViewportSize({ width: 1280, height: 900 });
+	await expect.poll(measured, { timeout: 30_000 }).toBe("1280");
+	await size.click();
+	await played.getByRole("menuitemcheckbox", { name: /Phone/ }).click();
+	await expect.poll(measured, { timeout: 30_000 }).toBe("390");
+	const phone = await screen.boundingBox();
+	const edge = { x: (phone?.x ?? 0) + (phone?.width ?? 0) + 6, y: (phone?.y ?? 0) + (phone?.height ?? 0) / 2 };
+	await played.mouse.move(edge.x, edge.y);
+	await played.mouse.down();
+	// across the frame's own document and back out, the pull keeps the pointer
+	await played.mouse.move(edge.x - 40, edge.y, { steps: 4 });
+	await played.mouse.move(edge.x + 110, edge.y, { steps: 8 });
+	await played.mouse.up();
+	await expect.poll(measured, { timeout: 30_000 }).toBe("610");
+	// the words of the stops it crossed have gone
+	await expect.poll(() => size.textContent(), { timeout: 5_000 }).toBe("610 × 844");
+	// a double-click on the edge springs it back to its own size
+	const pulled = await screen.boundingBox();
+	await played.mouse.dblclick((pulled?.x ?? 0) + (pulled?.width ?? 0) + 6, edge.y);
+	await expect.poll(measured, { timeout: 30_000 }).toBe("800");
+	await expect.poll(() => size.textContent(), { timeout: 5_000 }).toBe("800 × 700");
 
 	// close names its key in a tooltip rather than on the bar
 	await played.locator("#spool-close").hover();

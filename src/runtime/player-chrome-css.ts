@@ -1,3 +1,23 @@
+import { CORNER_POP, FADE, GRIP_POP, MENU_IN, MENU_OUT_S, TICKS_FADE } from "./player-size-model";
+import { springEasing } from "./spring";
+
+/** A spring the chrome moves by CSS, as `<duration> <easing>`. */
+function sprung(options: Parameters<typeof springEasing>[0]): string {
+	const { duration, easing } = springEasing(options);
+	return `${duration}ms ${easing}`;
+}
+
+/** A tween the chrome moves by CSS, as `<duration> <easing>`. */
+function tweened({ duration, ease }: { duration: number; ease: readonly number[] }): string {
+	return `${duration * 1000}ms cubic-bezier(${ease.join(", ")})`;
+}
+
+/** The design's fades: a word or a grip, and the stop marks. */
+const FADES = tweened(FADE);
+const TICKS_FADES = tweened(TICKS_FADE);
+/** The list going, on the ease-out Motion gives a bare duration. */
+const MENU_OUT = tweened({ duration: MENU_OUT_S, ease: [0, 0, 0.58, 1] });
+
 /** The page and the screen alone, under the player's bar. */
 const PLAYER_SCREEN_RULES = `/* the page is as tall as its content and the browser scrolls it: no clipped
    body, no scroll container of spool's own (#227) */
@@ -55,8 +75,11 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
    more than a glance away, and nothing has to be found again */
 .spool-page.has-bar { box-sizing: border-box; padding-top: 30px; }
 .spool-page.has-bar .spool-screen { min-height: calc(100vh - 30px); }
-/* a fitted frame (spool#553, spool#263): its box drawn at its scale, centred in the room both ways */
-.spool-fitted { margin: auto; overflow: hidden; }
+/* a sized frame (spool#553, spool#263, spool#264): its box drawn at its scale, centred in the room both ways, with
+   a hairline round it on the desk, stronger while an edge can be grabbed, and none while it is the window */
+.spool-fitted { margin: auto; overflow: hidden; transition: box-shadow ${FADES}; }
+.spool-fitted.is-ringed { box-shadow: 0 0 0 1px #212121; }
+.spool-fitted.is-ringed.is-hot { box-shadow: 0 0 0 1px #363636; }
 /* a screen holding its frame's document in an iframe. The browser puts the
    iframe on whole device pixels, so at a fractional scale a white backing
    reaching the box's edge shows beside a dark frame as a bright hairline
@@ -73,10 +96,12 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
 	z-index: 10;
 	/* its hairline is inside its 30px, so the page's inset and the bar agree */
 	box-sizing: border-box;
-	display: flex;
+	/* the size in the middle column, dead centre whatever stands either side of it */
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 	align-items: center;
 	gap: 12px;
-	padding: 0 6px 0 16px;
+	padding: 0 6px;
 	background: #0e0e0e;
 	border-bottom: 1px solid #212121;
 	color: #f0efed;
@@ -86,17 +111,159 @@ export const PLAYER_CHROME_RULES = `${PLAYER_SCREEN_RULES}
 }
 /* the first 76px are the OS's: three lights, inset by trafficLightPosition —
    and this bar is the window's title bar, so a hand on it moves the window */
-.spool-top.is-desk { padding: 0 12px 0 76px; -webkit-app-region: drag; }
-.spool-top.is-desk button { -webkit-app-region: no-drag; }
-.spool-bar-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.spool-top.is-desk { padding: 0 12px; -webkit-app-region: drag; }
+.spool-top.is-desk button, .spool-top.is-desk [role=menu] { -webkit-app-region: no-drag; }
+.spool-bar-title {
+	container-type: inline-size;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding-left: 10px;
+	white-space: nowrap;
+}
+.spool-top.is-desk .spool-bar-title { padding-left: 64px; }
 .spool-bar-project { color: #6c6a67; white-space: nowrap; }
 .spool-bar-name { overflow: hidden; color: #94918d; white-space: nowrap; text-overflow: ellipsis; }
-/* the size the frame plays at, and fit or responsive (spool#553, spool#263), always in the size's place */
-.spool-bar-tipped.spool-bar-fit { position: absolute; left: 50%; translate: -50% 0; }
-.spool-bar-fit .spool-bar-share { color: #94918d; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.spool-bar-fit .spool-bar-share:hover { color: #f0efed; }
+/* squeezed past a few letters by the middle, the name gives way rather than leave one */
+@container (width < 28px) { .spool-bar-name { visibility: hidden; } }
 .spool-bar-fit .spool-bar-tip { right: auto; left: 50%; translate: -50% 0; white-space: nowrap; }
-.spool-bar-end { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.spool-bar-end { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; }
+/* the size the frame plays at (spool#264): the readout, size first, which opens the list of sizes under it */
+.spool-size { justify-content: center; }
+.spool-size-readout {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 24px;
+	margin: 0;
+	padding: 0 4px 0 6px;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: #94918d;
+	font: 400 11px/16px "Fragment Mono", ui-monospace, monospace;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background-color ${FADES}, color ${FADES};
+}
+.spool-size-readout.is-away { color: #f0efed; }
+.spool-size-readout:hover, .spool-size-readout.is-pressed { background: rgb(240 239 237 / 0.06); color: #f0efed; }
+.spool-size-said { display: flex; align-items: center; }
+/* a word comes in from the left and goes to the right, popped out of the line as it goes */
+.spool-size-slot { position: relative; display: flex; }
+.spool-size-word { color: #94918d; white-space: pre; }
+.spool-size-word.is-in { animation: spool-size-word-in ${FADES} both; }
+.spool-size-word.is-out { position: absolute; top: 0; left: 0; animation: spool-size-word-out ${FADES} forwards; }
+@keyframes spool-size-word-in { from { opacity: 0; translate: -4px 0; } }
+@keyframes spool-size-word-out { to { opacity: 0; translate: 4px 0; } }
+.spool-size-caret { flex: none; color: #6c6a67; transition: rotate ${sprung(MENU_IN)}; }
+.spool-size-readout[aria-expanded=true] .spool-size-caret { rotate: 180deg; }
+.spool-size-menu {
+	position: absolute;
+	top: calc(100% + 5px);
+	left: 50%;
+	translate: -50% 0;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	width: 200px;
+	max-width: calc(100vw - 16px);
+	padding: 4px;
+	border: 1px solid #363636;
+	border-radius: 8px;
+	background: #282828;
+	box-shadow: 0 8px 24px rgb(0 0 0 / 0.32);
+	outline: none;
+	transform-origin: 50% 0;
+	animation: spool-size-menu-in ${sprung(MENU_IN)} both;
+}
+.spool-size-menu.is-out { pointer-events: none; animation: spool-size-menu-out ${MENU_OUT} forwards; }
+@keyframes spool-size-menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
+@keyframes spool-size-menu-out { to { opacity: 0; transform: translateY(-2px) scale(0.99); } }
+.spool-size-row {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	height: 28px;
+	margin: 0;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 6px;
+	background: none;
+	color: #f0efed;
+	font: 400 13px/20px "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+	text-align: left;
+	cursor: default;
+	transition: background-color ${FADES};
+}
+.spool-size-row[data-state=hover] { background: rgb(240 239 237 / 0.06); }
+.spool-size-check { display: flex; flex: none; align-items: center; justify-content: center; width: 16px; height: 16px; }
+.spool-size-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spool-size-meta {
+	flex: none;
+	max-width: 60%;
+	overflow: hidden;
+	color: #94918d;
+	font: 400 11px/16px "Fragment Mono", ui-monospace, monospace;
+	font-variant-numeric: tabular-nums;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.spool-size-rule { flex: none; height: 1px; margin: 4px 8px; border: 0; background: #363636; }
+/* the desk round the frame: under it, where an edge is grabbed and the stops are marked; over it, the grip. A pull
+   holds the pointer, so the frame's own document never takes it, and selects nothing */
+.spool-desk { position: fixed; inset: 30px 0 0; z-index: 0; }
+.spool-grips { position: fixed; inset: 30px 0 0; z-index: 1; pointer-events: none; }
+.spool-page.is-pulling { -webkit-user-select: none; user-select: none; }
+.spool-page.is-pulling .spool-screen { pointer-events: none; }
+.spool-ticks, .spool-grip { position: absolute; inset: 0; pointer-events: none; }
+.spool-ticks { animation: spool-size-fade-in ${TICKS_FADES} both; }
+.spool-ticks.is-out { animation: spool-size-fade-out ${TICKS_FADES} forwards; }
+.spool-grip { animation: spool-size-fade-in ${FADES} both; }
+.spool-grip.is-out { animation: spool-size-fade-out ${FADES} forwards; }
+@keyframes spool-size-fade-in { from { opacity: 0; } }
+@keyframes spool-size-fade-out { to { opacity: 0; } }
+.spool-tick { position: absolute; background: #363636; transition: background-color ${FADES}; }
+.spool-tick.is-across { width: 1px; height: 6px; translate: -50% 0; }
+.spool-tick.is-down { width: 6px; height: 1px; translate: 0 -50%; }
+.spool-tick.is-lit { background: #f5391a; }
+.spool-grip-edge { position: absolute; transition: background-color ${FADES}, opacity ${FADES}; }
+.spool-grip-edge.is-side { width: 1px; }
+.spool-grip-edge.is-end { height: 1px; }
+.spool-grip-pill { position: absolute; translate: -50% -50%; }
+.spool-grip-pill > span {
+	display: block;
+	border-radius: 999px;
+	transition: background-color ${FADES}, scale ${sprung(GRIP_POP)}, opacity ${sprung(GRIP_POP)};
+	animation: spool-grip-pop ${sprung(GRIP_POP)} backwards;
+}
+.spool-grip-pill > .is-side { width: 4px; height: 32px; }
+.spool-grip-pill > .is-end { width: 32px; height: 4px; }
+@keyframes spool-grip-pop { from { opacity: 0; scale: 0.5; } }
+.spool-grip-edge.is-near, .spool-grip-pill > .is-near { background: #94918d; }
+.spool-grip-edge.is-held, .spool-grip-pill > .is-held { background: #f0efed; }
+.spool-grip-edge.is-snapped, .spool-grip-pill > .is-snapped { background: #f5391a; }
+.spool-grip-corner { position: absolute; width: 24px; height: 24px; translate: -50% -50%; color: #f0efed; transition: color ${FADES}; }
+.spool-grip-corner.is-snapped { color: #f5391a; }
+.spool-grip-corner svg { display: block; overflow: visible; }
+.spool-grip-corner path {
+	transform-box: view-box;
+	transform-origin: center;
+	transition: scale ${sprung(CORNER_POP)};
+	animation: spool-corner-pop ${sprung(CORNER_POP)} backwards;
+}
+.spool-grip-corner path.is-snapped { scale: 1.12; }
+@keyframes spool-corner-pop { from { scale: 0.6; } }
+@media (prefers-reduced-motion: reduce) {
+	.spool-size-word, .spool-size-menu, .spool-ticks, .spool-grip, .spool-grip-pill > span, .spool-grip-corner path { animation: none; }
+	.spool-size-word.is-out, .spool-size-menu.is-out, .spool-ticks.is-out, .spool-grip.is-out { display: none; }
+}
 .spool-bar-hint { color: #94918d; font-size: 11px; white-space: nowrap; }
 /* said while the screen is on its way: the compile and the first fetch happen
    behind the bar, and a box with nothing in it says nothing */
