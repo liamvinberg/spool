@@ -1,4 +1,4 @@
-import { readDaemonState, statusDaemon } from "./daemon/lifecycle";
+import { isAlive, readDaemonState, statusDaemon } from "./daemon/lifecycle";
 import { CONTROL_HEADER } from "./daemon/security";
 import { SpoolError } from "./errors";
 import { forgetResolvedProject, resolveRegisteredRoot } from "./registry";
@@ -18,9 +18,17 @@ export function removeProject(path: string, spoolDir: string): { root: string; r
  */
 export async function forgetProject(path: string, spoolDir: string): Promise<{ root: string; removed: boolean }> {
 	const root = resolveRegisteredRoot(path);
+	const recorded = readDaemonState(spoolDir);
 	const daemon = await statusDaemon(spoolDir);
 	const state = readDaemonState(spoolDir);
-	if (!daemon.running || state?.pid !== daemon.pid) return removeProject(root, spoolDir);
+	if (!daemon.running || state?.pid !== daemon.pid) {
+		// one recorded and alive that didn't answer may still follow the folder
+		if (recorded !== undefined && isAlive(recorded.pid))
+			throw new SpoolError(
+				`the spool daemon (pid ${recorded.pid}) runs but didn't answer, so ${root} may still be followed; try again.`,
+			);
+		return removeProject(root, spoolDir);
+	}
 	let status: number;
 	try {
 		const response = await fetch(`${daemon.url}/api/projects/forget`, {

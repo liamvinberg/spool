@@ -552,7 +552,7 @@ async function terminate(spoolDir: string, url: string, pid: number, adopted: bo
 	throw new SpoolError(`spool daemon (pid ${pid}) did not exit — kill it manually`);
 }
 
-function isAlive(pid: number): boolean {
+export function isAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;
