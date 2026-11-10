@@ -1507,13 +1507,7 @@ function followGeometry(): void {
 					return;
 				}
 				if (!mount.mounted) {
-					if (mountedFrame !== mount.from) return;
-					mount.mounted = true;
-					mountedFrame = mount.to;
-					arrival++;
-					externalHref = null;
-					activateFrameStyles(mountedFrame);
-					flushSync(notifyPlay);
+					if (!mountCut(mount)) return;
 				} else if (mountedFrame !== mount.to) {
 					return;
 				}
@@ -1547,6 +1541,30 @@ function followGeometry(): void {
 		}
 	});
 	if (config.shell === true) {
+		// A cut's destination mounts in the very frame the viewport reaches its
+		// size: a resize observer runs after layout and before paint, where the
+		// resize event only comes a frame later. The source is never painted
+		// at a size not its own, so the shell keeps it on show until the
+		// destination has painted, and the browser shows the new size and the
+		// new screen together.
+		const viewport = document.createElement("div");
+		viewport.dataset.spoolViewport = "";
+		viewport.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none;contain:strict";
+		document.documentElement.append(viewport);
+		new ResizeObserver(() => {
+			const mount = pendingMount;
+			if (
+				mount?.decision !== "cut" ||
+				mount.mounted ||
+				currentFrame !== mount.to ||
+				window.innerWidth !== mount.w ||
+				window.innerHeight !== mount.h ||
+				!mountCut(mount)
+			) {
+				return;
+			}
+			announcePendingMount();
+		}).observe(viewport);
 		addEventListener("resize", () => {
 			announcePendingMount();
 			scheduleGeometryReady();
@@ -1560,6 +1578,18 @@ function followGeometry(): void {
 			postPlayerMessage({ spool: "player-key", key: "leave" });
 		});
 	}
+}
+
+/** Mount a cut's destination, from the screen it leaves. */
+function mountCut(mount: PendingMount): boolean {
+	if (mountedFrame !== mount.from) return false;
+	mount.mounted = true;
+	mountedFrame = mount.to;
+	arrival++;
+	externalHref = null;
+	activateFrameStyles(mountedFrame);
+	flushSync(notifyPlay);
+	return true;
 }
 
 function cutMessage(
