@@ -1,3 +1,4 @@
+import { cliName } from "./cli-name";
 import { isAlive, readDaemonState, statusDaemon } from "./daemon/lifecycle";
 import { CONTROL_HEADER } from "./daemon/security";
 import { SpoolError } from "./errors";
@@ -25,7 +26,7 @@ export async function forgetProject(path: string, spoolDir: string): Promise<{ r
 		// one recorded and alive that didn't answer may still follow the folder
 		if (recorded !== undefined && isAlive(recorded.pid))
 			throw new SpoolError(
-				`the spool daemon (pid ${recorded.pid}) runs but didn't answer, so ${root} may still be followed; try again.`,
+				`the spool daemon (pid ${recorded.pid}) runs but didn't answer, so ${root} may still be followed. Try again; if it never answers, \`${cliName()} stop\` it first.`,
 			);
 		return removeProject(root, spoolDir);
 	}
