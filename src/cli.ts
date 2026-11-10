@@ -64,7 +64,7 @@ import {
 	tellHooksChanged,
 } from "./outside/cli";
 import { isFramePath, isSafeName } from "./page-path";
-import { removeProject } from "./remove";
+import { forgetProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "./runtime/record-protocol";
 import { skillText } from "./skill";
@@ -271,8 +271,8 @@ program
 	.command("remove")
 	.description("forget one exact registered project root without deleting it")
 	.argument("[path]", "registered project root", ".")
-	.action((path: string) => {
-		const result = removeProject(path, spoolDir);
+	.action(async (path: string) => {
+		const result = await forgetProject(path, spoolDir);
 		const team = localCopyOf(result.root);
 		process.stdout.write(
 			!result.removed
