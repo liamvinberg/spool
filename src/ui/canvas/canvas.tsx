@@ -62,6 +62,8 @@ import {
 	subscribeSse,
 	writeKnob,
 } from "../api";
+import { tellDeckChange } from "../deck/deck-api";
+import { DeckLayer, useDeckPage } from "../deck/deck-page";
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
 import { isLetGo } from "../gone-projects";
@@ -1914,10 +1916,20 @@ function CanvasField({
 		commitGeometry(names, before);
 	}, [commitGeometry]);
 
+	// a deck page (spool#265): the band, the deck's snapping and its drop rules stand in for the canvas's own
+	const deckPage = useDeckPage({
+		project,
+		page: activePage,
+		store,
+		record: (entry) => recordEntry(entry),
+		say: (message) => setNotice({ kind: "error", message }),
+	});
+	const deckOwns = deckPage.owns;
+
 	const nudge = useCallback(
 		(dx: number, dy: number) => {
 			const names = store.get().selected;
-			if (names.length === 0) return;
+			if (names.length === 0 || deckOwns()) return;
 			for (const frame of visibleFramesOf(store.get())) {
 				if (!names.includes(frame.name) || nudgeOrigins.current.has(frame.name)) continue;
 				nudgeOrigins.current.set(frame.name, { x: frame.x, y: frame.y, w: frame.w, h: frame.h });
@@ -1931,7 +1943,7 @@ function CanvasField({
 			clearTimeout(nudgeTimer.current);
 			nudgeTimer.current = setTimeout(flushNudge, NUDGE_FLUSH_MS);
 		},
-		[flushNudge, store],
+		[deckOwns, flushNudge, store],
 	);
 
 	// --- undo/redo: inverse patches over the same sidecar writes ----------------
@@ -2078,6 +2090,7 @@ function CanvasField({
 	 */
 	const arrangeFrames = useCallback(() => {
 		flushNudge(); // a pending nudge is its own entry, never part of this one
+		if (deckOwns()) return; // a deck's places are its order's
 		const selection = store.get().selected;
 		const scope =
 			selection.length > 1
@@ -2092,7 +2105,7 @@ function CanvasField({
 		if (entry === undefined) return; // already tidy: nothing to undo
 		updateHistory(record(history.current, entry));
 		applyRects(rects);
-	}, [applyRects, flushNudge, updateHistory, store]);
+	}, [deckOwns, applyRects, flushNudge, updateHistory, store]);
 
 	// --- trash (#23): instant canvas removal, disk move deferred on the toast ---
 
@@ -2719,6 +2732,13 @@ function CanvasField({
 				knobs.walk(entry, way, taken.history);
 				return;
 			}
+			if (entry.kind === "deck") {
+				const taking = taken.history;
+				void deckPage.walk(entry, way).then((ran) => {
+					if (!ran && history.current === taking) updateHistory(drop(history.current, way));
+				});
+				return;
+			}
 			// a gather is a page the rail made and the frames it gathered into it, and
 			// the order the two halves go in is the whole reason it is one entry: going
 			// back, the frames leave before the page is staged, or they would ride into
@@ -2750,6 +2770,7 @@ function CanvasField({
 			updateHistory,
 			walkHand,
 			placeLanded,
+			deckPage.walk,
 		],
 	);
 
@@ -3342,6 +3363,7 @@ function CanvasField({
 						void refetchFrames();
 					}
 					if (event.kind === "comments") window.dispatchEvent(new CustomEvent(COMMENTS_CHANGE));
+					if (event.kind === "deck") tellDeckChange((data as { page: string }).page);
 					// a save here or a teammate's arriving is the team's history by now, or nearly (spool#187)
 					if (["frame", "shared", "geometry", "set-aside"].includes(event.kind))
 						window.dispatchEvent(new CustomEvent(HISTORY_CHANGE));
@@ -4184,6 +4206,7 @@ function CanvasField({
 		setResizingFrame(null);
 		setPanning(false);
 		if (active.kind === "move") {
+			deckPage.cancel();
 			setFrames((current) =>
 				current.map((frame) => {
 					const origin = active.origins.get(frame.name);
@@ -4195,7 +4218,7 @@ function CanvasField({
 				current.map((frame) => (frame.name === active.frame ? { ...frame, ...active.origin } : frame)),
 			);
 		}
-	}, [dropResize, carrier]);
+	}, [dropResize, carrier, deckPage.cancel]);
 
 	const originsOf = (names: readonly string[]): Map<string, Point> => {
 		const origins = new Map<string, Point>();
@@ -4544,6 +4567,8 @@ function CanvasField({
 			carryTo.current = carrier.over({ kind: "frame", names: active.names }, event.clientX, event.clientY);
 			const rawX = (p.x - active.start.x) / cam.k;
 			const rawY = (p.y - active.start.y) / cam.k;
+			// on a deck page the deck's snapping stands, and no guides
+			if (deckPage.hold(active.origins, { x: rawX, y: rawY }, toWorld(active.start, cam))) return;
 			const movingBoxes: Box[] = [];
 			for (const frame of visibleFramesOf(store.get())) {
 				const origin = active.origins.get(frame.name);
@@ -4669,8 +4694,10 @@ function CanvasField({
 			const to = carryTo.current;
 			carryTo.current = null;
 			carrier.end();
-			if (to === null) commitGeometry(active.names, moveBefore(active.origins));
-			else {
+			if (to === null) {
+				if (!deckPage.drop()) commitGeometry(active.names, moveBefore(active.origins));
+			} else {
+				deckPage.cancel();
 				// let go on a folder: the frames leave this page from where they stood, never from where the drag left them
 				setFrames((current) =>
 					current.map((frame) => {
@@ -5871,6 +5898,7 @@ function CanvasField({
 					{/* the page you are on and nothing else (spool#224): its own frames on the field, or the
 				    list of its pages when it holds only pages */}
 					<div ref={fieldRef} data-page-field={activePage} className="absolute inset-0">
+						{framed && <DeckLayer deck={deckPage} camera={camera} store={store} />}
 						{framed && (
 							<CameraField camera={camera} layer="under">
 								{/* the threads live under the frames: the map, never a hit target */}
@@ -6019,7 +6047,9 @@ function CanvasField({
 											hovered={isHovered}
 											unseen={unseen.get(frame.name)}
 											broken={frame.broken !== undefined}
-											onPlay={playFrame}
+											number={deckPage.numberOf(frame.name)}
+											onPlay={deckPage.playOf(frame.name, playFrame)}
+											playTitle={deckPage.playTitleOf(frame.name)}
 											live={
 												isEntered && live.chip?.frame === frame.name
 													? { ...live.chip, faded: live.overview !== null }
@@ -6086,7 +6116,8 @@ function CanvasField({
 											? hovered
 											: null
 								}
-								editable={effectiveTool === "select"}
+								// a deck page has no resize handles: a slide's size is the talk's
+								editable={effectiveTool === "select" && !deckPage.on}
 								picked={picked}
 								/*
 								 * A chip and the box it names are one object, so the cursor on one marks the

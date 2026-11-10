@@ -65,7 +65,9 @@ export const FrameLabel = memo(function FrameLabel({
 	hovered,
 	unseen,
 	broken = false,
+	number,
 	onPlay,
+	playTitle,
 	live,
 	clickEnters = false,
 	overview = null,
@@ -102,8 +104,12 @@ export const FrameLabel = memo(function FrameLabel({
 	unseen?: Unseen | undefined;
 	/** it does not compile or throws as it starts: the name in danger, the one thing that says so zoomed out */
 	broken?: boolean | undefined;
+	/** A slide's place in its deck's talk, from 1, said before its name (spool#265). */
+	number?: number | undefined;
 	/** Play this frame, by its name. Offered on the frame pointed at, the selection and the live one. */
 	onPlay?: ((name: string) => void) | undefined;
+	/** What play does, where it is not playing the frame: a slide's presents from it (spool#265). */
+	playTitle?: string | undefined;
 }) {
 	const place = useRef<HTMLDivElement | null>(null);
 	const label = useRef<HTMLDivElement | null>(null);
@@ -185,7 +191,7 @@ export const FrameLabel = memo(function FrameLabel({
 							{live?.note ?? "live · esc exits"}
 						</span>
 						{/* inside it is where you try the frame, so playing it from there stays one click */}
-						{onPlay !== undefined && <PlayButton name={name} leaf={leaf} onPlay={onPlay} />}
+						{onPlay !== undefined && <PlayButton name={name} leaf={leaf} onPlay={onPlay} title={playTitle} />}
 					</div>
 				) : (
 					<div
@@ -198,6 +204,17 @@ export const FrameLabel = memo(function FrameLabel({
 						)}
 					>
 						{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
+						{number !== undefined && (
+							<span
+								data-slide-number={number}
+								className={cn(
+									"shrink-0 tabular-nums transition-colors duration-fast ease-out type-value",
+									selected ? "text-accent-strong" : "text-tertiary",
+								)}
+							>
+								{number}
+							</span>
+						)}
 						<span
 							className={`min-w-0 truncate transition-colors duration-fast ease-out type-value ${
 								selected || overview === "target"
@@ -217,7 +234,7 @@ export const FrameLabel = memo(function FrameLabel({
 					    chrome. Beside the name rather than at the row's far end, because
 					    the far end is where teammates inside the frame dock their names. */}
 						{(selected || hovered) && onPlay !== undefined && (
-							<PlayButton name={name} leaf={leaf} onPlay={onPlay} />
+							<PlayButton name={name} leaf={leaf} onPlay={onPlay} title={playTitle} />
 						)}
 						{clickEnters && overview === null && (
 							<span
@@ -243,11 +260,22 @@ export const FrameLabel = memo(function FrameLabel({
 });
 
 /** Play a frame, from its label: a ghost until pointed at. */
-function PlayButton({ name, leaf, onPlay }: { name: string; leaf: string; onPlay: (name: string) => void }) {
+function PlayButton({
+	name,
+	leaf,
+	onPlay,
+	title,
+}: {
+	name: string;
+	leaf: string;
+	onPlay: (name: string) => void;
+	title?: string | undefined;
+}) {
 	return (
 		<button
 			type="button"
-			aria-label={`Play ${leaf}`}
+			aria-label={title ?? `Play ${leaf}`}
+			title={title}
 			className="flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-[color,opacity] duration-fast ease-out hover:text-accent-strong group-data-away/label:pointer-events-none group-data-away/label:opacity-0 type-detail"
 			onPointerDown={(event) => {
 				event.stopPropagation();
