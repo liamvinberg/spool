@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readDesignFile, writeDesignFile } from "./disk";
 
@@ -21,7 +21,13 @@ export interface Step {
 interface Record {
 	readonly page: string;
 	readonly steps: readonly Step[];
+	/** the daemon writing it, and when that process started: another daemon on the same design/ leaves it alone */
+	readonly pid?: number;
+	readonly started?: number;
 }
+
+/** When this process started, in milliseconds, which with its pid names it apart from a later one given the same pid. */
+const STARTED = Math.round(Date.now() - process.uptime() * 1000);
 
 const RECORDS = join(".spool", "deck-changes");
 
@@ -32,8 +38,11 @@ export function commitSteps(designDir: string, page: string, steps: readonly Ste
 	const dir = join(designDir, RECORDS);
 	mkdirSync(dir, { recursive: true });
 	const record = join(dir, `${randomUUID()}.json`);
-	const body: Record = { page, steps: writes };
-	writeFileSync(record, JSON.stringify(body), { flag: "wx" });
+	const body: Record = { page, steps: writes, pid: process.pid, started: STARTED };
+	// staged under a name recovery passes over, so a record it reads is always whole
+	const staged = `${record}.tmp`;
+	writeFileSync(staged, JSON.stringify(body), { flag: "wx" });
+	renameSync(staged, record);
 	const done: Step[] = [];
 	try {
 		for (const step of writes) {
@@ -79,10 +88,12 @@ export function recoverDeckChanges(designDir: string, log?: (line: string) => vo
 			record = JSON.parse(readFileSync(file, "utf8")) as Record;
 			if (!Array.isArray(record.steps)) throw new Error("no steps");
 		} catch {
-			// a record cut off while it was written was written before any change began
+			// a record is renamed into place whole, so one that does not read is no change's: it holds nothing to put back
 			rmSync(file, { force: true });
 			continue;
 		}
+		// another daemon following this design/ may be inside its change right now: its record is its own to finish
+		if (alive(record)) continue;
 		// all or nothing: put back where a hand wrote one of its files since, and the rest would no longer match it
 		let whole = true;
 		const back: Step[] = [];
@@ -108,6 +119,24 @@ export function recoverDeckChanges(designDir: string, log?: (line: string) => vo
 		}
 	}
 	return kept;
+}
+
+/**
+ * Whether the daemon that wrote a record may still be inside its change, as some other process. A record of this pid
+ * is this process's, never in flight while recovery runs since everything here is synchronous, or an earlier process's
+ * given the same pid (its `started` differs), long gone. A live process that merely reuses a dead daemon's pid only
+ * holds recovery back until it ends, the safe way round; a record naming no process is gone with its writer.
+ */
+function alive(record: Record): boolean {
+	const { pid } = record;
+	if (typeof pid !== "number" || pid === process.pid) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		// a process that exists but is not ours to signal is still running
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
 }
 
 /** A file put back as it was, never into a folder that has gone since. */

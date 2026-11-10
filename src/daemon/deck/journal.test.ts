@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { makeTempDir } from "../../test-helpers";
@@ -74,6 +75,30 @@ describe("a deck change the daemon died inside", () => {
 		expect(disk.read("frames/talk/x/notes.md")).toBe("NEW WORDS\n");
 		expect(disk.read("frames/talk/s/notes.md")).toBe("WORDS OF X\n");
 		expect(disk.records()).toEqual(["two.json"]);
+	});
+
+	it("is left to another daemon while that daemon still runs", () => {
+		const disk = fixture();
+		writeFileSync(join(disk.designDir, "frames/talk/x/notes.md"), "WORDS OF S\n");
+		mkdirSync(join(disk.designDir, ".spool", "deck-changes"), { recursive: true });
+		const steps = disk.trade.slice(0, 1);
+		// the parent of this test runs; a child that has exited does not
+		const gone = spawnSync(process.execPath, ["-e", ""]).pid;
+		writeFileSync(
+			join(disk.designDir, ".spool/deck-changes/live.json"),
+			JSON.stringify({ page: "talk", steps, pid: process.ppid, started: 1 }),
+		);
+		expect(recoverDeckChanges(disk.designDir)).toEqual([]);
+		expect(disk.read("frames/talk/x/notes.md")).toBe("WORDS OF S\n");
+		expect(disk.records()).toEqual(["live.json"]);
+		rmSync(join(disk.designDir, ".spool/deck-changes/live.json"));
+		writeFileSync(
+			join(disk.designDir, ".spool/deck-changes/dead.json"),
+			JSON.stringify({ page: "talk", steps, pid: gone, started: 1 }),
+		);
+		expect(recoverDeckChanges(disk.designDir)).toEqual([]);
+		expect(disk.read("frames/talk/x/notes.md")).toBe("WORDS OF X\n");
+		expect(disk.records()).toEqual([]);
 	});
 
 	it("never makes a folder that went", () => {
