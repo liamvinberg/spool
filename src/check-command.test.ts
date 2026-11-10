@@ -233,4 +233,57 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		]);
 		expect((await runCheck(root, root, ["design/frames/home"])).stderr).toEqual([]);
 	});
+
+	it("says what a deck needs with the deck experiment on, and nothing of it with it off", async () => {
+		const root = project();
+		const deck = (on: boolean) => () => on;
+		const slide = (beats: string, extra = "") =>
+			`import { ui } from "spool";${extra}\nconst NAMES = ["a", "b"] as const;\nexport default function Slide() {\n\tconst beat = ui.beats(${beats});\n\tui.live();\n\treturn <p>{String(beat.reached("a"))}</p>;\n}\n`;
+		writeDesignFile(
+			root,
+			"frames/talk/deck.json",
+			`${JSON.stringify({ version: 1, slides: ["intro", "body", "phone", "ghost"] }, null, "\t")}\n`,
+		);
+		writePageFrame(root, "talk", "intro", slide('["a", "b", "c"]'));
+		writeDesignFile(root, "frames/talk/intro/frame.json", JSON.stringify({ w: 1280, h: 720 }));
+		writeDesignFile(root, "frames/talk/intro/notes.md", "One.\n\nTwo.\n");
+		writePageFrame(root, "talk", "body", slide("NAMES"));
+		writeDesignFile(root, "frames/talk/body/frame.json", JSON.stringify({ x: 0, y: 0, w: 1440, h: 900 }));
+		writeDesignFile(root, "frames/talk/body/notes.md", "One.\n\nTwo.\n");
+		writePageFrame(
+			root,
+			"talk",
+			"phone",
+			slide('["a"]', '\nimport words from "./notes.md?raw";\nconsole.log(words);'),
+		);
+		writeDesignFile(root, "frames/talk/phone/frame.json", JSON.stringify({ w: 390, h: 844 }));
+		writeDesignFile(root, "frames/talk/phone/notes.md", "One.\n");
+		writePageFrame(root, "draft", "a", FRAME);
+		writeDesignFile(root, "frames/draft/deck.json", '{ "slides": ["a",] }');
+
+		const on = await runCheck(root, root, [], deck(true));
+		const notesTs2307 =
+			"design/frames/talk/phone/frame.tsx:2:19 TS2307: Cannot find module './notes.md?raw' or its corresponding type declarations.";
+		expect(on.stderr).toEqual([
+			notesTs2307,
+			'design/frames/talk/body/frame.tsx:4:15 deck: ui.beats takes one list of beat names written out in the call, as ui.beats(["title", "price"])',
+			expect.stringMatching(
+				/^design\/frames\/talk\/phone\/frame\.tsx:2:19 deck: imports "\.\/notes\.md\?raw": a slide never imports its notes/,
+			),
+			expect.stringMatching(/^design\/frames\/draft\/deck\.json:1:1 deck: does not parse as JSON: /),
+			'design/frames/talk/deck.json:7:3 deck: lists "ghost", and there is no design/frames/talk/ghost/frame.tsx: a slide is a frame\'s folder on this page',
+			"design/frames/talk/body/frame.json:1:1 deck warning: is 1440×900 and the talk is 1280×720: a slide is the talk's size (leave w and h out and spool sets them), or a shape plainly its own, such as a phone, shown fitted",
+			"design/frames/talk/body/notes.md:1:1 deck warning: has 2 paragraphs and the slide 1 beat: one paragraph per beat, and the rest show with its last beat",
+		]);
+		// what the typecheck finds of ui.beats is nothing: a slide calling it is ordinary, typed code
+		expect(on.stdout).toEqual(["checked 4 frames (4 source files), 5 errors"]);
+		expect(on.ok).toBe(false);
+		// named alone, a slide is checked with its own deck's rules
+		expect((await runCheck(root, root, ["design/frames/talk/intro"], deck(true))).stderr).toEqual([
+			'design/frames/talk/deck.json:7:3 deck: lists "ghost", and there is no design/frames/talk/ghost/frame.tsx: a slide is a frame\'s folder on this page',
+		]);
+
+		const off = await runCheck(root, root, [], deck(false));
+		expect(off).toEqual({ stderr: [notesTs2307], stdout: ["checked 4 frames (4 source files), 1 error"], ok: false });
+	});
 });

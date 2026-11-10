@@ -293,7 +293,7 @@ program
 	.action(async (paths: string[]) => {
 		// read-only: a project due its frame-name migration is told so, not migrated
 		const root = await offlineProject(checkStart(process.cwd(), paths), { migrate: false });
-		const output = await runCheck(root, process.cwd(), paths);
+		const output = await runCheck(root, process.cwd(), paths, experimentsOnHere(spoolDir));
 		// check needs no daemon, but a running one knows what of a team project didn't travel; what check names as an
 		// error itself isn't said twice
 		const daemon = readDaemonState(spoolDir);

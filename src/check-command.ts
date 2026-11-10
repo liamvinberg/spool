@@ -3,9 +3,11 @@ import { dirname, extname, join, relative, resolve } from "node:path";
 import { checkProject } from "./check";
 import { altReaders, describeAltReader } from "./check-alt";
 import { describeSlowFrame, slowFrames } from "./check-pace";
+import { checkDecks, type DeckCheck } from "./daemon/deck/check";
 import { realDesignDir } from "./daemon/design-path";
 import { followedLink, OUTSIDE_LAYOUT, staysOnThisMac, TOO_BIG } from "./daemon/team-sync";
 import { scanBrokenFrames } from "./daemon/thumbs";
+import { type ExperimentId, experimentDefault } from "./settings/experiments";
 
 /** What `spool check [paths…]` says: diagnostics and notes on stderr, the count line on stdout. */
 export interface CheckOutput {
@@ -30,9 +32,14 @@ export function checkStart(cwd: string, paths: string[]): string {
  * Check the frames the paths name (a path on disk, or a frame's name under
  * design/frames), or every frame when none is named. Slow frames are spelled
  * out only for frames named one by one; the rest are one line after the
- * diagnostics.
+ * diagnostics. `on` says which experiments this machine has on: an experiment's own rules are checked only with it on.
  */
-export async function runCheck(root: string, cwd: string, paths: string[]): Promise<CheckOutput> {
+export async function runCheck(
+	root: string,
+	cwd: string,
+	paths: string[],
+	on: (id: ExperimentId) => boolean = experimentDefault,
+): Promise<CheckOutput> {
 	const designDir = realDesignDir(root);
 	const framesDir = join(designDir, "frames");
 	const stderr: string[] = [];
@@ -67,6 +74,13 @@ export async function runCheck(root: string, cwd: string, paths: string[]): Prom
 			`${diagnostic.path}:${diagnostic.line}:${diagnostic.column} TS${diagnostic.code}: ${diagnostic.message}`,
 		);
 	}
+	// a deck's own rules (spool#265): its errors fail the check as a typecheck's do, its warnings are notes
+	const decks: DeckCheck = on("deck")
+		? checkDecks(root, paths.length === 0 ? undefined : report.frames)
+		: { errors: [], warnings: [] };
+	for (const found of decks.errors) stderr.push(`${found.path}:${found.line}:${found.column} deck: ${found.message}`);
+	for (const found of decks.warnings)
+		stderr.push(`${found.path}:${found.line}:${found.column} deck warning: ${found.message}`);
 	stderr.push(...report.notChecked);
 	for (const stray of report.strays) {
 		stderr.push(
@@ -96,7 +110,7 @@ export async function runCheck(root: string, cwd: string, paths: string[]): Prom
 	}
 	// a note, never a failure: a frame may mean to keep ⌥ for itself
 	if (report.ran) for (const reader of altReaders(root, report.frames)) stderr.push(describeAltReader(reader));
-	const errors = report.diagnostics.length;
+	const errors = report.diagnostics.length + decks.errors.length;
 	if (!report.ran) return { stderr, stdout: [`not checked: ${count(errors, "error")} stopped it`], ok: false };
 	// what the canvas shows broken, which a typecheck can not see all of (a frame
 	// that throws as it starts) and an agent should hear of in the same answer.
