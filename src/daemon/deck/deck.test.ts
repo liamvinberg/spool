@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { DeckChange, DeckChangeAnswer, DecksRead } from "../../deck/wire";
@@ -16,12 +16,13 @@ const box = (x: number, y: number, w = 1280, h = 720) => ({ x, y, w, h });
 const QUIET = 900;
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function deckProject(options: { on?: boolean } = {}) {
+function deckProject(options: { on?: boolean; before?: (root: string) => void } = {}) {
 	const spoolDir = join(makeTempDir(), ".spool");
 	mkdirSync(spoolDir, { recursive: true });
 	if (options.on !== false)
 		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experimental: { deck: true } }));
 	const { root, name } = makeProject(spoolDir);
+	options.before?.(root);
 	const trashDir = makeTempDir();
 	const trashed: { from: string; to: string }[] = [];
 	const page = join(root, "design", "frames", "talk");
@@ -62,7 +63,8 @@ function deckProject(options: { on?: boolean } = {}) {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(body),
 		});
-	return { spoolDir, root, name, app, page, sidecar, change, files, post, trashed };
+	const decks = async () => (await (await app.request(`/api/p/${name}/decks`)).json()) as DecksRead;
+	return { spoolDir, root, name, app, page, sidecar, change, files, post, trashed, decks };
 }
 
 describe("a deck on disk", () => {
@@ -103,6 +105,12 @@ describe("a deck on disk", () => {
 		await vi.waitFor(() => expect(deck.sidecar("title")).toEqual(box(0, 0)), { timeout: 5_000 });
 		expect(deck.sidecar("sense")).toEqual(box(1440, 0));
 		expect(deck.sidecar("draft")).toEqual(box(240, 1420, 800, 600));
+
+		// a copy that is no longer whole, being removed, is never written into
+		rmSync(join(deck.root, "design", "canvas.json"));
+		writeDesignFile(deck.root, "frames/talk/deck.json", json({ version: 1, slides: ["sense", "title"] }));
+		await wait(QUIET);
+		expect(deck.sidecar("title")).toEqual(box(0, 0));
 	});
 
 	it("brings two machines to the same bytes, and to rest, whichever of their writes sync kept", async () => {
@@ -205,9 +213,30 @@ describe("a deck on disk", () => {
 		const traded = await fresh.change({ kind: "trade", page: "talk", frame: "loose", slide: "one" });
 		expect(fresh.files()["loose/notes.md"]).toBe("One's words.\n");
 		expect(fresh.files()["one/notes.md"]).toBeUndefined();
-		await fresh.change(traded.answer?.undo as DeckChange);
+		const undo = traded.answer?.undo as DeckChange;
+		await fresh.change(undo);
 		expect(fresh.files()["one/notes.md"]).toBe("One's words.\n");
 		expect(fresh.files()["loose/notes.md"]).toBeUndefined();
+		// the same undo sent again finds the files it would put back already back, and trades nothing a second time
+		expect((await fresh.change(undo)).status).toBe(409);
+		expect(fresh.files()["one/notes.md"]).toBe("One's words.\n");
+
+		// an undo or redo never writes over a hand's change since: to the talk, to notes, or a place in flight
+		const redo = traded.answer?.redo as DeckChange;
+		const untouched = fresh.files();
+		writeDesignFile(fresh.root, "frames/talk/deck.json", json({ version: 1, slides: ["one", "two", "loose"] }));
+		expect((await fresh.change(redo)).status).toBe(409);
+		writeDesignFile(fresh.root, "frames/talk/deck.json", untouched["deck.json"] as string);
+		writeDesignFile(fresh.root, "frames/talk/one/notes.md", "One's words, edited.\n");
+		expect((await fresh.change(redo)).status).toBe(409);
+		writeDesignFile(fresh.root, "frames/talk/one/notes.md", "One's words.\n");
+		writeDesignFile(fresh.root, "frames/talk/loose/frame.json", '{ "x": ');
+		expect((await fresh.change(redo)).status).toBe(409);
+		writeDesignFile(fresh.root, "frames/talk/loose/frame.json", untouched["loose/frame.json"] as string);
+		expect(fresh.files()).toEqual(untouched);
+		// put back as it was, the redo lands
+		expect((await fresh.change(redo)).status).toBe(200);
+		expect(fresh.files()["loose/notes.md"]).toBe("One's words.\n");
 	});
 
 	it("keeps the talk in step through rename, move, trash, restore and duplicate", async () => {
@@ -236,6 +265,12 @@ describe("a deck on disk", () => {
 		await vi.waitFor(() => expect(deck.sidecar("d-copy")).toEqual(box(1440, 1360)), { timeout: 5_000 });
 		expect(talk()).toEqual(["story", "d"]);
 
+		// an ordinary page's frames are none of the deck's business, whatever their sidecars hold
+		writePageFrame(deck.root, "plain", "a", tsx("a"));
+		writePageFrame(deck.root, "plain", "b", tsx("b"));
+		mkdirSync(join(deck.root, "design/frames/plain/b/frame.json"));
+		expect((await deck.post("frames/rename", { from: "plain/a", to: "plain/c" })).status).toBe(204);
+
 		// a page copied carries its deck
 		expect((await deck.post("pages/duplicate", { name: "talk" })).status).toBe(200);
 		expect(JSON.parse(readFileSync(join(deck.root, "design/frames/talk-copy/deck.json"), "utf8")).slides).toEqual([
@@ -250,6 +285,8 @@ describe("a deck on disk", () => {
 		writeDesignFile(deck.root, "frames/talk/deck.json", json({ slides: ["b", "ghost", "a", "b"] }));
 		writePageFrame(deck.root, "later", "x", tsx("x"));
 		writeDesignFile(deck.root, "frames/later/deck.json", json({ version: 9, slides: ["x"] }));
+		writePageFrame(deck.root, "merged", "y", tsx("y"));
+		writeDesignFile(deck.root, "frames/merged/deck.json", '{ "version": 1, "slides": ["y" "z"] }\n');
 
 		const read = (await (await deck.app.request(`/api/p/${deck.name}/decks`)).json()) as DecksRead;
 		expect(read).toEqual({
@@ -265,7 +302,10 @@ describe("a deck on disk", () => {
 					],
 				},
 			],
-			unread: [{ page: "later", why: "version" }],
+			unread: [
+				{ page: "later", why: "version", problems: [] },
+				{ page: "merged", why: "unparsed", problems: [{ kind: "unparsed", name: "merged" }] },
+			],
 		});
 		// the read laid the deck out first, and left the other version's page as it was
 		expect(deck.sidecar("b")).toEqual(box(0, 0));

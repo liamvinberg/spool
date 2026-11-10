@@ -22,14 +22,21 @@ export interface DeckLoose {
 }
 
 /**
- * What is wrong with a deck, said rather than refused. `missing`: the talk lists a frame that is not there (yet).
- * `repeated`: the talk lists a frame more than once, counted at its first place. `unreadable`: a frame's sidecar does
- * not parse, a write in flight most likely, and the page is not laid out until it does.
+ * What is wrong with a deck, said rather than refused, each naming a frame or, for the page's own, the page.
+ * - `missing`: the talk lists a frame that is not there (yet).
+ * - `repeated`: the talk lists a frame more than once, counted at its first place.
+ * - `unreadable`: a frame's sidecar does not parse, a write in flight most likely; the page waits for it.
+ * - `looping`: another hand (another machine or another spool) keeps putting this frame back where this spool does not
+ *   lay it, so this spool stopped laying the page out until its `deck.json` changes or the daemon restarts.
+ * - `interrupted`: a change to the page stopped half way and its files were written over since; what it would have
+ *   put back is kept in `design/.spool/deck-changes/`.
+ * - `unparsed`: the page's `deck.json` does not parse. While it is being written that passes; one a merge left broken
+ *   stays, and is somebody's to mend: nothing on the page is laid out or written until it parses.
  */
-export type DeckProblem =
-	| { readonly kind: "missing"; readonly name: string }
-	| { readonly kind: "repeated"; readonly name: string }
-	| { readonly kind: "unreadable"; readonly name: string };
+export type DeckProblem = {
+	readonly kind: "missing" | "repeated" | "unreadable" | "looping" | "interrupted" | "unparsed";
+	readonly name: string;
+};
 
 /** One deck: a page holding a `deck.json` of a version this spool knows. */
 export interface DeckRead {
@@ -47,6 +54,7 @@ export interface DeckRead {
 export interface UnreadDeck {
 	readonly page: string;
 	readonly why: "unparsed" | "version";
+	readonly problems: readonly DeckProblem[];
 }
 
 /** `GET /api/p/:project/decks` */
@@ -64,16 +72,20 @@ export type DeckChange =
 	/** the page becomes a deck whose talk is these frames, in order (none: an empty talk) */
 	| { readonly kind: "make"; readonly page: string; readonly slides?: readonly string[]; readonly size?: Size }
 	/**
-	 * the deck's file and these frames' sidecars back to exactly these bytes, `null` being no file; `swap` trades two
-	 * frames' notes back, never writing a note's words
+	 * the deck's files put from `from` to `to`, and refused when they no longer hold `from`: an undo or redo never
+	 * writes over what any hand did since, and the same undo sent twice does nothing the second time
 	 */
-	| {
-			readonly kind: "restore";
-			readonly page: string;
-			readonly deck: string | null;
-			readonly sidecars: Readonly<Record<string, string | null>>;
-			readonly swap?: readonly [string, string];
-	  };
+	| { readonly kind: "restore"; readonly page: string; readonly from: DeckFiles; readonly to: DeckFiles };
+
+/**
+ * A deck's files as a change found or left them, exactly: its `deck.json`, and the sidecars and notes of the frames it
+ * touched, by folder; `null` is no file. A restore's `from` and `to` name the same files.
+ */
+export interface DeckFiles {
+	readonly deck: string | null;
+	readonly sidecars: Readonly<Record<string, string | null>>;
+	readonly notes: Readonly<Record<string, string | null>>;
+}
 
 /**
  * `POST /api/p/:project/deck`'s answer. `undo` and `redo` are changes to send back through the same route, which make
@@ -102,6 +114,22 @@ const size = (value: unknown): Size | undefined =>
 const cell = (value: unknown): Cell | undefined =>
 	isFields(value) && whole(value.col) && whole(value.row) ? { col: value.col, row: value.row } : undefined;
 const folder = (value: unknown): value is string => typeof value === "string" && isSafeName(value);
+
+const bytesByFolder = (value: unknown): Record<string, string | null> | undefined => {
+	if (!isFields(value)) return undefined;
+	const found: Record<string, string | null> = {};
+	for (const [name, bytes] of Object.entries(value)) {
+		if (!isSafeName(name) || (bytes !== null && typeof bytes !== "string")) return undefined;
+		found[name] = bytes;
+	}
+	return found;
+};
+const deckFiles = (value: unknown): DeckFiles | undefined => {
+	if (!isFields(value) || (value.deck !== null && typeof value.deck !== "string")) return undefined;
+	const sidecars = bytesByFolder(value.sidecars);
+	const notes = bytesByFolder(value.notes);
+	return sidecars === undefined || notes === undefined ? undefined : { deck: value.deck, sidecars, notes };
+};
 
 /** A deck change as the wire carries it, or nothing when it is not one. */
 export function parseDeckChange(value: unknown): DeckChange | undefined {
@@ -141,24 +169,13 @@ export function parseDeckChange(value: unknown): DeckChange | undefined {
 			return { kind: "make", page, slides, ...(to === undefined ? {} : { size: to }) };
 		}
 		case "restore": {
-			const deck = value.deck;
-			if (deck !== null && typeof deck !== "string") return undefined;
-			if (!isFields(value.sidecars)) return undefined;
-			const sidecars: Record<string, string | null> = {};
-			for (const [name, bytes] of Object.entries(value.sidecars)) {
-				if (!isSafeName(name) || (bytes !== null && typeof bytes !== "string")) return undefined;
-				sidecars[name] = bytes;
-			}
-			const swap = value.swap;
-			if (swap !== undefined && !(Array.isArray(swap) && swap.length === 2 && swap.every(folder))) return undefined;
-			const pair = swap as [string, string] | undefined;
-			return {
-				kind: "restore",
-				page,
-				deck,
-				sidecars,
-				...(pair === undefined ? {} : { swap: [pair[0], pair[1]] as const }),
-			};
+			const from = deckFiles(value.from);
+			const to = deckFiles(value.to);
+			if (from === undefined || to === undefined) return undefined;
+			const same = (one: object, other: object) =>
+				Object.keys(one).sort().join("/") === Object.keys(other).sort().join("/");
+			if (!same(from.sidecars, to.sidecars) || !same(from.notes, to.notes)) return undefined;
+			return { kind: "restore", page, from, to };
 		}
 		default:
 			return undefined;

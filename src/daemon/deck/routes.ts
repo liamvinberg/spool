@@ -49,7 +49,14 @@ export function deckRoutes(deps: {
 				);
 			}
 			return withProject(c, deps.resolve, (root) => {
-				const done = answeringDiskRefusals(c, () => changeDeck(root, change));
+				let done: ReturnType<typeof answeringDiskRefusals<ReturnType<typeof changeDeck>>>;
+				try {
+					done = answeringDiskRefusals(c, () => changeDeck(root, change));
+				} catch (error) {
+					// a write the disk refused: the change was put back whole before this answer
+					const why = error instanceof Error ? error.message : String(error);
+					return c.text(`the deck change could not be written, and nothing of it stands: ${why}`, 500);
+				}
 				if ("response" in done) return done.response;
 				const answer = done.value;
 				if ("status" in answer) return c.text(answer.message, answer.status);

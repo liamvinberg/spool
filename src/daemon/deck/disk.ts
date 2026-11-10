@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	type Dirent,
+	existsSync,
+	lstatSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { writeAtomic } from "../../atomic-write";
 import { DECK_FILE, type DeckFileRead, parseDeckFile } from "../../deck/deck-file";
 import { type DeckFrame, settle } from "../../deck/layout";
 import type { DeckProblem, DeckRead, UnreadDeck } from "../../deck/wire";
@@ -10,9 +18,9 @@ import { realDesignDir, resolveDesignPath } from "../design-path";
 import { parseSidecar } from "../sidecar";
 
 /**
- * A deck's page as the disk has it (spool#265), and the few ways the daemon writes it: a frame's sidecar, the page's
- * `deck.json`, and two frames' notes traded. Every write is whole: a reader, a watcher or team sync never sees half a
- * file, and a trade of notes never has a moment where a note exists nowhere.
+ * A deck's page as the disk has it (spool#265), and the one way the daemon writes into it: a file written whole in a
+ * folder that is there, never a folder made. A reader, a watcher or team sync never sees half a file, and a folder a
+ * hand, a move or a removal took away is never made again by a write that was on its way to it.
  */
 
 /** A frame on the deck's page: a folder of the page holding a frame entry. */
@@ -33,10 +41,19 @@ export interface DeckPage {
 	readonly frames: readonly PageFrame[];
 }
 
-/** One page's folder and what it holds; nothing when the page is not there. */
+/**
+ * Whether a project's `design/` is whole: a copy whose `canvas.json` is gone is being removed or was never finished
+ * (#243), and nothing is laid out or written in it.
+ */
+export function isWhole(designDir: string): boolean {
+	return existsLexically(join(designDir, "canvas.json"));
+}
+
+/** One page's folder and what it holds; nothing when the page is not there, or its project is not whole. */
 export function readPage(root: string, page: string): DeckPage | undefined {
 	if (!isPagePath(page)) return undefined;
 	const designDir = realDesignDir(root);
+	if (!isWhole(designDir)) return undefined;
 	const dir = resolveDesignPath(designDir, join(designDir, "frames", page));
 	let entries: Dirent[];
 	try {
@@ -98,8 +115,9 @@ export function deckFramesOf(page: DeckPage): { frames: DeckFrame[]; unreadable:
 export function deckReadOf(page: DeckPage): DeckRead | UnreadDeck | undefined {
 	const file = deckFileOf(page);
 	if (file === undefined) return undefined;
-	if (file.kind === "unparsed") return { page: page.page, why: "unparsed" };
-	if (file.kind === "unknown") return { page: page.page, why: "version" };
+	if (file.kind === "unparsed")
+		return { page: page.page, why: "unparsed", problems: [{ kind: "unparsed", name: page.page }] };
+	if (file.kind === "unknown") return { page: page.page, why: "version", problems: [] };
 	const { frames, unreadable } = deckFramesOf(page);
 	const deck = settle(file.file.size, file.file.slides, frames);
 	const present = new Set(page.frames.map((frame) => frame.folder));
@@ -155,54 +173,46 @@ export function holdsDeck(root: string, page: string): boolean {
 	}
 }
 
-/** A frame's sidecar written whole, or taken away for `null`. */
-export function writeSidecar(page: DeckPage, folder: string, bytes: string | null): void {
-	const file = resolveDesignPath(page.designDir, join(page.dir, folder, "frame.json"));
-	if (bytes === null) rmSync(file, { force: true });
-	else writeAtomic(file, bytes);
+/** A path inside `design/`, as a record of the change keeps it: relative, so a project that moved keeps its records. */
+export function designPath(page: DeckPage, ...under: string[]): string {
+	return join("frames", page.page, ...under);
+}
+
+/** A file's bytes under `design/`, `null` when there is none. */
+export function readDesignFile(designDir: string, path: string): string | null {
+	return readBytes(resolveDesignPath(designDir, join(designDir, path)))?.toString("utf8") ?? null;
 }
 
 /**
- * The page's `deck.json` written whole, or taken away for `null`. Bytes that would make no deck, or name a frame twice,
- * are refused here, the one door every deck write goes through.
+ * A file under `design/` written whole, or taken away for `null`, in a folder that must already be there: a missing
+ * folder throws `ENOENT` rather than being made. Written to a staging name beside it first, then renamed over it.
  */
-export function writeDeck(page: DeckPage, bytes: string | null): void {
-	const file = resolveDesignPath(page.designDir, join(page.dir, DECK_FILE));
+export function writeDesignFile(designDir: string, path: string, bytes: string | null): void {
+	const file = resolveDesignPath(designDir, join(designDir, path));
 	if (bytes === null) {
 		rmSync(file, { force: true });
 		return;
 	}
+	const staged = `${file}.${randomUUID()}.tmp`;
+	try {
+		writeFileSync(staged, bytes, { flag: "wx" });
+		renameSync(staged, file);
+	} finally {
+		rmSync(staged, { force: true });
+	}
+}
+
+/** Whether a frame of the page still has its entry, asked just before writing beside it. */
+export function frameStands(page: DeckPage, folder: string): boolean {
+	return existsLexically(join(page.dir, folder, "frame.tsx"));
+}
+
+/** Bytes a `deck.json` may be written with: a deck this spool reads back, naming no frame twice. */
+export function assertDeckBytes(bytes: string | null): void {
+	if (bytes === null) return;
 	const read = parseDeckFile(bytes);
 	if (read.kind !== "deck" || read.repeated.length > 0)
 		throw new Error("spool will not write a deck.json it cannot read back");
-	writeAtomic(file, bytes);
-}
-
-/**
- * Two frames' `notes.md` traded, the notes belonging to the place in the talk rather than the frame. Neither note's
- * words are ever only in memory: both are first copied into `design/.spool`, which stays on this machine, and that
- * copy goes only once both have landed. Each note is written whole where the other was, and a frame that had none
- * ends with none, its file removed only after the other side has it.
- */
-export function swapNotes(page: DeckPage, one: string, other: string): void {
-	const first = resolveDesignPath(page.designDir, join(page.dir, one, "notes.md"));
-	const second = resolveDesignPath(page.designDir, join(page.dir, other, "notes.md"));
-	const a = readBytes(first);
-	const b = readBytes(second);
-	if (a === undefined && b === undefined) return;
-	const kept = join(page.designDir, ".spool", "deck-swap", `${randomUUID()}.json`);
-	writeAtomic(
-		kept,
-		JSON.stringify({
-			[first]: a?.toString("base64") ?? null,
-			[second]: b?.toString("base64") ?? null,
-		}),
-	);
-	if (b !== undefined) writeAtomic(first, b);
-	if (a !== undefined) writeAtomic(second, a);
-	if (b === undefined) rmSync(first, { force: true });
-	if (a === undefined) rmSync(second, { force: true });
-	rmSync(kept, { force: true });
 }
 
 function readText(designDir: string, file: string): string | undefined {

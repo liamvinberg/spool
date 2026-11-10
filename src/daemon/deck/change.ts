@@ -1,21 +1,26 @@
 import { applyRule } from "../../deck/changes";
-import { type DeckFile, deckFileBytes, newDeckFile, parseDeckFile, withAbsent } from "../../deck/deck-file";
+import { DECK_FILE, type DeckFile, deckFileBytes, newDeckFile, parseDeckFile, withAbsent } from "../../deck/deck-file";
 import { type Deck, placesOf, placesToWrite, reconcilePlan, settle } from "../../deck/layout";
-import type { DeckChange, DeckChangeAnswer, DeckRead } from "../../deck/wire";
-import { isSafeName, pageParent } from "../../page-path";
+import type { DeckChange, DeckChangeAnswer, DeckFiles, DeckRead } from "../../deck/wire";
+import { isPagePath, pageParent, ROOT_PAGE } from "../../page-path";
+import { realDesignDir } from "../design-path";
 import type { Moved } from "../frame-links";
 import { geometryBytes } from "../geometry";
 import { parseSidecar } from "../sidecar";
 import {
+	assertDeckBytes,
 	type DeckPage,
 	deckFileOf,
 	deckFramesOf,
 	deckReadOf,
+	designPath,
+	frameStands,
+	isWhole,
+	readDesignFile,
 	readPage,
-	swapNotes,
-	writeDeck,
-	writeSidecar,
+	writeDesignFile,
 } from "./disk";
+import { commitSteps, recoverDeckChanges, type Step } from "./journal";
 
 /**
  * Everything the daemon writes for a deck (spool#265), each kept whole: reconciling a page after any hand changed it,
@@ -60,26 +65,49 @@ function ready(page: DeckPage): Ready | DeckRefusal {
 	return { kind: "ready", page, file: read.file, deck: settle(read.file.size, read.file.slides, frames) };
 }
 
+/** A sidecar reconcile wrote: the bytes it found (none: the frame had no place) and the bytes it wrote. */
+export interface Rewrite {
+	readonly folder: string;
+	readonly from: string | undefined;
+	readonly to: string;
+}
+
 /**
  * Lay a deck's page out as its files say, writing only the sidecars whose place differs. Nothing is written for a page
  * that is no deck, whose `deck.json` does not parse or is of a version this spool does not know, or that holds a
- * sidecar that does not parse: each of those is somebody else's write, finished or in flight. What it wrote, by folder.
+ * sidecar that does not parse: each of those is somebody else's write, finished or in flight. A frame whose folder or
+ * entry went in the meantime is passed over, never made again. What it wrote.
  */
-export function reconcileDeck(root: string, page: string): string[] {
+export function reconcileDeck(root: string, page: string): Rewrite[] {
 	const found = readPage(root, page);
 	if (found === undefined) return [];
 	const deck = ready(found);
 	if (deck.kind === "refused") return [];
 	const { frames } = deckFramesOf(found);
-	const writes = reconcilePlan(deck.file.size, deck.file.slides, frames);
-	for (const [folder, box] of writes) writeSidecar(found, folder, geometryBytes(box));
-	return [...writes.keys()];
+	const rewrites: Rewrite[] = [];
+	for (const [folder, box] of reconcilePlan(deck.file.size, deck.file.slides, frames)) {
+		if (!frameStands(found, folder)) continue;
+		const to = geometryBytes(box);
+		try {
+			writeDesignFile(found.designDir, designPath(found, folder, "frame.json"), to);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			throw error;
+		}
+		rewrites.push({ folder, from: found.frames.find((frame) => frame.folder === folder)?.sidecar, to });
+	}
+	return rewrites;
 }
 
-/** A deck change applied whole, answering with the page after it and the changes that undo and redo it. */
+/**
+ * A deck change applied whole, answering with the page after it and the changes that undo and redo it. A change the
+ * daemon died inside earlier is put back first, so a retry starts from files that are whole.
+ */
 export function changeDeck(root: string, change: DeckChange): DeckChangeAnswer | DeckRefusal {
-	const found = readPage(root, change.page);
-	if (found === undefined) return refuse(404, `no page "${change.page}" on the canvas`);
+	const first = readPage(root, change.page);
+	if (first === undefined) return refuse(404, `no page "${change.page}" on the canvas`);
+	recoverDeckChanges(first.designDir);
+	const found = readPage(root, change.page) as DeckPage;
 	if (change.kind === "make") return make(found, change.slides ?? [], change.size);
 	if (change.kind === "restore") return restore(found, change);
 	// what any hand left unsettled is laid out first, as keeping in step rather than as this change, so the undo
@@ -96,7 +124,7 @@ export function changeDeck(root: string, change: DeckChange): DeckChangeAnswer |
 	// a file only changes when what it says does: a hand's own spelling of it stands until then
 	const same = sameList(slides, now.file.slides) && size.w === result.deck.talk.w && size.h === result.deck.talk.h;
 	const file: DeckFile = { ...now.file, size: result.deck.talk, slides };
-	return write(page, same ? page.bytes : deckFileBytes(file), result.deck, result.swap);
+	return write(page, same ? (page.bytes ?? null) : deckFileBytes(file), result.deck, result.swap);
 }
 
 /** A page made a deck: the talk is the frames named, in order, and every other frame of the page goes loose. */
@@ -122,94 +150,144 @@ function make(
 }
 
 /**
- * One change's writes, and the restores that undo and redo it. The notes trade first, because it is the one write
- * that can be refused by the disk, and then every place and the file, each whole.
+ * One change's files, written as one transaction: a trade's notes, then every place that moves, then `deck.json`. The
+ * answer's undo and redo carry the files as the change found and left them, each refused once they hold something else.
  */
 function write(
 	page: DeckPage,
-	bytes: string | undefined,
+	bytes: string | null,
 	deck: Deck,
 	swap?: readonly [string, string],
 ): DeckChangeAnswer | DeckRefusal {
-	const { frames } = deckFramesOf(page);
-	const writes = placesToWrite(placesOf(deck), frames);
-	const before: Record<string, string | null> = {};
-	const after: Record<string, string | null> = {};
-	for (const [folder, box] of writes) {
-		before[folder] = page.frames.find((frame) => frame.folder === folder)?.sidecar ?? null;
-		after[folder] = geometryBytes(box);
+	const before: Files = { deck: page.bytes ?? null, sidecars: {}, notes: {} };
+	const after: Files = { deck: bytes, sidecars: {}, notes: {} };
+	if (swap !== undefined) {
+		const [one, other] = swap;
+		before.notes[one] = notesOf(page, one);
+		before.notes[other] = notesOf(page, other);
+		after.notes[one] = before.notes[other] ?? null;
+		after.notes[other] = before.notes[one] ?? null;
 	}
-	const fileChanged = bytes !== undefined && bytes !== page.bytes;
-	if (swap !== undefined) swapNotes(page, swap[0], swap[1]);
-	for (const [folder, sidecar] of Object.entries(after)) writeSidecar(page, folder, sidecar);
-	if (fileChanged) writeDeck(page, bytes);
-	const restoreTo = (deckBytes: string | null, sidecars: Record<string, string | null>): DeckChange => ({
+	const { frames } = deckFramesOf(page);
+	for (const [folder, box] of placesToWrite(placesOf(deck), frames)) {
+		before.sidecars[folder] = page.frames.find((frame) => frame.folder === folder)?.sidecar ?? null;
+		after.sidecars[folder] = geometryBytes(box);
+	}
+	return commitFiles(page, before, after);
+}
+
+/** Files the change is not writing are named with the bytes they hold, so `from` and `to` name the same files. */
+type Files = { deck: string | null; sidecars: Record<string, string | null>; notes: Record<string, string | null> };
+
+/** `from` to `to` written as one transaction, and the answer that undoes and redoes it. */
+function commitFiles(page: DeckPage, from: Files, to: Files): DeckChangeAnswer {
+	assertDeckBytes(to.deck);
+	const steps: Step[] = [
+		...Object.keys(to.notes).map((folder) => ({
+			path: designPath(page, folder, "notes.md"),
+			before: from.notes[folder] ?? null,
+			after: to.notes[folder] ?? null,
+		})),
+		...Object.keys(to.sidecars).map((folder) => ({
+			path: designPath(page, folder, "frame.json"),
+			before: from.sidecars[folder] ?? null,
+			after: to.sidecars[folder] ?? null,
+		})),
+		{ path: designPath(page, DECK_FILE), before: from.deck, after: to.deck },
+	];
+	commitSteps(page.designDir, page.page, steps);
+	const restoreTo = (one: DeckFiles, other: DeckFiles): DeckChange => ({
 		kind: "restore",
 		page: page.page,
-		deck: deckBytes,
-		sidecars,
-		...(swap === undefined ? {} : { swap }),
+		from: one,
+		to: other,
 	});
 	return {
-		changed: fileChanged || writes.size > 0 || swap !== undefined,
+		changed: steps.some((step) => step.before !== step.after),
 		deck: readDeck(page),
-		undo: restoreTo(page.bytes ?? null, before),
-		redo: restoreTo(bytes ?? page.bytes ?? null, after),
+		undo: restoreTo(to, from),
+		redo: restoreTo(from, to),
 	};
 }
 
 /**
- * A deck's files put back to bytes an earlier answer carried. The notes are traded back rather than written, so an
- * undo can never put back old words over new ones; a frame gone since has no sidecar to put back and is passed over.
- * Nothing is written over a `deck.json` that does not parse or that another spool owns.
+ * A deck's files put back to bytes an earlier answer carried, refused while they hold anything but what that answer
+ * left: a hand's edit since is never written over, and an undo sent twice is refused the second time rather than
+ * trading a slide's notes back again. `deck.json` and the sidecars are compared for what they say, so a hand that only
+ * re-spelled one has not changed it; notes are compared byte for byte. A frame that has left the page since cannot be
+ * put back and refuses the whole restore.
  */
 function restore(page: DeckPage, change: Extract<DeckChange, { kind: "restore" }>): DeckChangeAnswer | DeckRefusal {
-	const now = deckFileOf(page);
-	if (now?.kind === "unparsed")
+	const read = deckFileOf(page);
+	if (read?.kind === "unparsed")
 		return refuse(409, `page "${page.page}"'s deck.json does not parse: a write in flight`);
-	if (now?.kind === "unknown")
+	if (read?.kind === "unknown")
 		return refuse(409, `page "${page.page}"'s deck.json is of a version this spool does not lay out`);
-	let bytes = change.deck;
-	if (bytes !== null) {
-		const read = parseDeckFile(bytes);
-		if (read.kind !== "deck") return refuse(400, "a restore's deck.json must be a deck this spool reads");
+	const since = (what: string) => refuse(409, `${what} changed since, so undoing or redoing would write over it`);
+	if (!sameDeck(page.bytes ?? null, change.from.deck)) return since(`page "${page.page}"'s deck.json`);
+	let deck = change.to.deck;
+	if (deck !== null) {
+		const next = parseDeckFile(deck);
+		if (next.kind !== "deck") return refuse(400, "a restore's deck.json must be a deck this spool reads");
 		// bytes naming a frame twice came from a hand; spool never writes them back, only the talk they mean
-		if (read.repeated.length > 0) bytes = deckFileBytes(read.file);
+		if (next.repeated.length > 0) deck = deckFileBytes(next.file);
 	}
 	const present = new Map(page.frames.map((frame) => [frame.folder, frame]));
-	const sidecars: Record<string, string | null> = {};
-	for (const [folder, sidecar] of Object.entries(change.sidecars)) {
-		if (!isSafeName(folder)) return refuse(400, `not a frame folder: "${folder}"`);
-		if (!present.has(folder)) continue;
-		if (sidecar !== null && parseSidecar(parseJson(sidecar)).kind === "none")
+	const now: Files = { deck: page.bytes ?? null, sidecars: {}, notes: {} };
+	for (const [folder, expected] of Object.entries(change.from.sidecars)) {
+		const wanted = change.to.sidecars[folder] ?? null;
+		const frame = present.get(folder);
+		if (frame === undefined && wanted !== null)
+			return refuse(409, `"${folder}" left the page, so it cannot be put back`);
+		const bytes = frame?.sidecar ?? null;
+		if (bytes !== null && sidecarOf(bytes) === undefined)
+			return refuse(409, `the sidecar of "${folder}" does not parse: a write in flight, so the deck waits for it`);
+		if (wanted !== null && sidecarOf(wanted) === undefined)
 			return refuse(400, `a restore's sidecar for "${folder}" must place or size the frame`);
-		sidecars[folder] = sidecar;
+		if (sidecarOf(bytes) !== sidecarOf(expected)) return since(`the place of "${folder}"`);
+		now.sidecars[folder] = bytes;
 	}
-	const swap = change.swap;
-	if (swap !== undefined) {
-		const gone = swap.find((folder) => !present.has(folder));
-		if (gone !== undefined) return refuse(409, `"${gone}" left the page, so its notes cannot be traded back`);
+	for (const [folder, expected] of Object.entries(change.from.notes)) {
+		const wanted = change.to.notes[folder] ?? null;
+		if (!present.has(folder) && wanted !== null)
+			return refuse(409, `"${folder}" left the page, so its notes cannot be put back`);
+		const bytes = present.has(folder) ? notesOf(page, folder) : null;
+		if (bytes !== expected) return since(`the notes of "${folder}"`);
+		now.notes[folder] = bytes;
 	}
-	const undoSidecars: Record<string, string | null> = {};
-	for (const folder of Object.keys(sidecars)) undoSidecars[folder] = present.get(folder)?.sidecar ?? null;
-	const fileChanged = bytes !== (page.bytes ?? null);
-	const moved = Object.keys(sidecars).filter((folder) => sidecars[folder] !== undoSidecars[folder]);
-	if (swap !== undefined) swapNotes(page, swap[0], swap[1]);
-	for (const folder of moved) writeSidecar(page, folder, sidecars[folder] ?? null);
-	if (fileChanged) writeDeck(page, bytes);
-	const restoreTo = (deck: string | null, to: Record<string, string | null>): DeckChange => ({
-		kind: "restore",
-		page: page.page,
+	return commitFiles(page, now, {
 		deck,
-		sidecars: to,
-		...(swap === undefined ? {} : { swap }),
+		sidecars: { ...change.to.sidecars },
+		notes: { ...change.to.notes },
 	});
-	return {
-		changed: fileChanged || moved.length > 0 || swap !== undefined,
-		deck: readDeck(page),
-		undo: restoreTo(page.bytes ?? null, undoSidecars),
-		redo: restoreTo(bytes, sidecars),
-	};
+}
+
+/** Two `deck.json`s that say the same: equal once read, or byte for byte when either is no deck. */
+function sameDeck(one: string | null, other: string | null): boolean {
+	if (one === other) return true;
+	if (one === null || other === null) return false;
+	const a = parseDeckFile(one);
+	const b = parseDeckFile(other);
+	return a.kind === "deck" && b.kind === "deck" && deckFileBytes(a.file) === deckFileBytes(b.file);
+}
+
+/** What a sidecar says, comparable as a string; "" for none, nothing for bytes that say nothing. */
+function sidecarOf(bytes: string | null): string | undefined {
+	if (bytes === null) return "";
+	let value: unknown;
+	try {
+		value = JSON.parse(bytes);
+	} catch {
+		return undefined;
+	}
+	const read = parseSidecar(value);
+	if (read.kind === "placed") return JSON.stringify(read.geometry);
+	if (read.kind === "sized") return JSON.stringify(read.footprint);
+	return undefined;
+}
+
+function notesOf(page: DeckPage, folder: string): string | null {
+	return readDesignFile(page.designDir, designPath(page, folder, "notes.md"));
 }
 
 /** The page's deck read as it stands now. */
@@ -217,14 +295,6 @@ function readDeck(page: DeckPage): DeckRead | null {
 	const again = readPage(page.root, page.page);
 	const read = again === undefined ? undefined : deckReadOf(again);
 	return read === undefined || !("slides" in read) ? null : read;
-}
-
-function parseJson(bytes: string): unknown {
-	try {
-		return JSON.parse(bytes);
-	} catch {
-		return undefined;
-	}
 }
 
 /**
@@ -261,15 +331,28 @@ export function deckFollowsTrash(root: string, frames: readonly string[]): void 
 	for (const [page, gone] of byPage) rewriteTalk(root, page, (slides) => slides.filter((folder) => !gone.has(folder)));
 }
 
-/** A deck's talk rewritten by bookkeeping, leaving every other key and an unknown version's file alone. */
+/**
+ * A deck's talk rewritten by bookkeeping, reading nothing but its `deck.json`, so an ordinary page answers at once
+ * whatever its frames hold. Every other key, and an unknown version's file, are left alone.
+ */
 function rewriteTalk(root: string, page: string, rewrite: (slides: readonly string[]) => string[]): void {
-	const found = readPage(root, page);
-	if (found === undefined) return;
-	const read = deckFileOf(found);
-	if (read?.kind !== "deck") return;
+	if (page === ROOT_PAGE || !isPagePath(page)) return;
+	const designDir = realDesignDir(root);
+	if (!isWhole(designDir)) return;
+	const path = `frames/${page}/${DECK_FILE}`;
+	const bytes = readDesignFile(designDir, path);
+	if (bytes === null) return;
+	const read = parseDeckFile(bytes);
+	if (read.kind !== "deck") return;
 	const slides = rewrite(read.file.slides);
 	if (sameList(slides, read.file.slides)) return;
-	writeDeck(found, deckFileBytes({ ...read.file, slides }));
+	const next = deckFileBytes({ ...read.file, slides });
+	assertDeckBytes(next);
+	try {
+		writeDesignFile(designDir, path, next);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
 }
 
 function sameList(one: readonly string[], other: readonly string[]): boolean {
