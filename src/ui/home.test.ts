@@ -425,11 +425,19 @@ it("starts one untitled project at once from Home or the tab strip, saying a ref
 	expect(window.location.pathname).toBe("/p/untitled");
 });
 
-it("does not claim first launch while the registry is still loading", () => {
+it("does not claim first launch while the registry is still loading, and says it is loading past the gate", () => {
+	vi.useFakeTimers();
+	onTestFinished(() => {
+		vi.useRealTimers();
+	});
 	const host = mount(createElement(Home, { projects: [], loading: true, ...actions() }));
 	expect(host.querySelector('main[aria-busy="true"]')).not.toBeNull();
 	expect(host.textContent).not.toContain("Start with an idea.");
 	expect(host.querySelector(".pj-navigation")).not.toBeNull();
+	// a registry that answers inside the boot gate draws nothing; a slower one says what it waits on
+	expect(host.querySelector('[role="status"]')).toBeNull();
+	act(() => vi.advanceTimersByTime(200));
+	expect(host.querySelector('[role="status"]')?.textContent).toContain("loading projects");
 });
 
 it.each([204, 503])(
