@@ -64,6 +64,14 @@ export const EXPERIMENTS = {
 		stage: "experimental",
 		ticket: "spool#221",
 	},
+	deck: {
+		name: "Decks",
+		says: "A page holding a deck.json is a presentation: its top row is the talk, laid out by spool and kept in step as frames come and go.",
+		tradeoff:
+			"Spool writes the places of a deck's frames by itself whenever its files change. Off, a deck is an ordinary page.",
+		stage: "experimental",
+		ticket: "spool#265",
+	},
 	knobs: {
 		name: "Knobs",
 		says: "The Knobs section in the properties rail, for the values a frame declares with `ui.knobs`.",
