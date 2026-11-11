@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { BETA } from "../../channel";
 import { accelLabel } from "../../runtime/platform-keys";
 import { parseSetting, type SettingKey, type ThemeToken } from "../../settings/registry";
 import { ACCENTS, parseTheme, printTheme, type ThemeSpec } from "../../settings/themes";
@@ -16,7 +17,11 @@ export type Tokens = Readonly<Record<ThemeToken, string>>;
 export type Write = ReturnType<typeof useWriteSetting>;
 export type WriteMany = ReturnType<typeof useWriteSettings>;
 
-export const FILES = { project: "design/canvas.json", machine: "~/.spool/config.json" } as const;
+/** Spool Beta keeps its own state (spool#282), so its settings are written there. */
+export const FILES = {
+	project: "design/canvas.json",
+	machine: BETA ? "~/.spool-beta/config.json" : "~/.spool/config.json",
+} as const;
 
 /** A hairline over every line, and under the last, as the page's rows stand. */
 export const LINE = "border-line-default border-t py-4";
