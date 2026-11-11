@@ -21,7 +21,7 @@ export interface PresentAsk extends PresentFrom {
 
 /**
  * Present a deck from one of its slides (spool#265): what a slide's play on its name label, the Present action on a
- * deck's row in Pages do. The room's window opens here, while the press that asked
+ * deck's row in Pages, and ⌘↵ and ⇧⌘↵ on a deck page do. The room's window opens here, while the press that asked
  * for it is still the user's, and the canvas (`presenting.tsx`) turns spool's own window into the presenter view. One
  * talk at a time: a press while one is on does nothing.
  */
@@ -56,6 +56,25 @@ export function presentDone(): void {
 /** The talk asked for, while one is. */
 export function usePresentAsk(): PresentAsk | null {
 	return useSyncExternalStore(subscribe, () => asked);
+}
+
+/**
+ * The slide ⌘↵ (`first` false) or ⇧⌘↵ (`first` true) presents from on a page whose talk is `slides`, with `selected`
+ * the frames held: ⇧⌘↵ the first slide; ⌘↵ the one slide held, or the first with nothing held. With anything else held
+ * (a loose frame, several frames, an element) ⌘↵ is the canvas's own key, and nothing is presented.
+ */
+export function presentKeyFrom(
+	slides: readonly string[],
+	held: { readonly frames: readonly string[]; readonly elements: number },
+	first: boolean,
+): string | undefined {
+	const [start] = slides;
+	if (start === undefined) return undefined;
+	if (first) return start;
+	if (held.elements > 0) return undefined;
+	if (held.frames.length === 0) return start;
+	const [only] = held.frames;
+	return held.frames.length === 1 && only !== undefined && slides.includes(only) ? only : undefined;
 }
 
 let asked: PresentAsk | null = null;

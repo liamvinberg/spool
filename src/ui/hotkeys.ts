@@ -317,6 +317,17 @@ export const HOTKEYS = [
 		keys: ["accel+enter"],
 		repeats: false,
 	},
+	// on a deck page (spool#265, behind the experiment `deck`) ⌘↵ presents from the slide held, and ⇧⌘↵ from the first;
+	// unlisted, since with the experiment off neither is anything
+	{
+		id: "canvas.present-first",
+		scope: "canvas",
+		group: "Frames",
+		label: "Present the talk from its first slide",
+		keys: ["accel+shift+enter"],
+		repeats: false,
+		listed: false,
+	},
 	{
 		id: "canvas.ascend",
 		scope: "canvas",

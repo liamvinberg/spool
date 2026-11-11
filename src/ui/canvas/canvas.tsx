@@ -1927,6 +1927,7 @@ function CanvasField({
 		say: (message) => setNotice({ kind: "error", message }),
 	});
 	const deckOwns = deckPage.owns;
+	const presentKey = deckPage.presentKey;
 	// what the Pages rail and Properties show of a deck: its rows, its notes, New presentation
 	const deckKit = useMemo(
 		() =>
@@ -5266,8 +5267,14 @@ function CanvasField({
 			"canvas.descend": (event) => {
 				if (store.get().entered !== null) return;
 				event?.preventDefault();
+				// on a deck page ⌘↵ presents from the slide held (spool#265)
+				if (presentKey(false)) return;
 				setPreview(null);
 				openHeld();
+			},
+			"canvas.present-first": (event) => {
+				if (store.get().entered !== null || !presentKey(true)) return;
+				event?.preventDefault();
 			},
 			"canvas.ascend": (event) => {
 				if (store.get().entered !== null) return;
@@ -5406,6 +5413,7 @@ function CanvasField({
 		walkList,
 		stepPages,
 		showCommentAim,
+		presentKey,
 		camera,
 		store,
 	]);
