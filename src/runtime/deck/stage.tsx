@@ -479,8 +479,13 @@ export function bootStage(runtime: StageRuntime): void {
 		});
 	}
 
+	/** The host asked for the slide it named to go on with no dissolve: nobody was watching this stage until now. */
+	let cut = false;
+
 	function swap(copy: Copy, at: At): void {
 		const from = shown;
+		const instant = cut;
+		cut = false;
 		const update = () => {
 			setSlideBeat(copy.key, at.beat);
 			revealed = { key: copy.key, from };
@@ -491,7 +496,7 @@ export function bootStage(runtime: StageRuntime): void {
 			});
 			done(at, false, copy, from === null);
 		};
-		if (!motion || from === null || typeof document.startViewTransition !== "function") {
+		if (!motion || instant || from === null || typeof document.startViewTransition !== "function") {
 			update();
 			settle();
 			return;
@@ -532,6 +537,8 @@ export function bootStage(runtime: StageRuntime): void {
 	}
 
 	function command(next: StageCommand): void {
+		// a key moves the talk on from what the host cut to: that is a step, and dissolves like any other
+		cut = false;
 		take(stepSession(session, next, talk));
 	}
 
@@ -587,6 +594,7 @@ export function bootStage(runtime: StageRuntime): void {
 		if (message.spool === "stage-apply") {
 			if (message.mode !== undefined) mode = message.mode;
 			if (message.session.revision < session.revision && message.mode === undefined) return;
+			cut = message.cut === true;
 			take({ ...message.session, at: clampAt(talk, message.session.at) });
 		}
 	}

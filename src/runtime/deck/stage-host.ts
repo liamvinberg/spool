@@ -56,8 +56,11 @@ export interface StageHostEvents {
 export interface StageHost {
 	/** a command for a stage that owns its session */
 	command(command: StageCommand): void;
-	/** the session a following stage shows, or that an owning one takes over */
-	apply(session: StageSession, mode?: StageMode): void;
+	/**
+	 * the session a following stage shows, or that an owning one takes over; `cut`: its slide goes on in one frame,
+	 * with no dissolve from the one showing, for a stage nobody was watching until now
+	 */
+	apply(session: StageSession, mode?: StageMode, cut?: boolean): void;
 	/** a key pressed in the host's own document, read as the stage reads its own; true when the talk took it */
 	key(event: KeyboardEvent): boolean;
 	/** take a new build of the talk, staying on its slide and beat */
@@ -285,13 +288,14 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		command(command) {
 			current?.post?.({ spool: "stage-command", command });
 		},
-		apply(next, nextMode) {
+		apply(next, nextMode, cut) {
 			session = next;
 			if (nextMode !== undefined) mode = nextMode;
 			current?.post?.({
 				spool: "stage-apply",
 				session: next,
 				...(nextMode === undefined ? {} : { mode: nextMode }),
+				...(cut === true ? { cut: true } : {}),
 			});
 		},
 		key(event) {

@@ -85,8 +85,17 @@ export type HostMessage =
 	  }
 	/** a command for a stage that owns its session */
 	| { readonly spool: "stage-command"; readonly command: StageCommand }
-	/** the session a following stage shows, or that an owning one takes over, with the mode it plays in from now */
-	| { readonly spool: "stage-apply"; readonly session: StageSession; readonly mode?: StageMode };
+	/**
+	 * the session a following stage shows, or that an owning one takes over, with the mode it plays in from now.
+	 * `cut`: the slide it names goes on in one frame, with no dissolve from the one showing, for a stage nobody was
+	 * watching until now (the canvas's, as a slide is gone into)
+	 */
+	| {
+			readonly spool: "stage-apply";
+			readonly session: StageSession;
+			readonly mode?: StageMode;
+			readonly cut?: true;
+	  };
 
 /** stage → host */
 export type StageMessage =
@@ -199,9 +208,12 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 	if (value.spool === "stage-apply") {
 		const session = parseSession(value.session);
 		if (session === undefined || (value.mode !== undefined && !isMode(value.mode))) return undefined;
-		return isMode(value.mode)
-			? { spool: "stage-apply", session, mode: value.mode }
-			: { spool: "stage-apply", session };
+		return {
+			spool: "stage-apply",
+			session,
+			...(isMode(value.mode) ? { mode: value.mode } : {}),
+			...(value.cut === true ? { cut: true } : {}),
+		};
 	}
 	return undefined;
 }
