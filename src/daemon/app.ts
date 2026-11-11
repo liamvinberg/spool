@@ -65,7 +65,7 @@ import { createFrameCompiler } from "./compile";
 import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
 import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
 import { deckRoutes } from "./deck/routes";
-import { createStagePlay } from "./deck/stage-play";
+import { createStagePlay, ROOM_QUERY } from "./deck/stage-play";
 import { talkFile } from "./deck/talk-file";
 import { DesignBoundaryError, designRelativePath, realDesignDir } from "./design-path";
 import {
@@ -297,6 +297,8 @@ const playParams = z.object({
 		.optional(),
 	/** a deck page (spool#265): its talk played on the stage, from `frame` when that is one of its slides */
 	deck: z.string().refine(isPagePath, { message: "not a page name" }).optional(),
+	/** with `deck`: the address is the room's window of the talk named, presented from spool's own window */
+	room: ROOM_QUERY.optional(),
 });
 
 /**
@@ -1946,7 +1948,7 @@ export function createDaemonApp({
 			}),
 			async (c) => {
 				const name = c.req.param("project");
-				const { frame, scenario, shell, handoff, record, recording, deck } = c.req.valid("query");
+				const { frame, scenario, shell, handoff, record, recording, deck, room } = c.req.valid("query");
 				const controlRequest = hostClass(c.req.url) === "control";
 				if (deck !== undefined) {
 					return stagePlay.play(c, {
@@ -1954,6 +1956,7 @@ export function createDaemonApp({
 						deck,
 						control: controlRequest,
 						...(frame === undefined ? {} : { frame }),
+						...(room === undefined ? {} : { room }),
 						...(shell === undefined ? {} : { shell }),
 						...(handoff === undefined ? {} : { handoff }),
 					});

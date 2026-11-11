@@ -1,4 +1,6 @@
 import type { Context } from "hono";
+import { z } from "zod";
+import { TALK_NAME } from "../../deck/present-wire";
 import type { StageConfig, StageSlideConfig } from "../../deck/stage-wire";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } from "../document";
 import { type PlayerCompile, type PlayerConfig, playerChunkBase } from "../play";
@@ -40,6 +42,9 @@ export interface StageAddress {
 
 const passKey = (page: string) => `deck:${page}`;
 
+/** The `room` of a play address: the talk whose room's window it is, presented from spool's own window. */
+export const ROOM_QUERY = z.string().regex(TALK_NAME, { message: "not a talk" });
+
 /** The talk of a deck page as its stage plays it, or why there is none to play. */
 export function stageOf(root: string, page: string): StageConfig | { message: string } {
 	const found = readPage(root, page);
@@ -74,7 +79,15 @@ export function createStagePlay(deps: StagePlayDeps) {
 	/** The play address of a deck page, on either origin. */
 	async function play(
 		c: Context,
-		query: { project: string; deck: string; frame?: string; shell?: "1"; handoff?: string; control: boolean },
+		query: {
+			project: string;
+			deck: string;
+			frame?: string;
+			shell?: "1";
+			handoff?: string;
+			room?: string;
+			control: boolean;
+		},
 	): Promise<Response> {
 		if (!deps.on()) return c.text("Not Found", 404);
 		const project = deps.resolve(c, query.project);
@@ -84,7 +97,10 @@ export function createStagePlay(deps: StagePlayDeps) {
 			if ("message" in stage) return c.text(stage.message, 404);
 			deps.protect(c);
 			return c.html(
-				stageHostDocument({ project: query.project, page: query.deck, frame: query.frame }, deps.controlToken),
+				stageHostDocument(
+					{ project: query.project, page: query.deck, frame: query.frame, room: query.room },
+					deps.controlToken,
+				),
 			);
 		}
 		const embedded = query.shell === "1";
@@ -178,9 +194,12 @@ function refusedDocument(message: string): string {
 `;
 }
 
-/** The stage's first host: a black page on spool's own origin holding the stage, its keys and its saved changes. */
+/**
+ * The stage's first host: a black page on spool's own origin holding the stage, its keys and its saved changes. With
+ * `room` it is the room's window of a talk presented from spool's own window.
+ */
 function stageHostDocument(
-	config: { project: string; page: string; frame: string | undefined },
+	config: { project: string; page: string; frame: string | undefined; room: string | undefined },
 	controlToken: string,
 ): string {
 	const host = { ...config, controlToken };
