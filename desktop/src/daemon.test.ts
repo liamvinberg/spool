@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -14,6 +14,7 @@ import {
 	daemonUrl,
 	gone,
 	health,
+	moveOffTakenPort,
 	readState,
 	start,
 	stateDirectory,
@@ -252,6 +253,33 @@ test("a port another app holds is named at once, with where to choose another", 
 		assert.ok(Date.now() - began < 5_000, "a daemon that exits is not waited out");
 	} finally {
 		other.close();
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("a port another app holds, that nobody chose, moves to a free one nearby and stays there", async () => {
+	const directory = temporary();
+	const held = createServer((_request, response) => response.end("not spool"));
+	await new Promise<void>((done) => held.listen(0, "127.0.0.1", done));
+	const { port } = held.address() as AddressInfo;
+	const next = createServer((_request, response) => response.end("not spool either"));
+	await new Promise<void>((done) => next.listen(port + 10, "127.0.0.1", done));
+	try {
+		writeFileSync(join(directory, "config.json"), JSON.stringify({ appearance: "dark" }));
+		const address = { host: "127.0.0.1", port };
+		assert.equal(await moveOffTakenPort(directory, address), port + 20);
+		assert.deepEqual(JSON.parse(readFileSync(join(directory, "config.json"), "utf8")), {
+			appearance: "dark",
+			port: port + 20,
+		});
+		// once config.json names a port it is kept, taken or not
+		assert.equal(await moveOffTakenPort(directory, { host: "127.0.0.1", port: port + 10 }), undefined);
+		writeFileSync(join(directory, "config.json"), "{");
+		assert.equal(await moveOffTakenPort(directory, address), undefined);
+		assert.equal(readFileSync(join(directory, "config.json"), "utf8"), "{");
+	} finally {
+		held.close();
+		next.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
