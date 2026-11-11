@@ -2942,6 +2942,8 @@ function CanvasField({
 	const selectFrameRow = (name: string, modifiers: SelectModifiers, span?: FrameSpan) => {
 		const frame = navigatorFrames.find((candidate) => candidate.name === name);
 		if (frame === undefined) return;
+		// inside a slide of a deck, a row pressed comes out of it first, as a press on the canvas does (spool#265)
+		deckInside.leave();
 		const targetPage = pageOf(frame);
 		const changedPage = targetPage !== store.get().activePage;
 		if (changedPage) {
