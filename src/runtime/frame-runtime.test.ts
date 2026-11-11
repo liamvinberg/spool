@@ -1146,38 +1146,12 @@ export default function Slide() {
 `;
 
 describe("a slide's beats", () => {
-	it("shows its last beat where nothing steps it, and the beat its host puts it on, telling the host what it drew", async () => {
+	it("shows its last beat where no stage steps it, as a still is shot", async () => {
 		const harness = makeHarness();
 		scaffoldFlow(harness);
 		writeFrame(harness.root, "slide", slideTsx);
-
-		// alone, as a still is shot: complete, and nobody to tell
 		await loadFrameDocument(harness, "slide");
 		await waitForText("#beat", "date 2");
-
-		// on the canvas, the host may step it
-		const told: Record<string, unknown>[] = [];
-		await loadFrameDocument(harness, "slide", {
-			host: (message) => {
-				if (message.spool === "slide") told.push(message);
-				if (message.spool === "session?") hostReply({ spool: "session", record: null });
-			},
-		});
-		await waitForText("#beat", "date 2");
-		const slide = { spool: "slide", frame: "slide", beats: ["title", "price", "date"], live: true };
-		await vi.waitFor(() => expect(told).toEqual([{ ...slide, beat: 2 }]));
-		hostReply({ spool: "beat", beat: 0 });
-		await waitForText("#beat", "title 0");
-		expect(document.querySelector("#price")?.textContent).toBe("false");
-		hostReply({ spool: "beat", beat: 1 });
-		await waitForText("#price", "true");
-		// a beat past its last is its last, and none puts it back there
-		hostReply({ spool: "beat", beat: 7 });
-		await waitForText("#beat", "date 2");
-		hostReply({ spool: "beat", beat: 0 });
-		await waitForText("#beat", "title 0");
-		hostReply({ spool: "beat", beat: null });
-		await waitForText("#beat", "date 2");
-		await vi.waitFor(() => expect(told.map((message) => message.beat)).toEqual([2, 0, 1, 2, 0, 2]));
+		expect(document.querySelector("#price")?.textContent).toBe("true");
 	});
 });

@@ -25,7 +25,7 @@ import {
 } from "./knob-protocol";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
 import { createHandsLog } from "./record-hands";
-import { parsePlayerBeat, parseSlideBeat, setSlideBeat, slideCalls } from "./slide-beats";
+import { slideCalls } from "./slide-beats";
 import type { KnobRead, SpoolUi } from "./spool-public";
 import { parseWalkDecision } from "./walk-protocol";
 
@@ -366,11 +366,6 @@ if (play === undefined) {
 		const knobAction = parseKnobAction(event.data);
 		if (knobAction !== undefined) {
 			pressKnob(knobAction);
-			return;
-		}
-		const beat = parseSlideBeat(event.data);
-		if (beat !== undefined) {
-			setSlideBeat(doc.frame, beat.beat);
 			return;
 		}
 		const decision = parseWalkDecision(event.data);
@@ -1298,11 +1293,6 @@ function followGeometry(): void {
 			settleClipboardWrite(clipboard);
 			return;
 		}
-		const beat = parsePlayerBeat(message);
-		if (beat !== undefined) {
-			setSlideBeat(beat.frame, beat.beat);
-			return;
-		}
 		// Record (spool#221): the shell starts and stops noting the hands; what was noted goes back to it
 		if (message.spool === "player-record" && typeof message.on === "boolean") {
 			if (message.on) hands.start();
@@ -2132,17 +2122,8 @@ function useSpoolState(): SpoolState {
 	return state;
 }
 
-/**
- * A slide's beats and live (spool#265): a call belongs to the frame the document shows, and what a slide drew goes to
- * whoever can step it, the canvas or the player shell.
- */
-const slides = slideCalls({
-	frame: () => (play === undefined ? doc.frame : mountedFrame),
-	report: (slide) => {
-		if (play?.shell === true) postPlayerMessage({ spool: "player-slide", ...slide });
-		else if (play === undefined) post({ spool: "slide", beats: slide.beats, live: slide.live, beat: slide.beat });
-	},
-});
+/** A slide's beats and live (spool#265): a call outside the stage belongs to the frame the document shows. */
+const slides = slideCalls({ frame: () => (play === undefined ? doc.frame : mountedFrame) });
 
 export const ui: SpoolUi = Object.freeze({
 	state,
