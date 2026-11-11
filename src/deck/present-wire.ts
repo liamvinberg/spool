@@ -43,25 +43,13 @@ export function mintTalk(): string {
 }
 
 /**
- * What the room passes on of the keys pressed and the clicks made in its window: the talk moving, and black. Freeze,
- * restart, swap, the key list and the keyboard handed to a live slide are the presenter's alone, and the room never
- * writes `ui.state`: what its copy of a live slide writes on its own is a mirror's echo, not the talk's.
+ * What the room passes on of the keys pressed and the clicks made in its window: every command they make, the keys
+ * being the same in every host, for the presenter view to carry out (? lists the keys there, never over the room's
+ * slide). Never a write to `ui.state`: what the room's copy of a live slide writes on its own is a mirror's echo, not
+ * the talk's.
  */
 export function roomPasses(command: KeyCommand): boolean {
-	switch (command.kind) {
-		case "next":
-		case "back":
-		case "next-slide":
-		case "previous-slide":
-		case "first":
-		case "last":
-		case "go":
-		case "black":
-		case "escape":
-			return true;
-		default:
-			return false;
-	}
+	return command.kind !== "state" && command.kind !== "blur";
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
