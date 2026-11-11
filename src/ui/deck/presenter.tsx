@@ -104,6 +104,12 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		};
 		const app = desktopWindow();
 		const carry = (command: KeyCommand) => {
+			// the key list open over the view takes the keys pressed in a slide's document or the room's as well: esc
+			// and ? close it, and nothing acts through it
+			if (hands.current.help) {
+				if (command.kind === "escape" || command.kind === "help") setHelp(false);
+				return;
+			}
 			if (command.kind === "escape") end();
 			else if (command.kind === "help") setHelp(true);
 			else if (command.kind === "swap") app?.swapRoom?.(ask.talk);
@@ -204,10 +210,8 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		const down = (event: KeyboardEvent) => {
 			event.stopPropagation();
 			if (hands.current.help) {
-				if (event.key === "Escape" || event.key === "?") {
-					event.preventDefault();
-					setHelp(false);
-				}
+				if (event.key === "Escape" || event.key === "?" || event.key === "Tab") event.preventDefault();
+				if (event.key === "Escape" || event.key === "?") setHelp(false);
 				return;
 			}
 			if (stage.current?.main.key(event) === true) event.preventDefault();
@@ -219,6 +223,16 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			rest();
 		};
 	}, []);
+
+	// the key list takes the focus from wherever it was (a slide's own document), and gives it back as it closes
+	useEffect(() => {
+		if (!help) return;
+		const before = document.activeElement;
+		view.current?.focus({ preventScroll: true });
+		return () => {
+			if (before instanceof HTMLElement && before.isConnected) before.focus({ preventScroll: true });
+		};
+	}, [help]);
 
 	const at: At = session?.at ?? {
 		slide: Math.max(

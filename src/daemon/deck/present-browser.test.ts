@@ -179,6 +179,13 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	await view.mouse.move(4, 4);
 	const counted = audience.frameLocator("iframe >> nth=-1").locator("[data-spool-stage-shown] #more");
 	await expect.poll(() => counted.textContent()).toBe("count 1");
+	// ? from the slide that has the focus lists the keys over the view, and esc closes the list and does nothing else
+	await view.keyboard.press("?");
+	const keyList = view.getByRole("dialog", { name: "Presenting keys" });
+	await keyList.waitFor();
+	await view.keyboard.press("Escape");
+	await keyList.waitFor({ state: "detached" });
+	expect(await together(view, audience)).toEqual({ slide: 4, beat: 0 });
 	// ⇥ hands it the keys, and esc takes them back without ending the talk
 	await view.keyboard.press("Tab");
 	await expect.poll(async () => (await presenter(view))?.keys).toBe(true);
