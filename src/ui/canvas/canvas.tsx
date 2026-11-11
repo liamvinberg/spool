@@ -6588,6 +6588,8 @@ function CanvasField({
 					holdChain(null);
 					setSelected([frame]);
 					frameAnchor.current = frame;
+					// presented from inside a slide, the camera comes back as esc would have brought it
+					if (deckInside.ended(frame)) return;
 					const box = store.get().frames.find((one) => one.name === frame);
 					const viewport = viewportRef.current;
 					const cam = camera.get();
