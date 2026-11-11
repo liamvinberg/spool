@@ -87,8 +87,8 @@ export type HostMessage =
 	| { readonly spool: "stage-command"; readonly command: StageCommand }
 	/**
 	 * the session a following stage shows, or that an owning one takes over, with the mode it plays in from now.
-	 * `cut`: the slide it names goes on in one frame, with no dissolve from the one showing, for a stage nobody was
-	 * watching until now (the canvas's, as a slide is gone into)
+	 * `cut`: the slide it names goes on in one frame, at rest, with no dissolve from the one showing, for a stage nobody
+	 * was watching until now (the canvas's, as a slide is gone into)
 	 */
 	| {
 			readonly spool: "stage-apply";

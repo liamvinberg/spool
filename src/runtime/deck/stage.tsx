@@ -479,7 +479,10 @@ export function bootStage(runtime: StageRuntime): void {
 		});
 	}
 
-	/** The host asked for the slide it named to go on with no dissolve: nobody was watching this stage until now. */
+	/**
+	 * The host asked for the slide it named to go on with no dissolve and at rest, its entrances played: nobody was
+	 * watching this stage until now, and the slide was seen as it stands (on the canvas, gone into).
+	 */
 	let cut = false;
 
 	function swap(copy: Copy, at: At): void {
@@ -490,7 +493,8 @@ export function bootStage(runtime: StageRuntime): void {
 			setSlideBeat(copy.key, at.beat);
 			revealed = { key: copy.key, from };
 			show(copy.key);
-			if (from === null && underWay && copy.box !== undefined) atRest(copy.box);
+			// a talk under way, or a cut to a slide that was already showing elsewhere: it stands as it was seen, not playing in
+			if (((from === null && underWay) || instant) && copy.box !== undefined) atRest(copy.box);
 			requestAnimationFrame(() => {
 				if (revealed?.key === copy.key) revealed = undefined;
 			});
