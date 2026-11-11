@@ -2271,7 +2271,8 @@ export async function fetchMoveBranches(path: string, signal?: AbortSignal): Pro
 }
 
 /** A canvas's sync, and where its design/ went when it moved into a team this account can't edit (spool#194). */
-export type CanvasSync = SyncState & { moved: MovedAway | null };
+/** `formatUpgrade`: Spool Beta holds this project's format upgrade until a person says yes (spool#282). */
+export type CanvasSync = SyncState & { moved: MovedAway | null; formatUpgrade?: true };
 
 /** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
 export async function fetchSyncState(project: string): Promise<CanvasSync | undefined> {
@@ -2289,9 +2290,21 @@ export async function fetchSyncState(project: string): Promise<CanvasSync | unde
 			...(body.backInGit === true ? { backInGit: true } : {}),
 			offline: body.offline === true,
 			update: updateOf(body.update),
+			...(body.formatUpgrade === true ? { formatUpgrade: true } : {}),
 		};
 	} catch {
 		return undefined;
+	}
+}
+
+/** The yes to a format upgrade Spool Beta held (spool#282): whether the project is on the current format now. */
+export async function upgradeProject(project: string): Promise<boolean> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/upgrade`, { method: "POST" });
+		const body = (await response.json().catch(() => null)) as { upgraded?: unknown } | null;
+		return response.ok && body?.upgraded === true;
+	} catch {
+		return false;
 	}
 }
 

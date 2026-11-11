@@ -1,5 +1,13 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { type CanvasSync, fetchSyncState, matchTeam, postForgetProject, putBackInGit, type SyncState } from "../api";
+import {
+	type CanvasSync,
+	fetchSyncState,
+	matchTeam,
+	postForgetProject,
+	putBackInGit,
+	type SyncState,
+	upgradeProject,
+} from "../api";
 import { type AppUpdate, type DesktopBridge, desktopBridge } from "../desktop-bridge";
 import { MovedSheet } from "../moved-away";
 import { TextAction, Toast } from "../primitives/feedback";
@@ -85,6 +93,15 @@ export function useSyncState(project: string, root?: string): ReactNode {
 					refresh();
 					return done.note ?? done.toast;
 				}}
+				{...(state.formatUpgrade === true
+					? {
+							onUpgrade: async () => {
+								const upgraded = await upgradeProject(project);
+								refresh();
+								return upgraded ? null : UPGRADE_FAILED;
+							},
+						}
+					: {})}
 			/>
 		</>
 	);
@@ -143,6 +160,12 @@ interface Line {
 
 const SENDING = "sending";
 const UPDATE = "update";
+const UPGRADE = "upgrade";
+/** Spool Beta's held format upgrade (spool#282), said on the canvas until a person upgrades or closes it. */
+export const UPGRADE_LINE =
+	"This project is in an older format, so some walks read as missing. Upgrade it here, and the released spool may need an update before it opens the project again.";
+const UPGRADE_FAILED = "The upgrade didn't finish. Try again, and if it fails again the daemon's log says why.";
+const UPGRADE_REFUSED = "upgrade-refused";
 const REFUSED = "refused";
 export const OFFLINE = "Offline. Your changes go up when you're back.";
 
@@ -161,6 +184,7 @@ export function SyncNotices({
 	onMatchTeam,
 	onRefusedRead,
 	onBackInGit,
+	onUpgrade,
 	bridge = desktopBridge(),
 }: {
 	/** Whose notices these are: a didn't-travel line closed stays closed across reloads, in this browser. */
@@ -174,6 +198,8 @@ export function SyncNotices({
 	onRefusedRead?: (() => void) | undefined;
 	/** Put design/ back in git (#198), resolving to the sentence that says what came of it. */
 	onBackInGit?: (() => Promise<string>) | undefined;
+	/** Present while Spool Beta holds the project's format upgrade (spool#282): runs it, resolving to a refusal or null. */
+	onUpgrade?: (() => Promise<string | null>) | undefined;
 }) {
 	const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
 	// files a closed didn't-travel line named stay unsaid in this browser: a person who closed it knows, and a new
@@ -207,10 +233,23 @@ export function SyncNotices({
 	if (state.sending === null && closed.has(SENDING))
 		setClosed((was) => new Set([...was].filter((key) => key !== SENDING)));
 	const inApp = bridge !== undefined;
+	const [upgrading, setUpgrading] = useState(false);
+	const [upgradeSaid, setUpgradeSaid] = useState<string | null>(null);
+	const upgrade = async () => {
+		if (onUpgrade === undefined || upgrading) return;
+		setUpgrading(true);
+		try {
+			setUpgradeSaid(await onUpgrade());
+		} finally {
+			setUpgrading(false);
+		}
+	};
 	const lines: Line[] = [
+		...(onUpgrade === undefined ? [] : [{ key: UPGRADE, text: UPGRADE_LINE, matches: false }]),
 		...linesOf(state, inApp),
 		...(refused === undefined ? [] : [{ key: REFUSED, text: refused, matches: false }]),
 		...(backSaid === null ? [] : [{ key: BACK, text: backSaid, matches: false }]),
+		...(upgradeSaid === null ? [] : [{ key: UPGRADE_REFUSED, text: upgradeSaid, matches: false }]),
 	].filter((line) => !closed.has(line.key));
 	if (lines.length === 0) return null;
 	const heldKey = state.held.length > 0 ? linesOf(state, inApp).at(-1)?.key : undefined;
@@ -239,6 +278,11 @@ export function SyncNotices({
 						Put design/ back in git
 					</TextAction>
 				);
+				const upgradeAction = key === UPGRADE && (
+					<TextAction disabled={upgrading} onClick={() => void upgrade()}>
+						Upgrade
+					</TextAction>
+				);
 				const match = matches && onMatchTeam !== undefined && (
 					<TextAction onClick={onMatchTeam}>Reset to team's version</TextAction>
 				);
@@ -258,10 +302,11 @@ export function SyncNotices({
 						message={text}
 						{...(command === undefined ? {} : { detail: <span className="select-all">{command}</span> })}
 						action={
-							show || putBackAction || match || install ? (
+							show || putBackAction || upgradeAction || match || install ? (
 								<>
 									{show}
 									{putBackAction}
+									{upgradeAction}
 									{match}
 									{install}
 								</>
@@ -270,6 +315,7 @@ export function SyncNotices({
 						onDismiss={() => {
 							// a refusal closed is read: the next one is said afresh
 							if (key === REFUSED) onRefusedRead?.();
+							else if (key === UPGRADE_REFUSED) setUpgradeSaid(null);
 							else if (key === heldKey) closeHeld();
 							else setClosed((was) => new Set([...was, key]));
 						}}
