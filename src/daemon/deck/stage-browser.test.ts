@@ -4,15 +4,7 @@ import type { StageSession } from "../../deck/stage-session";
 import type { SlideReadiness, StageShown } from "../../deck/stage-wire";
 import { testBrowser } from "../../test-browser";
 import { serveProject, writeDesignFile } from "../../test-helpers";
-import {
-	explainFrame,
-	HARD_TALK,
-	pixelsOf,
-	SCREEN_POINTS,
-	serveHardTalkFiles,
-	slideLooks,
-	writeHardTalk,
-} from "./stage-browser.test-helpers";
+import { HARD_TALK, readScreen, recordScreen, serveHardTalkFiles, writeHardTalk } from "./stage-browser.test-helpers";
 
 /**
  * The stage (spool#265, spool#269) over the hard talk, in a real browser at its plain play address: what only a browser
@@ -87,44 +79,6 @@ async function slideIs(page: Page, frame: string, status: SlideReadiness["status
 		.toBe(status);
 	if (found === undefined) throw new Error(`no word of ${frame}`);
 	return found;
-}
-
-/** Every frame the browser composites for the page, from now until `stop`. */
-async function recordScreen(page: Page) {
-	const cdp = await page.context().newCDPSession(page);
-	const frames: Buffer[] = [];
-	cdp.on("Page.screencastFrame", (frame) => {
-		frames.push(Buffer.from(frame.data, "base64"));
-		void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
-	});
-	await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1 });
-	return {
-		/** how many frames are in so far, to read a stretch of them later */
-		mark: () => frames.length,
-		async stop() {
-			await cdp.send("Page.stopScreencast");
-			return frames;
-		},
-	};
-}
-
-/**
- * What the frames showed, in order, each as the slide or two it is; black before the first picture, when the talk has
- * not started. Fails on the first frame that is none of that.
- */
-function readScreen(frames: readonly Buffer[]): { from: string; to: string; mix: number }[] {
-	const looks = slideLooks();
-	const read: { from: string; to: string; mix: number }[] = [];
-	frames.forEach((png, index) => {
-		const colours = pixelsOf(png, SCREEN_POINTS);
-		if (read.length === 0 && colours.every((colour) => colour.every((channel) => channel <= 2))) return;
-		const seen = explainFrame(colours, looks);
-		if (seen === undefined) {
-			throw new Error(`frame ${index} of ${frames.length} is no slide: ${JSON.stringify(colours)}`);
-		}
-		read.push(seen);
-	});
-	return read;
 }
 
 /** The slides seen whole, in the order they were first seen. */

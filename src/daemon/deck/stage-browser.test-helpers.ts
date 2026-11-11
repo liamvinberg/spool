@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { deflateSync, inflateSync } from "node:zlib";
-import type { BrowserContext } from "playwright-core";
+import type { BrowserContext, Page } from "playwright-core";
 import { writeDesignFile } from "../../test-helpers";
 
 /**
@@ -472,4 +472,44 @@ export function explainFrame(
 		}
 	}
 	return best !== undefined && best.off <= SLACK ? { from: best.from, to: best.to, mix: best.mix } : undefined;
+}
+
+/** Every frame the browser composites for the page, from now until `stop`. */
+export async function recordScreen(page: Page) {
+	const cdp = await page.context().newCDPSession(page);
+	const frames: Buffer[] = [];
+	cdp.on("Page.screencastFrame", (frame) => {
+		frames.push(Buffer.from(frame.data, "base64"));
+		void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
+	});
+	await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1 });
+	return {
+		/** how many frames are in so far, to read a stretch of them later */
+		mark: () => frames.length,
+		async stop() {
+			await cdp.send("Page.stopScreencast");
+			return frames;
+		},
+	};
+}
+
+/**
+ * What the frames showed, in order, each as the slide or two it is (of `looks`); black before the first picture, when
+ * the talk has not started. Fails on the first frame that is none of that.
+ */
+export function readScreen(
+	frames: readonly Buffer[],
+	looks: Record<string, readonly Rgb[]> = slideLooks(),
+): { from: string; to: string; mix: number }[] {
+	const read: { from: string; to: string; mix: number }[] = [];
+	frames.forEach((png, index) => {
+		const colours = pixelsOf(png, SCREEN_POINTS);
+		if (read.length === 0 && colours.every((colour) => colour.every((channel) => channel <= 2))) return;
+		const seen = explainFrame(colours, looks);
+		if (seen === undefined) {
+			throw new Error(`frame ${index} of ${frames.length} is no slide: ${JSON.stringify(colours)}`);
+		}
+		read.push(seen);
+	});
+	return read;
 }
