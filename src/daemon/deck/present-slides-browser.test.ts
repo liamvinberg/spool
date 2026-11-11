@@ -354,3 +354,40 @@ it("presents on one display: the slide grows from its card into a full screen, t
 });
 
 const widthsOf = (boxes: readonly (Box | null)[]) => boxes.map((box) => box?.w ?? 0);
+
+it("with two displays in a browser, the caret's Full screen opens the room's window in the press, fills the page with the slides, and is made full screen by a click", {
+	timeout: 120_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir, experiments: { deck: true } });
+	writeTalk(project.root);
+	writeDesignFile(
+		project.root,
+		".spool/state.json",
+		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.08 } } }),
+	);
+	const context = await browser.newContext({ viewport: { width: W, height: H } });
+	await fullScreenAsABrowserGivesIt(context);
+	await context.addInitScript(() => Object.defineProperty(window.screen, "isExtended", { value: true }));
+	const view = await context.newPage();
+	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
+
+	// the press opens the room's window, and the slides fill the page: the press is spent on the window
+	const room = context.waitForEvent("page");
+	await view.getByRole("button", { name: "Ways to present" }).click();
+	await view.getByRole("menuitemradio", { name: /Full screen/ }).click();
+	await room;
+	await expect.poll(() => phaseOf(view)).toBe("on");
+	expect(await fullScreenAsked(view)).toEqual([]);
+	// a click on the slides makes the window full screen, and does nothing else: the first slide is still up
+	await view.mouse.click(W / 2, H / 2);
+	expect(await fullScreenAsked(view)).toEqual(["on"]);
+	await view.waitForTimeout(400);
+	const [ground] = pixelsOf(await view.screenshot(), [{ x: 160, y: 360 }]);
+	expect(near(ground, ONE, 10)).toBe(true);
+	// and the next click is the talk's
+	await view.mouse.click(W / 2, H / 2);
+	await expect.poll(async () => near(pixelsOf(await view.screenshot(), [{ x: 160, y: 360 }])[0], TWO, 10)).toBe(true);
+});

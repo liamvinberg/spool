@@ -117,6 +117,8 @@ export function PresentSlides({
 	const [awake, setAwake] = useState(false);
 	const [pinned, setPinned] = useState(false);
 	const [help, setHelp] = useState(false);
+	/** the slides fill the page, and wait for a click to fill the screen: the press opened the room's window instead */
+	const [unfilled, setUnfilled] = useState(false);
 
 	const flyer = useRef<HTMLDivElement | null>(null);
 	/** what stands over a card while its slide is away: moved by hand, so it goes the very frame the slide is back */
@@ -448,6 +450,7 @@ export function PresentSlides({
 		setAwake(false);
 		setPinned(false);
 		setHelp(false);
+		setUnfilled(!ask.fillAsked);
 		setPhase("waiting");
 		// a stage readied on the slide has drawn it already, and it sets off as that
 		if (drawn.current === ask.slide) {
@@ -511,8 +514,10 @@ export function PresentSlides({
 	useEffect(() => {
 		let full = false;
 		const changed = () => {
-			if (document.fullscreenElement !== null) full = true;
-			else if (full) {
+			if (document.fullscreenElement !== null) {
+				full = true;
+				setUnfilled(false);
+			} else if (full) {
 				full = false;
 				ending.current();
 			}
@@ -697,6 +702,19 @@ export function PresentSlides({
 					data-present-clear=""
 					className="pointer-events-auto absolute inset-0"
 					onClick={() => host.current?.command(black ? { kind: "black", on: false } : { kind: "next" })}
+				/>
+			) : null}
+			{/* with the room's window opened in the press, the first click on the slides makes this window full screen, and
+			    does nothing else */}
+			{phase === "on" && unfilled ? (
+				<div
+					aria-hidden="true"
+					data-present-fill=""
+					className="pointer-events-auto absolute inset-0"
+					onClick={() => {
+						setUnfilled(false);
+						fillScreen(true);
+					}}
 				/>
 			) : null}
 			{phase === "on" ? (

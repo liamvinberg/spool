@@ -24,6 +24,11 @@ export interface PresentAsk extends PresentFrom {
 	readonly way: PresentWay;
 	/** a room's window was asked for: the presenter view's, or the slides' on another display */
 	readonly roomAsked: boolean;
+	/**
+	 * the press asked for this window full screen with the slides. A browser's press opens a window or makes this one
+	 * full screen, never both: with the room's window opened, the slides fill the page, and a click makes it full screen.
+	 */
+	readonly fillAsked: boolean;
 	/** the room's window, when the browser let it open and handed it over */
 	readonly room: Window | null;
 }
@@ -44,8 +49,9 @@ export function presentDeck(from: PresentFrom, how: PresentHow = "present"): voi
 	const plan = presentPlan({ displays: displayCount(), remembered: rememberedWay(), how });
 	const talk = mintTalk();
 	const room = plan.room ? openRoom(from, talk) : null;
-	if (plan.way === "slides") fillScreen(true);
-	asked = { ...from, talk, pressed: Date.now(), way: plan.way, roomAsked: plan.room, room };
+	const fillAsked = plan.way === "slides" && (!plan.room || desktopWindow() !== undefined);
+	if (fillAsked) fillScreen(true);
+	asked = { ...from, talk, pressed: Date.now(), way: plan.way, roomAsked: plan.room, room, fillAsked };
 	if (plan.remember !== undefined) void writeSetting("present.way", plan.remember);
 	tell();
 }
