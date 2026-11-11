@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
+import { connect } from "node:net";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { compareVersions, parseVersion } from "./version";
@@ -355,14 +356,20 @@ export async function start(options: StartOptions): Promise<DaemonStatus> {
 		// config.json, the same as when the CLI starts it.
 		env: { ...(options.env ?? process.env), ELECTRON_RUN_AS_NODE: "1" },
 	});
+	// a daemon that exits never comes up: it is not waited out
+	let exited = false;
+	child.once("exit", () => {
+		exited = true;
+	});
 	child.unref();
 	log.close();
 
 	const live = await poll(options.timeoutMs ?? 30_000, async () => {
 		const current = await status(directory);
-		return current.running ? current : undefined;
+		if (current.running) return current;
+		return exited ? current : undefined;
 	});
-	if (live !== undefined) return live;
+	if (live?.running) return live;
 	try {
 		process.kill(child.pid ?? 0, "SIGTERM");
 	} catch {
@@ -377,7 +384,28 @@ export async function start(options: StartOptions): Promise<DaemonStatus> {
 			`a spool daemon (v${squatter.version}, pid ${squatter.pid}) already serves ${squatter.url}, but nothing records it, so it cannot be adopted. Run \`spool stop --force\` in a terminal, then open Spool again.`,
 		);
 	}
+	// The other: something that is not spool holds the port, which the daemon can only refuse
+	const { host, port } = configuredAddress(directory, options.env ?? process.env, options.beta);
+	if (await listening(host, port)) {
+		throw new DaemonStartError(
+			`port ${port} on ${host} is taken by another app. Set another "port" in ${join(directory, "config.json")}, such as { "port": ${port + 2} }, then open the app again.`,
+		);
+	}
 	throw new DaemonStartError(`the spool daemon did not come up, see ${join(directory, "daemon.log")}`);
+}
+
+/** Whether anything accepts a connection on the address. */
+function listening(host: string, port: number): Promise<boolean> {
+	return new Promise((done) => {
+		const socket = connect({ host: connectHost(host), port, timeout: 1000 });
+		const end = (open: boolean) => {
+			socket.destroy();
+			done(open);
+		};
+		socket.once("connect", () => end(true));
+		socket.once("error", () => end(false));
+		socket.once("timeout", () => end(false));
+	});
 }
 
 /**

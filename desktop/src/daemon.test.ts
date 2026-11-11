@@ -224,6 +224,38 @@ test("nothing running is started, waited for, and stopped by pid", async () => {
 	}
 });
 
+test("a port another app holds is named at once, with where to choose another", async () => {
+	const directory = temporary();
+	// Spotify on 7768, say: something that is not spool, on the port the daemon wants
+	const other = createServer((_request, response) => response.end("not spool"));
+	await new Promise<void>((done) => other.listen(0, "127.0.0.1", done));
+	const { port } = other.address() as AddressInfo;
+	writeFileSync(join(directory, "config.json"), JSON.stringify({ port }));
+	const cli = join(directory, "fake-cli.js");
+	// what the real daemon does on a taken port: says so and exits
+	writeFileSync(cli, 'console.error("spool: port is already in use"); process.exit(1);');
+	const began = Date.now();
+	try {
+		await assert.rejects(
+			start({
+				execPath: process.execPath,
+				nodeArgs: ["-r", join(__dirname, "..", "shim", "electron-argv.js")],
+				cli,
+				directory,
+				env: { ...process.env, SPOOL_DIR: directory },
+				timeoutMs: 15_000,
+			}),
+			new RegExp(
+				`port ${port} on 127\\.0\\.0\\.1 is taken by another app\\. Set another "port" in ${join(directory, "config.json").replaceAll(".", "\\.")}`,
+			),
+		);
+		assert.ok(Date.now() - began < 5_000, "a daemon that exits is not waited out");
+	} finally {
+		other.close();
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
 test("stopping a pid that is already gone is a stop", async () => {
 	assert.equal(await stop(0x7ffffff0), true);
 });
