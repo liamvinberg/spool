@@ -13,6 +13,7 @@ import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Button } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
 import { Scrim, Sheet } from "../primitives/overlays";
+import { type DeckMotion, useDeckMotion } from "./deck-motion";
 import { openRoom, type PresentAsk } from "./present";
 import { presenterLayout } from "./presenter-layout";
 import { talkSource } from "./talk-source";
@@ -31,9 +32,6 @@ import "./presenter.css";
  * view hears a key while it is up. A slide that is broken or still loading is named beside its bar, and the one the
  * talk is on beside the slide.
  */
-
-const EASE_OUT = [0.22, 0.61, 0.36, 1] as const;
-const SNAP = [0.32, 0.72, 0, 1] as const;
 
 /** How long a room's window that said it was going has to come back, as a reload does, before it counts as closed. */
 const ROOM_GONE_MS = 1500;
@@ -60,6 +58,7 @@ type RoomState = "opening" | "open" | "closed";
 
 export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, onRefused }: PresenterProps) {
 	const still = useReducedMotion() === true;
+	const timing = useDeckMotion();
 	const view = useRef<HTMLDivElement | null>(null);
 	const slideBox = useRef<HTMLDivElement | null>(null);
 	const nextBox = useRef<HTMLDivElement | null>(null);
@@ -262,11 +261,17 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 	const rect = layout.slide;
 	const side = layout.side;
 	const nextH = (side.w * screen.h) / screen.w;
-	const arrive = (delay: number) => ({
+	/** the view arriving around the slide, a part at a time */
+	const arrive = (part: keyof DeckMotion["arrive"]) => ({
 		initial: { opacity: 0, y: 8 },
 		animate: shown ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 },
-		transition: { duration: still ? 0 : 0.4, ease: EASE_OUT, delay: still || !shown ? 0 : delay },
+		transition: {
+			duration: still ? 0 : timing.slower / 1000,
+			ease: timing.out,
+			delay: still || !shown ? 0 : timing.arrive[part] / 1000,
+		},
 	});
+	const fade = { duration: still ? 0 : timing.base / 1000, ease: timing.out };
 	const cue = (key: string, children: ReactNode, className?: string) => (
 		<motion.span
 			key={key}
@@ -274,7 +279,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			initial={{ opacity: 0, y: 4 }}
 			animate={{ opacity: 1, y: 0 }}
 			exit={{ opacity: 0, y: -4 }}
-			transition={{ duration: still ? 0 : 0.18, ease: EASE_OUT }}
+			transition={fade}
 		>
 			{children}
 		</motion.span>
@@ -302,7 +307,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			<motion.div
 				data-deck-presenter-head=""
 				className="absolute inset-x-10 top-0 flex h-[64px] items-center gap-4"
-				{...arrive(0.1)}
+				{...arrive("head")}
 			>
 				<span className="text-primary tabular-nums type-page">{clock}</span>
 				<div className="ml-auto flex items-center gap-5 type-value">
@@ -407,7 +412,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			<motion.div
 				className="absolute bottom-0"
 				style={{ top: side.top, left: side.x, width: side.w }}
-				{...arrive(0.18)}
+				{...arrive("side")}
 			>
 				<div className="flex h-5 items-center gap-2 text-secondary type-detail">
 					<span>{keys ? "room" : "next"}</span>
@@ -426,7 +431,12 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					{/* never touched: what it shows is only a look ahead */}
 					<div className="absolute inset-0 z-10" />
 					{keys ? (
-						<SoftDot at={pointer} shown={roomLive && !black && frozen === null} box={{ w: side.w, h: nextH }} />
+						<SoftDot
+							at={pointer}
+							shown={roomLive && !black && frozen === null}
+							box={{ w: side.w, h: nextH }}
+							timing={timing}
+						/>
 					) : null}
 					<AnimatePresence initial={false}>
 						{atEnd && !keys ? (
@@ -436,7 +446,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 								initial={{ opacity: 0 }}
 								animate={{ opacity: 1 }}
 								exit={{ opacity: 0 }}
-								transition={{ duration: still ? 0 : 0.26, ease: EASE_OUT }}
+								transition={{ duration: still ? 0 : timing.slow / 1000, ease: timing.out }}
 							>
 								end of the talk
 							</motion.div>
@@ -460,7 +470,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 							initial={{ opacity: 0, y: 10 }}
 							animate={{ opacity: 1, y: 0 }}
 							exit={{ opacity: 0, y: -10 }}
-							transition={{ duration: still ? 0 : 0.3, ease: SNAP }}
+							transition={{ duration: still ? 0 : timing.notes / 1000, ease: timing.snap }}
 						>
 							{note === "" ? <span className="text-tertiary">No notes for this beat.</span> : note}
 						</motion.p>
@@ -469,7 +479,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			</motion.div>
 
 			{/* the foot: one bar per slide, a segment per beat */}
-			<motion.div className="absolute inset-x-10 bottom-14" {...arrive(0.24)}>
+			<motion.div className="absolute inset-x-10 bottom-14" {...arrive("foot")}>
 				<TalkLine
 					at={at}
 					talk={talk}
@@ -663,7 +673,17 @@ function KeyList({ swaps, onClose }: { swaps: boolean; onClose: () => void }) {
 }
 
 /** The presenter's pointer as the room sees it, over the room's view in the right-hand column: one soft dot. */
-function SoftDot({ at, shown, box }: { at: StagePointer | null; shown: boolean; box: Size }) {
+function SoftDot({
+	at,
+	shown,
+	box,
+	timing,
+}: {
+	at: StagePointer | null;
+	shown: boolean;
+	box: Size;
+	timing: DeckMotion;
+}) {
 	const size = Math.max(10, box.w / 60);
 	const on = shown && at !== null;
 	return (
@@ -679,10 +699,10 @@ function SoftDot({ at, shown, box }: { at: StagePointer | null; shown: boolean; 
 				scale: on ? 1 : 0.6,
 			}}
 			transition={{
-				x: { type: "spring", stiffness: 900, damping: 60, mass: 0.4 },
-				y: { type: "spring", stiffness: 900, damping: 60, mass: 0.4 },
-				opacity: { duration: 0.18, ease: EASE_OUT },
-				scale: { duration: 0.18, ease: EASE_OUT },
+				x: { type: "spring", ...timing.pointer },
+				y: { type: "spring", ...timing.pointer },
+				opacity: { duration: timing.base / 1000, ease: timing.out },
+				scale: { duration: timing.base / 1000, ease: timing.out },
 			}}
 		/>
 	);

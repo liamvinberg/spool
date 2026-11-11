@@ -925,6 +925,31 @@
 	color: transparent;
 }
 
+/* the deck's choreography (spool#265), measured in its prototype and kept as it was approved: the timings its
+ * script-driven motion reads (`src/ui/deck/deck-motion.ts`), on the curves above, where the scale has no step that
+ * is theirs. A script stills itself under reduced motion. */
+:root {
+	/* frames settling into their slot or cell; where a held frame will land, gliding after the hand */
+	--motion-deck-settle: 440ms;
+	--motion-deck-glide: 220ms;
+	/* the camera going into a slide and back out */
+	--motion-deck-fly: 600ms;
+	/* Present: the slide waits for the chrome to start going, then travels to the presenter view. End: it travels
+	 * home, and the chrome follows after a wait */
+	--motion-deck-leave-wait: 120ms;
+	--motion-deck-leave: 660ms;
+	--motion-deck-return: 560ms;
+	--motion-deck-chrome-wait: 200ms;
+	/* the presenter view arriving around the slide: its head, then its side, then its foot */
+	--motion-deck-arrive-head: 100ms;
+	--motion-deck-arrive-side: 180ms;
+	--motion-deck-arrive-foot: 240ms;
+	/* a beat's notes giving way to the next */
+	--motion-deck-notes: 300ms;
+	/* the presenter's pointer as the room sees it, following the hand: a spring's stiffness, damping and mass */
+	--motion-deck-pointer: 900 60 0.4;
+}
+
 @utility focus-ring {
 	&:focus-visible {
 		outline: 2px solid var(--color-line-focus);

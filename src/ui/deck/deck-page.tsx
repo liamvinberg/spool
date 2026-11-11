@@ -8,7 +8,7 @@ import { type CanvasStore, useCanvasState } from "../canvas/canvas-store";
 import { cn } from "../cn";
 import { changeDeck, type DeckEntry, type DeckReads, useDeckRead, useDeckReads, walkDeck } from "./deck-api";
 import { type Aim, aimOf, BAND_ROOM, deckOfRead, folderOf, nameOf } from "./deck-drag";
-import { createFrameTween, GLIDE_MS, type Point, SNAP } from "./deck-motion";
+import { createFrameTween, easing, type Point, useDeckMotion } from "./deck-motion";
 import { presentDeck, presentKeyFrom } from "./present";
 
 /**
@@ -359,6 +359,7 @@ function Landing({ camera, landing }: { camera: CameraStore; landing: Box | null
 	/** the box drawn now, in page pixels; it stays while the outline fades, and none once it has */
 	const at = useRef<Box | null>(null);
 	const frame = useRef(0);
+	const { glide, snap } = useDeckMotion();
 	const draw = useCallback(() => {
 		const el = outline.current;
 		const cam = camera.get();
@@ -373,7 +374,7 @@ function Landing({ camera, landing }: { camera: CameraStore; landing: Box | null
 			// faded out, the next drag's outline starts where it lands rather than gliding from this one
 			const timer = setTimeout(() => {
 				at.current = null;
-			}, GLIDE_MS);
+			}, glide);
 			return () => clearTimeout(timer);
 		}
 		const from = at.current;
@@ -383,9 +384,10 @@ function Landing({ camera, landing }: { camera: CameraStore; landing: Box | null
 			return;
 		}
 		const start = performance.now();
+		const ease = easing(snap);
 		const step = (now: number) => {
-			const t = Math.min(1, Math.max(0, (now - start) / GLIDE_MS));
-			const k = SNAP(t);
+			const t = glide <= 0 ? 1 : Math.min(1, Math.max(0, (now - start) / glide));
+			const k = ease(t);
 			const mix = (a: number, b: number) => a + (b - a) * k;
 			at.current = {
 				x: mix(from.x, landing.x),
@@ -398,7 +400,7 @@ function Landing({ camera, landing }: { camera: CameraStore; landing: Box | null
 		};
 		frame.current = requestAnimationFrame(step);
 		return () => cancelAnimationFrame(frame.current);
-	}, [landing, draw]);
+	}, [landing, draw, glide, snap]);
 	useCameraFollow(camera, draw, [draw]);
 	return (
 		<div

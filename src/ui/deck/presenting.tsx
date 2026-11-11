@@ -6,6 +6,7 @@ import { coverUrl } from "../api";
 import type { CameraStore } from "../canvas/camera-store";
 import type { CanvasStore } from "../canvas/canvas-store";
 import { type DeckReads, useDeckRead } from "./deck-api";
+import { type DeckMotion, useDeckMotion } from "./deck-motion";
 import { presentDone, usePresentAsk } from "./present";
 import { Presenter, useWindowSize } from "./presenter";
 import { presenterLayout } from "./presenter-layout";
@@ -18,18 +19,6 @@ import { presenterLayout } from "./presenter-layout";
  * The slide's picture stays over the presenter's stage until the stage has drawn its own. End plays it back: the slide
  * the talk ended on travels to its place on the canvas, selected there, while the chrome comes back.
  */
-
-const SNAP = [0.32, 0.72, 0, 1] as const;
-const EASE_OUT = [0.22, 0.61, 0.36, 1] as const;
-/** the slide leaving the canvas: it waits a beat for the chrome to start going, then travels */
-const LEAVE = { duration: 0.66, delay: 0.12 };
-/** the slide coming back, and how long the chrome waits before it follows */
-const RETURN = { duration: 0.56 };
-const CHROME_BACK_MS = 200;
-/** with no slide on screen to travel from, how long the chrome takes to fall away before the view is drawn */
-const FALL_MS = 400;
-/** the slide's picture giving way to the stage's own */
-const HANDOVER_S = 0.18;
 
 /** A box on the window, in its pixels. */
 interface Rect {
@@ -62,6 +51,9 @@ export interface PresentingProps {
 
 export function Presenting({ project, store, camera, reads, viewport, onEnded, say }: PresentingProps) {
 	const still = useReducedMotion() === true;
+	const timing = useDeckMotion();
+	/** with no slide on screen to travel from, the chrome falls away as its transitions take it before the view is drawn */
+	const fall = timing.slower;
 	const ask = usePresentAsk();
 	const mine = ask !== null && ask.project === project ? ask : null;
 	const deck = useDeckRead(reads, mine?.page ?? "");
@@ -126,9 +118,9 @@ export function Presenting({ project, store, camera, reads, viewport, onEnded, s
 	// with nothing to travel, the view is drawn once the chrome has gone
 	useEffect(() => {
 		if (moment?.kind !== "leave" || moment.from !== null) return;
-		const timer = setTimeout(() => land(moment), still ? 0 : FALL_MS);
+		const timer = setTimeout(() => land(moment), still ? 0 : fall);
 		return () => clearTimeout(timer);
-	}, [moment, still, land]);
+	}, [moment, still, land, fall]);
 
 	const end = useCallback((frame: string) => {
 		setMoment((now) => (now === null ? now : { kind: "back", talk: now.talk, frame, to: undefined }));
@@ -155,15 +147,16 @@ export function Presenting({ project, store, camera, reads, viewport, onEnded, s
 			return () => cancelAnimationFrame(frame);
 		}
 		if (moment.to === undefined) return;
-		const timer = setTimeout(() => setChrome(true), still ? 0 : CHROME_BACK_MS);
+		// the chrome waits a beat after the slide sets off home, then follows it
+		const timer = setTimeout(() => setChrome(true), still ? 0 : timing.chromeWait);
 		return () => clearTimeout(timer);
-	}, [moment, still]);
+	}, [moment, still, timing]);
 	// nothing travels home: the moment is over once the chrome is back
 	useEffect(() => {
 		if (moment?.kind !== "back" || moment.to !== null) return;
-		const timer = setTimeout(() => done(moment), still ? 0 : FALL_MS);
+		const timer = setTimeout(() => done(moment), still ? 0 : fall);
 		return () => clearTimeout(timer);
-	}, [moment, still, done]);
+	}, [moment, still, done, fall]);
 	// the window's chrome, told by marks on the document: away while it is gone, moving while a moment plays
 	const moving = moment !== null && !(moment.kind === "on" && moment.handed);
 	/** the slide's place on the canvas, empty while its picture travels from it or to it */
@@ -234,6 +227,7 @@ export function Presenting({ project, store, camera, reads, viewport, onEnded, s
 			{moment.kind === "leave" && moment.from !== null ? (
 				<Travel
 					key={`leave-${moment.talk}`}
+					timing={timing}
 					picture={picture(moment.frame)}
 					from={moment.from}
 					to={big}
@@ -249,7 +243,8 @@ export function Presenting({ project, store, camera, reads, viewport, onEnded, s
 					style={{ x: big.x, y: big.y, width: big.w, height: big.h }}
 					initial={{ opacity: 1 }}
 					animate={{ opacity: pictured ? 0 : 1 }}
-					transition={{ duration: still ? 0 : HANDOVER_S, ease: EASE_OUT }}
+					// the slide's picture giving way to the stage's own
+					transition={{ duration: still ? 0 : timing.base / 1000, ease: timing.out }}
 					onAnimationComplete={() => {
 						if (pictured) setMoment((now) => (now === moment ? { ...moment, handed: true } : now));
 					}}
@@ -259,10 +254,17 @@ export function Presenting({ project, store, camera, reads, viewport, onEnded, s
 			) : null}
 			{moment.kind === "back" && moment.to !== null ? (
 				moment.to === undefined ? (
-					<Travel key={`stay-${moment.talk}`} picture={picture(moment.frame)} from={big} to={big} />
+					<Travel
+						key={`stay-${moment.talk}`}
+						timing={timing}
+						picture={picture(moment.frame)}
+						from={big}
+						to={big}
+					/>
 				) : (
 					<Travel
 						key={`back-${moment.talk}`}
+						timing={timing}
 						picture={picture(moment.frame)}
 						from={big}
 						to={moment.to}
@@ -275,21 +277,28 @@ export function Presenting({ project, store, camera, reads, viewport, onEnded, s
 	);
 }
 
-/** The slide on its way: its picture as the canvas has it, fitted on black, from one box to another. */
+/**
+ * The slide on its way: its picture as the canvas has it, fitted on black, from one box to another. Leaving the
+ * canvas, it waits a beat for the chrome to start going, then travels.
+ */
 function Travel({
+	timing,
 	picture,
 	from,
 	to,
 	leaving = false,
 	onDone,
 }: {
+	timing: DeckMotion;
 	picture: string | undefined;
 	from: Rect;
 	to: Rect;
 	leaving?: boolean;
 	onDone?: () => void;
 }) {
-	const t = { ...(leaving ? LEAVE : RETURN), ease: SNAP };
+	const t = leaving
+		? { duration: timing.leave / 1000, delay: timing.leaveWait / 1000, ease: timing.snap }
+		: { duration: timing.return / 1000, ease: timing.snap };
 	return (
 		<motion.div
 			aria-hidden="true"

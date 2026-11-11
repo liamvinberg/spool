@@ -11,8 +11,8 @@ import { type Box, shellRadiusOnScreen, toScreen } from "../canvas/camera";
 import { type CameraStore, useCameraFollow, type ViewChanges } from "../canvas/camera-store";
 import { type CanvasStore, useCanvasState } from "../canvas/canvas-store";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
-import { SNAP } from "./deck-motion";
-import { FLY_MS, insideBox, insideCamera, outCamera } from "./inside-camera";
+import { deckMotion, easing } from "./deck-motion";
+import { insideBox, insideCamera, outCamera } from "./inside-camera";
 import { usePresentAsk } from "./present";
 import { talkSource } from "./talk-source";
 
@@ -158,17 +158,19 @@ export function useDeckInside({
 		before.current = null;
 		hands.current.select(going.slide);
 		giveBackKeys();
-		if (stillness()) camera.set(to);
-		else camera.fly(to, FLY_MS, SNAP);
+		const { fly, snap } = deckMotion();
+		const still = stillness() || fly <= 0;
+		if (still) camera.set(to);
+		else camera.fly(to, fly, easing(snap));
 		// the slide keeps the beat it was left on until the camera is out; unseen, there is nothing to keep
-		if (going.phase === "in" || stillness()) {
+		if (going.phase === "in" || still) {
 			setInside(null);
 			return true;
 		}
 		setInside({ ...going, phase: "out", keys: false });
 		setTimeout(() => {
 			if (trip.current === n) setInside(null);
-		}, FLY_MS);
+		}, fly);
 		return true;
 	}, [camera, giveBackKeys, slotOf, viewSize]);
 
@@ -259,12 +261,13 @@ export function useDeckInside({
 				flown.current = true;
 				ears.current.reveal();
 			};
-			if (stillness()) {
+			const { fly, snap } = deckMotion();
+			if (stillness() || fly <= 0) {
 				camera.set(to);
 				queueMicrotask(landed);
 			} else {
-				camera.fly(to, FLY_MS, SNAP);
-				setTimeout(landed, FLY_MS);
+				camera.fly(to, fly, easing(snap));
+				setTimeout(landed, fly);
 			}
 			return true;
 		},

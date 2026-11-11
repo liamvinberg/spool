@@ -5,11 +5,8 @@ import type { Box } from "../canvas/camera";
  * Where the camera goes as a slide of a deck is gone into and come out of (spool#265), the prototype's numbers and
  * rules (`field.tsx`): in, it flies until the slide fills the canvas with room for its label above and a little
  * around; out, it flies back to the very camera it left when the talk is still on the slide gone into, and otherwise
- * to the same zoom and height, centred across the slide the talk ended on.
+ * to the same zoom and height, centred across the slide the talk ended on. The flight's timing is the deck's motion.
  */
-
-/** The flight in and out, which rides the deck's snap curve. */
-export const FLY_MS = 600;
 
 /** Room above a slide gone into, for its label, and around it, in screen pixels. */
 export const ROOM = { top: 40, side: 24, bottom: 24 } as const;
