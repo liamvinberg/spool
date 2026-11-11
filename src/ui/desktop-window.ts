@@ -61,6 +61,25 @@ export interface DesktopWindow {
 	onOpenPath?(listener: (path: string) => void): () => void;
 	/** where a dropped file or folder lies on this Mac; an older app has no such call */
 	pathForFile?(file: File): string;
+	/** a presented talk's room changed screens, or a display came or went; an older app makes no room */
+	onRoom?(listener: (report: RoomReport) => void): () => void;
+	/** where the room of `talk` is now; null while it has no window */
+	roomReport?(talk: string): Promise<RoomReport | null>;
+	/** X: the room and spool's window trade screens */
+	swapRoom?(talk: string): void;
+	/** the room's window brought to the front, without the keys */
+	showRoom?(talk: string): void;
+}
+
+/** What the Mac app says of a presented talk's room (spool#265). */
+export interface RoomReport {
+	talk: string;
+	/** the display the room is full screen on, by its name; null while the room is a window */
+	screen: string | null;
+	/** whether X has another screen to swap to */
+	swaps: boolean;
+	/** the display unplugged under the room, which is a window again because of it */
+	unplugged?: string;
 }
 
 export type ProjectDownload =

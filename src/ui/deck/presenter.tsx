@@ -8,6 +8,7 @@ import type { SlideReadiness, StagePointer } from "../../deck/stage-wire";
 import type { DeckRead } from "../../deck/wire";
 import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
 import { cn } from "../cn";
+import { desktopWindow, type RoomReport } from "../desktop-window";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Kbd } from "../primitives/display";
 import { Scrim, Sheet } from "../primitives/overlays";
@@ -68,6 +69,8 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 	const [room, setRoom] = useState<RoomState>("opening");
 	const [help, setHelp] = useState(false);
 	const [pointer, setPointer] = useState<StagePointer | null>(null);
+	/** in the Mac app, the screen the room is on and whether X can trade it; a browser never says */
+	const [screenOf, setScreenOf] = useState<RoomReport | null>(null);
 	const clock = useTalkClock(ask.pressed);
 	const hands = useRef({ onPicture, onEnd, onRefused, help });
 	hands.current = { onPicture, onEnd, onRefused, help };
@@ -99,11 +102,19 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			const at = nextAt(host.talk(), now.at);
 			return { ...now, at, keys: false, black: false, frozen: null };
 		};
+		const app = desktopWindow();
 		const carry = (command: KeyCommand) => {
 			if (command.kind === "escape") end();
 			else if (command.kind === "help") setHelp(true);
-			else if (command.kind !== "swap" && command.kind !== "blur") host.command(command);
+			else if (command.kind === "swap") app?.swapRoom?.(ask.talk);
+			else if (command.kind !== "blur") host.command(command);
 		};
+		// the Mac app places the room and says where: by the display's own name
+		const heard = (report: RoomReport | null) => {
+			if (report === null || report.talk === ask.talk) setScreenOf(report);
+		};
+		const stopScreens = app?.onRoom?.(heard);
+		const placed = () => void app?.roomReport?.(ask.talk).then(heard, () => {});
 		const host = mountStage(main, {
 			address,
 			mode: "own",
@@ -151,6 +162,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 				clearTimeout(gone);
 				setRoom("open");
 				publish();
+				placed();
 			} else if (message.kind === "gone") {
 				clearTimeout(gone);
 				gone = setTimeout(() => setRoom("closed"), ROOM_GONE_MS);
@@ -171,6 +183,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		const leave = () => say({ kind: "end" });
 		addEventListener("pagehide", leave);
 		return () => {
+			stopScreens?.();
 			removeEventListener("pagehide", leave);
 			stopHearing();
 			clearTimeout(gone);
@@ -250,6 +263,9 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			{children}
 		</motion.span>
 	);
+	const app = desktopWindow();
+	const swaps = screenOf?.swaps === true;
+	const roomName = screenOf?.screen ?? "window";
 	const reopen = () => {
 		roomWindow.current = openRoom(ask, ask.talk);
 		setRoom("opening");
@@ -274,31 +290,43 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					<AnimatePresence mode="wait" initial={false}>
 						{room === "closed"
 							? cue("closed", <>The room's window is closed</>, "text-secondary type-detail")
-							: black
-								? cue("black", <>The room's screen is black · any key</>, "text-secondary type-detail")
-								: frozen !== null
-									? cue(
-											"frozen",
-											<>
-												The room is held on {nameOf(talk[frozen.at.slide]?.frame ?? frame)} <Kbd>F</Kbd>
-											</>,
-											"text-secondary type-detail",
-										)
-									: null}
+							: screenOf?.unplugged !== undefined && screenOf.screen === null
+								? cue(
+										"unplugged",
+										<>{screenOf.unplugged} was unplugged · the room is a window</>,
+										"text-secondary type-detail",
+									)
+								: black
+									? cue("black", <>The room's screen is black · any key</>, "text-secondary type-detail")
+									: frozen !== null
+										? cue(
+												"frozen",
+												<>
+													The room is held on {nameOf(talk[frozen.at.slide]?.frame ?? frame)} <Kbd>F</Kbd>
+												</>,
+												"text-secondary type-detail",
+											)
+										: null}
 					</AnimatePresence>
 					<button
 						type="button"
-						onClick={() => (room === "closed" ? reopen() : roomWindow.current?.focus())}
+						onClick={() =>
+							room === "closed"
+								? reopen()
+								: app?.showRoom !== undefined
+									? app.showRoom(ask.talk)
+									: roomWindow.current?.focus()
+						}
 						title={
 							room === "closed"
 								? "Open the room's window again"
-								: "The room's screen · B blacks it · F freezes it"
+								: `The room's screen${swaps ? " · X swaps screens" : ""} · B blacks it · F freezes it`
 						}
 						className="flex cursor-pointer text-tertiary transition-colors duration-fast ease-out hover:text-primary"
 					>
 						room ·&nbsp;
 						<AnimatePresence mode="wait" initial={false}>
-							{cue(room === "closed" ? "again" : "window", room === "closed" ? "open it again" : "window")}
+							{room === "closed" ? cue("again", "open it again") : cue(`on ${roomName}`, roomName)}
 						</AnimatePresence>
 					</button>
 					<button
@@ -430,7 +458,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 				/>
 			</motion.div>
 
-			{help ? <KeyList onClose={() => setHelp(false)} /> : null}
+			{help ? <KeyList swaps={swaps} onClose={() => setHelp(false)} /> : null}
 		</div>
 	);
 }
@@ -566,8 +594,16 @@ const PRESENTER_KEYS: readonly { group: string; rows: readonly { label: string; 
 	},
 ];
 
+/** The keys, with X when the Mac app has a second screen for the room to trade with spool's window. */
+function presenterKeys(swaps: boolean): typeof PRESENTER_KEYS {
+	if (!swaps) return PRESENTER_KEYS;
+	return PRESENTER_KEYS.map((group) =>
+		group.group === "room" ? { ...group, rows: [...group.rows, { label: "Swap screens", keys: ["X"] }] } : group,
+	);
+}
+
 /** ? on the presenter's screen: the presentation's keys, in spool's own sheet; esc or ? puts it away. */
-function KeyList({ onClose }: { onClose: () => void }) {
+function KeyList({ swaps, onClose }: { swaps: boolean; onClose: () => void }) {
 	return (
 		<>
 			<Scrim label="Close the key list" onMouseDown={onClose} />
@@ -579,7 +615,7 @@ function KeyList({ onClose }: { onClose: () => void }) {
 					className="pointer-events-auto max-h-[calc(100%-128px)]"
 				>
 					<div className="columns-2 gap-x-12">
-						{PRESENTER_KEYS.map(({ group, rows }) => (
+						{presenterKeys(swaps).map(({ group, rows }) => (
 							<section key={group} className="mb-5 break-inside-avoid">
 								<h3 className="mb-1.5 text-secondary type-label">{group}</h3>
 								{rows.map((row) => (
