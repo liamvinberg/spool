@@ -142,6 +142,8 @@ interface SlideHeld {
 	module: "waiting" | "loading" | "in" | "broken";
 	style: "waiting" | "loading" | "in" | "failed";
 	broken?: { why: string; when: "compile" | "load" | "mount" | "later"; kept?: "picture" | "picture-without-webgl" };
+	/** what of its files would not come (its stylesheet, a face, a picture), tried again until they do */
+	unloaded?: string | undefined;
 	/** its fonts and pictures, held for the whole talk so the browser keeps them */
 	warmed?: Warmed;
 }
@@ -149,6 +151,8 @@ interface SlideHeld {
 /** One rendering of a slide: a take of it, out of sight or on screen. */
 interface Copy {
 	readonly key: string;
+	/** which rendering of that take it is: one rendered afresh to try its files again is a new one */
+	readonly mount: number;
 	readonly index: number;
 	readonly take: number;
 	/** the box it rendered into, once it has */
@@ -156,6 +160,8 @@ interface Copy {
 	warm: boolean;
 	warming: boolean;
 	broken: boolean;
+	/** its files would not come: kept as it is until it is rendered afresh to try them again */
+	failed: boolean;
 	/** what it threw from a handler or a timer while on screen, for its boundary to stop it with */
 	thrown?: { error: unknown };
 }
@@ -168,6 +174,8 @@ const AHEAD = 2;
 const BEHIND = 1;
 /** Slides fetched at once, nearest first. */
 const LOADS_AT_ONCE = 3;
+/** How long a slide whose files would not come waits before they are asked for again. */
+const RETRY_MS = 2000;
 
 export function bootStage(runtime: StageRuntime): void {
 	const config = deck;
@@ -215,22 +223,23 @@ export function bootStage(runtime: StageRuntime): void {
 	const restingBeat = (index: number, target: number) =>
 		index < target ? Math.max(0, (talk[index]?.beats ?? 1) - 1) : 0;
 
+	let mounts = 0;
 	function copyFor(index: number, take: number): Copy {
 		const key = keyOf(index, take);
 		let copy = copies.get(key);
 		if (copy === undefined) {
-			copy = { key, index, take, warm: false, warming: false, broken: false };
+			copy = { key, mount: ++mounts, index, take, warm: false, warming: false, broken: false, failed: false };
 			copies.set(key, copy);
 		}
 		return copy;
 	}
 
-	/** Its stylesheet is in the document, or will never be. */
-	const styled = (slide: SlideHeld | undefined) => slide?.style === "in" || slide?.style === "failed";
+	/** Its stylesheet is in the document. */
+	const styled = (slide: SlideHeld | undefined) => slide?.style === "in";
 
 	/** A copy that can go on screen in the next frame: rendered, its styles in, its fonts and pictures warmed. */
 	const ready = (copy: Copy | undefined): boolean => {
-		if (copy === undefined || copy.broken || copy.box === undefined || !copy.warm) return false;
+		if (copy === undefined || copy.broken || copy.failed || copy.box === undefined || !copy.warm) return false;
 		const slide = slides[copy.index];
 		return slide?.module === "in" && styled(slide);
 	};
@@ -277,10 +286,16 @@ export function bootStage(runtime: StageRuntime): void {
 					.then(
 						() => {
 							slide.style = "in";
+							slide.unloaded = undefined;
 						},
-						() => {
-							// a stylesheet that will not come is the slide's own look; nothing would bring it later
+						(error: unknown) => {
+							// a slide without its styles is not the slide: it is named, held off the screen, and asked for again
 							slide.style = "failed";
+							slide.unloaded = error instanceof Error ? error.message : "its stylesheet would not load";
+							setTimeout(() => {
+								slide.style = "waiting";
+								settle();
+							}, RETRY_MS);
 						},
 					)
 					.finally(() => {
@@ -310,7 +325,7 @@ export function bootStage(runtime: StageRuntime): void {
 			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
 			if (!near(index) && copy !== undefined && !copy.broken) out.push(copy);
 		});
-		if (out.some((copy) => !copy.broken && !ready(copy))) return out;
+		if (out.some((copy) => !copy.broken && !copy.failed && !ready(copy))) return out;
 		for (const index of order(target)) {
 			const key = keyOf(index, takeOf(index, at.takes));
 			if (near(index) || copies.has(key)) continue;
@@ -322,23 +337,42 @@ export function bootStage(runtime: StageRuntime): void {
 		return out;
 	}
 
-	function renderedCopy(key: string, box: HTMLElement): void {
-		const copy = copies.get(key);
-		if (copy === undefined || copy.box !== undefined) return;
+	function renderedCopy(rendered: Copy, box: HTMLElement): void {
+		const copy = copies.get(rendered.key);
+		if (copy !== rendered || copy.box !== undefined) return;
 		copy.box = box;
 		settle();
 	}
 
-	/** A rendered copy's fonts and pictures fetched and decoded here, once its stylesheet says which fonts it uses. */
+	/**
+	 * A rendered copy's fonts and pictures fetched and decoded here, once its stylesheet says which fonts it uses. One
+	 * that would not come leaves the copy unready and the slide named, and the copy is rendered afresh to try again.
+	 */
 	function warm(copy: Copy): void {
 		const slide = slides[copy.index];
-		if (copy.box === undefined || copy.warm || copy.warming || copy.broken || !styled(slide)) return;
+		if (slide === undefined || copy.box === undefined || copy.warm || copy.warming || copy.broken || copy.failed)
+			return;
+		if (!styled(slide)) return;
 		copy.warming = true;
-		const style = runtime.styleOf(slide?.config.frame ?? "");
+		const style = runtime.styleOf(slide.config.frame);
 		void warmSlide(copy.box, style?.sheet ?? null, style?.textContent ?? "").then((warmed) => {
 			copy.warming = false;
-			copy.warm = true;
-			if (slide !== undefined && !copy.broken) slide.warmed = warmed;
+			// let go meanwhile: what it was waiting for says nothing of the slide
+			if (copies.get(copy.key) !== copy) return;
+			if (warmed.failed.length > 0) {
+				copy.failed = true;
+				slide.unloaded = `${warmed.failed.join(", ")} would not load`;
+				setTimeout(() => {
+					if (copies.get(copy.key) === copy && shown !== copy.key) copies.delete(copy.key);
+					settle();
+				}, RETRY_MS);
+			} else {
+				copy.warm = true;
+				if (!copy.broken) {
+					slide.unloaded = undefined;
+					slide.warmed = warmed;
+				}
+			}
 			settle();
 		});
 	}
@@ -425,7 +459,11 @@ export function bootStage(runtime: StageRuntime): void {
 			if (wanted !== undefined && wanted.key === shown) {
 				setSlideBeat(wanted.key, want.at.beat);
 				done(want.at, false, wanted);
-			} else if (slides[target]?.module === "broken" || wanted?.broken === true) {
+			} else if (
+				slides[target]?.module === "broken" ||
+				wanted?.broken === true ||
+				(slides[target]?.unloaded !== undefined && !ready(wanted))
+			) {
 				// the room keeps what it has, and the next key still moves on
 				done(want.at, true);
 			} else if (opened && wanted !== undefined && ready(wanted) && !swapping) {
@@ -721,6 +759,7 @@ export function bootStage(runtime: StageRuntime): void {
 			}
 			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
 			if (ready(copy)) return { frame, status: "ready" };
+			if (slide.unloaded !== undefined) return { frame, status: "broken", why: slide.unloaded, when: "load" };
 			return { frame, status: "loading" };
 		});
 		const text = JSON.stringify(report);
@@ -746,7 +785,7 @@ export function bootStage(runtime: StageRuntime): void {
 					if (slide?.component === undefined) return null;
 					return (
 						<Slot
-							key={copy.key}
+							key={`${copy.key}@${copy.mount}`}
 							copy={copy}
 							slide={slide.config}
 							screen={slide.component}
@@ -779,13 +818,13 @@ export function bootStage(runtime: StageRuntime): void {
 			const element = box.current;
 			if (element === null) return;
 			const check = () => {
-				if (element.querySelector(":scope > [data-spool-rendered]") !== null) renderedCopy(copy.key, element);
+				if (element.querySelector(":scope > [data-spool-rendered]") !== null) renderedCopy(copy, element);
 			};
 			check();
 			const observer = new MutationObserver(check);
 			observer.observe(element, { childList: true });
 			return () => observer.disconnect();
-		}, [copy.key]);
+		}, [copy]);
 		const same = slide.w === size.w && slide.h === size.h;
 		const fit = same ? undefined : fitIn(slide, size);
 		return (

@@ -116,6 +116,52 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+it("holds the room's picture off a slide whose stylesheet or picture will not come, names it, and tries again", async () => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+	let styleFails = true;
+	const decodes = vi.spyOn(HTMLImageElement.prototype, "decode").mockImplementation(function (this: HTMLImageElement) {
+		return this.src.endsWith("gone.png") ? Promise.reject(new Error("no picture")) : Promise.resolve();
+	});
+	const on = await stage(
+		[
+			{ frame: "talk/a", screen: plain("a") },
+			{ frame: "talk/b", screen: plain("b") },
+			{ frame: "talk/c", screen: () => createElement("img", { alt: "", src: "/gone.png" }) },
+		],
+		{ mode: "own", room: true },
+		async (frame) => {
+			if (frame === "talk/b" && styleFails) throw new Error("the stylesheet for frame talk/b could not be loaded");
+		},
+	);
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
+	await vi.waitFor(() => {
+		expect(statusOf(on, "talk/b")).toMatchObject({
+			status: "broken",
+			when: "load",
+			why: expect.stringMatching(/stylesheet/),
+		});
+		expect(statusOf(on, "talk/c")).toMatchObject({
+			status: "broken",
+			when: "load",
+			why: expect.stringMatching(/gone\.png/),
+		});
+	});
+
+	// a step to either holds what the room has, and the next key still moves on
+	on.send({ spool: "stage-command", command: { kind: "next" } });
+	await vi.waitFor(() => expect(on.shown().at(-1)).toMatchObject({ at: { slide: 1 }, held: true }));
+	on.send({ spool: "stage-command", command: { kind: "next" } });
+	await vi.waitFor(() => expect(on.shown().at(-1)).toMatchObject({ at: { slide: 2 }, held: true }));
+	expect(on.onScreen()).toBe("talk/a");
+
+	// asked for again, the picture that comes goes on whole
+	decodes.mockResolvedValue(undefined);
+	styleFails = false;
+	await vi.advanceTimersByTimeAsync(2000);
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/c"));
+	await vi.waitFor(() => expect(statusOf(on, "talk/b")?.status).toBe("ready"));
+});
+
 it("stops a slide that throws from a handler where it stands, its last picture kept, and the talk moves on", async () => {
 	function Ticking() {
 		const [count, setCount] = useState(0);

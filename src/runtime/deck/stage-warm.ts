@@ -16,6 +16,8 @@ export interface Warmed {
 	/** its stylesheet's own faces, loaded, for it to wear while it is on screen */
 	readonly fonts: FontFace[];
 	readonly images: HTMLImageElement[];
+	/** what would not load or decode in time, each by its face or its address: the slide is not ready while any is */
+	readonly failed: readonly string[];
 }
 
 let worn: readonly FontFace[] = [];
@@ -29,8 +31,8 @@ export function wear(fonts: readonly FontFace[]): void {
 
 /**
  * Warm everything a slide rendered into `box` shows on its first frame: its `<img>`s decoded where they stand, the
- * images its stylesheet and inline styles draw, and the fonts its stylesheet declares or names. Never rejects: a file
- * that will not load is the slide's own look, as it would be in any player.
+ * images its stylesheet and inline styles draw, and the fonts its stylesheet declares or names. Never rejects: what
+ * would not load, or not in time, is named in `failed`.
  */
 export async function warmSlide(box: Element, sheet: CSSStyleSheet | null, text: string): Promise<Warmed> {
 	const rules = sheet === null ? [] : flatRules(sheet);
@@ -48,33 +50,39 @@ export async function warmSlide(box: Element, sheet: CSSStyleSheet | null, text:
 		// out of sight, a lazy image waits for a viewport it is never in
 		if (img.loading === "lazy") img.loading = "eager";
 	}
+	const faces = [...own, ...shared];
 	const loaded = await Promise.all(
-		[...own, ...shared].map((face) =>
+		faces.map((face) =>
 			face.load().then(
 				() => face,
 				() => undefined,
 			),
 		),
 	);
-	await Promise.all([...placed, ...images].map((img) => decoded(img)));
-	return { fonts: own.filter((face) => loaded.includes(face)), images };
+	const pictures = [...placed, ...images];
+	const came = await Promise.all(pictures.map((img) => decoded(img)));
+	const failed = [
+		...faces.filter((face) => !loaded.includes(face)).map((face) => `the face ${unquote(face.family)}`),
+		...pictures.filter((_, index) => !came[index]).map((img) => img.currentSrc || img.src),
+	];
+	return { fonts: own.filter((face) => loaded.includes(face)), images, failed };
 }
 
 const DECODE_PATIENCE_MS = 20_000;
 
-/** An image decoded, failed, or given up on: a picture never holds the talk for ever. */
-function decoded(img: HTMLImageElement): Promise<void> {
-	if (img.getAttribute("src") === null && img.getAttribute("srcset") === null) return Promise.resolve();
-	return new Promise<void>((resolve) => {
-		const timer = setTimeout(resolve, DECODE_PATIENCE_MS);
+/** Whether an image decoded; false once it failed, or was given up on: a picture never holds the talk for ever. */
+function decoded(img: HTMLImageElement): Promise<boolean> {
+	if (!img.getAttribute("src") && !img.getAttribute("srcset")) return Promise.resolve(true);
+	return new Promise<boolean>((resolve) => {
+		const timer = setTimeout(() => resolve(false), DECODE_PATIENCE_MS);
 		img.decode().then(
 			() => {
 				clearTimeout(timer);
-				resolve();
+				resolve(true);
 			},
 			() => {
 				clearTimeout(timer);
-				resolve();
+				resolve(false);
 			},
 		);
 	});
