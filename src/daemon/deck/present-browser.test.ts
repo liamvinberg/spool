@@ -160,6 +160,12 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	expect(seen).toContain("2.1");
 	expect(seen).toContain("7.1");
 
+	// a segment clicked takes the talk there and leaves the keys with the view: the next key draws no ring on it
+	await view.locator('[aria-label^="words, "]').first().click();
+	await view.keyboard.press("ArrowRight");
+	await together(view, audience);
+	expect(await view.evaluate(() => document.querySelector("button:focus-visible")?.ariaLabel ?? null)).toBeNull();
+
 	// F holds the room on its picture while the presenter looks ahead, and catches it up when let go
 	await view.keyboard.press("Home");
 	await together(view, audience);

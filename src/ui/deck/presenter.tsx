@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
 import type { KeyCommand } from "../../deck/stage-keys";
@@ -509,6 +509,8 @@ function TalkLine({
 	ready: readonly SlideReadiness[];
 	onGo: (slide: number, beat: number) => void;
 }) {
+	// a click here moves the talk and leaves the focus, and the keys, where they were
+	const keepFocus = (event: MouseEvent) => event.preventDefault();
 	return (
 		<div className="flex w-full gap-4">
 			{talk.map((slide, index) => {
@@ -524,6 +526,7 @@ function TalkLine({
 						<button
 							type="button"
 							title={`${nameOf(slide.frame)} · ${index + 1} ↵`}
+							onMouseDown={keepFocus}
 							onClick={() => onGo(index, 0)}
 							className={cn(
 								"flex min-w-0 cursor-pointer items-baseline gap-1.5 text-left transition-colors duration-base ease-out type-value",
@@ -551,6 +554,7 @@ function TalkLine({
 										key={beat}
 										type="button"
 										aria-label={`${nameOf(slide.frame)}, ${name}`}
+										onMouseDown={keepFocus}
 										onClick={() => onGo(index, beat)}
 										className="group flex h-3 flex-1 cursor-pointer items-center"
 									>
