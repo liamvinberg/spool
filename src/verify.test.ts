@@ -34,9 +34,12 @@ async function browserAvailable(): Promise<boolean> {
 	}
 }
 
-async function serveVerifyProject() {
+async function serveVerifyProject(experiments?: { deck: boolean }) {
 	// the scheme a boot renders in is the machine's until a canvas says; this one is held light
-	const { spoolDir, root, name, url } = await serveProject({ booth: { systemScheme: async () => "light" } });
+	const { spoolDir, root, name, url } = await serveProject({
+		booth: { systemScheme: async () => "light" },
+		...(experiments === undefined ? {} : { experiments }),
+	});
 	const controlToken = readDaemonState(spoolDir)?.controlToken;
 	if (controlToken === undefined) throw new Error("test daemon has no control token");
 	const deps = (frame: string, overrides: Partial<BootDeps> = {}): BootDeps => ({
@@ -821,6 +824,45 @@ export default function Late() {
 		if (past.kind !== "shot") throw new Error("bands was not shot past its end");
 		expect(past.warnings).toEqual(["[spool] scrolled to 1080, not 5000: the document runs out there"]);
 		expect(firstPixel(join(verify, "bands.scroll5000.png"))).toEqual([0, 0, 255]);
+	});
+
+	it("shoots a slide at the beat --beat names, by its name or number, beside the shot of its last", {
+		timeout: 120_000,
+	}, async () => {
+		if (!(await browserAvailable())) return;
+
+		const { root, deps } = await serveVerifyProject({ deck: true });
+		writeFrame(
+			root,
+			"talk/reveal",
+			`import { ui } from "spool";
+
+const GROUNDS = { dark: "#ff0000", mid: "#00ff00", light: "#0000ff" };
+
+export default function Reveal() {
+	const beat = ui.beats(["dark", "mid", "light"]);
+	return <main style={{ background: GROUNDS[beat.name], width: "100%", height: "100vh" }} />;
+}
+`,
+		);
+		const viewport = { width: 160, height: 120 };
+		const verify = join(root, "design", ".spool", "verify", "talk");
+
+		const last = await shotFrame(deps("talk/reveal", { viewport }));
+		if (last.kind !== "shot") throw new Error("reveal was not shot");
+		expect(firstPixel(join(verify, "reveal.png"))).toEqual([0, 0, 255]);
+		const named = await shotFrame(deps("talk/reveal", { viewport, beat: "dark" }));
+		if (named.kind !== "shot") throw new Error("reveal was not shot at its first beat");
+		expect(named.files).toEqual([{ file: join(verify, "reveal.beat1.png"), y: 0, height: 120, beat: 1 }]);
+		expect(firstPixel(join(verify, "reveal.beat1.png"))).toEqual([255, 0, 0]);
+		await shotFrame(deps("talk/reveal", { viewport, beat: "2" }));
+		expect(firstPixel(join(verify, "reveal.beat2.png"))).toEqual([0, 255, 0]);
+		expect(firstPixel(join(verify, "reveal.png"))).toEqual([0, 0, 255]);
+
+		// a beat the slide does not have is said before any boot, with the beats it has
+		await expect(shotFrame(deps("talk/reveal", { viewport, beat: "4" }))).rejects.toThrow(
+			'talk/reveal has no beat "4": its beats are "dark", "mid", "light", or 1 to 3',
+		);
 	});
 
 	it("does not replay logs booted in the other colour scheme", { timeout: 60_000 }, async () => {

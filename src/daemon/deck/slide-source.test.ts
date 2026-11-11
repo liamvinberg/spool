@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readSlideSource } from "./slide-source";
+import { beatAsked, readSlideSource } from "./slide-source";
 
 const slide = (body: string, imports = 'import { ui } from "spool";') =>
 	`${imports}\nexport default function Slide() {\n${body}\n\treturn <p />;\n}\n`;
@@ -41,5 +41,22 @@ describe("a slide's source, read without running it", () => {
 			{ line: 2, column: 19, specifier: "./notes.md" },
 			{ line: 4, column: 22, specifier: "./notes.md?raw" },
 		]);
+	});
+
+	it("finds the beat a shot asks for by its name or its number from 1, and says what there is when it is not one", () => {
+		const read = readSlideSource(slide('\tui.beats(["title", "price", "close"]);'));
+		expect(beatAsked("talk/a", read, "price")).toBe(1);
+		expect(beatAsked("talk/a", read, "3")).toBe(2);
+		expect(beatAsked("talk/a", read, "4")).toEqual({
+			message: 'talk/a has no beat "4": its beats are "title", "price", "close", or 1 to 3',
+		});
+		// a slide that names none has one beat, its whole self
+		expect(beatAsked("talk/b", readSlideSource(slide("")), "1")).toBe(0);
+		expect(beatAsked("talk/b", readSlideSource(slide("")), "title")).toMatchObject({
+			message: expect.stringContaining("one beat"),
+		});
+		expect(beatAsked("talk/c", readSlideSource(slide("\tui.beats(NAMES);")), "1")).toMatchObject({
+			message: expect.stringContaining("written out"),
+		});
 	});
 });

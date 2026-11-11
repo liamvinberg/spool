@@ -150,3 +150,21 @@ function isNotesSpecifier(specifier: string): boolean {
 function at(node: Node): SourceAt {
 	return { line: node.loc?.start.line ?? 1, column: (node.loc?.start.column ?? 0) + 1 };
 }
+
+/**
+ * The beat `spool shot --beat` asks a slide for, by its name or its number from 1, as an index from 0; or why the slide
+ * has no such beat. A slide that names no beats has one, its whole self.
+ */
+export function beatAsked(frame: string, source: SlideSource, asked: string): number | { readonly message: string } {
+	if (source.unread !== undefined) {
+		return { message: `${frame}'s beats cannot be read from its source: ${source.unread.message}` };
+	}
+	const { beats } = source;
+	const named = beats.indexOf(asked);
+	if (named >= 0) return named;
+	const number = /^\d+$/.test(asked) ? Number(asked) : Number.NaN;
+	if (number >= 1 && number <= Math.max(1, beats.length)) return number - 1;
+	if (beats.length === 0) return { message: `${frame} names no beats with ui.beats: it has one beat, its last` };
+	const list = beats.map((beat) => `"${beat}"`).join(", ");
+	return { message: `${frame} has no beat "${asked}": its beats are ${list}, or 1 to ${beats.length}` };
+}
