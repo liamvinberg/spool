@@ -1,7 +1,8 @@
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 import { SpoolError } from "./errors";
+import { checkoutOf, teamProjectNameAt } from "./git-remote";
 import { moveSentence } from "./team-moves";
-import type { ProjectLink } from "./team-project";
+import { type ProjectLink, readProjectLink } from "./team-project";
 
 /**
  * `spool move` (task 136): a team project to another team, out of its team, or into a checkout, and a project on this
@@ -137,10 +138,11 @@ export async function runMove(options: MoveVerbOptions, deps: MoveVerbDeps): Pro
  * It takes its folder's name there.
  */
 async function moveIn(root: string, wanted: string, options: MoveVerbOptions, deps: MoveVerbDeps): Promise<void> {
-	const name = basename(root);
+	// as the daemon's move names it: after the repo at a checkout's top, else after the folder
+	const { name } = teamProjectNameAt(root, await checkoutOf(root));
 	if (options.name !== undefined)
 		throw new SpoolError(
-			`a project moving into a team takes its folder's name, ${name}: \`--name\` doesn't go with it`,
+			`a project moving into a team is named as it would start, ${name}: \`--name\` doesn't go with it`,
 		);
 	const teams = await teamsOf(deps);
 	if (teams.state !== "ready") throw new SpoolError(teamsUnknown(teams.state));
@@ -170,7 +172,7 @@ async function moveIn(root: string, wanted: string, options: MoveVerbOptions, de
 	const moved = (await answer(
 		deps.request(`/teams/${encodeURIComponent(team.address)}/move`, { method: "POST", body: { path: root } }),
 	)) as { root: string; name: string; commit: string };
-	deps.print(`moved ${moved.root} to ${teams.origin}/${team.address}/${moved.name}`);
+	deps.print(`moved ${moved.root} to ${readProjectLink(moved.root).url}`);
 	deps.print(movedInCommit(moved.root, moved.commit));
 }
 
