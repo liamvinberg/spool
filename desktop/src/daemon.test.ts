@@ -26,8 +26,10 @@ function temporary(): string {
 	return mkdtempSync(join(tmpdir(), "spool-desktop-"));
 }
 
-test("the state directory is ~/.spool unless SPOOL_DIR says otherwise", () => {
+test("the state directory is ~/.spool unless SPOOL_DIR says otherwise, and Spool Beta's ~/.spool-beta", () => {
 	assert.equal(stateDirectory({}), join(homedir(), ".spool"));
+	assert.equal(stateDirectory({}, true), join(homedir(), ".spool-beta"));
+	assert.equal(stateDirectory({ SPOOL_DIR: "/tmp/lane" }, true), "/tmp/lane");
 	assert.equal(stateDirectory({ SPOOL_DIR: "" }), join(homedir(), ".spool"));
 	assert.equal(stateDirectory({ SPOOL_DIR: "/tmp/lane" }), "/tmp/lane");
 	assert.equal(stateDirectory({ SPOOL_DIR: "~/.spool-lane" }), join(homedir(), ".spool-lane"));
@@ -229,6 +231,7 @@ test("stopping a pid that is already gone is a stop", async () => {
 test("the address a daemon would take is config.json's, with SPOOL_HOST and SPOOL_PORT on top", () => {
 	const directory = temporary();
 	assert.deepEqual(configuredAddress(directory, {}), { host: "127.0.0.1", port: 7766 });
+	assert.deepEqual(configuredAddress(directory, {}, true), { host: "127.0.0.1", port: 7768 });
 	writeFileSync(join(directory, "config.json"), JSON.stringify({ host: "localhost", port: 7800 }));
 	assert.deepEqual(configuredAddress(directory, {}), { host: "localhost", port: 7800 });
 	assert.deepEqual(configuredAddress(directory, { SPOOL_PORT: "7767" }), { host: "localhost", port: 7767 });

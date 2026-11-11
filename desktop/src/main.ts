@@ -75,6 +75,8 @@ import {
 	updateRestartWorkspace,
 } from "./update-restart";
 import {
+	BETA_DOWNLOAD_URL,
+	BETA_UPDATE_HOST,
 	CHECK_INTERVAL_MS,
 	checkCachePath,
 	checkForUpdate,
@@ -91,10 +93,11 @@ import {
 	readCheckCache,
 	relaunchIntoUpdate,
 	stagedUpdate,
+	UPDATE_HOST,
 	UpdateCheckError,
 	updaterAvailable,
 } from "./updates";
-import { compareVersions, formatVersion, parseVersion } from "./version";
+import { compareVersions, formatVersion, isBeta, parseVersion } from "./version";
 
 // Spool, as a Mac app: a window on the canvas the daemon already serves.
 //
@@ -116,7 +119,18 @@ import { compareVersions, formatVersion, parseVersion } from "./version";
 // the app in the menu bar with the daemon running; quitting stops a daemon this
 // app started and leaves an adopted one alone.
 
-const DIRECTORY = daemon.stateDirectory();
+/**
+ * Spool Beta (spool#282): main, built on every push and installed beside Spool.
+ * Its version says so (`-beta.N`), and so does everything that must stay out of
+ * Spool's way: its name, its menu bar mark, its state (`~/.spool-beta`) and port
+ * (7768), and its feed. Its app id, Dock icon and file types are the bundle's
+ * own, from electron-builder.beta.ts. A released build reads false.
+ */
+const BETA = isBeta(version());
+const FEED = BETA ? BETA_UPDATE_HOST : UPDATE_HOST;
+const DOWNLOAD = BETA ? BETA_DOWNLOAD_URL : DOWNLOAD_URL;
+
+const DIRECTORY = daemon.stateDirectory(process.env, BETA);
 
 /**
  * What this copy calls itself.
@@ -128,10 +142,10 @@ const DIRECTORY = daemon.stateDirectory();
  * src/cli.ts uses to decide the daemon is a development daemon, so the app and
  * the canvas it shows agree about which of the two this is.
  *
- * Unset SPOOL_DIR is the released app, unchanged.
+ * Unset SPOOL_DIR is the released app, unchanged, or Spool Beta.
  */
 const LANE = (process.env.SPOOL_DIR ?? "") !== "";
-const NAME = LANE ? "Spool Dev" : "Spool";
+const NAME = LANE ? "Spool Dev" : BETA ? "Spool Beta" : "Spool";
 
 /** Held only so the tray item is not collected out from under the menu bar. */
 let tray: Tray | undefined;
@@ -282,6 +296,24 @@ export function version(): string {
 		// not a checkout: Electron's number is all there is
 	}
 	return app.getVersion();
+}
+
+/**
+ * The commit a Spool Beta build was made from, which the beta workflow stamps
+ * into the bundle's package.json as `spoolCommit`, for About. A release is its
+ * tag and carries none.
+ */
+function builtFrom(): string | undefined {
+	try {
+		const parsed = JSON.parse(readFileSync(join(app.getAppPath(), "package.json"), "utf8")) as {
+			spoolCommit?: unknown;
+		};
+		return typeof parsed.spoolCommit === "string" && /^[0-9a-f]{7,40}$/.test(parsed.spoolCommit)
+			? parsed.spoolCommit
+			: undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 // MARK: - The window
@@ -657,6 +689,7 @@ async function startBundled(): Promise<
 			nodeArgs: ["-r", bundledShim(process.resourcesPath)],
 			cli,
 			directory: DIRECTORY,
+			beta: BETA,
 			...(path === undefined ? {} : { env: { ...process.env, PATH: path } }),
 		});
 		if (!status.running) return undefined;
@@ -1310,7 +1343,8 @@ export function buildAppMenu(): Menu {
 							},
 						]
 					: []),
-				{ label: "Install Command Line Tool…", click: () => void installCommand() },
+				// /usr/local/bin/spool is Spool's: the beta never puts its own there
+				...(BETA ? [] : [{ label: "Install Command Line Tool…", click: () => void installCommand() }]),
 				...remoteItems(false),
 				{ type: "separator" },
 				{ ...updateItem(), id: "app-update" },
@@ -1409,10 +1443,15 @@ export function trayImage(): Electron.NativeImage {
 				[1, "markDev.png"],
 				[2, "markDev@2x.png"],
 			] as const)
-		: ([
-				[1, "markTemplate.png"],
-				[2, "markTemplate@2x.png"],
-			] as const);
+		: BETA
+			? ([
+					[1, "markBetaTemplate.png"],
+					[2, "markBetaTemplate@2x.png"],
+				] as const)
+			: ([
+					[1, "markTemplate.png"],
+					[2, "markTemplate@2x.png"],
+				] as const);
 	for (const [scaleFactor, file] of marks) {
 		try {
 			image.addRepresentation({ scaleFactor, buffer: readFileSync(join(__dirname, "..", "assets", file)) });
@@ -1484,7 +1523,7 @@ function updateItem(): MenuItemConstructorOptions {
 				return { label: `Retry update to ${target}…`, click: () => void prepareUpdate(target) };
 			}
 			if (update.restart) return { label: "Restart Spool to Retry Update…", click: () => relaunchToRetryUpdate() };
-			return { label: `Download Spool ${update.version}…`, click: () => void shell.openExternal(DOWNLOAD_URL) };
+			return { label: `Download ${NAME} ${update.version}…`, click: () => void shell.openExternal(DOWNLOAD) };
 	}
 }
 
@@ -1741,7 +1780,7 @@ async function checkForUpdates(): Promise<void> {
 	if (!updaterAvailable()) {
 		let latest: Release;
 		try {
-			latest = await latestRelease();
+			latest = await latestRelease(FEED);
 		} catch (error) {
 			const detail = error instanceof UpdateCheckError ? error.message : String(error);
 			log("updates", "FAIL", detail);
@@ -1770,7 +1809,7 @@ async function checkForUpdates(): Promise<void> {
 			defaultId: 0,
 			cancelId: 1,
 		});
-		if (answer.response === 0) void shell.openExternal(DOWNLOAD_URL);
+		if (answer.response === 0) void shell.openExternal(DOWNLOAD);
 		return;
 	}
 
@@ -1867,7 +1906,7 @@ async function offerApplicationsFolder(): Promise<void> {
  * with the move to Applications; the app menu has the same install for later.
  */
 async function offerCommand(): Promise<void> {
-	if (process.platform !== "darwin" || !app.isPackaged || LANE) return;
+	if (process.platform !== "darwin" || !app.isPackaged || LANE || BETA) return;
 	// a link into a dmg or Downloads breaks the moment the app is moved
 	if (!app.isInApplicationsFolder()) return;
 	const launcher = launcherPath(process.resourcesPath);
@@ -2283,7 +2322,14 @@ export function boot(): void {
 	});
 	installUpdateChannels();
 	installCanvasChannels();
-	app.setAboutPanelOptions({ applicationName: NAME, applicationVersion: version(), credits: "FSL-1.1-MIT" });
+	const commit = builtFrom();
+	// macOS writes the build version in brackets after the version: a beta's is the commit it was built from
+	app.setAboutPanelOptions({
+		applicationName: NAME,
+		applicationVersion: version(),
+		...(commit === undefined ? {} : { version: commit.slice(0, 7) }),
+		credits: "FSL-1.1-MIT",
+	});
 
 	app.on("window-all-closed", () => {
 		// Deliberately nothing. Closing the window leaves the app in the menu bar
