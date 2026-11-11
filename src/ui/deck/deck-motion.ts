@@ -90,29 +90,53 @@ export interface Point {
 
 /** Frames gliding to their places on the canvas, by path; a new goal mid-flight sets off from where they stand. */
 export interface FrameTween {
-	to(goals: ReadonlyMap<string, Point>): void;
+	/**
+	 * Every frame named to its goal: one already flying there keeps its flight, one flying elsewhere turns from where
+	 * it stands, and a frame not named stops where it is. `holdFor` is how long `keep` holds a goal that no read has
+	 * agreed with: a drop's places are the daemon's to write, a drag's preview never is.
+	 */
+	to(goals: ReadonlyMap<string, Point>, holdFor?: number): void;
 	stop(): void;
+	/**
+	 * Frames as a read of the disk has them, with the ones this tween has a goal for where it has them: a read that
+	 * lands mid-flight, or before the daemon has written the goal, never moves a frame back. A frame lets go once a
+	 * read has it at its goal, or has it at another size, which no goal of the old size can speak for.
+	 */
+	keep<F extends Frame>(read: readonly F[]): F[];
 }
+
+interface Frame extends Point {
+	readonly name: string;
+	readonly w: number;
+	readonly h: number;
+}
+
+/** A goal no read has agreed with in this long is let go, so a write the daemon never made cannot hold a frame. */
+export const HOLD_MS = 4000;
 
 const stillness = () =>
 	typeof window !== "undefined" &&
 	typeof window.matchMedia === "function" &&
 	window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+interface Flight {
+	readonly from: Point;
+	readonly to: Point;
+	readonly start: number;
+}
+
 /**
  * Moves the canvas's own frames, as a drag does: their places in the canvas's store change a drawn frame at a time,
- * and nothing is written. The daemon writes the places a deck change settles on, and they arrive as the same numbers.
- * They settle on the deck's own timing, on the snap curve.
+ * and nothing is written. The daemon writes the places a deck change settles on, and they arrive as the same numbers;
+ * until they do, `keep` holds each frame where the glide has it. They settle on the deck's own timing, on the snap
+ * curve.
  */
-export function createFrameTween(store: CanvasStore, still = stillness): FrameTween {
-	let flight: {
-		from: Map<string, Point>;
-		to: Map<string, Point>;
-		start: number;
-		ms: number;
-		ease: (t: number) => number;
-	} | null = null;
+export function createFrameTween(store: CanvasStore, still = stillness, now = () => performance.now()): FrameTween {
+	const flights = new Map<string, Flight>();
+	/** each frame's goal, and when it was set */
+	const goals = new Map<string, { at: Point; until: number }>();
 	let frame = 0;
+	let motion = { ms: 0, ease: (t: number) => t };
 	const write = (at: (name: string) => Point | undefined) =>
 		store.set((state) => ({
 			frames: state.frames.map((one) => {
@@ -120,47 +144,78 @@ export function createFrameTween(store: CanvasStore, still = stillness): FrameTw
 				return to === undefined || (to.x === one.x && to.y === one.y) ? one : { ...one, x: to.x, y: to.y };
 			}),
 		}));
-	const step = (now: number) => {
+	const step = (time: number) => {
 		frame = 0;
-		const going = flight;
-		if (going === null) return;
-		const t = Math.min(1, Math.max(0, (now - going.start) / going.ms));
-		const k = going.ease(t);
 		write((name) => {
-			const from = going.from.get(name);
-			const to = going.to.get(name);
-			return from === undefined || to === undefined
-				? undefined
-				: { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k };
+			const flight = flights.get(name);
+			if (flight === undefined) return undefined;
+			const t = Math.min(1, Math.max(0, (time - flight.start) / motion.ms));
+			const k = motion.ease(t);
+			if (t >= 1) flights.delete(name);
+			return {
+				x: flight.from.x + (flight.to.x - flight.from.x) * k,
+				y: flight.from.y + (flight.to.y - flight.from.y) * k,
+			};
 		});
-		if (t < 1) frame = requestAnimationFrame(step);
-		else flight = null;
+		if (flights.size > 0) frame = requestAnimationFrame(step);
 	};
 	const stop = () => {
 		if (frame !== 0) cancelAnimationFrame(frame);
 		frame = 0;
-		flight = null;
+		flights.clear();
+		goals.clear();
 	};
+	const same = (a: Point, b: Point) => a.x === b.x && a.y === b.y;
 	return {
-		to(goals) {
-			stop();
-			const from = new Map<string, Point>();
-			const to = new Map<string, Point>();
-			for (const one of store.get().frames) {
-				const goal = goals.get(one.name);
-				if (goal === undefined || (goal.x === one.x && goal.y === one.y)) continue;
-				from.set(one.name, { x: one.x, y: one.y });
-				to.set(one.name, goal);
-			}
-			if (to.size === 0) return;
+		to(next, holdFor = HOLD_MS) {
+			const time = now();
+			for (const name of [...flights.keys()]) if (!next.has(name)) flights.delete(name);
+			for (const name of [...goals.keys()]) if (!next.has(name)) goals.delete(name);
 			const { settle, snap } = deckMotion();
-			if (still() || settle <= 0) {
-				write((name) => to.get(name));
-				return;
+			motion = { ms: settle, ease: easing(snap) };
+			const instant = still() || settle <= 0;
+			const jumps = new Map<string, Point>();
+			for (const one of store.get().frames) {
+				const goal = next.get(one.name);
+				if (goal === undefined) continue;
+				goals.set(one.name, { at: goal, until: time + holdFor });
+				const flight = flights.get(one.name);
+				if (flight !== undefined && same(flight.to, goal)) continue;
+				flights.delete(one.name);
+				if (same(one, goal)) continue;
+				if (instant) jumps.set(one.name, goal);
+				else flights.set(one.name, { from: { x: one.x, y: one.y }, to: goal, start: time });
 			}
-			flight = { from, to, start: performance.now(), ms: settle, ease: easing(snap) };
-			frame = requestAnimationFrame(step);
+			if (jumps.size > 0) write((name) => jumps.get(name));
+			if (flights.size > 0 && frame === 0) frame = requestAnimationFrame(step);
+			if (flights.size === 0 && frame !== 0) {
+				cancelAnimationFrame(frame);
+				frame = 0;
+			}
 		},
 		stop,
+		keep(read) {
+			if (goals.size === 0) return [...read];
+			const time = now();
+			const shown = new Map(store.get().frames.map((one) => [one.name, one]));
+			return read.map((one) => {
+				const goal = goals.get(one.name);
+				if (goal === undefined) return one;
+				const drawn = shown.get(one.name);
+				const flying = flights.has(one.name);
+				const letGo =
+					drawn === undefined ||
+					drawn.w !== one.w ||
+					drawn.h !== one.h ||
+					(!flying && (same(one, goal.at) || time > goal.until));
+				if (letGo) {
+					goals.delete(one.name);
+					flights.delete(one.name);
+					return one;
+				}
+				const at = flying ? drawn : goal.at;
+				return same(one, at) ? one : { ...one, x: at.x, y: at.y };
+			});
+		},
 	};
 }
