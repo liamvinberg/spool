@@ -1304,6 +1304,8 @@ function CanvasField({
 		return () => clearTimeout(timeout);
 	}, [notice]);
 
+	/** a deck page's frames where its glide has them, over a read that lands before the daemon wrote them (spool#283) */
+	const deckKeep = useRef(<F extends ProjectedFrame>(read: readonly F[]): F[] => [...read]);
 	const refetchFrames = useCallback(async () => {
 		const ticket = frameReads.ask();
 		const projection = await fetchProjection(project);
@@ -1311,7 +1313,7 @@ function CanvasField({
 		const projected = frameReads.settle(ticket, projection.frames);
 		// a read asked later has landed already, and it knows more than this one
 		if (projected === undefined) return;
-		setFrames(projected);
+		setFrames(deckKeep.current(projected));
 		setPlaceholders(projection.placeholders ?? []);
 		setPages(projection.pages);
 		setLoaded(true);
@@ -1936,6 +1938,7 @@ function CanvasField({
 		record: (entry) => recordEntry(entry),
 		say: (message) => setNotice({ kind: "error", message }),
 	});
+	deckKeep.current = deckPage.keep;
 	const deckOwns = deckPage.owns;
 	const presentKey = deckPage.presentKey;
 	// ⌘ held over a slide of a deck page: ⌘↵ is likely next, so the slide it would play is readied now (spool#298)
@@ -4660,7 +4663,7 @@ function CanvasField({
 			const rawX = (p.x - active.start.x) / cam.k;
 			const rawY = (p.y - active.start.y) / cam.k;
 			// on a deck page the deck's snapping stands, and no guides
-			if (deckPage.hold(active.origins, { x: rawX, y: rawY }, toWorld(active.start, cam))) return;
+			if (deckPage.hold(active.origins, { x: rawX, y: rawY }, toWorld(active.start, cam), cam.k)) return;
 			const movingBoxes: Box[] = [];
 			for (const frame of visibleFramesOf(store.get())) {
 				const origin = active.origins.get(frame.name);

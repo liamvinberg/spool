@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { DeckRule } from "../../deck/changes";
 import type { Deck } from "../../deck/layout";
 import { aimOf, deckOfRead } from "./deck-drag";
 
@@ -51,6 +52,29 @@ describe("a frame held over a deck page", () => {
 	it("brings several in together in the order they stood, on the nearer side of a slide's middle", () => {
 		expect(aim(["y", "x"], 640 + 300, 360)?.deck.line).toEqual(["a", "x", "y", "b", "c"]);
 		expect(aim(["y", "x"], 640 - 300, 360)?.deck.line).toEqual(["x", "y", "a", "b", "c"]);
+	});
+
+	it("keeps the aim shown while the hand stays within its slack of it", () => {
+		// b's left fifth ends at 1440 + 256: just past it the middle trades, unless the edge was shown and is near
+		const edge = aim(["x"], 1440 + 250, 360);
+		expect(edge?.rule.kind).toBe("insert");
+		const held = (cx: number) =>
+			aimOf(
+				deck,
+				{ frames: ["x"], grabbed: "x", at: { x: cx - talk.w / 2, y: 0 } },
+				{ rule: edge?.rule as DeckRule, slack: 50 },
+			)?.rule.kind;
+		expect(held(1440 + 290)).toBe("insert");
+		expect(held(1440 + 320)).toBe("trade");
+	});
+
+	it("pushes a loose frame down only once the middle of what is held is over it", () => {
+		// y rests in column 1; x held in the gap beside it stays in its own cell, and nobody moves
+		const beside = aim(["x"], 1360, 1360 + 360);
+		expect(beside?.rule).toEqual({ kind: "place", frames: ["x"], cell: { col: 0, row: 1 } });
+		expect(beside?.same).toBe(true);
+		const over = aim(["x"], 1500, 1360 + 360);
+		expect(over?.deck.loose).toContainEqual({ folder: "y", col: 1, row: 2 });
 	});
 
 	it("says a frame let go where it stood changes nothing", () => {
