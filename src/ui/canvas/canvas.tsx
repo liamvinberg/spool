@@ -5757,7 +5757,7 @@ function CanvasField({
 	const onFlyToFrame = useStableCallback(flyToFrame);
 	const onTrashPage = useStableCallback((page: string, names: string[]) => stageEntry({ frames: names, page }));
 	const onCopyFramePath = useStableCallback((name: string) => copySourcePath(frameSourcePath(name)));
-	const onRefreshFrames = useStableCallback(() => void refetchFrames());
+	const onRefreshFrames = useStableCallback(() => refetchFrames());
 	const commentsPane: PaneDef = {
 		id: "comments",
 		title: "Comments",
