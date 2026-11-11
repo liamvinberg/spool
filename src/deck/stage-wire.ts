@@ -106,6 +106,8 @@ export type StageMessage =
 	/** every slide's readiness, whenever one changes */
 	| { readonly spool: "stage-slides"; readonly slides: readonly SlideReadiness[] }
 	| { readonly spool: "stage-shown"; readonly shown: StageShown }
+	/** the session of that revision the host applied is on the screen, whether or not anything moved */
+	| { readonly spool: "stage-applied"; readonly revision: number }
 	/** a command the stage does not carry out itself: a host's own, and every command while it follows */
 	| { readonly spool: "stage-command"; readonly command: KeyCommand }
 	/** the pointer over the live slide on screen, for the room's soft dot; null once it leaves, or the slide is not live */
@@ -285,6 +287,8 @@ export function parseStageMessage(value: unknown): StageMessage | undefined {
 			const shown = parseShown(value.shown);
 			return shown === undefined ? undefined : { spool: "stage-shown", shown };
 		}
+		case "stage-applied":
+			return isCount(value.revision) ? { spool: "stage-applied", revision: value.revision } : undefined;
 		case "stage-command": {
 			const command = parseKeyCommand(value.command);
 			return command === undefined ? undefined : { spool: "stage-command", command };

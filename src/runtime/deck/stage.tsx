@@ -449,6 +449,12 @@ export function bootStage(runtime: StageRuntime): void {
 		if (was === undefined || was.at.slide !== at.slide || was.at.beat !== at.beat) return;
 		pending = undefined;
 		const waited = Math.round(performance.now() - was.arrived);
+		unsaid++;
+		const say = (message: StageMessage) => {
+			post(message);
+			unsaid--;
+			sayApplied();
+		};
 		requestAnimationFrame(() => {
 			const message: StageMessage = {
 				spool: "stage-shown",
@@ -462,9 +468,23 @@ export function bootStage(runtime: StageRuntime): void {
 					waited,
 				},
 			};
-			if (first) requestAnimationFrame(() => post(message));
-			else post(message);
+			if (first) requestAnimationFrame(() => say(message));
+			else say(message);
 		});
+	}
+
+	/** The revision of the session the host applied last, said back once the screen shows it. */
+	let owed: number | undefined;
+	/** what was carried out and is still to be said, in the frame that shows it */
+	let unsaid = 0;
+	function acknowledge(revision: number): void {
+		owed = revision;
+		requestAnimationFrame(sayApplied);
+	}
+	function sayApplied(): void {
+		if (owed === undefined || pending !== undefined || unsaid > 0) return;
+		post({ spool: "stage-applied", revision: owed });
+		owed = undefined;
 	}
 
 	function show(key: string | null): void {
@@ -597,9 +617,12 @@ export function bootStage(runtime: StageRuntime): void {
 		}
 		if (message.spool === "stage-apply") {
 			if (message.mode !== undefined) mode = message.mode;
-			if (message.session.revision < session.revision && message.mode === undefined) return;
-			cut = message.cut === true;
-			take({ ...message.session, at: clampAt(talk, message.session.at) });
+			if (message.session.revision >= session.revision || message.mode !== undefined) {
+				cut = message.cut === true;
+				take({ ...message.session, at: clampAt(talk, message.session.at) });
+			}
+			// said whether or not anything moved: a host waiting for this document to show the newest session hears it
+			acknowledge(message.session.revision);
 		}
 	}
 

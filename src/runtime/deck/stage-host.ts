@@ -16,7 +16,7 @@ import {
  * slide, or the plain play address of a deck page. It lays the stage's document out at the talk's size, fitted into
  * the element it is given and centred on black, speaks to it over its private port, and takes a new build of the talk
  * without the picture ever leaving the screen: the new document is readied behind the one showing and takes its place
- * only once it has painted the same slide and beat. When that slide is broken in the new build,
+ * only once it has painted the same slide and beat, at the newest session. When that slide is broken in the new build,
  * the last picture the room saw stays over the new one, through any number of builds that cannot show it either, until
  * the talk moves to a slide the playing build can show. A room's black is drawn here, over every document.
  */
@@ -88,6 +88,10 @@ interface StageDocument {
 	opened?: StageSession | undefined;
 	/** the session it said it holds, as an owning stage says each: a new build finds its slide in a talk changed since */
 	said?: StageSession | undefined;
+	/** the revision of the newest session it said is on its screen, while it readies behind the one on screen */
+	applied?: number;
+	/** it has painted a picture, and whether that was the picture it had, its slide being broken */
+	pictured?: { held: boolean };
 	shown: boolean;
 	timer?: ReturnType<typeof setTimeout>;
 	stop(): void;
@@ -245,15 +249,35 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 					}
 					on.shown?.(message.shown);
 				} else if (doc === incoming) {
-					// shown where the talk stood when it opened; the talk may have moved on since
-					if (session !== undefined && doc.opened?.revision !== session.revision) {
-						doc.opened = session;
-						doc.post?.({ spool: "stage-apply", session, mode });
-						return;
-					}
-					takeOver(doc, message.shown.held);
+					// its first picture is of the session it opened on
+					if (doc.pictured === undefined) doc.applied = doc.opened?.revision ?? -1;
+					doc.pictured = { held: message.shown.held };
+					catchUp(doc);
 				}
 				return;
+			case "stage-applied":
+				if (doc === incoming) {
+					doc.applied = message.revision;
+					catchUp(doc);
+				}
+				return;
+		}
+	}
+
+	/**
+	 * A readied document takes the screen once it shows the newest session; the talk may have moved on since it opened,
+	 * or only what a slide wrote to `ui.state` changed, and either way it is handed the newest and says when it shows it.
+	 */
+	function catchUp(doc: StageDocument): void {
+		if (doc.pictured === undefined) return;
+		const newest = session?.revision ?? -1;
+		if (doc.applied === newest) {
+			takeOver(doc, doc.pictured.held);
+			return;
+		}
+		if (session !== undefined && doc.opened?.revision !== newest) {
+			doc.opened = session;
+			doc.post?.({ spool: "stage-apply", session, mode });
 		}
 	}
 
