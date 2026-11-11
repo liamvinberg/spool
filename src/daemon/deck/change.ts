@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { applyRule } from "../../deck/changes";
 import { DECK_FILE, type DeckFile, deckFileBytes, newDeckFile, parseDeckFile, withAbsent } from "../../deck/deck-file";
 import { type Deck, placesOf, placesToWrite, reconcilePlan, settle, slotBox } from "../../deck/layout";
@@ -174,11 +174,10 @@ function makeStarter(
 	const designDir = realDesignDir(root);
 	if (!isWhole(designDir)) return refuse(409, "this project's design/ is not whole, so nothing is made in it");
 	const parent = pageParent(page);
-	const frames = resolveDesignPath(designDir, join(designDir, "frames"));
+	// the whole destination, every link on its way collapsed, so a link out of design/ is refused before anything is made
+	const target = resolveDesignPath(designDir, join(designDir, "frames", ...page.split("/")));
 	// a page inside a page nothing holds has nowhere to be born, as with New page
-	if (parent !== ROOT_PAGE && !isPageFolder(join(frames, ...parent.split("/"))))
-		return refuse(404, `no page "${parent}" on the canvas`);
-	const target = join(frames, ...page.split("/"));
+	if (parent !== ROOT_PAGE && !isPageFolder(dirname(target))) return refuse(404, `no page "${parent}" on the canvas`);
 	if (existsSync(target)) return refuse(409, `"${page}" is taken`);
 	const file = newDeckFile(
 		STARTER.map((slide) => slide.folder),

@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { DeckChange, DeckChangeAnswer, DecksRead } from "../../deck/wire";
@@ -270,6 +280,12 @@ describe("a deck on disk", () => {
 		expect(deck.files()).toEqual(files);
 		expect((await deck.change({ kind: "make", page: "nowhere/talk", starter: true })).status).toBe(404);
 		expect(existsSync(join(deck.root, "design", "frames", "nowhere"))).toBe(false);
+		// nor one whose page folder a link takes out of design/: nothing is written there
+		const outside = makeTempDir();
+		mkdirSync(join(outside, "nested"));
+		symlinkSync(outside, join(deck.root, "design", "frames", "link"), "dir");
+		expect((await deck.change({ kind: "make", page: "link/nested/talk", starter: true })).status).toBe(400);
+		expect(readdirSync(join(outside, "nested"))).toEqual([]);
 	});
 
 	it("writes one beat's notes and undoes them to the exact bytes, with no frame reloaded or pictured for them", async () => {
