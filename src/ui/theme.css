@@ -101,6 +101,10 @@
 
 	--shadow-float: 0 8px 24px light-dark(rgb(26 25 23 / 0.08), rgb(0 0 0 / 0.32));
 	--shadow-modal: 0 16px 48px light-dark(rgb(26 25 23 / 0.14), rgb(0 0 0 / 0.55));
+	/* a frame lifted in the hand on a deck page (spool#299): soft and wide, with a close shade under its edge */
+	--shadow-lift:
+		0 10px 28px light-dark(rgb(26 25 23 / 0.18), rgb(0 0 0 / 0.45)),
+		0 2px 6px light-dark(rgb(26 25 23 / 0.12), rgb(0 0 0 / 0.3));
 
 	--breakpoint-app: 1280px;
 	--container-artboard: 1360px;
@@ -929,9 +933,12 @@
  * script-driven motion reads (`src/ui/deck/deck-motion.ts`), on the curves above, where the scale has no step that
  * is theirs. A script stills itself under reduced motion. */
 :root {
-	/* frames settling into their slot or cell; where a held frame will land, gliding after the hand */
-	--motion-deck-settle: 440ms;
-	--motion-deck-glide: 220ms;
+	/* the springs a deck page's frames move on (spool#299), each a duration and a bounce, as Apple tunes them: frames
+	 * making room, making room while the band scrolls under the hand, a frame let go landing, and one lifting */
+	--motion-deck-room: 300ms 0;
+	--motion-deck-rush: 160ms 0;
+	--motion-deck-land: 360ms 0.12;
+	--motion-deck-lift: 240ms 0;
 	/* the camera going into a slide and back out */
 	--motion-deck-fly: 600ms;
 	/* Present: the slide waits for the chrome to start going, then travels to the presenter view. End: it travels
