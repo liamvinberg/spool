@@ -114,28 +114,28 @@ export function PresentSplit({
 	return (
 		<div ref={box} data-present-split="" className="relative" onPointerEnter={onWarm}>
 			<div className="flex h-control-sm items-center rounded-xs border border-line-strong bg-surface-canvas">
-				<button
-					type="button"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={<PlayGlyph />}
 					title={`Present · ${WAYS[way].title} ⌘↵`}
 					onClick={() => {
 						setOpen(false);
 						onPresent("present");
 					}}
-					className="flex h-full items-center gap-1.5 rounded-l-xs pr-2 pl-1.5 text-primary transition-[background-color,transform] duration-fast ease-out type-label hover:bg-state-hover-raised active:scale-[0.97]"
+					className="h-full rounded-r-none border-0 pr-2 pl-1.5 text-primary enabled:active:scale-[0.97]"
 				>
-					<PlayGlyph />
 					Present
-				</button>
+				</Button>
 				<span aria-hidden="true" className="h-3.5 w-px bg-line-strong" />
-				<button
-					type="button"
-					aria-label="Ways to present"
+				<IconButton
+					size="sm"
+					icon={<Caret />}
+					label="Ways to present"
 					aria-expanded={open}
 					onClick={() => setOpen((one) => !one)}
-					className="flex h-full w-6 items-center justify-center rounded-r-xs text-secondary transition-[background-color,color] duration-fast ease-out hover:bg-state-hover-raised hover:text-primary aria-expanded:bg-state-selected-strong aria-expanded:text-primary"
-				>
-					<Caret />
-				</button>
+					className="h-full w-6 rounded-l-none border-0 enabled:active:scale-100"
+				/>
 			</div>
 			<div
 				role="menu"
@@ -158,7 +158,7 @@ export function PresentSplit({
 							setOpen(false);
 							onPresent({ picked: mode });
 						}}
-						className="flex w-full items-center gap-2.5 rounded-sm py-2 pr-2 pl-1.5 text-left transition-colors duration-fast ease-out hover:bg-state-hover-raised active:bg-state-pressed"
+						className="flex w-full items-center gap-2.5 rounded-sm py-2 pr-2 pl-1.5 text-left transition-colors duration-fast ease-out focus-ring-inset hover:bg-state-hover-raised active:bg-state-pressed"
 					>
 						<span className="flex w-3 shrink-0 justify-center text-primary">
 							{mode === way ? <CheckIcon className="size-3" /> : null}

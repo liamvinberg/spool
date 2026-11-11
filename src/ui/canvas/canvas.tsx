@@ -6563,6 +6563,8 @@ function CanvasField({
 					{/* a deck page presents from its top right (spool#298) */}
 					{loaded && deckPage.on && (deckPage.read?.slides.length ?? 0) > 0 && (
 						<div
+							role="toolbar"
+							aria-label="Present the talk"
 							className="absolute top-3 right-3 z-20"
 							onPointerDown={(event) => event.stopPropagation()}
 							onPointerMove={(event) => event.stopPropagation()}
