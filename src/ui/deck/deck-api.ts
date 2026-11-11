@@ -13,6 +13,7 @@ import { experimentOn } from "../experiments";
  * - `useDeckRead`: one page's deck, or nothing when the page is no deck (or the experiment is off).
  * - `changeDeck`: send one intent; the answer goes into the reads and comes back as the one undo entry it makes.
  * - `walkDeck`: run that entry back or forward.
+ * - `deckSending`: once every intent out is answered, for undo to wait on.
  */
 
 /** The window event a deck change is passed on as, with the page in `detail`. */
@@ -171,11 +172,33 @@ export function useDeckRead(reads: DeckReads | null, page: string): DeckRead | u
 	return useSyncExternalStore(reads?.subscribe ?? NO_READS, () => reads?.deckOf(page));
 }
 
+/** Every intent this window sent and has no answer to yet, from the canvas, the Pages rail or Properties. */
+const sending = new Set<Promise<unknown>>();
+
+/**
+ * Once every intent out has its answer and its caller has recorded its entry, or nothing when none is out. Undo waits
+ * for it, so it reverses the change that was just made rather than the one before, which a drop shown at once and
+ * recorded only on its answer would otherwise leave on top of the stack.
+ */
+export function deckSending(): Promise<void> | undefined {
+	if (sending.size === 0) return undefined;
+	return Promise.allSettled([...sending]).then(
+		// the callers record on the answer, a few promise steps after it: a task later, they all have
+		() => new Promise((done) => setTimeout(done, 0)),
+	);
+}
+
 /** Send one intent; its answer goes into the reads. The entry, when it made one, is the caller's to record. */
 export async function changeDeck(project: string, reads: DeckReads, change: DeckChange): Promise<DeckSent> {
-	const sent = await sendDeckChange(project, change);
-	if (sent.kind === "done") reads.take(change.page, sent.answer.deck);
-	return sent;
+	const out = sendDeckChange(project, change);
+	sending.add(out);
+	try {
+		const sent = await out;
+		if (sent.kind === "done") reads.take(change.page, sent.answer.deck);
+		return sent;
+	} finally {
+		sending.delete(out);
+	}
 }
 
 /**

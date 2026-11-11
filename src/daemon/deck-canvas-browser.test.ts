@@ -59,8 +59,15 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	await expect.poll(names).toEqual(["title", "statement", "live", "number", "close", "x"]);
 	await expect.poll(() => read("x", "frame.json")).not.toBeNull();
 
-	/** hold the frame whose middle is at `from` and let go with its middle at `to`, in page pixels */
-	const drag = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
+	/**
+	 * hold the frame whose middle is at `from` and let go with its middle at `to`, in page pixels; `meanwhile` runs
+	 * after letting go and before the answer is waited for
+	 */
+	const drag = async (
+		from: { x: number; y: number },
+		to: { x: number; y: number },
+		meanwhile?: () => Promise<void>,
+	) => {
 		const start = await pagePointOf(page, from);
 		const end = await pagePointOf(page, to);
 		await page.mouse.move(start.x, start.y);
@@ -69,6 +76,7 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 		await page.locator("[data-deck-landing]").waitFor();
 		const answered = page.waitForResponse((response) => response.url().endsWith("/deck"));
 		await page.mouse.up();
+		await meanwhile?.();
 		await answered;
 		// and its undo entry is in
 		await page.locator("[data-deck-band]:not([data-deck-sending])").waitFor();
@@ -110,8 +118,24 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	// a slide's size is the talk's: no resize handles on it
 	expect(await page.locator("[data-handle]").count()).toBe(0);
 
-	// the first slide, dragged down off the band into the empty cell beside statement: it leaves the talk
-	await drag({ x: 640, y: 360 }, { x: 1440 + 640, y: 1360 + 360 });
+	// the first slide, dragged down off the band into the empty cell beside statement: it leaves the talk. Undone
+	// while its answer is still on the way, the undo waits for it and takes that drop, never the trade before it
+	let answer = () => {};
+	const held = new Promise<void>((done) => {
+		answer = done;
+	});
+	await page.route("**/deck", async (route) => {
+		await held;
+		await route.continue();
+	});
+	await drag({ x: 640, y: 360 }, { x: 1440 + 640, y: 1360 + 360 }, async () => {
+		await page.locator("[data-deck-band][data-deck-sending]").waitFor();
+		await page.keyboard.press("Control+z");
+		answer();
+	});
+	await page.unroute("**/deck");
+	await expect.poll(slides).toEqual(["title", "x", "live", "number", "close"]);
+	await page.keyboard.press("Control+Shift+z");
 	await expect.poll(slides).toEqual(["x", "live", "number", "close"]);
 	await expect.poll(names).toEqual(["x", "live", "number", "close", "statement", "title"]);
 

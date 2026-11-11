@@ -62,7 +62,7 @@ import {
 	subscribeSse,
 	writeKnob,
 } from "../api";
-import { type DeckEntry, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
+import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
 import { type DeckInside, DeckStage, useDeckInside } from "../deck/deck-inside";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
 import { Presenting } from "../deck/presenting";
@@ -2754,6 +2754,12 @@ function CanvasField({
 	 */
 	const walk = useCallback(
 		(way: Way) => {
+			// a deck change out has no entry yet: the step waits for it, so it takes that change rather than the one before
+			const sending = deckSending();
+			if (sending !== undefined) {
+				void sending.then(() => walkLatest.current(way));
+				return;
+			}
 			flushNudge(); // a pending nudge is its own entry: undo pops it, redo is voided by it
 			const held = history.current;
 			const alive = liveness();
@@ -2820,6 +2826,8 @@ function CanvasField({
 			deckPage.walk,
 		],
 	);
+	const walkLatest = useRef(walk);
+	walkLatest.current = walk;
 
 	/**
 	 * A drag in Edit has crossed the threshold (#340): the element grabbed is
