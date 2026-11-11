@@ -262,7 +262,11 @@ async function carry(window: BrowserWindow, from: RoomDisplay, to: RoomDisplay):
 	refocus(window);
 }
 
-/** Full screen on or off, resolved once macOS has finished the move, or given up on after a moment. */
+/**
+ * Full screen on or off, resolved once macOS has finished the move, or given up on after a moment. The event comes
+ * from inside the move, where a frame set on another display is held to this one, so it resolves a task later: the
+ * room set there on X stayed on its own screen.
+ */
 function setFullScreen(window: BrowserWindow, on: boolean): Promise<void> {
 	if (window.isDestroyed() || window.isFullScreen() === on) return Promise.resolve();
 	return new Promise((resolve) => {
@@ -272,7 +276,7 @@ function setFullScreen(window: BrowserWindow, on: boolean): Promise<void> {
 				window.off("enter-full-screen", done);
 				window.off("leave-full-screen", done);
 			}
-			resolve();
+			setTimeout(resolve, 0);
 		};
 		const late = setTimeout(done, 1_500);
 		if (on) window.once("enter-full-screen", done);
