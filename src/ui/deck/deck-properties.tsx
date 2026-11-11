@@ -179,6 +179,12 @@ function beatsOf(slide: DeckSlide): readonly string[] {
 	return slide.beats.length > 0 ? slide.beats : [pageName(slide.name)];
 }
 
+/** A note's typed words written once: the blur and the click of one press are one write. */
+function writeNote(live: { draft: string | null; words: string; onSave: (text: string) => void }): void {
+	if (live.draft !== null && live.draft !== live.words) live.onSave(live.draft);
+	live.draft = null;
+}
+
 /**
  * One beat's words. What is typed is the field's own until it is left, which writes it once, as one undo entry; while
  * nobody is typing the field follows the file, so an agent's words arrive in it.
@@ -188,15 +194,10 @@ function BeatNote({ words, label, onSave }: { words: string; label: string; onSa
 	const field = useRef<HTMLTextAreaElement>(null);
 	const live = useRef({ draft, words, onSave });
 	live.current = { draft, words, onSave };
-	const write = () => {
-		const { draft: typed, words: was, onSave: save } = live.current;
-		if (typed !== null && typed !== was) save(typed);
-		// once: the blur and the click of one press are one write
-		live.current.draft = null;
-	};
 	// written however the words are left: taken away (another frame picked), the window going, or a press elsewhere that
 	// moves no focus, as an accessibility press does
 	useEffect(() => {
+		const write = () => writeNote(live.current);
 		const away = (event: Event) => {
 			if (event.target instanceof Node && field.current?.contains(event.target)) return;
 			write();
@@ -210,7 +211,7 @@ function BeatNote({ words, label, onSave }: { words: string; label: string; onSa
 		};
 	}, []);
 	const leave = () => {
-		write();
+		writeNote(live.current);
 		setDraft(null);
 	};
 	return (
