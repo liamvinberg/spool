@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { type ComponentType, createElement, useEffect, useState } from "react";
+import { type ComponentType, createElement, useEffect, useState, useSyncExternalStore } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { StageSession, StageState } from "../../deck/stage-session";
+import { openSession, type StageSession, type StageState } from "../../deck/stage-session";
 import type { HostMessage, SlideReadiness, StageMessage, StageShown } from "../../deck/stage-wire";
 
 /**
@@ -29,6 +29,16 @@ interface Stage {
 
 let stateNow: StageState = {};
 const stateHeard = new Set<() => void>();
+/** `ui.state` as a slide reads it */
+function useTalkState(): StageState {
+	return useSyncExternalStore(
+		(listener) => {
+			stateHeard.add(listener);
+			return () => stateHeard.delete(listener);
+		},
+		() => stateNow,
+	);
+}
 const writeState = (next: StageState) => {
 	stateNow = next;
 	for (const listener of [...stateHeard]) listener();
@@ -134,4 +144,29 @@ it("stops a slide that throws from a handler where it stands, its last picture k
 
 	on.send({ spool: "stage-command", command: { kind: "next" } });
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
+});
+
+it("never lets a mirror's slide change the talk's state on its own, but keeps a default the talk never had", async () => {
+	const talk = [
+		{ frame: "talk/a", beats: 1, live: true },
+		{ frame: "talk/b", beats: 1, live: false },
+	];
+	function Counting() {
+		const state = useTalkState();
+		useEffect(() => {
+			writeState({ ...stateNow, count: Number(stateNow.count) + 1, seen: true });
+		}, []);
+		return createElement("p", { className: "count" }, String(state.count));
+	}
+	const on = await stage(
+		[
+			{ frame: "talk/a", screen: Counting, live: true },
+			{ frame: "talk/b", screen: plain("b") },
+		],
+		{ mode: "follow", room: true, session: openSession(talk, { slide: 0, beat: 0 }, { count: 1 }) },
+	);
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	expect(document.querySelector("[data-spool-stage-shown] .count")?.textContent).toBe("1");
+	expect(on.state()).toEqual({ count: 1, seen: true });
 });

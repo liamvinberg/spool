@@ -580,15 +580,18 @@ export function bootStage(runtime: StageRuntime): void {
 		}
 	}
 
-	// what a slide writes to `ui.state` is the talk's: kept here when this stage owns the session, sent to the host
-	// that does otherwise, and heard back with the next session it hands over. A room holding its picture is a still.
+	// what a slide writes to `ui.state` is the talk's when this stage owns the session. One that follows is a mirror
+	// (the room, the slide the next key plays), and so is a room holding its picture: what a slide writes there on its
+	// own is put back before it is drawn, all but a key the talk has never had, which is the slide's own default.
 	runtime.state.subscribe(() => {
-		if (!opened || seeding || (room && session.frozen !== null)) return;
+		if (!opened || seeding) return;
 		const state = runtime.state.read();
-		if (mode === "own") take(stepSession(session, { kind: "state", state }, talk));
-		else if (JSON.stringify(state) !== JSON.stringify(session.state)) {
-			post({ spool: "stage-command", command: { kind: "state", state } });
+		if (mode === "follow" || (room && session.frozen !== null)) {
+			const talkState = { ...state, ...picture().state };
+			if (JSON.stringify(talkState) !== JSON.stringify(state)) seed(talkState);
+			return;
 		}
+		take(stepSession(session, { kind: "state", state }, talk));
 	});
 
 	function fromHost(data: unknown): void {
