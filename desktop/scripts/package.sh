@@ -27,9 +27,13 @@ if [ -z "${SIGN_IDENTITY:-}" ]; then
 fi
 
 VERSION="$("$ROOT/scripts/version.sh")"
+# Spool, or Spool Beta for a version with `-beta.N` (spool#282): its files are
+# Spool-Beta-<version>.dmg and the like, so the two never share a name.
+NAME="$("$ROOT/scripts/app-name.sh" "$VERSION")"
+FILE="${NAME// /-}"
 STAGE="$OUT/stage"
-APP="$STAGE/Spool.app"
-DMG="$OUT/Spool-$VERSION.dmg"
+APP="$STAGE/$NAME.app"
+DMG="$OUT/$FILE-$VERSION.dmg"
 
 NOTARIZING=false
 if [ -n "${NOTARY_KEY:-}" ] && [ -n "${NOTARY_KEY_ID:-}" ] && [ -n "${NOTARY_ISSUER_ID:-}" ]; then
@@ -76,17 +80,17 @@ mkdir -p "$STAGE"
 # what you have been running.
 export SIGN_IDENTITY
 "$ROOT/scripts/build.sh"
-cp -R "$ROOT/release/mac-arm64/Spool.app" "$APP"
+cp -R "$ROOT/release/mac-arm64/$NAME.app" "$APP"
 
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 if [ "$NOTARIZING" = true ]; then
 	# The app goes to Apple zipped, because notarytool takes an archive, and the
 	# staple lands on the bundle rather than on the zip.
-	ditto -c -k --keepParent "$APP" "$OUT/Spool.zip"
-	notarize "$OUT/Spool.zip"
+	ditto -c -k --keepParent "$APP" "$OUT/$FILE.zip"
+	notarize "$OUT/$FILE.zip"
 	staple "$APP"
-	rm -f "$OUT/Spool.zip"
+	rm -f "$OUT/$FILE.zip"
 fi
 
 # One timestamp for every file, the same in every release. The zip carries each
@@ -97,12 +101,12 @@ fi
 # The bundle folder and its executable keep the build time, because
 # LaunchServices records both to notice a replaced app.
 TZ=UTC find "$APP" -exec touch -h -t 202001010000 {} +
-touch "$APP" "$APP/Contents/MacOS/Spool"
+touch "$APP" "$APP/Contents/MacOS/$NAME"
 
 # The update feed. electron-updater downloads a zip, not a dmg, and reads
 # latest-mac.yml off the release to find it and check it. Built from the
 # stapled app, so what an update installs is exactly what a download gets.
-ZIP="$OUT/Spool-$VERSION-arm64-mac.zip"
+ZIP="$OUT/$FILE-$VERSION-arm64-mac.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 # The blockmap and feed must describe this final archive, after stapling.
 node "$ROOT/dist/update-feed.js" "$ZIP" "$VERSION"
@@ -111,7 +115,7 @@ node "$ROOT/dist/update-feed.js" "$ZIP" "$VERSION"
 ln -s /Applications "$STAGE/Applications"
 
 hdiutil create \
-	-volname "Spool" \
+	-volname "$NAME" \
 	-srcfolder "$STAGE" \
 	-fs HFS+ \
 	-format UDZO \

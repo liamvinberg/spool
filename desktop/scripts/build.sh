@@ -12,20 +12,24 @@ set -euo pipefail
 #
 #   SIGN_IDENTITY  Developer ID Application identity, or - for ad hoc
 #   VERSION        the version to stamp (default: scripts/version.sh)
+#   SPOOL_COMMIT   the commit a beta is built from, said in its About
 #
-# The app lands at release/mac-arm64/Spool.app.
+# The app lands at release/mac-arm64/Spool.app. A version with `-beta.N` is
+# Spool Beta (spool#282), from electron-builder.beta.ts, at
+# release/mac-arm64/Spool Beta.app.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$ROOT"
 
 VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+NAME="$("$ROOT/scripts/app-name.sh" "$VERSION")"
 
 # Only this output bundle can block replacing the build. Installed copies and
 # other checkout lanes have their own supervisors and must remain untouched.
 while IFS= read -r executable; do
-	if [ "$executable" = "$ROOT/release/mac-arm64/Spool.app/Contents/MacOS/Spool" ]; then
-		echo "Quit the Spool build at $ROOT/release/mac-arm64/Spool.app before rebuilding." >&2
+	if [ "$executable" = "$ROOT/release/mac-arm64/$NAME.app/Contents/MacOS/$NAME" ]; then
+		echo "Quit the $NAME build at $ROOT/release/mac-arm64/$NAME.app before rebuilding." >&2
 		exit 1
 	fi
 done < <(ps -axo comm=)
@@ -35,6 +39,12 @@ rm -rf dist release
 VERSION="$VERSION" "$ROOT/scripts/bundle-cli.sh"
 
 BUILDER=(./node_modules/.bin/electron-builder --mac --publish never "-c.extraMetadata.version=$VERSION")
+if [ "$NAME" = "Spool Beta" ]; then
+	BUILDER+=(--config electron-builder.beta.ts)
+	if [ -n "${SPOOL_COMMIT:-}" ]; then
+		BUILDER+=("-c.extraMetadata.spoolCommit=$SPOOL_COMMIT")
+	fi
+fi
 if [ "$SIGN_IDENTITY" != "-" ]; then
 	# electron-builder takes the certificate's name without its type prefix and
 	# picks the Developer ID Application certificate by that name itself; handed
@@ -50,7 +60,7 @@ else
 fi
 "${BUILDER[@]}"
 
-APP="$ROOT/release/mac-arm64/Spool.app"
+APP="$ROOT/release/mac-arm64/$NAME.app"
 [ -d "$APP" ] || { echo "electron-builder produced no $APP." >&2; exit 1; }
 
 STAMPED="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
