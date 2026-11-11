@@ -1,0 +1,13 @@
+/* The presenter view covers the header, so its head is where the Mac window's lights sit and what drags it. */
+:root[data-desktop] [data-deck-presenter-head] {
+	app-region: drag;
+	padding-left: 56px;
+}
+
+:root[data-desktop] [data-deck-presenter-head] button {
+	app-region: no-drag;
+}
+
+:root[data-desktop][data-window-fullscreen="true"] [data-deck-presenter-head] {
+	padding-left: 0;
+}

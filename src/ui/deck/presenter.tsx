@@ -15,6 +15,7 @@ import { Scrim, Sheet } from "../primitives/overlays";
 import { openRoom, type PresentAsk } from "./present";
 import { presenterLayout } from "./presenter-layout";
 import { talkSource } from "./talk-source";
+import "./presenter.css";
 
 /**
  * The presenter view (spool#265, the team canvas's `app/spool-deck--presenter`): spool's own window while a talk is
