@@ -16,8 +16,9 @@ import {
  * slide, or the plain play address of a deck page. It lays the stage's document out at the talk's size, fitted into
  * the element it is given and centred on black, speaks to it over its private port, and takes a new build of the talk
  * without the picture ever leaving the screen: the new document is readied behind the one showing and takes its place
- * only once it has painted the same slide and beat. When that slide is broken in the new build, the old document's
- * picture stays over the new one until the talk moves to a slide the new build can show.
+ * only once it has painted the same slide and beat. When that slide is broken in the new build,
+ * the last picture the room saw stays over the new one, through any number of builds that cannot show it either, until
+ * the talk moves to a slide the playing build can show. A room's black is drawn here, over every document.
  */
 
 export interface StageHostOptions {
@@ -98,7 +99,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 	let session = options.session;
 	let current: StageDocument | undefined;
 	let incoming: StageDocument | undefined;
-	/** an old build's picture, kept over the new one while the slide on screen is broken in it */
+	/** the last picture the room saw, an older build's, kept over the playing one while the slide is broken in it */
 	let veil: StageDocument | undefined;
 	let destroyed = false;
 	let digits = "";
@@ -109,6 +110,14 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 	Object.assign(holder.style, { position: "absolute", inset: "0", overflow: "hidden", background: "#000" });
 	if (getComputedStyle(container).position === "static") container.style.position = "relative";
 	container.append(holder);
+	// the room's black, over every document of the stage and any picture kept from an older build
+	const black = document.createElement("div");
+	black.dataset.spoolStageBlack = "";
+	Object.assign(black.style, { position: "absolute", inset: "0", zIndex: "2", background: "#000", display: "none" });
+	holder.append(black);
+	const drawBlack = () => {
+		black.style.display = options.room && session?.black === true ? "block" : "none";
+	};
 
 	const place = (doc: StageDocument) => {
 		const box = { w: holder.clientWidth || doc.size.w, h: holder.clientHeight || doc.size.h };
@@ -213,6 +222,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				doc.said = message.session;
 				if (live && mode === "own") {
 					session = message.session;
+					drawBlack();
 					on.session?.(session);
 				}
 				return;
@@ -255,7 +265,8 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 
 	/**
 	 * The readied document takes the place of the one showing, in one frame, on the same picture. When it has no
-	 * picture of the slide (the slide is broken in the new build), the old one's stays over it, inert, until it does.
+	 * picture of the slide (the slide is broken in the new build), the last picture the room saw stays over it, inert,
+	 * until it does: the old document's, or the one an older build already left over the old document.
 	 */
 	function takeOver(doc: StageDocument, held: boolean): void {
 		const old = current;
@@ -263,12 +274,15 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		current = doc;
 		incoming = undefined;
 		reveal(doc);
-		veil?.stop();
-		veil = undefined;
-		if (old !== undefined && held && old.shown) {
+		if (!held) {
+			veil?.stop();
+			veil = undefined;
+			old?.stop();
+		} else if (veil === undefined && old !== undefined && old.shown) {
 			veil = old;
 			Object.assign(old.frame.style, { zIndex: "1", pointerEvents: "none" });
 		} else {
+			// the old document never showed the room anything over the picture already kept, which stays
 			old?.stop();
 		}
 		// keys pressed in the stage go on reaching the build that now plays the talk
@@ -278,6 +292,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		const said = doc.said;
 		if (mode === "own" && said !== undefined && (session === undefined || said.revision >= session.revision)) {
 			session = said;
+			drawBlack();
 			on.session?.(said);
 		}
 	}
@@ -290,6 +305,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		},
 		apply(next, nextMode, cut) {
 			session = next;
+			drawBlack();
 			if (nextMode !== undefined) mode = nextMode;
 			current?.post?.({
 				spool: "stage-apply",
