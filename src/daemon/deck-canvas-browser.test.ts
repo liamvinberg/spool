@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, pagePointOf, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, fixtureAgentExecutor, pagePointOf, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 const slide = (words: string) => `export default function Slide() {
 	return <main style={{ width: "100%", height: "100%", background: "#111", color: "#eee" }}>${words}</main>;
@@ -21,7 +21,13 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 }, async () => {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
-	const project = await serveProject({ uiDir, experiments: { deck: true } });
+	// an agent to ask, as a machine with none installed shows how to get one instead of the composer
+	const project = await serveProject({
+		uiDir,
+		experiments: { deck: true },
+		agentExecutor: fixtureAgentExecutor().executor,
+		agentLook: () => true,
+	});
 	const file = (...path: string[]) => join(project.root, "design", "frames", "presentation", ...path);
 	const read = (...path: string[]) => {
 		try {
