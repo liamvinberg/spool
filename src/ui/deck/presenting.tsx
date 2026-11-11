@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Size } from "../../deck/deck-file";
 import { coverUrl } from "../api";
@@ -82,12 +82,18 @@ function SlidesMoments({ project, store, camera, reads, viewport, onEnded, say }
 	const ask = usePresentAsk();
 	const warm = usePresentWarm();
 	const mine = ask !== null && ask.project === project && ask.way === "slides" ? ask : null;
+	// the room's window is kept out of the props: React reading it to compare would be refused by its other origin
+	const shown = useMemo(() => {
+		if (mine === null) return null;
+		const { room: _room, ...rest } = mine;
+		return rest;
+	}, [mine]);
 	const readied = ask === null && warm !== null && warm.project === project ? warm : null;
 	const deck = useDeckRead(reads, (mine ?? readied)?.page ?? "");
 	const talk: Size = deck?.size ?? { w: 1280, h: 720 };
 	return (
 		<PresentSlides
-			ask={mine}
+			ask={shown}
 			warm={readied}
 			deck={deck}
 			talk={talk}
@@ -100,6 +106,7 @@ function SlidesMoments({ project, store, camera, reads, viewport, onEnded, say }
 			}}
 			onEnded={onEnded}
 			say={say}
+			closeRoom={() => mine?.room?.close()}
 		/>
 	);
 }

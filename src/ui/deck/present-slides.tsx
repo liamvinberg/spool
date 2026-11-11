@@ -69,8 +69,11 @@ type Phase =
 const WARM_MS = 30_000;
 
 export interface PresentSlidesProps {
-	/** the talk asked for this way, while one is */
-	readonly ask: PresentAsk | null;
+	/**
+	 * the talk asked for this way, while one is: without the room's window, a window of another origin, which refuses
+	 * being read by whatever compares what a component is given
+	 */
+	readonly ask: Omit<PresentAsk, "room"> | null;
 	/** the slide readied for Present, while one is and no talk is on */
 	readonly warm: PresentFrom | null;
 	/** the deck as last read: each slide's beats by name, and its notes */
@@ -85,9 +88,21 @@ export interface PresentSlidesProps {
 	onEnded(frame: string): void;
 	/** a talk that could not be played, and why */
 	say(message: string): void;
+	/** the talk's room's window closed, when the press opened one */
+	closeRoom(): void;
 }
 
-export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnded, say }: PresentSlidesProps) {
+export function PresentSlides({
+	ask,
+	warm,
+	deck,
+	talk,
+	cardOf,
+	pictureOf,
+	onEnded,
+	say,
+	closeRoom,
+}: PresentSlidesProps) {
 	const still = useReducedMotion() === true;
 	const timing = useDeckMotion();
 	const holding = ask ?? warm;
@@ -136,8 +151,8 @@ export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnde
 	const pictured = useRef(false);
 	/** where the window's page stands on the screen, so the slide stays put on it while the window moves */
 	const origin = useRef(viewportOrigin());
-	const hands = useRef({ cardOf, pictureOf, onEnded, say, talk, still, timing, pinned, help });
-	hands.current = { cardOf, pictureOf, onEnded, say, talk, still, timing, pinned, help };
+	const hands = useRef({ cardOf, pictureOf, onEnded, say, closeRoom, talk, still, timing, pinned, help });
+	hands.current = { cardOf, pictureOf, onEnded, say, closeRoom, talk, still, timing, pinned, help };
 
 	// one spring for everything that flies, the theme's; under reduced motion nothing flies, and its duration is zero
 	const flight = useRef(
@@ -597,6 +612,7 @@ export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnde
 	// with two displays, the room on the other one follows the talk over its channel
 	useEffect(() => {
 		if (ask === null || !ask.roomAsked) return;
+		const closeRoom = hands.current.closeRoom;
 		const channel = new BroadcastChannel(talkChannel(ask.talk));
 		const said = (message: TalkMessage) => channel.postMessage(message);
 		const publish = () => {
@@ -617,7 +633,7 @@ export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnde
 			said({ kind: "end" });
 			channel.close();
 			room.current = null;
-			ask.room?.close();
+			closeRoom();
 		};
 	}, [ask]);
 
