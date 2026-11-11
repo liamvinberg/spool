@@ -82,6 +82,8 @@ interface StageDocument {
 	post?: (message: HostMessage) => void;
 	/** the session it was last handed, while it readies behind the one on screen */
 	opened?: StageSession | undefined;
+	/** the session it said it holds, as an owning stage says each: a new build finds its slide in a talk changed since */
+	said?: StageSession | undefined;
 	shown: boolean;
 	timer?: ReturnType<typeof setTimeout>;
 	stop(): void;
@@ -205,6 +207,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				if (live) on.talk?.(doc.talk);
 				return;
 			case "stage-session":
+				doc.said = message.session;
 				if (live && mode === "own") {
 					session = message.session;
 					on.session?.(session);
@@ -268,6 +271,12 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		// keys pressed in the stage go on reaching the build that now plays the talk
 		if (focused) doc.frame.focus();
 		on.talk?.(doc.talk);
+		// the session as the new build holds it, its slide found again in a talk that changed since
+		const said = doc.said;
+		if (mode === "own" && said !== undefined && (session === undefined || said.revision >= session.revision)) {
+			session = said;
+			on.session?.(said);
+		}
 	}
 
 	void open();
