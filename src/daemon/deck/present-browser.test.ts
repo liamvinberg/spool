@@ -91,7 +91,7 @@ function walker(seed: number) {
 /** The talk's slides as the presenter view names them on its foot, with their beats. */
 const BEATS: Record<string, number> = { words: 3, "beat-throws": 2 };
 
-it("presents the hard talk: the room follows the presenter through a long walk, a reload, a freeze, black and a live slide, and shows only slides", {
+it("presents the hard talk: the room follows the presenter through a long walk, a reload, a freeze, black and a live slide, and shows only slides; closed, it is offered again, and goes with spool's window", {
 	timeout: 300_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -223,8 +223,17 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	await expect.poll(async () => (await presenter(view))?.black).toBe(false);
 	expect(await together(view, audience)).toEqual({ slide: 6, beat: 0 });
 
+	// the room's window closed mid-talk is said in the presenter view and offered again, and opens on where the talk is
+	await audience.close();
+	await view.getByText("The room's window is closed").waitFor();
+	const again = context.waitForEvent("page");
+	await view.getByRole("button", { name: /open it again/ }).click();
+	const reopened = await again;
+	await reopened.setViewportSize({ width: 1280, height: 720 });
+	expect(await together(view, reopened)).toEqual({ slide: 6, beat: 0 });
+
 	// esc ends the talk: the room's window closes and the canvas comes back with the slide the talk ended on selected
-	const closed = audience.waitForEvent("close");
+	const closed = reopened.waitForEvent("close");
 	await view.keyboard.press("Escape");
 	await closed;
 	await view.locator("[data-deck-presenter]").waitFor({ state: "detached" });
@@ -237,4 +246,16 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 			return body.selection?.map((one) => one.frame);
 		})
 		.toEqual(["talk/mount-throws"]);
+
+	// reloading spool's window ends a talk and closes its room (Present again, once the slide is home)
+	await expect.poll(() => view.evaluate(() => document.documentElement.hasAttribute("data-deck-moving"))).toBe(false);
+	const last = context.waitForEvent("page");
+	await view.keyboard.press("ControlOrMeta+Shift+Enter");
+	const left = await last;
+	await view.locator("[data-deck-presenter]").waitFor();
+	const ended = left.waitForEvent("close");
+	await view.reload();
+	await ended;
+	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
+	expect(await view.locator("[data-deck-presenter]").count()).toBe(0);
 });
