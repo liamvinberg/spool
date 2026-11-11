@@ -10,6 +10,7 @@ import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
 import { cn } from "../cn";
 import { desktopWindow, type RoomReport } from "../desktop-window";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
+import { Button } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
 import { Scrim, Sheet } from "../primitives/overlays";
 import { openRoom, type PresentAsk } from "./present";
@@ -327,8 +328,9 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 											)
 										: null}
 					</AnimatePresence>
-					<button
-						type="button"
+					<Button
+						variant="ghost"
+						className="gap-0 text-tertiary type-value"
 						onClick={() =>
 							room === "closed"
 								? reopen()
@@ -341,21 +343,21 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 								? "Open the room's window again"
 								: `The room's screen${swaps ? " · X swaps screens" : ""} · B blacks it · F freezes it`
 						}
-						className="flex cursor-pointer text-tertiary transition-colors duration-fast ease-out hover:text-primary"
 					>
 						room ·&nbsp;
 						<AnimatePresence mode="wait" initial={false}>
 							{room === "closed" ? cue("again", "open it again") : cue(`on ${roomName}`, roomName)}
 						</AnimatePresence>
-					</button>
-					<button
-						type="button"
+					</Button>
+					<Button
+						variant="ghost"
+						// its words, not its wash, end where the column below does
+						className="-mr-3 gap-2 type-value"
 						onClick={() => stage.current !== null && onEnd(frame)}
 						title="End the talk · esc"
-						className="flex cursor-pointer items-center gap-2 text-secondary transition-colors duration-fast ease-out hover:text-primary"
 					>
 						End <Kbd>esc</Kbd>
-					</button>
+					</Button>
 				</div>
 			</motion.div>
 
