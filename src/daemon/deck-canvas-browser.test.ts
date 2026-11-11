@@ -14,7 +14,7 @@ const slide = (words: string) => `export default function Slide() {
  * canvas and from the Pages rail alike, each one undo, and a note written from Properties. On a deck page the canvas's
  * own snapping stands down and a frame let go sends the deck's change; a row let go in the rail sends the same one.
  * Then into a slide, the talk played there on its own keys, and out again: by esc, by a row pressed in the rail, and
- * by the end of a talk presented from there.
+ * by the end of a talk presented from there. Last, an ordinary New page opens its page too.
  */
 it("walks a talk from New presentation through the canvas, the Pages rail and Properties, each change one undo", {
 	timeout: 240_000,
@@ -250,6 +250,13 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	// zoomed out until the slides are too small for their verbs, the selected slide's label still names it
 	await page.setViewportSize({ width: 480, height: 900 });
 	await page.keyboard.press("Shift+1");
-	const named = page.locator('[data-frame-label="presentation/number"][data-away] [data-slide-number] + span');
+	const named = page.locator('[data-frame-label="presentation/close"][data-away] [data-slide-number] + span');
 	await expect.poll(() => named.evaluate((name) => name.getBoundingClientRect().width)).toBeGreaterThan(8);
+
+	// back to a full window, an ordinary New page opens the page it makes, as New presentation does (spool#278)
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.getByRole("button", { name: "New page", exact: true }).click();
+	await page.keyboard.type("aside");
+	await page.keyboard.press("Enter");
+	await page.locator('[data-path-page="aside"][data-path-kind="here"]').waitFor();
 });
