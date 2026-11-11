@@ -27,8 +27,11 @@ import { talkSource } from "./talk-source";
  * room in place, so the room's keys are nobody's there, and ? lists the rest.
  *
  * The talk's stage is built in the background as the deck page opens, unseen over the canvas, and rests on the slide
- * selected, so going in is instant. Going in never blinks: the canvas's own picture of the slide (its last beat)
- * stays until the camera has landed and the stage has drawn the same beat over it.
+ * selected once the selection has stood a moment, so going in is instant. Going in never blinks: the canvas's own
+ * picture of the slide (its last beat) stays until the camera has landed and the stage has drawn the same beat over it.
+ * Nothing of the slide starts while the camera flies (spool#305): a slide drawn anew for the first time, the stage's
+ * or its own document, holds the window's frames back while it starts, so the stage takes the slide on as the camera
+ * lands, the slide's own document waits for it too, and a click that is the first of a double-click moves nothing.
  *
  * `useDeckInside` is the whole of it for the canvas, `DeckStage` the stage it draws over the slide, `DeckKeyList` the
  * keys ? lists over the canvas.
@@ -58,7 +61,7 @@ export interface DeckInside {
 }
 
 interface InsideView {
-	/** where the stage stands on the page: the slide's place while one is gone into, null while it waits unseen */
+	/** where the stage stands on the page: the slide's place once the camera is on one, null while it waits unseen */
 	readonly slot: Box | null;
 	readonly shown: boolean;
 	readonly talk: Size;
@@ -73,12 +76,20 @@ interface Inside {
 	readonly slide: string;
 	/** flying in, unseen, the canvas's picture still showing; playing; or flying out, the stage still over the slide */
 	readonly phase: "in" | "on" | "out";
+	/** the camera has landed on the slide gone into */
+	readonly flown: boolean;
 	/** the live slide holds the keyboard */
 	readonly keys: boolean;
 }
 
 const stillness = () =>
 	typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/**
+ * How long a slide held stands before the stage rests on it: longer than a double-click, whose first click selects the
+ * slide the second goes into, so that one starts nothing under the flight.
+ */
+const REST_AFTER_MS = 500;
 
 /** A frame's own name, the last part of its path. */
 const leafOf = (name: string) => name.slice(name.lastIndexOf("/") + 1);
@@ -272,16 +283,18 @@ export function useDeckInside({
 			// coming back in on the way out: where it was flying back to is where it came from
 			before.current = { camera: cam, from: name };
 			const beats = talk[at]?.beats ?? 1;
-			stage.apply(openSession(talk, { slide: at, beat: beats - 1 }, stage.session()?.state ?? {}), "own", true);
 			hands.current.select(name);
 			const n = ++trip.current;
 			flown.current = false;
-			setInside({ from: name, slide: name, phase: "in", keys: false });
+			setInside({ from: name, slide: name, phase: "in", flown: false, keys: false });
 			const slot = slotBox(deck.size, index);
 			const to = insideCamera(slot, view.w, view.h);
+			// the stage takes the slide on once the camera is there, the canvas's picture standing in until it has drawn it
 			const landed = () => {
 				if (trip.current !== n) return;
 				flown.current = true;
+				setInside((going) => (going?.phase === "in" ? { ...going, flown: true } : going));
+				stage.apply(openSession(talk, { slide: at, beat: beats - 1 }, stage.session()?.state ?? {}), "own", true);
 				ears.current.reveal();
 			};
 			const { fly, snap } = deckMotion();
@@ -300,15 +313,24 @@ export function useDeckInside({
 	// resting on the slide held, so going into it is instant: its last beat drawn, unseen
 	const held = useCanvasState(store, (state) => (state.selected.length === 1 ? (state.selected[0] ?? null) : null));
 	useEffect(() => {
-		const stage = host.current;
-		if (said === 0 || inside !== null || held === null || stage === null || read === undefined) return;
-		const talk = stage.talk();
-		const at = talk.findIndex((slide) => slide.frame === held);
-		const resting = stage.session()?.at;
-		const beat = (talk[at]?.beats ?? 1) - 1;
-		if (at < 0 || (resting?.slide === at && resting.beat === beat)) return;
-		stage.apply(openSession(talk, { slide: at, beat }, stage.session()?.state ?? {}), "own", true);
+		if (said === 0 || inside !== null || held === null || read === undefined) return;
+		const rest = setTimeout(() => {
+			const stage = host.current;
+			if (stage === null) return;
+			const talk = stage.talk();
+			const at = talk.findIndex((slide) => slide.frame === held);
+			const resting = stage.session()?.at;
+			const beat = (talk[at]?.beats ?? 1) - 1;
+			if (at < 0 || (resting?.slide === at && resting.beat === beat)) return;
+			stage.apply(openSession(talk, { slide: at, beat }, stage.session()?.state ?? {}), "own", true);
+		}, REST_AFTER_MS);
+		return () => clearTimeout(rest);
 	}, [held, inside, read, said]);
+
+	// the slide flown into holds no document of its own on the canvas until the camera is there
+	const flyingInto = inside?.phase === "in" && !inside.flown ? inside.slide : null;
+	useEffect(() => store.set({ flyingInto }), [store, flyingInto]);
+	useEffect(() => () => store.set({ flyingInto: null }), [store]);
 
 	// presenting takes the talk to the presenter view: the canvas lets go of it where it stands
 	const presenting = usePresentAsk() !== null;
@@ -378,7 +400,8 @@ export function useDeckInside({
 	const chip =
 		slide === null ? null : inside?.keys === true ? `${leafOf(slide)} has the keys · esc` : "live · esc exits";
 	const view = {
-		slot: inside === null ? null : slotOf(inside.slide),
+		// flying in, the stage waits unseen where the slide lands, rather than being drawn anew at every step of the zoom
+		slot: inside === null || flyingInto !== null ? null : slotOf(inside.slide),
 		shown: inside !== null && inside.phase !== "in",
 		talk,
 		hold,

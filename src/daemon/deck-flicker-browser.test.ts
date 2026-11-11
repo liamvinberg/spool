@@ -31,7 +31,7 @@ interface Sample {
  * it; a drop and its undo each settle once, every frame going one way to its place; and no slide's picture blanks
  * on the way. Every drawn frame is sampled in the window, and the screen is read from the browser's own frames.
  */
-it("drags, drops and undoes on a deck page without a preview flickering, a frame going back or a picture blanking", {
+it("drags, drops, undoes and goes into a slide on a deck page without a preview flickering, a frame going back, a picture blanking or a frame dropped", {
 	timeout: 300_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -235,5 +235,53 @@ it("drags, drops and undoes on a deck page without a preview flickering, a frame
 	// and every frame is drawn where it rests
 	const colours = pixelsOf(await shot(), await Promise.all(Object.keys(FRAMES).map(inside)));
 	expect(Object.values(FRAMES).every((frame, i) => near(colours[i] as Rgb, frame.colour))).toBe(true);
+
+	// spool#305: into b by a double-click and out by esc, every frame of both flights drawn, and b on screen all the way
+	const box = async (selector: string) => {
+		const rect = await page.locator(selector).boundingBox();
+		if (rect === null) throw new Error(`${selector} is not on screen`);
+		return rect;
+	};
+	/** the waits between the drawn frames of a stretch */
+	const gaps = (stretch: readonly Sample[]) => stretch.slice(1).map((sample, i) => sample.t - (stretch[i]?.t ?? sample.t));
+	const longest = (stretch: readonly Sample[]) => Math.max(...gaps(stretch));
+	// the window's frame time, at rest
+	const still = await now();
+	await page.waitForTimeout(500);
+	const resting = gaps(await samples(still)).sort((p, q) => p - q);
+	const frameTime = resting[Math.floor(resting.length / 2)] ?? 1000 / 60;
+	// how long the camera flies, in milliseconds, as the canvas reads it
+	const fly = await page.evaluate(() => {
+		const value = getComputedStyle(document.documentElement).getPropertyValue("--motion-deck-fly").trim();
+		return Number.parseFloat(value) * (value.endsWith("ms") ? 1 : 1000);
+	});
+	const from = await at({ x: 1440, y: 0 });
+	const to = await at({ x: 1440 + 1280, y: 720 });
+	const going = await recordScreen(page);
+	const flying = await now();
+	await page.mouse.dblclick((from.x + to.x) / 2, (from.y + to.y) / 2);
+	await page.locator('[data-deck-stage="talk/b"][data-deck-stage-shown]').waitFor();
+	await page.waitForTimeout(300);
+	console.log("DBG in", frameTime, fly, gaps(await samples(flying, flying + fly)).map(Math.round).join(" "));
+	expect(longest(await samples(flying, flying + fly)), "the zoom in waited on a frame").toBeLessThanOrEqual(
+		2 * frameTime + 1,
+	);
+	// a point on b where it stood and where it landed is on b at every step between, the camera's flight being a straight line
+	const landed = await box('[data-deck-stage="talk/b"]');
+	const point = {
+		x: Math.round((Math.max(from.x, landed.x) + Math.min(to.x, landed.x + landed.width)) / 2),
+		y: Math.round((Math.max(from.y, landed.y) + Math.min(to.y, landed.y + landed.height)) / 2),
+	};
+	const inFrames = await going.stop();
+	const lost = inFrames.findIndex((png) => !near(pixelsOf(png, [point])[0] as Rgb, FRAMES.b?.colour ?? [0, 0, 0]));
+	expect(lost, `b's picture was gone in frame ${lost} of ${inFrames.length} going in`).toBe(-1);
+	const leaving = await now();
+	await page.keyboard.press("Escape");
+	await page.locator("[data-deck-stage-shown]").waitFor({ state: "detached" });
+	await page.waitForTimeout(300);
+	console.log("DBG out", gaps(await samples(leaving, leaving + fly)).map(Math.round).join(" "));
+	expect(longest(await samples(leaving, leaving + fly)), "the fly back waited on a frame").toBeLessThanOrEqual(
+		2 * frameTime + 1,
+	);
 	await page.close();
 });

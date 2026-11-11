@@ -160,6 +160,9 @@ const LIVE_MARGIN = 0.25;
  * one selected frame is held live and a selection of several is not: booting a
  * document for every frame a marquee caught is what made a multi-selection lag.
  * ⌘ over an entered frame borrows its pointer, so that frame is held too.
+ * A slide the camera is flying into waits for it to land (spool#305): a
+ * document booting under the flight costs it frames, and the deck's own stage
+ * plays the slide once it is there.
  */
 export function selectionTargetsOf(input: {
 	picked: readonly { frame: string }[];
@@ -167,11 +170,13 @@ export function selectionTargetsOf(input: {
 	selected: readonly string[];
 	accelDown: boolean;
 	entered: string | null;
+	/** the slide of a deck the camera is flying into */
+	flyingInto?: string | null;
 }): Set<string> {
-	const { picked, pointerTool, selected, accelDown, entered } = input;
+	const { picked, pointerTool, selected, accelDown, entered, flyingInto = null } = input;
 	if (picked.length > 0) return new Set(picked.map((pick) => pick.frame));
 	if (!pointerTool) return new Set();
-	if (selected.length === 1) return new Set(selected);
+	if (selected.length === 1) return new Set(selected[0] === flyingInto ? [] : selected);
 	if (selected.length > 1) return new Set();
 	return accelDown && entered !== null ? new Set([entered]) : new Set();
 }

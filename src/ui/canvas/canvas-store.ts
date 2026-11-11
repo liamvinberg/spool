@@ -46,6 +46,8 @@ export interface CanvasState {
 	hiddenPages: ReadonlySet<string>;
 	/** the frame that is live, whose document owns the pointer and the keyboard */
 	entered: string | null;
+	/** the slide of a deck the camera is flying into, until it lands (spool#305) */
+	flyingInto: string | null;
 	/** the in-place text edit that is open (#314), which is what hands the frame its pointer */
 	editing: HandEdit | null;
 	/** the tool picked (#321) */
@@ -114,6 +116,7 @@ export function createCanvasStore(): CanvasStore {
 		hidden: new Set<string>(),
 		hiddenPages: new Set<string>(),
 		entered: null,
+		flyingInto: null,
 		editing: null,
 		tool: "select",
 		spaceDown: false,

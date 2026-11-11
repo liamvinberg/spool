@@ -193,6 +193,9 @@ describe("what a selection holds live", () => {
 	it("holds nothing for the hand", () => {
 		expect(selectionTargetsOf({ ...base, pointerTool: false, selected: ["a"] })).toEqual(new Set());
 	});
+	it("holds no slide while the camera flies into it", () => {
+		expect(selectionTargetsOf({ ...base, selected: ["a"], flyingInto: "a" })).toEqual(new Set());
+	});
 	it("holds the entered frame while ⌘ borrows its pointer", () => {
 		expect(selectionTargetsOf({ ...base, accelDown: true, entered: "a" })).toEqual(new Set(["a"]));
 	});
