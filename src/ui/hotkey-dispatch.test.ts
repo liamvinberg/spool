@@ -38,6 +38,23 @@ describe("hotkey dispatch", () => {
 		expect(canvasUndo).toHaveBeenCalledTimes(1);
 	});
 
+	it("lets a playing talk read its own keys ahead of the canvas, and pass on the rest", () => {
+		const hand = vi.fn();
+		const toggle = vi.fn();
+		const read = vi.fn((event: KeyboardEvent) => event.key === " ");
+		let playing = true;
+		attach({ scope: "canvas", handlers: { "canvas.space-hold": hand, "canvas.threads": toggle } });
+		attach({ scope: "stage", active: () => playing, handlers: {}, read });
+		dispatchHotkeyEvent(key({ key: " ", code: "Space" }));
+		expect(hand).not.toHaveBeenCalled();
+		dispatchHotkeyEvent(key({ key: "t" }));
+		expect(toggle).toHaveBeenCalledTimes(1);
+		playing = false;
+		dispatchHotkeyEvent(key({ key: " ", code: "Space" }));
+		expect(hand).toHaveBeenCalledTimes(1);
+		expect(read).toHaveBeenCalledTimes(2);
+	});
+
 	it("lets an exclusive scope swallow what it does not answer", () => {
 		const close = vi.fn();
 		const toggle = vi.fn();

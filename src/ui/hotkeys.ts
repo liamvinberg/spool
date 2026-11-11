@@ -25,6 +25,7 @@ export type HotkeyScope =
 	| "picker"
 	| "help"
 	| "settings"
+	| "stage"
 	| "toast"
 	| "peek"
 	| "sidebar"
@@ -44,6 +45,10 @@ export type HotkeyScope =
  * sits above both (spool#224): it is up only while a folder is under the
  * pointer or the keys, or a peek is open, and then Space and the arrows are its. The panes
  * answer only chords nothing else binds, so where they sit in the walk is moot.
+ *
+ * The stage sits above all three (spool#265): it is up only while a deck's talk plays in place on the
+ * canvas, and then the talk's keys are its, read by the talk's own table, so Space is the next beat and
+ * never the Hand.
  */
 export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"dialog",
@@ -54,6 +59,7 @@ export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"toast",
 	"help",
 	"settings",
+	"stage",
 	"peek",
 	"sidebar",
 	"panes",

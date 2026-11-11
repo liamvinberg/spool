@@ -37,6 +37,12 @@ export interface HotkeyLayer {
 	/** read per event so it can sit on refs; an absent gate means mounted = up */
 	active?: () => boolean;
 	handlers: Partial<Record<HotkeyId, HotkeyHandler>>;
+	/**
+	 * Keys read by a table of the layer's own rather than the register's: a talk's (spool#265), whose ladder,
+	 * typed digits and text-field rules live with the talk. Asked before the scope's entries, text fields
+	 * included; true when it took the key, which ends the walk.
+	 */
+	read?: (event: KeyboardEvent) => boolean;
 }
 
 interface DispatchEntry {
@@ -81,6 +87,7 @@ export function dispatchHotkeyEvent(event: KeyboardEvent): void {
 	for (const scope of SCOPE_PRIORITY) {
 		const up = activeLayers(scope);
 		if (up.length === 0) continue;
+		if (up.some((layer) => layer.read?.(event) === true)) return;
 		for (const entry of entriesByScope.get(scope) ?? []) {
 			if (typing && !entry.typing) continue;
 			if (!entry.combos.some((combo) => matchesCombo(event, combo))) continue;
