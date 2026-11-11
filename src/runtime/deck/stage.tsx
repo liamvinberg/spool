@@ -158,6 +158,8 @@ interface Copy {
 	warm: boolean;
 	warming: boolean;
 	broken: boolean;
+	/** what it threw from a handler or a timer while on screen, for its boundary to stop it with */
+	thrown?: { error: unknown };
 }
 
 /**
@@ -358,13 +360,14 @@ export function bootStage(runtime: StageRuntime): void {
 		settle();
 	}
 
-	// an error a slide threw from a handler or a timer leaves its picture, and is named against the slide on screen
+	// an error a slide threw from a handler or a timer stops the slide on screen where it stands, as a throw while it
+	// renders does: its last picture kept, its rendering and its effects let go, and the keys still moving the talk on
 	windowError = (error) => {
 		const copy = shown === null ? undefined : copies.get(shown);
 		const slide = copy === undefined ? undefined : slides[copy.index];
-		if (slide === undefined || slide.broken !== undefined) return;
-		slide.broken = { why: describe(error), when: "later" };
-		reportSlides();
+		if (copy === undefined || slide === undefined || copy.broken || copy.thrown !== undefined) return;
+		copy.thrown = { error };
+		redraw();
 	};
 
 	// --- showing -----------------------------------------------------------------------------------------
@@ -795,7 +798,11 @@ export function bootStage(runtime: StageRuntime): void {
 			>
 				<SlideScope.Provider value={copy.key}>
 					<Activity mode={visible ? "visible" : "hidden"}>
-						<SlideBoundary box={box} onBroken={(error, kept) => brokeCopy(copy.key, error, kept)}>
+						<SlideBoundary
+							box={box}
+							thrown={copy.thrown}
+							onBroken={(error, kept) => brokeCopy(copy.key, error, kept)}
+						>
 							<Screen />
 						</SlideBoundary>
 						<span data-spool-rendered="" hidden />
@@ -862,6 +869,8 @@ function atRest(box: HTMLElement): void {
 class SlideBoundary extends Component<
 	{
 		box: { readonly current: HTMLElement | null };
+		/** an error the slide threw outside React (a handler, a timer), which stops it here all the same */
+		thrown: { error: unknown } | undefined;
 		onBroken: (error: unknown, kept: KeptPicture | undefined) => void;
 		children: ReactNode;
 	},
@@ -873,6 +882,10 @@ class SlideBoundary extends Component<
 
 	static getDerivedStateFromError(error: unknown) {
 		return { error, failed: true };
+	}
+
+	static getDerivedStateFromProps(props: { thrown: { error: unknown } | undefined }, state: { failed: boolean }) {
+		return props.thrown !== undefined && !state.failed ? { error: props.thrown.error, failed: true } : null;
 	}
 
 	override render() {
