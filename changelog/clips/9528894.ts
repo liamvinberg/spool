@@ -39,7 +39,7 @@ export default function Frame() {
 		await site.waitForTimeout(1500);
 		await film(site);
 	},
-	live: async ({ page, extension, walk, film }) => {
+	live: async ({ page, extension, walk, film, hurry }) => {
 		// a beat on the page everyone knows, then down to its payments card, scrolled as the page itself scrolls
 		await walk([{ wait: 1000 }], site);
 		await site.evaluate((card) => {
@@ -48,17 +48,21 @@ export default function Frame() {
 		}, CARD);
 		await site.waitForTimeout(900);
 		// the toolbar icon, which a headless window has no toolbar to press
-		await extension?.evaluate(async () => {
-			const { chrome } = globalThis as unknown as {
-				chrome: {
-					tabs: { query(filter: object): Promise<{ id?: number; url?: string }[]> };
-					scripting: { executeScript(options: { target: { tabId: number }; files: string[] }): Promise<unknown> };
+		await hurry(
+			extension?.evaluate(async () => {
+				const { chrome } = globalThis as unknown as {
+					chrome: {
+						tabs: { query(filter: object): Promise<{ id?: number; url?: string }[]> };
+						scripting: {
+							executeScript(options: { target: { tabId: number }; files: string[] }): Promise<unknown>;
+						};
+					};
 				};
-			};
-			const tab = (await chrome.tabs.query({})).find((one) => one.url?.startsWith("https://stripe.com"));
-			if (tab?.id !== undefined)
-				await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["picker.js"] });
-		});
+				const tab = (await chrome.tabs.query({})).find((one) => one.url?.startsWith("https://stripe.com"));
+				if (tab?.id !== undefined)
+					await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["picker.js"] });
+			}) ?? Promise.resolve(),
+		);
 		await walk(
 			[
 				{ wait: 300 },
@@ -69,17 +73,21 @@ export default function Frame() {
 			],
 			site,
 		);
-		await site.locator("spool-picker >> text=Open in spool").waitFor({ timeout: 30_000 });
+		// the send, which takes a few seconds on a page this rich
+		await hurry(site.locator("spool-picker >> text=Open in spool").waitFor({ timeout: 30_000 }));
 		await walk([{ wait: 300 }, { click: "spool-picker >> text=Open in spool", ms: 350 }], site);
-		// the canvas goes to the reference once spool has opened it, filmed once the reference has drawn: in front, so it draws
-		await page.bringToFront();
-		await page
-			.locator('[data-page-row], [aria-label="Path"]')
-			.getByText("references")
-			.first()
-			.waitFor({ timeout: 20_000 });
-		await page.locator("iframe").last().waitFor({ timeout: 20_000 });
-		await page.waitForTimeout(1200);
+		// spool opens the reference in its own tab behind this one; the take cuts to it once it has drawn
+		await hurry(
+			(async () => {
+				await page
+					.locator('[data-page-row], [aria-label="Path"]')
+					.getByText("references")
+					.first()
+					.waitFor({ timeout: 20_000 });
+				await page.locator("iframe").last().waitFor({ timeout: 20_000 });
+				await page.waitForTimeout(1200);
+			})(),
+		);
 		await film(page);
 		await walk([{ wait: 2000 }], page);
 	},
