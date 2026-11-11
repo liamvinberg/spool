@@ -391,7 +391,24 @@ function stripUnsafeCaptureDeclarations(rule: { style?: CSSStyleDeclaration }): 
 	}
 }
 
-// A copied DOM has no animation timeline. Preserve its current painted values.
+/**
+ * Read a style as the animation leaves it once it has run: one that ends and is still under way is moved to its end
+ * for the read and straight back. The settle waits for what animates in, but in a frame Chrome holds out of view
+ * (a talk's slide booting for its PDF) the clock never moves, and the words would be copied at their first keyframe.
+ */
+function arrived<T>(animation: Animation, read: () => T): T {
+	const end = animation.playState === "running" ? animation.effect?.getComputedTiming().endTime : undefined;
+	if (typeof end !== "number" || !Number.isFinite(end)) return read();
+	const was = animation.currentTime;
+	animation.currentTime = end;
+	try {
+		return read();
+	} finally {
+		animation.currentTime = was;
+	}
+}
+
+// A copied DOM has no animation timeline. Preserve its painted values, an animation that ends as it ends.
 function snapshotAnimations(clone: Element): void {
 	const animations = document.getAnimations();
 	if (animations.length === 0) return;
@@ -406,16 +423,21 @@ function snapshotAnimations(clone: Element): void {
 		const copy = copies[index] as (Element & { style?: CSSStyleDeclaration }) | undefined;
 		if (!copy) continue;
 		const pseudo = effect.pseudoElement;
-		const computed = getComputedStyle(effect.target, pseudo);
 		const style = pseudo ? document.createElement("span").style : copy.style;
 		if (!style) continue;
+		const properties = new Set<string>();
 		for (const keyframe of effect.getKeyframes()) {
 			for (const key of Object.keys(keyframe)) {
 				if (["offset", "computedOffset", "easing", "composite"].includes(key)) continue;
-				const property = key.startsWith("--") ? key : key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-				style.setProperty(property, computed.getPropertyValue(property), "important");
+				properties.add(key.startsWith("--") ? key : key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`));
 			}
 		}
+		const target = effect.target;
+		const values = arrived(animation, () => {
+			const computed = getComputedStyle(target, pseudo);
+			return [...properties].map((property) => [property, computed.getPropertyValue(property)] as const);
+		});
+		for (const [property, value] of values) style.setProperty(property, value, "important");
 		style.setProperty("animation", "none", "important");
 		style.setProperty("transition", "none", "important");
 		if (pseudo) {
