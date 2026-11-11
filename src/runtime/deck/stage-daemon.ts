@@ -1,5 +1,5 @@
 import type { Size } from "../../deck/deck-file";
-import { stageChange } from "../../deck/stage-wire";
+import { talkReloads } from "../../deck/talk-reload";
 import type { StageHost } from "./stage-host";
 
 /**
@@ -24,9 +24,6 @@ export interface StageDaemon {
 /** The header spool's own windows prove themselves with, as the player shell sends it. */
 const CONTROL_HEADER_NAME = "x-spool-control";
 
-/** How long the folder has to be quiet before a saved change is taken: an editor's save is often several writes. */
-const QUIET_MS = 250;
-
 export function stageDaemon(config: StageDaemonConfig): StageDaemon {
 	const headers = { [CONTROL_HEADER_NAME]: config.controlToken };
 	const api = `/api/p/${encodeURIComponent(config.project)}`;
@@ -50,26 +47,15 @@ export function stageDaemon(config: StageDaemonConfig): StageDaemon {
 			return answer;
 		},
 		follow(host) {
-			let build: ReturnType<typeof setTimeout> | undefined;
-			let check: ReturnType<typeof setTimeout> | undefined;
-			void listen(api, headers, (change) => {
-				const kind = stageChange(
-					change,
-					host.talk().map((slide) => slide.frame),
-					config.page,
-				);
-				if (kind === "build") build = later(build, () => host.reload());
-				else if (kind === "talk")
-					check = later(check, () => void talkChanged().then((changed) => changed && host.reload()));
+			const reloader = talkReloads({
+				page: config.page,
+				frames: () => host.talk().map((slide) => slide.frame),
+				reload: () => host.reload(),
+				changed: talkChanged,
 			});
+			void listen(api, headers, reloader.heard);
 		},
 	};
-}
-
-/** `run` once the folder has been quiet for a moment, however many changes came before it. */
-function later(timer: ReturnType<typeof setTimeout> | undefined, run: () => void): ReturnType<typeof setTimeout> {
-	clearTimeout(timer);
-	return setTimeout(run, QUIET_MS);
 }
 
 /** The project's changes, each handed to `heard`, for as long as the page is open. */

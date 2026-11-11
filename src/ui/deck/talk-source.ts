@@ -1,11 +1,8 @@
 import type { Size } from "../../deck/deck-file";
-import { stageChange } from "../../deck/stage-wire";
+import { talkReloads } from "../../deck/talk-reload";
 import type { StageHost } from "../../runtime/deck/stage-host";
 import { controlFetch } from "../api";
 import { onStageChange } from "./deck-api";
-
-/** How long the folder has to be quiet before a saved change is taken: an editor's save is often several writes. */
-const QUIET_MS = 250;
 
 /**
  * Where spool's window gets a deck page's talk for the stages it hosts (spool#265): the presenter view's two, and the
@@ -39,25 +36,21 @@ export function talkSource(project: string, page: string): TalkSource {
 			return answer;
 		},
 		follow(hosts) {
-			let build: ReturnType<typeof setTimeout> | undefined;
-			const reload = () => {
-				for (const host of hosts()) host.reload();
-			};
-			const stop = onStageChange((change) => {
-				const frames = (hosts()[0]?.talk() ?? []).map((slide) => slide.frame);
-				const kind = stageChange(change, frames, page);
-				if (kind === undefined) return;
-				clearTimeout(build);
-				build = setTimeout(() => {
-					if (kind === "build") return reload();
-					void controlFetch(`${api}/deck-stage?page=${encodeURIComponent(page)}`)
-						.then(async (response) => response.ok && JSON.stringify(await response.json()) !== playing)
-						.then((changed) => changed && reload());
-				}, QUIET_MS);
+			const reloader = talkReloads({
+				page,
+				frames: () => (hosts()[0]?.talk() ?? []).map((slide) => slide.frame),
+				reload: () => {
+					for (const host of hosts()) host.reload();
+				},
+				changed: async () => {
+					const response = await controlFetch(`${api}/deck-stage?page=${encodeURIComponent(page)}`);
+					return response.ok && JSON.stringify(await response.json()) !== playing;
+				},
 			});
+			const stop = onStageChange(reloader.heard);
 			return () => {
 				stop();
-				clearTimeout(build);
+				reloader.stop();
 			};
 		},
 	};
