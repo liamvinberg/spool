@@ -7,6 +7,7 @@ import {
 	parseStageMessage,
 	type SlideReadiness,
 	type StageMode,
+	type StagePointer,
 	type StageShown,
 } from "../../deck/stage-wire";
 
@@ -48,6 +49,8 @@ export interface StageHostEvents {
 	command?(command: KeyCommand): void;
 	/** the stage could not be opened, or a new build of it could not, and why; what was showing stays */
 	refused?(why: string): void;
+	/** where the pointer stands over the live slide on screen, and null once it leaves: the room shows it as a dot */
+	pointer?(at: StagePointer | null): void;
 }
 
 export interface StageHost {
@@ -204,6 +207,9 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 					session = message.session;
 					on.session?.(session);
 				}
+				return;
+			case "stage-pointer":
+				if (live) on.pointer?.(message.at);
 				return;
 			case "stage-slides":
 				if (live) on.slides?.(message.slides);

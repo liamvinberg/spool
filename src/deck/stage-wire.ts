@@ -63,6 +63,12 @@ export interface StageShown {
 
 export type StageMode = "own" | "follow";
 
+/** Where the pointer stands over a live slide, on the talk's screen: from 0 to 1 across and down. */
+export interface StagePointer {
+	readonly x: number;
+	readonly y: number;
+}
+
 /** host → stage */
 export type HostMessage =
 	/**
@@ -92,7 +98,9 @@ export type StageMessage =
 	| { readonly spool: "stage-slides"; readonly slides: readonly SlideReadiness[] }
 	| { readonly spool: "stage-shown"; readonly shown: StageShown }
 	/** a command the stage does not carry out itself: a host's own, and every command while it follows */
-	| { readonly spool: "stage-command"; readonly command: KeyCommand };
+	| { readonly spool: "stage-command"; readonly command: KeyCommand }
+	/** the pointer over the live slide on screen, for the room's soft dot; null once it leaves, or the slide is not live */
+	| { readonly spool: "stage-pointer"; readonly at: StagePointer | null };
 
 type Loose = Record<string, unknown>;
 
@@ -269,9 +277,23 @@ export function parseStageMessage(value: unknown): StageMessage | undefined {
 			const command = parseKeyCommand(value.command);
 			return command === undefined ? undefined : { spool: "stage-command", command };
 		}
+		case "stage-pointer": {
+			const at = parsePointer(value.at);
+			return at === undefined ? undefined : { spool: "stage-pointer", at };
+		}
 		default:
 			return undefined;
 	}
+}
+
+const isShare = (value: unknown): value is number =>
+	typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+
+/** A pointer's place on the talk's screen, or null for none; undefined when it is neither. */
+export function parsePointer(value: unknown): StagePointer | null | undefined {
+	if (value === null) return null;
+	if (!isRecord(value) || !isShare(value.x) || !isShare(value.y)) return undefined;
+	return { x: value.x, y: value.y };
 }
 
 /**

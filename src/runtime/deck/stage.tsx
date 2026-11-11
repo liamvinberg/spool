@@ -30,6 +30,7 @@ import {
 	type StageConfig,
 	type StageMessage,
 	type StageMode,
+	type StagePointer,
 	type StageSlideConfig,
 } from "../../deck/stage-wire";
 import { SlideScope, setSlideBeat } from "../slide-beats";
@@ -641,6 +642,30 @@ export function bootStage(runtime: StageRuntime): void {
 		if (room && session.black) carry({ kind: "black", on: false });
 		else if (shownSlide()?.live !== true && !session.keys) carry({ kind: "next" });
 	});
+
+	// the pointer over a live slide, for a host that shows the room where it is as a soft dot: where it stands on the
+	// talk's screen, at most once a frame, and null once it leaves or stands over a slide that is not live
+	let pointer: StagePointer | null = null;
+	let pointerSaid = "null";
+	let pointerFrame = 0;
+	const tellPointer = (next: StagePointer | null) => {
+		pointer = next;
+		if (pointerFrame !== 0) return;
+		pointerFrame = requestAnimationFrame(() => {
+			pointerFrame = 0;
+			const text = JSON.stringify(pointer);
+			if (text === pointerSaid) return;
+			pointerSaid = text;
+			post({ spool: "stage-pointer", at: pointer });
+		});
+	};
+	const share = (value: number) => Math.min(1, Math.max(0, value));
+	addEventListener("pointermove", (event) => {
+		if (!opened) return;
+		const live = shownSlide()?.live === true;
+		tellPointer(live ? { x: share(event.clientX / innerWidth), y: share(event.clientY / innerHeight) } : null);
+	});
+	document.documentElement.addEventListener("pointerleave", () => tellPointer(null));
 
 	// --- reports -----------------------------------------------------------------------------------------
 
