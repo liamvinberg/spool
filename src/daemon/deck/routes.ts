@@ -88,7 +88,7 @@ export function deckRoutes(deps: {
 			const change = parseDeckChange(await c.req.json().catch(() => undefined));
 			if (change === undefined) {
 				return c.text(
-					'a deck change is { "page", "kind": "insert" | "trade" | "place" | "reorder" | "arrange" | "size" | "make" | "notes" | "restore", ... }',
+					'a deck change is { "page", "kind": "insert" | "place" | "reorder" | "arrange" | "size" | "make" | "notes" | "restore", ... }',
 					400,
 				);
 			}

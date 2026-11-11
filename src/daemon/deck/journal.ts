@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { readDesignFile, writeDesignFile } from "./disk";
 
 /**
- * A deck change written as one transaction (spool#265): its `deck.json`, its sidecars and a trade's notes land
+ * A deck change written as one transaction (spool#265): its `deck.json`, its sidecars and its notes land
  * together or not at all. The words of a note are never only in memory: before the first write, a record of every
  * file's bytes before and after goes into `design/.spool/deck-changes/`, which stays on this machine; a write that
  * fails puts back what was written from memory and rethrows; and the record goes only once the whole change has landed,
