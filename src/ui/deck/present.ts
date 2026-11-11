@@ -171,8 +171,8 @@ export function openRoom(from: PresentFrom, talk: string): Window | null {
 }
 
 /**
- * The hand is on its way to Present (the pointer over it, ⌘ held on the deck page): the slide it would play from is
- * readied out of sight now, so the slide that flies is the slide itself.
+ * The hand is on its way to Present (the pointer over it, a slide held a moment or with ⌘ down on the deck page): the
+ * slide it would play from is readied out of sight now, so the slide that flies is the slide itself.
  */
 export function warmPresent(from: PresentFrom): void {
 	if (!experimentOn("deck")) return;

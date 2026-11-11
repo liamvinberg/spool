@@ -331,8 +331,15 @@ it("presents on one display: the slide grows from its card into a full screen, t
 		})
 		.toEqual(["talk/two"]);
 
-	// the slide held a moment is readied out of sight, the stage drawn under Present; a press still reaches Present, and
-	// sets off at once from what the stage drew
+	// the slide held a moment is readied out of sight, and let go of, goes with it
+	await view.locator('[data-present-slides="warm"]').waitFor({ state: "attached" });
+	await view.keyboard.press("Escape");
+	await view.locator("[data-present-slides]").waitFor({ state: "detached" });
+	// held again, the stage is drawn under Present; a press still reaches Present, and sets off at once from what the
+	// stage drew
+	const home = twos.at(-1);
+	if (home === null || home === undefined) return;
+	await view.mouse.click(home.x + home.w / 2, home.y + home.h / 2);
 	const present = view.getByRole("button", { name: "Present", exact: true });
 	await expect
 		.poll(() =>
