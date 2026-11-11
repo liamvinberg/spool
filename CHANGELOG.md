@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.55.0
+
+### Minor Changes
+
+- abc1267: **Decks, as an experiment.** Turn on Decks under Settings, Experimental, and a page can be a talk. New presentation in Pages gives you five starter slides and asks your agent what the talk is about. The top row of the page is the talk, in order: drag a frame into the row to add it, onto a slide to swap the two, or out of the row to skip it. A slide can reveal itself in steps, and each step has its own notes in Properties. Double-click a slide to step through the talk right on the canvas, and Esc flies you back. Present, with ⌘↵, turns spool into a presenter view with the clock, the next step and your notes, and opens a second window that shows only the slides. In the Mac app that window goes full screen on your other display. A slide that breaks never reaches that window: it keeps the last picture and the presenter view tells you. Export sends the talk as a PDF, or as one HTML file that plays offline. For agents, `spool skill deck` explains how to write one: a `deck.json`, `ui.beats()` and `ui.live()` on the `spool` import, and a `notes.md` beside a slide.
+- f13b472: **Play at any size.** Pull the edge of a played frame to lay it out at another width or height. On the way it holds on the sizes of a phone, a tablet, a laptop, a desktop and the frame's own. The size on the bar now opens a list of sizes: As drawn, Window, Phone, Tablet, Laptop and Desktop. Rest on one to see the frame at it, and click to keep it. Double-click an edge to go back to the size the frame was drawn at. As drawn or Window is remembered for the next play; any other size lasts until you close it.
+- ff875cf: **Frames keep their size.** A frame now plays at exactly the size it was drawn, centred in the window, instead of being stretched to the window's height, so a phone frame looks like a phone. A long page keeps its width and scrolls rather than shrinking to a sliver. The bar always says the size the frame plays at, like `390 × 844` or `1440 × 944 · 65%`. A thin white line that could show beside a dark frame on some displays is gone.
+
+### Patch Changes
+
+- 41ca669: The size on the played bar sits in the middle of the window again, rather than off to the right.
+- b4941fa: Exporting a frame that animates its content in now shows it arrived. A frame out of view could come out with those parts missing, such as words that rise in.
+- 5701720: Exporting a frame the canvas has scrolled out of view now waits for what it draws on each animation frame, such as a WebGL shader, instead of exporting it undrawn.
+- 58beeaa: An exported frame no longer loses a line of text whose characters come from more than one of its web font's files.
+- f2cd029: New page in Pages opens the page it makes, rather than leaving you on the page you were on.
+- 113e457: While spool starts, Home and the canvas show the same loader in the same spot: the mark winding beside a line saying what it waits on, with a count once the wait passes three seconds. Home no longer sits empty while its projects load.
+- 6aef2bf: An agent in your terminal now appears on the canvas once it changes the design in a turn, writing a frame or a shared file, or once a designer subagent of its starts. An agent that only reads frames, takes screenshots or works on code stays off the canvas, and a shell command counts as a write only where it really writes inside this project's design.
+- 2178430: An agent from your terminal can now be opened while it works or waits, not only once it is done: it shows which frames it is on, what it has changed so far and its tasks, and a press takes you to a frame. A frame's name stays whole when a long agent word stands beside it.
+- 200dcee: An agent working in another checkout of a team project you have open, such as a git worktree, now shows on its canvas like one working in the folder you opened.
+- 66e851a: Removing a folder that holds a team project's copy, such as a git worktree, no longer deletes the team's files for everyone. Spool waits until the folder stops changing, sends nothing if the folder is being removed, writes nothing into it, and stops syncing it. Deleting files in a copy that stays whole still reaches the team. If you delete design/ in a team project, Spool now stops syncing it instead of filling it again; open the project to get it back. `spool remove` now tells a running Spool to stop syncing the folder before it returns.
+- 51b462a: Walking to a frame of another size in a shared canvas no longer squeezes the screen you left into the next one's box while it loads.
+- 9ada967: Walking between frames of different sizes no longer flashes white before the next one shows. The screen you left stays on show until the next one has drawn, in a played tab and in a shared canvas.
+
 ## 0.54.0
 
 ### Minor Changes

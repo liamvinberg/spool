@@ -1,5 +1,0 @@
----
-"spool.page": minor
----
-
-**Decks, as an experiment.** Turn on Decks under Settings, Experimental, and a page can be a talk. New presentation in Pages gives you five starter slides and asks your agent what the talk is about. The top row of the page is the talk, in order: drag a frame into the row to add it, onto a slide to swap the two, or out of the row to skip it. A slide can reveal itself in steps, and each step has its own notes in Properties. Double-click a slide to step through the talk right on the canvas, and Esc flies you back. Present, with ⌘↵, turns spool into a presenter view with the clock, the next step and your notes, and opens a second window that shows only the slides. In the Mac app that window goes full screen on your other display. A slide that breaks never reaches that window: it keeps the last picture and the presenter view tells you. Export sends the talk as a PDF, or as one HTML file that plays offline. For agents, `spool skill deck` explains how to write one: a `deck.json`, `ui.beats()` and `ui.live()` on the `spool` import, and a `notes.md` beside a slide.
