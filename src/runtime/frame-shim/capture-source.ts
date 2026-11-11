@@ -1,5 +1,6 @@
 import { isAssetUrl } from "../../daemon/assets";
 import { FORBIDDEN_ELEMENTS, safeImageReference, URL_ATTRIBUTES, unsafeCaptureCss } from "./capture-safety";
+import { deliverFramesForCapture } from "./freeze";
 import { nativeFetch, nativeRaf } from "./natives";
 import { atFullDensity, realDevicePixelRatio } from "./resolution";
 import { settle } from "./settle";
@@ -435,7 +436,12 @@ export function captureSource(settleMs: number): Promise<{ svg: Blob; width: num
 }
 
 async function captureAtDensity(settleMs: number): Promise<{ svg: Blob; width: number; height: number; dpr: number }> {
-	await settle(settleMs, nativeRaf);
+	const stopFrames = deliverFramesForCapture();
+	try {
+		await settle(settleMs, nativeRaf);
+	} finally {
+		stopFrames();
+	}
 	const W = document.documentElement.clientWidth || innerWidth;
 	const H = document.documentElement.clientHeight || innerHeight;
 	if (!Number.isInteger(W) || W <= 0 || !Number.isInteger(H) || H <= 0) {

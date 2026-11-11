@@ -62,8 +62,8 @@ let frozen = false;
 let frozenAt = 0;
 let frozenFor = 0;
 let nextRafHandle = 1;
-// handle -> { cb, native }; a native of 0 is a callback the freeze is holding
-const rafs = new Map<number, { cb: FrameRequestCallback; native: number }>();
+// handle -> { cb, native, asked }; a native of 0 is a callback the freeze is holding
+const rafs = new Map<number, { cb: FrameRequestCallback; native: number; asked: number }>();
 const paused = new Set<Animation>();
 
 export function gateAnimationFrames(): void {
@@ -72,7 +72,7 @@ export function gateAnimationFrames(): void {
 			throw new TypeError("requestAnimationFrame: parameter 1 is not of type 'Function'");
 		}
 		const handle = nextRafHandle++;
-		const entry = { cb: callback, native: 0 };
+		const entry = { cb: callback, native: 0, asked: performance.now() };
 		rafs.set(handle, entry);
 		if (!frozen) {
 			entry.native = nativeRaf((time) => {
@@ -101,6 +101,44 @@ function holdFrames(): void {
 	}
 }
 
+// Native rAF isolates one callback's throw from the next; the shim's own deliveries do too.
+function deliver(callback: FrameRequestCallback, time: number): void {
+	try {
+		callback(time - frozenFor);
+	} catch (error) {
+		setTimeout(() => {
+			throw error;
+		});
+	}
+}
+
+/** How long a frame's rAF callback may wait on the renderer before a capture delivers it itself. */
+const OVERDUE_MS = 50;
+
+/**
+ * A capture's frames (spool#275). Chrome runs no rAF at all in a cross-origin
+ * iframe out of the viewport, and an export captures frames wherever the camera
+ * left them: a WebGL slide that draws on rAF never drew, and its PDF page showed
+ * whatever stood behind its canvas. While a capture settles, a callback the
+ * renderer has left waiting is delivered here, on a timer, as a frame on screen
+ * would have had it; one on screen is delivered by the renderer before it is due.
+ * The returned function stops it.
+ */
+export function deliverFramesForCapture(): () => void {
+	const timer = setInterval(() => {
+		if (frozen) return;
+		const now = performance.now();
+		for (const [handle, entry] of [...rafs]) {
+			// a callback a thaw released waits on the renderer too
+			if (now - entry.asked < OVERDUE_MS) continue;
+			if (entry.native !== 0) nativeCancelRaf(entry.native);
+			rafs.delete(handle);
+			deliver(entry.cb, now);
+		}
+	}, 16);
+	return () => clearInterval(timer);
+}
+
 function releaseFrames(): void {
 	const due: number[] = [];
 	for (const pair of rafs) if (pair[1].native === 0) due.push(pair[0]);
@@ -113,15 +151,7 @@ function releaseFrames(): void {
 			// cancelled while held, or already delivered by an earlier thaw
 			if (entry === undefined) continue;
 			rafs.delete(handle);
-			try {
-				entry.cb(time - frozenFor);
-			} catch (error) {
-				// one held callback's throw is not the next one's problem —
-				// native rAF isolates them, so this does too
-				setTimeout(() => {
-					throw error;
-				});
-			}
+			deliver(entry.cb, time);
 		}
 	});
 }

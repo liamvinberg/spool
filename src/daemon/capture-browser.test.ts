@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { type Browser, chromium, type Frame, type Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
-import { MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
+import { MAX_CAPTURE_OUTPUT_PIXELS, SETTLE_BUDGET_MS } from "../cover";
 import { assembleFrameDocument, captureWorkerCsp, captureWorkerDocument } from "./document";
 import { CAPTURE_HOST, RENDER_HOST } from "./security";
 
@@ -173,9 +173,12 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 	};
 }
 
-/** A frame with a single WebGL canvas, cleared to solid red once and never redrawn — the #174 repro shape. */
+/**
+ * A frame with a single WebGL canvas, cleared to solid red once and never redrawn — the #174 repro shape. Out of the
+ * viewport, it clears on its first animation frame instead, as a shader does, which Chrome never runs there (#275).
+ */
 async function serveWebglCapture(
-	positioning: "inline" | "class",
+	positioning: "inline" | "class" | "offscreen",
 ): Promise<{ controlOrigin: string; url: string; close(): Promise<void> }> {
 	let frameDocument = "";
 	let controlDocument = "";
@@ -224,7 +227,8 @@ async function serveWebglCapture(
 	const controlOrigin = `http://127.0.0.1:${address.port}`;
 	const renderOrigin = `http://${RENDER_HOST}:${address.port}`;
 	const canvasStyle = "position: absolute; left: 25%; top: 25%; width: 50%; height: 50%";
-	const canvasAttribute = positioning === "inline" ? `style="${canvasStyle}"` : 'class="shader"';
+	const canvasAttribute = positioning === "class" ? 'class="shader"' : `style="${canvasStyle}"`;
+	const clear = "gl.clearColor(1, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);";
 	frameDocument = assembleFrameDocument({
 		project: "capture-test-webgl",
 		frame: "capture",
@@ -238,12 +242,12 @@ async function serveWebglCapture(
 		bootJs: `
 			document.getElementById("root").innerHTML = '<canvas width="800" height="600" ${canvasAttribute}></canvas>';
 			const gl = document.querySelector("canvas").getContext("webgl");
-			gl.clearColor(1, 0, 0, 1);
-			gl.clear(gl.COLOR_BUFFER_BIT);
+			${positioning === "offscreen" ? `requestAnimationFrame(() => { ${clear} });` : clear}
 		`,
 	});
+	const away = positioning === "offscreen" ? ' style="position: absolute; left: -5000px"' : "";
 	controlDocument = `<!doctype html><html><body>
-<iframe id="frame" width="800" height="600" sandbox="allow-scripts" src="${renderOrigin}/frame"></iframe>
+<iframe id="frame" width="800" height="600"${away} sandbox="allow-scripts" src="${renderOrigin}/frame"></iframe>
 </body></html>`;
 	return {
 		controlOrigin,
@@ -384,9 +388,9 @@ async function stopTargetPerformance(browser: Browser, frame: Frame) {
 	return { supported, longTaskThreadTimes, longTaskWallTimes: longTasks.map(({ duration }) => duration) };
 }
 
-async function requestCapture(page: Page, captureOrigin: string) {
+async function requestCapture(page: Page, captureOrigin: string, settleMs = 0) {
 	return page.evaluate(
-		async ({ captureOrigin }) => {
+		async ({ captureOrigin, settleMs }) => {
 			const frame = document.querySelector<HTMLIFrameElement>("#frame");
 			const sourceWindow = frame?.contentWindow;
 			if (sourceWindow === null || sourceWindow === undefined) throw new Error("frame unavailable");
@@ -460,7 +464,7 @@ async function requestCapture(page: Page, captureOrigin: string) {
 						});
 					};
 					window.addEventListener("message", sourceListener);
-					sourceWindow.postMessage({ spool: "capture", id, settleMs: 0 }, "*");
+					sourceWindow.postMessage({ spool: "capture", id, settleMs }, "*");
 				});
 				if (timeoutId !== undefined) window.clearTimeout(timeoutId);
 				if (sourceListener !== undefined) window.removeEventListener("message", sourceListener);
@@ -502,7 +506,7 @@ async function requestCapture(page: Page, captureOrigin: string) {
 				cleanup();
 			}
 		},
-		{ captureOrigin },
+		{ captureOrigin, settleMs },
 	);
 }
 
@@ -863,7 +867,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	});
 });
 
-it.each(["inline", "class"] as const)(
+it.each(["inline", "class", "offscreen"] as const)(
 	"captures a WebGL canvas with %s positioning and its cleared color",
 	{
 		timeout: 30_000,
@@ -902,12 +906,19 @@ it.each(["inline", "class"] as const)(
 		// The clear happens synchronously in the boot module, but the compositor
 		// paints it asynchronously; wait out a couple of frames so the drawing
 		// buffer has actually been presented at least once before capturing it,
-		// otherwise this races the paint independently of the shim's fix.
-		await authored.evaluate(
-			() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-		);
+		// otherwise this races the paint independently of the shim's fix. Out of
+		// the viewport no frame comes: the capture's settle has to draw it.
+		if (positioning !== "offscreen") {
+			await authored.evaluate(
+				() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+			);
+		}
 
-		const exported = await requestCapture(page, captureOrigin.origin);
+		const exported = await requestCapture(
+			page,
+			captureOrigin.origin,
+			positioning === "offscreen" ? SETTLE_BUDGET_MS : 0,
+		);
 		expect(exported.resultReplies).toBe(1);
 		const exportImage = await readImage(exported.image.url, page);
 		expect(exportImage.type).toBe("image/png");
