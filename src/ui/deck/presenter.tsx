@@ -275,7 +275,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 	const cue = (key: string, children: ReactNode, className?: string) => (
 		<motion.span
 			key={key}
-			className={cn("flex items-center gap-2", className)}
+			className={cn("flex min-w-0 items-center gap-2", className)}
 			initial={{ opacity: 0, y: 4 }}
 			animate={{ opacity: 1, y: 0 }}
 			exit={{ opacity: 0, y: -4 }}
@@ -310,7 +310,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 				{...arrive("head")}
 			>
 				<span className="text-primary tabular-nums type-page">{clock}</span>
-				<div className="ml-auto flex items-center gap-5 type-value">
+				<div className="ml-auto flex min-w-0 items-center gap-5 type-value">
 					{/* what the room is doing that the presenter is not seeing: one quiet cue beside its name */}
 					<AnimatePresence mode="wait" initial={false}>
 						{room === "closed"
@@ -318,7 +318,10 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 							: screenOf?.unplugged !== undefined && screenOf.screen === null
 								? cue(
 										"unplugged",
-										<>{screenOf.unplugged} was unplugged · the room is a window</>,
+										// a narrow window keeps what it can of it, and the room's name beside it says the rest
+										<span className="truncate" title={`${screenOf.unplugged} was unplugged · the room is a window`}>
+											{screenOf.unplugged} was unplugged · the room is a window
+										</span>,
 										"text-secondary type-detail",
 									)
 								: black

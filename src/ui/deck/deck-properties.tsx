@@ -185,22 +185,37 @@ function beatsOf(slide: DeckSlide): readonly string[] {
  */
 function BeatNote({ words, label, onSave }: { words: string; label: string; onSave: (text: string) => void }) {
 	const [draft, setDraft] = useState<string | null>(null);
+	const field = useRef<HTMLTextAreaElement>(null);
 	const live = useRef({ draft, words, onSave });
 	live.current = { draft, words, onSave };
-	// a field taken away while typed in (another frame picked) still writes what it holds
-	useEffect(
-		() => () => {
-			const { draft: left, words: was, onSave: save } = live.current;
-			if (left !== null && left !== was) save(left);
-		},
-		[],
-	);
+	const write = () => {
+		const { draft: typed, words: was, onSave: save } = live.current;
+		if (typed !== null && typed !== was) save(typed);
+		// once: the blur and the click of one press are one write
+		live.current.draft = null;
+	};
+	// written however the words are left: taken away (another frame picked), the window going, or a press elsewhere that
+	// moves no focus, as an accessibility press does
+	useEffect(() => {
+		const away = (event: Event) => {
+			if (event.target instanceof Node && field.current?.contains(event.target)) return;
+			write();
+		};
+		document.addEventListener("click", away, true);
+		window.addEventListener("pagehide", write);
+		return () => {
+			document.removeEventListener("click", away, true);
+			window.removeEventListener("pagehide", write);
+			write();
+		};
+	}, []);
 	const leave = () => {
-		if (draft !== null && draft !== words) onSave(draft);
+		write();
 		setDraft(null);
 	};
 	return (
 		<TextareaBare
+			ref={field}
 			rows={1}
 			value={draft ?? words}
 			onValueChange={setDraft}
