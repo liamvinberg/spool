@@ -5,6 +5,7 @@ import { openSession, type StageSession, type TalkSlide } from "../../deck/stage
 import type { StageShown } from "../../deck/stage-wire";
 import type { DeckRead } from "../../deck/wire";
 import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
+import { accelPressed } from "../../runtime/platform-keys";
 import type { Camera } from "../api";
 import { type Box, shellRadiusOnScreen, toScreen } from "../canvas/camera";
 import { type CameraStore, useCameraFollow, type ViewChanges } from "../canvas/camera-store";
@@ -83,6 +84,7 @@ export function useDeckInside({
 	camera,
 	viewport,
 	select,
+	present,
 }: {
 	project: string;
 	/** the page in front */
@@ -95,6 +97,8 @@ export function useDeckInside({
 	viewport: () => HTMLElement | null;
 	/** hold `name` alone as the selection */
 	select: (name: string) => void;
+	/** present the talk, from the slide held or the first, as ⌘↵ and ⇧⌘↵ do on the page; false when it did not */
+	present: (first: boolean) => boolean;
 }): DeckInside {
 	const [inside, setInside] = useState<Inside | null>(null);
 	const [element, hold] = useState<HTMLDivElement | null>(null);
@@ -110,8 +114,8 @@ export function useDeckInside({
 	const trip = useRef(0);
 	const now = useRef(inside);
 	now.current = inside;
-	const hands = useRef({ read, select, viewport });
-	hands.current = { read, select, viewport };
+	const hands = useRef({ read, select, viewport, present });
+	hands.current = { read, select, viewport, present };
 	const talk = read?.size ?? { w: 1280, h: 720 };
 	const playable = read !== undefined && read.slides.length > 0;
 
@@ -297,7 +301,10 @@ export function useDeckInside({
 				active: () => now.current !== null && now.current.phase !== "out",
 				handlers: {},
 				read: (event) => {
-					const taken = host.current?.key(event) === true;
+					// ⌘↵ presents from the slide the talk is on, as the label offers, and ⇧⌘↵ from the first
+					const taken =
+						host.current?.key(event) === true ||
+						(event.key === "Enter" && accelPressed(event) && hands.current.present(event.shiftKey));
 					if (taken) event.preventDefault();
 					return taken;
 				},

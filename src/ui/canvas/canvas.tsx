@@ -1949,6 +1949,7 @@ function CanvasField({
 			setSelected([name]);
 			frameAnchor.current = name;
 		},
+		present: presentKey,
 	});
 	deckIn.current = deckInside;
 	// what the Pages rail and Properties show of a deck: its rows, its notes, New presentation
