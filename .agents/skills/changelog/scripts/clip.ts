@@ -9,6 +9,7 @@ import type { BrowserContext, Page, Worker } from "playwright-core";
 import { renderClip } from "../../../../src/daemon/record";
 import { createSettingsStore } from "../../../../src/daemon/settings";
 import type { RecordedInput } from "../../../../src/runtime/record-protocol";
+import { type Crop, openM1 } from "./m1";
 
 /**
  * One changelog clip: spool's real window on a project made for it, driven by a
@@ -66,6 +67,8 @@ export interface Take {
 	walk(steps: readonly Step[], on?: Page): Promise<void>;
 	/** film this page from now on, in front */
 	film(page: Page): Promise<void>;
+	/** wait for something slow the viewer needn't sit through (a send, a load): the take plays it in a blink */
+	hurry<T>(work: Promise<T>): Promise<T>;
 }
 
 /**
@@ -92,8 +95,10 @@ export type Step =
 	| { wait: number };
 
 const GLIDE_MS = 600;
-/** three times the 560 px the changelog shows a clip at, so a dense or zoomed screen stays sharp */
-const WEB_WIDTH = 1680;
+/** X's widest, and over three times the 560 px the changelog shows a clip at, so a dense or zoomed screen stays sharp */
+const WEB_WIDTH = 1920;
+/** how long a hurried wait lasts in the take */
+const HURRIED_S = 0.4;
 const STEP_MS = 1000 / 60;
 const START = { x: 720, y: 450 };
 
@@ -150,11 +155,17 @@ async function pointOf(page: Page, target: Target): Promise<{ x: number; y: numb
  * what the next step points at, and write down the inputs with their times. The
  * recorder then plays the same inputs into a fresh window on its own clock.
  */
+/** a live take's drawn cursor */
+type Hand = {
+	to(x: number, y: number): Promise<void>;
+	glide(moves: readonly { t: number; x: number; y: number }[]): Promise<void>;
+};
+
 export async function rehearse(
 	page: Page,
 	steps: readonly Step[],
-	/** told every point the hand moves to, for a live take's drawn cursor */
-	hand?: (x: number, y: number) => Promise<void>,
+	/** a live take's drawn cursor: put at a point, or sent on a whole glide it draws by itself, frame by frame */
+	hand?: Hand,
 	from = START,
 ): Promise<{ inputs: RecordedInput[]; duration: number; at: { x: number; y: number } }> {
 	const inputs: RecordedInput[] = [];
@@ -162,15 +173,19 @@ export async function rehearse(
 	let at = from;
 	const move = async (x: number, y: number) => {
 		await page.mouse.move(x, y);
-		await hand?.(x, y);
+		await hand?.to(x, y);
 	};
 	/**
 	 * A live take is filmed on the wall clock, so its glide keeps to its own times, dropping a move it fell behind on;
-	 * a rehearsal records the times and may take as long as it likes.
+	 * a rehearsal records the times and may take as long as it likes. The drawn cursor glides in the page on its own
+	 * frames, and the mouse follows it for what hovers: a move costs a round trip to the browser, which the m1's is
+	 * far enough away for a cursor moved by them to step.
 	 */
 	const real = async (moves: RecordedInput[]) => {
 		const began = Date.now();
 		const first = moves[0]?.t ?? 0;
+		const path = moves.flatMap((one) => (one.kind === "move" ? [{ t: one.t, x: one.x, y: one.y }] : []));
+		await hand?.glide(path);
 		for (const [i, one] of moves.entries()) {
 			if (one.kind !== "move") continue;
 			if (hand !== undefined) {
@@ -179,8 +194,10 @@ export async function rehearse(
 				const next = moves[i + 1];
 				if (next !== undefined && next.t - first < Date.now() - began) continue;
 			}
-			await move(one.x, one.y);
+			await page.mouse.move(one.x, one.y);
 		}
+		const last = path.at(-1);
+		if (hand !== undefined && last !== undefined) await hand.to(last.x, last.y);
 	};
 	/** a live take's pause for what a rehearsal only counts */
 	const beat = async (ms: number) => {
@@ -365,6 +382,7 @@ async function main() {
 			out: { type: "string" },
 			keep: { type: "boolean", default: false },
 			rehearse: { type: "boolean", default: false },
+			headless: { type: "boolean", default: false },
 		},
 	});
 	const [script] = positionals;
@@ -463,32 +481,64 @@ const CURSOR = `(() => {
 		clearTimeout(idle);
 		idle = setTimeout(() => { element.style.transition = "opacity 300ms"; element.style.opacity = "0"; }, 1200);
 	};
+	// a glide drawn on the page's own frames, on its times from now
+	let gliding = 0;
+	window.__clipGlide = (path) => {
+		if (path.length === 0) return;
+		const run = ++gliding;
+		const began = performance.now() - path[0].t;
+		const frame = (now) => {
+			if (run !== gliding) return;
+			const t = now - began;
+			let i = 0;
+			while (i < path.length - 1 && path[i + 1].t <= t) i++;
+			const a = path[i], b = path[Math.min(i + 1, path.length - 1)];
+			const k = b.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 1;
+			window.__clipHand(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k);
+			if (t < path[path.length - 1].t) requestAnimationFrame(frame);
+		};
+		requestAnimationFrame(frame);
+	};
 })()`;
 
-/** A live clip: one lane, walked once while the page is filmed, the frames laid on a 60 fps clock after. */
+/**
+ * A live clip: one lane, walked once on the wall clock while the page is filmed. The take is filmed on the m1, a real
+ * Chrome window on a real screen at 60 fps (m1.ts); --headless films it here instead, with Chrome's screencast, whose
+ * pictures come as fast as a GPU-less machine draws them, so a heavy page plays choppy. A rehearsal walks it here.
+ */
 async function live(
 	clip: Clip,
 	act: (take: Take) => Promise<void>,
 	viewport: { w: number; h: number },
 	out: string,
-	options: { keep: boolean; rehearse: boolean },
+	options: { keep: boolean; rehearse: boolean; headless: boolean },
 ): Promise<void> {
 	const { chromium } = await import("playwright-core");
+	const onM1 = !options.headless && !options.rehearse;
+	const work = mkdtempSync(join(tmpdir(), "spool-changelog-live-"));
 	const shots: { at: number; data: string }[] = [];
+	const hurried: { from: number; to: number }[] = [];
+	let filmed: { video: string; startedAt: number; crop: Crop | null } | null = null;
 	await withLane(clip, options.keep, async (url, lane) => {
 		const size = { viewport: { width: viewport.w, height: viewport.h }, deviceScaleFactor: 2 };
 		const unpacked = join(CHECKOUT, "extension/dist");
+		const m1 = onM1
+			? await openM1({ port: lane.port, extension: clip.extension === true ? unpacked : undefined, viewport })
+			: null;
 		// a persistent context owns its browser; a plain one leaves it running unless closed too
-		const browser = clip.extension === true ? null : await chromium.launch({ channel: "chromium-headless-shell" });
+		const browser =
+			m1 !== null || clip.extension === true ? null : await chromium.launch({ channel: "chromium-headless-shell" });
 		const context =
-			browser === null
-				? await chromium.launchPersistentContext(join(lane.dir, "profile"), {
-						channel: "chromium",
-						headless: true,
-						args: [`--disable-extensions-except=${unpacked}`, `--load-extension=${unpacked}`],
-						...size,
-					})
-				: await browser.newContext(size);
+			m1 !== null
+				? m1.context
+				: browser === null
+					? await chromium.launchPersistentContext(join(lane.dir, "profile"), {
+							channel: "chromium",
+							headless: true,
+							args: [`--disable-extensions-except=${unpacked}`, `--load-extension=${unpacked}`],
+							...size,
+						})
+					: await browser.newContext(size);
 		try {
 			await context.addInitScript(CURSOR);
 			let extension: Worker | null = null;
@@ -507,11 +557,12 @@ async function live(
 			await frameDrawn(page);
 			await page.waitForTimeout(2000);
 			await page.screenshot({ path: out.replace(/\.mp4$/, ".start.png") });
-			let filmed = null as { stop: () => Promise<void> } | null;
+			let screencast = null as { stop: () => Promise<void> } | null;
 			let filming: Page | null = null;
 			const film = async (on: Page) => {
 				filming = on;
-				await filmed?.stop();
+				if (m1 !== null) return m1.film(on);
+				await screencast?.stop();
 				await on.bringToFront();
 				if (options.rehearse) return;
 				const cdp = await context.newCDPSession(on);
@@ -526,23 +577,38 @@ async function live(
 					maxHeight: viewport.h * 2,
 					everyNthFrame: 1,
 				});
-				filmed = { stop: () => cdp.send("Page.stopScreencast").catch(() => {}) as Promise<void> };
+				screencast = { stop: () => cdp.send("Page.stopScreencast").catch(() => {}) as Promise<void> };
 			};
 			const hands = new Map<Page, { x: number; y: number }>();
 			const walk = async (steps: readonly Step[], on: Page = page) => {
 				const walked = await rehearse(
 					on,
 					steps,
-					(x, y) =>
-						on.evaluate(
-							(at) => (window as { __clipHand?: (x: number, y: number) => void }).__clipHand?.(at.x, at.y),
-							{ x, y },
-						),
+					{
+						to: (x, y) =>
+							on.evaluate(
+								(at) => (window as { __clipHand?: (x: number, y: number) => void }).__clipHand?.(at.x, at.y),
+								{ x, y },
+							),
+						glide: (moves) =>
+							on.evaluate(
+								(path) => (window as { __clipGlide?: (path: unknown) => void }).__clipGlide?.(path),
+								moves,
+							),
+					},
 					hands.get(on) ?? START,
 				);
 				hands.set(on, walked.at);
 			};
-			const take: Take = { page, context, url, port: lane.port, root: lane.root, extension, walk, film };
+			const hurry = async <T>(slow: Promise<T>): Promise<T> => {
+				const from = Date.now();
+				try {
+					return await slow;
+				} finally {
+					hurried.push({ from, to: Date.now() });
+				}
+			};
+			const take: Take = { page, context, url, port: lane.port, root: lane.root, extension, walk, film, hurry };
 			await clip.prepare?.(take);
 			if (filming === null) await film(page);
 			try {
@@ -551,48 +617,79 @@ async function live(
 				await (context.pages().at(-1) ?? page).screenshot({ path: out.replace(/\.mp4$/, ".fail.png") });
 				throw error;
 			}
-			await filmed?.stop();
-			await (context.pages().at(-1) ?? page).screenshot({ path: out.replace(/\.mp4$/, ".end.png") });
+			if (m1 !== null) filmed = await m1.stop(work);
+			await screencast?.stop();
+			await (filming ?? page).screenshot({ path: out.replace(/\.mp4$/, ".end.png") });
 		} finally {
-			await context.close();
+			if (m1 !== null) await m1.close();
+			else await context.close();
 			await browser?.close();
 		}
 	});
-	if (options.rehearse) return;
-	// each still holds until the next, the last for a beat
-	const dir = mkdtempSync(join(tmpdir(), "spool-changelog-live-"));
-	const lines = ["ffconcat version 1.0"];
-	shots.sort((a, b) => a.at - b.at);
-	shots.forEach((shot, i) => {
-		writeFileSync(join(dir, `${i}.jpg`), Buffer.from(shot.data, "base64"));
-		const next = shots[i + 1]?.at ?? shot.at + 0.8;
-		lines.push(`file ${i}.jpg`, `duration ${(next - shot.at).toFixed(4)}`);
-	});
-	lines.push(`file ${shots.length - 1}.jpg`);
-	writeFileSync(join(dir, "list.ffconcat"), `${lines.join("\n")}\n`);
+	try {
+		if (options.rehearse) return;
+		if (filmed === null) {
+			// each still holds until the next, the last for a beat
+			const lines = ["ffconcat version 1.0"];
+			shots.sort((a, b) => a.at - b.at);
+			shots.forEach((shot, i) => {
+				writeFileSync(join(work, `${i}.jpg`), Buffer.from(shot.data, "base64"));
+				const next = shots[i + 1]?.at ?? shot.at + 0.8;
+				lines.push(`file ${i}.jpg`, `duration ${(next - shot.at).toFixed(4)}`);
+			});
+			lines.push(`file ${shots.length - 1}.jpg`);
+			writeFileSync(join(work, "list.ffconcat"), `${lines.join("\n")}\n`);
+			const video = join(work, "screencast.mp4");
+			const raw = spawnSync("ffmpeg", [
+				...["-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", join(work, "list.ffconcat"), "-an"],
+				...["-vf", "fps=60", "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-pix_fmt", "yuv420p", video],
+			]);
+			if (raw.status !== 0) throw new Error(`ffmpeg could not join the screencast: ${raw.stderr}`);
+			filmed = { video, startedAt: (shots[0]?.at ?? 0) * 1000, crop: null };
+		}
+		pace(filmed, hurried, out);
+		process.stdout.write(`${out} and ${out.replace(/\.mp4$/, ".jpg")}, filmed ${onM1 ? "on the m1" : "here"}\n`);
+	} finally {
+		rmSync(work, { recursive: true, force: true });
+	}
+}
+
+/**
+ * The web copy of a live take: hurried waits squeezed to a blink, the page cut out of the window, at 60 fps and
+ * X's width, sharp enough that the window's small text survives, starting to play before it has all arrived; and its
+ * last picture for the poster.
+ */
+function pace(
+	filmed: { video: string; startedAt: number; crop: Crop | null },
+	hurried: readonly { from: number; to: number }[],
+	out: string,
+): void {
+	// each hurried stretch of the take, in seconds from its first picture, runs HURRIED_S long; the rest keeps its pace
+	const squeeze = hurried
+		.map(({ from, to }) => ({ a: Math.max(0, (from - filmed.startedAt) / 1000), b: (to - filmed.startedAt) / 1000 }))
+		.filter(({ a, b }) => b - a > HURRIED_S)
+		.map(
+			({ a, b }) =>
+				`(clip(T,${a.toFixed(3)},${b.toFixed(3)})-${a.toFixed(3)})*${(1 - HURRIED_S / (b - a)).toFixed(4)}`,
+		);
+	const { crop } = filmed;
+	const filters = [
+		"setpts=PTS-STARTPTS",
+		...(squeeze.length > 0 ? [`setpts='(T-${squeeze.join("-")})/TB'`] : []),
+		...(crop === null ? [] : [`crop=${crop.w}:${crop.h}:${crop.x}:${crop.y}`]),
+		`scale=${WEB_WIDTH}:-2:flags=lanczos`,
+		"fps=60",
+		"format=yuv420p",
+	];
 	const web = spawnSync("ffmpeg", [
-		...["-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", join(dir, "list.ffconcat"), "-an"],
-		...["-vf", `fps=60,scale=${WEB_WIDTH}:-2:flags=lanczos`],
-		...["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out],
+		...["-loglevel", "error", "-y", "-i", filmed.video, "-an", "-vf", filters.join(",")],
+		...["-c:v", "libx264", "-preset", "slow", "-crf", "16", "-profile:v", "high", "-movflags", "+faststart", out],
 	]);
 	if (web.status !== 0) throw new Error(`ffmpeg could not make the web copy: ${web.stderr}`);
-	rmSync(dir, { recursive: true, force: true });
-	const poster = out.replace(/\.mp4$/, ".jpg");
 	spawnSync("ffmpeg", [
-		"-loglevel",
-		"error",
-		"-y",
-		"-sseof",
-		"-0.5",
-		"-i",
-		out,
-		"-frames:v",
-		"1",
-		"-q:v",
-		"2",
-		poster,
+		...["-loglevel", "error", "-y", "-sseof", "-0.5", "-i", out],
+		...["-frames:v", "1", "-q:v", "2", out.replace(/\.mp4$/, ".jpg")],
 	]);
-	process.stdout.write(`${out} and ${poster}, ${shots.length} pictures\n`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) await main();
