@@ -283,7 +283,11 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			style={shown ? undefined : { opacity: 0, pointerEvents: "none" }}
 		>
 			{/* the head: the clock, the room's screen, the way out */}
-			<motion.div className="absolute inset-x-10 top-0 flex h-[64px] items-center gap-4" {...arrive(0.1)}>
+			<motion.div
+				data-deck-presenter-head=""
+				className="absolute inset-x-10 top-0 flex h-[64px] items-center gap-4"
+				{...arrive(0.1)}
+			>
 				<span className="text-primary tabular-nums type-page">{clock}</span>
 				<div className="ml-auto flex items-center gap-5 type-value">
 					{/* what the room is doing that the presenter is not seeing: one quiet cue beside its name */}
