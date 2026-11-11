@@ -166,20 +166,37 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	await page.keyboard.press("Control+z");
 	await expect.poll(slides).toEqual(["x", "live", "number", "close"]);
 
-	// a slide's notes in Properties: one field a beat, named by the beat, written when it is left, one undo
-	await page.getByRole("button", { name: "number frame" }).click();
-	await page.getByRole("tab", { name: "Properties" }).click();
+	// a slide's notes in Properties: one field a beat, named by the beat, written when it is left by any route, one undo
+	const notesOf = async () => {
+		await page.getByRole("button", { name: "number frame" }).click();
+		await page.getByRole("tab", { name: "Properties" }).click();
+		const meaning = page.getByLabel("Notes for number, meaning");
+		await expect.poll(() => meaning.inputValue()).toBe("Then what it means.");
+		return meaning;
+	};
+	await (await notesOf()).fill("Let it sit.");
 	await expect.poll(() => page.locator("[data-deck-size]").textContent()).toContain("all slides");
-	const meaning = page.getByLabel("Notes for number, meaning");
-	await expect.poll(() => meaning.inputValue()).toBe("Then what it means.");
-	await meaning.fill("Let it sit.");
-	const wrote = page.waitForResponse((response) => response.url().endsWith("/deck"));
 	await page.getByLabel("Notes for number, number").focus();
-	await wrote;
 	await expect.poll(() => read("number", "notes.md")).toBe("Say the number.\n\nLet it sit.\n");
 	await page.getByLabel("Notes for number, number").blur();
 	await page.keyboard.press("Control+z");
 	await expect.poll(() => read("number", "notes.md")).toBe("Say the number.\n\nThen what it means.\n");
+	// a press out on the canvas, which also lets go of the slide
+	await (await notesOf()).fill("Let it rest.");
+	const field = await pagePointOf(page, { x: 2000, y: -600 });
+	await page.mouse.click(field.x, field.y);
+	await expect.poll(() => read("number", "notes.md")).toBe("Say the number.\n\nLet it rest.\n");
+	await page.keyboard.press("Control+z");
+	await expect.poll(() => read("number", "notes.md")).toBe("Say the number.\n\nThen what it means.\n");
+	// a press that moves no focus, as an accessibility press does
+	await (await notesOf()).fill("Let it hang.");
+	await page.locator("[data-deck-notes]").evaluate((notes) => (notes as HTMLElement).click());
+	await expect.poll(() => read("number", "notes.md")).toBe("Say the number.\n\nLet it hang.\n");
+	await page.getByLabel("Notes for number, meaning").blur();
+	await page.keyboard.press("Control+z");
+	await expect.poll(() => read("number", "notes.md")).toBe("Say the number.\n\nThen what it means.\n");
+	// and going into a slide, as below
+	await (await notesOf()).fill("Let it land.");
 
 	// into a slide: a double-click flies in and the talk plays there, on the slide's last beat
 	const camera = () =>
@@ -193,6 +210,7 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	const into = await pagePointOf(page, { x: 1440 + 640, y: 360 });
 	await page.mouse.dblclick(into.x, into.y);
 	await page.locator('[data-deck-stage="presentation/live"][data-deck-stage-shown]').waitFor();
+	await expect.poll(() => read("number", "notes.md")).toBe("Say the number.\n\nLet it land.\n");
 	await page.locator('[data-live-chip="presentation/live"]').waitFor();
 	// Space is the talk's next beat, not the Hand: on from live to number, the camera and selection with it
 	await page.keyboard.press("Space");

@@ -9,7 +9,7 @@ import { testBrowser } from "../../test-browser";
 import { COVER_PNG, makeApp, makeProject, makeTempDir, writeDesignFile } from "../../test-helpers";
 import { writeCover } from "../thumbs";
 import { HARD_TALK, writeHardTalk } from "./stage-browser.test-helpers";
-import { TALK_HINT } from "./talk-file";
+import { TALK_HINT, TALK_HINT_CLICK } from "./talk-file";
 
 /**
  * A deck's talk exported as one HTML file (spool#275), opened the way whoever it was sent to opens it: from disk, with
@@ -123,6 +123,12 @@ it("plays the talk from disk with the network off: every key, beats, carry, a li
 		asked.push(url);
 		return route.abort();
 	});
+	// opened as Safari opens a file, with the keys in its address bar until the first click into the page
+	await context.addInitScript(() => {
+		let keys = false;
+		Document.prototype.hasFocus = () => keys;
+		addEventListener("pointerdown", () => (keys = true));
+	});
 	const page = await context.newPage();
 	await page.goto(pathToFileURL(file).href);
 
@@ -137,9 +143,13 @@ it("plays the talk from disk with the network off: every key, beats, carry, a li
 		await expect.poll(onScreen, { timeout: 15_000 }).toBe(now);
 	};
 
-	// the first slide's first beat, with the quiet line under it until the first key
+	// the first slide's first beat, with the quiet line under it until the first key; the click that hands the window
+	// the keys moves no slide
 	await expect.poll(onScreen, { timeout: 30_000 }).toBe("talk/title: The hard talk");
-	expect(await page.locator(".spool-talk-hint").textContent()).toBe(TALK_HINT);
+	expect(await page.locator(".spool-talk-hint").textContent()).toBe(TALK_HINT_CLICK);
+	await page.mouse.click(640, 400);
+	await expect.poll(() => page.locator(".spool-talk-hint").textContent()).toBe(TALK_HINT);
+	expect(await onScreen()).toBe("talk/title: The hard talk");
 	expect(await page.locator(".spool-talk-still").count()).toBe(1);
 	expect(await page.locator(".spool-talk-still").isVisible()).toBe(false);
 

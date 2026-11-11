@@ -86,6 +86,8 @@ export async function sendDeckChange(project: string, change: DeckChange): Promi
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(change),
+			// notes written as the window goes still land
+			keepalive: true,
 		});
 		if (!response.ok) return { kind: "refused", status: response.status, message: await response.text() };
 		const answer = (await response.json()) as DeckChangeAnswer;

@@ -179,28 +179,44 @@ function beatsOf(slide: DeckSlide): readonly string[] {
 	return slide.beats.length > 0 ? slide.beats : [pageName(slide.name)];
 }
 
+/** A note's typed words written once: the blur and the click of one press are one write. */
+function writeNote(live: { draft: string | null; words: string; onSave: (text: string) => void }): void {
+	if (live.draft !== null && live.draft !== live.words) live.onSave(live.draft);
+	live.draft = null;
+}
+
 /**
  * One beat's words. What is typed is the field's own until it is left, which writes it once, as one undo entry; while
  * nobody is typing the field follows the file, so an agent's words arrive in it.
  */
 function BeatNote({ words, label, onSave }: { words: string; label: string; onSave: (text: string) => void }) {
 	const [draft, setDraft] = useState<string | null>(null);
+	const field = useRef<HTMLTextAreaElement>(null);
 	const live = useRef({ draft, words, onSave });
 	live.current = { draft, words, onSave };
-	// a field taken away while typed in (another frame picked) still writes what it holds
-	useEffect(
-		() => () => {
-			const { draft: left, words: was, onSave: save } = live.current;
-			if (left !== null && left !== was) save(left);
-		},
-		[],
-	);
+	// written however the words are left: taken away (another frame picked), the window going, or a press elsewhere that
+	// moves no focus, as an accessibility press does
+	useEffect(() => {
+		const write = () => writeNote(live.current);
+		const away = (event: Event) => {
+			if (event.target instanceof Node && field.current?.contains(event.target)) return;
+			write();
+		};
+		document.addEventListener("click", away, true);
+		window.addEventListener("pagehide", write);
+		return () => {
+			document.removeEventListener("click", away, true);
+			window.removeEventListener("pagehide", write);
+			write();
+		};
+	}, []);
 	const leave = () => {
-		if (draft !== null && draft !== words) onSave(draft);
+		writeNote(live.current);
 		setDraft(null);
 	};
 	return (
 		<TextareaBare
+			ref={field}
 			rows={1}
 			value={draft ?? words}
 			onValueChange={setDraft}
