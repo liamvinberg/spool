@@ -31,15 +31,20 @@ export function wear(fonts: readonly FontFace[]): void {
 
 /**
  * Warm everything a slide rendered into `box` shows on its first frame: its `<img>`s decoded where they stand, the
- * images its stylesheet and inline styles draw, and the fonts its stylesheet declares or names. Never rejects: what
- * would not load, or not in time, is named in `failed`.
+ * images its stylesheet and inline styles draw, the pictures it was seen to reach for as it showed (`learned`), and
+ * the fonts its stylesheet declares or names. Never rejects: what would not load, or not in time, is named in `failed`.
  */
-export async function warmSlide(box: Element, sheet: CSSStyleSheet | null, text: string): Promise<Warmed> {
+export async function warmSlide(
+	box: Element,
+	sheet: CSSStyleSheet | null,
+	text: string,
+	learned: readonly string[] = [],
+): Promise<Warmed> {
 	const rules = sheet === null ? [] : flatRules(sheet);
 	// a family is named in the slide's stylesheet, or in a style the slide writes on an element itself
 	const inline = [...box.querySelectorAll<HTMLElement>("[style]")].map((element) => element.style.cssText);
 	const { own, document: shared } = fontsOf(rules, [text, ...inline].join("\n"));
-	const urls = new Set<string>([...cssImagesFor(rules, box), ...inlineImages(box)]);
+	const urls = new Set<string>([...cssImagesFor(rules, box), ...inlineImages(box), ...learned]);
 	const images = [...urls].map((url) => {
 		const image = new Image();
 		image.src = url;
@@ -86,6 +91,17 @@ function decoded(img: HTMLImageElement): Promise<boolean> {
 			},
 		);
 	});
+}
+
+/**
+ * The pictures a slide on screen is still waiting for: `<img>`s its effects gave an address as it mounted, which
+ * nothing rendered out of sight could have warmed.
+ */
+export function stillComing(box: Element): string[] {
+	return [...box.querySelectorAll("img")]
+		.filter((img) => (img.getAttribute("src") || img.getAttribute("srcset")) && !img.complete)
+		.map((img) => img.currentSrc || img.src)
+		.filter((url) => url !== "");
 }
 
 /** Every rule of a sheet, the ones inside layers, media and supports blocks included. */

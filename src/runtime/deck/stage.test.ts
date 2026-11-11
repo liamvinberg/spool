@@ -162,6 +162,48 @@ it("holds the room's picture off a slide whose stylesheet or picture will not co
 	await vi.waitFor(() => expect(statusOf(on, "talk/b")?.status).toBe("ready"));
 });
 
+it("waits for a picture a slide's effect reaches for before it goes on, and readies it with the slide from then on", async () => {
+	const coming = new Set(["/late.png"]);
+	const arrived: (() => void)[] = [];
+	vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockImplementation(function (this: HTMLImageElement) {
+		return !coming.has(new URL(this.src, location.href).pathname);
+	});
+	vi.spyOn(HTMLImageElement.prototype, "decode").mockImplementation(function (this: HTMLImageElement) {
+		const path = new URL(this.src, location.href).pathname;
+		return coming.has(path) ? new Promise<void>((resolve) => arrived.push(resolve)) : Promise.resolve();
+	});
+	function Late() {
+		const [src, setSrc] = useState<string | undefined>(undefined);
+		useEffect(() => setSrc("/late.png"), []);
+		return createElement("img", { alt: "", src });
+	}
+	const on = await stage(
+		[
+			{ frame: "talk/a", screen: plain("a") },
+			{ frame: "talk/b", screen: Late },
+		],
+		{ mode: "own", room: true },
+	);
+	await vi.waitFor(() => expect(statusOf(on, "talk/b")?.status).toBe("ready"));
+
+	on.send({ spool: "stage-command", command: { kind: "next" } });
+	await vi.waitFor(() => expect(arrived.length).toBeGreaterThan(0));
+	expect(on.onScreen()).toBe("talk/a");
+	expect(on.shown()).toHaveLength(1);
+
+	coming.clear();
+	for (const resolve of arrived) resolve();
+	await vi.waitFor(() => expect(on.shown().at(-1)).toMatchObject({ at: { slide: 1 }, ready: false, held: false }));
+	expect(on.onScreen()).toBe("talk/b");
+
+	// readied with its picture now: back and on again is a step to a ready slide
+	on.send({ spool: "stage-command", command: { kind: "back" } });
+	await vi.waitFor(() => expect(on.shown().at(-1)?.at.slide).toBe(0));
+	on.send({ spool: "stage-command", command: { kind: "next" } });
+	await vi.waitFor(() => expect(on.shown().at(-1)).toMatchObject({ at: { slide: 1 } }));
+	expect(on.shown().at(-1)?.ready).toBe(true);
+});
+
 it("stops a slide that throws from a handler where it stands, its last picture kept, and the talk moves on", async () => {
 	function Ticking() {
 		const [count, setCount] = useState(0);

@@ -35,7 +35,7 @@ import {
 } from "../../deck/stage-wire";
 import { SlideScope, setSlideBeat } from "../slide-beats";
 import { type KeptPicture, keepPicture, keepWebglPictures } from "./stage-keep";
-import { type Warmed, warmSlide, wear } from "./stage-warm";
+import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
@@ -129,6 +129,17 @@ export function stageRefusesWalk(): boolean {
 }
 let walkRefused = false;
 
+/** After the tasks already queued: the render React scheduled from an effect among them. */
+const nextTask = () =>
+	new Promise<void>((resolve) => {
+		const channel = new MessageChannel();
+		channel.port1.onmessage = () => {
+			channel.port1.close();
+			resolve();
+		};
+		channel.port2.postMessage(null);
+	});
+
 const describe = (error: unknown): string =>
 	(error instanceof Error ? error.stack || error.message : typeof error === "string" ? error : String(error)).slice(
 		0,
@@ -144,6 +155,8 @@ interface SlideHeld {
 	broken?: { why: string; when: "compile" | "load" | "mount" | "later"; kept?: "picture" | "picture-without-webgl" };
 	/** what of its files would not come (its stylesheet, a face, a picture), tried again until they do */
 	unloaded?: string | undefined;
+	/** the pictures its effects reached for as it showed, readied with it from then on */
+	learned: string[];
 	/** its fonts and pictures, held for the whole talk so the browser keeps them */
 	warmed?: Warmed;
 }
@@ -190,6 +203,7 @@ export function bootStage(runtime: StageRuntime): void {
 		config: slide,
 		module: "waiting",
 		style: "waiting",
+		learned: [],
 	}));
 	const startAt = Math.max(
 		0,
@@ -355,7 +369,7 @@ export function bootStage(runtime: StageRuntime): void {
 		if (!styled(slide)) return;
 		copy.warming = true;
 		const style = runtime.styleOf(slide.config.frame);
-		void warmSlide(copy.box, style?.sheet ?? null, style?.textContent ?? "").then((warmed) => {
+		void warmSlide(copy.box, style?.sheet ?? null, style?.textContent ?? "", slide.learned).then((warmed) => {
 			copy.warming = false;
 			// let go meanwhile: what it was waiting for says nothing of the slide
 			if (copies.get(copy.key) !== copy) return;
@@ -546,33 +560,59 @@ export function bootStage(runtime: StageRuntime): void {
 	 */
 	let cut = false;
 
+	/**
+	 * The copy goes on screen, and its effects run as it mounts. A picture they reach for that nothing rendered out of
+	 * sight could have readied (an address an effect hands an `<img>`) is waited for before the frame is shown: the copy
+	 * goes off again, the room keeps what it had, and the copy goes on once the picture is in, as it will each time after.
+	 */
 	function swap(copy: Copy, at: At): void {
 		const from = shown;
 		const instant = cut;
 		cut = false;
-		const update = () => {
+		const slide = slides[copy.index];
+		const before = runtime.state.read();
+		const update = async () => {
 			setSlideBeat(copy.key, at.beat);
 			revealed = { key: copy.key, from };
 			show(copy.key);
 			// a talk under way, or a cut to a slide that was already showing elsewhere: it stands as it was seen, not playing in
 			if (((from === null && underWay) || instant) && copy.box !== undefined) atRest(copy.box);
+			// what its effects asked React to draw once they ran, drawn: then every picture it shows has its address
+			await nextTask();
+			const coming = copy.box === undefined || shown !== copy.key ? [] : stillComing(copy.box);
+			if (slide !== undefined && coming.length > 0) {
+				for (const url of coming) if (!slide.learned.includes(url)) slide.learned.push(url);
+				revealed = undefined;
+				show(from !== null && copies.has(from) ? from : null);
+				unwrite(before);
+				if (pending !== undefined) pending.ready = false;
+				// readied again, the pictures it reached for with it
+				copy.warm = false;
+				return;
+			}
 			requestAnimationFrame(() => {
 				if (revealed?.key === copy.key) revealed = undefined;
 			});
 			done(at, false, copy, from === null);
 		};
-		if (!motion || instant || from === null || typeof document.startViewTransition !== "function") {
-			update();
-			settle();
-			return;
-		}
 		swapping = true;
-		const transition = document.startViewTransition(update);
 		const after = () => {
 			swapping = false;
 			settle();
 		};
+		if (!motion || instant || from === null || typeof document.startViewTransition !== "function") {
+			void update().then(after, after);
+			return;
+		}
+		const transition = document.startViewTransition(update);
 		transition.updateCallbackDone.then(after, after);
+	}
+
+	/** What a slide wrote to `ui.state` as it mounted, undone once it goes off before anyone saw it. */
+	function unwrite(before: StageState): void {
+		if (JSON.stringify(runtime.state.read()) === JSON.stringify(before)) return;
+		seed(before);
+		if (mode === "own") take(stepSession(session, { kind: "state", state: before }, talk));
 	}
 
 	/** A slide that threw as it was swapped in never stays: the copy it replaced comes back, as if nothing moved. */
