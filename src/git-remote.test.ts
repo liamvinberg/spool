@@ -40,6 +40,11 @@ it("names a team project after its repo at a checkout's top, never after a workt
 		name: "learn-harness",
 		from: "checkout",
 	});
+	// nothing spool.page would take is left of it: kept, for spool.page to refuse, rather than the worktree's folder
+	expect(at("/w/588-some-task", { top: "/w/588-some-task", repo: "github.com/devosurf/x" })).toEqual({
+		name: "x",
+		from: "repo",
+	});
 	expect(at("/m/Site_A", { top: "/m/Site_A", repo: undefined })).toEqual({ name: "Site_A", from: "folder" });
 	expect(at("/m/sandbox/lab", { top: "/m/sandbox", repo: "github.com/devosurf/sandbox" })).toEqual({
 		name: "lab",

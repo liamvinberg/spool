@@ -8,7 +8,7 @@ import { git, repo } from "./daemon/team-sync-editors";
 import { SpoolError } from "./errors";
 import { initProject, initTeamProject, joinOrStart } from "./init";
 import { readRegistry } from "./registry";
-import { fakeTeam, TEAM_ORIGIN } from "./team-sync-test-harness";
+import { fakeTeam, TEAM_ORIGIN, teamWriter } from "./team-sync-test-harness";
 import { FORMAT_VERSION } from "./templates";
 import { makeTempDir, markProject } from "./test-helpers";
 
@@ -249,14 +249,20 @@ describe("initTeamProject against the team's projects (spool#295)", () => {
 		expect(made).toMatchObject({ started: "made", uploaded: true, named: { name: "learn-harness", from: "repo" } });
 		expect(made.link.url).toBe(`${TEAM_ORIGIN}/devosurf/learn-harness`);
 		expect(cloud.repo("learn-harness")).toBe("github.com/liamvinberg/learn-harness");
+		// the team's canvas moves on from the scaffold, so a join that scaffolded would show
+		const ana = await teamWriter(cloud, cloud.machine("ana"), "learn-harness");
+		await ana.save("frames/home/frame.tsx", "export default () => <h1>Home</h1>;\n");
+		await ana.save("AGENTS.md", "The team's own rules.\n");
+		ana.close();
 		const saves = cloud.saves("learn-harness").length;
 
 		const second = worktree(main, "601-another-task");
 		const joined = await init(second);
 		expect(joined).toMatchObject({ started: "joined", why: "repo", link: { project: "learn-harness" } });
-		expect(readFileSync(join(second, "design/canvas.json"), "utf8")).toBe(
-			readFileSync(join(made.root, "design/canvas.json"), "utf8"),
+		expect(readFileSync(join(second, "design/frames/home/frame.tsx"), "utf8")).toBe(
+			"export default () => <h1>Home</h1>;\n",
 		);
+		expect(readFileSync(join(second, "design/AGENTS.md"), "utf8")).toBe("The team's own rules.\n");
 		expect(JSON.parse(readFileSync(join(second, "spool.json"), "utf8"))).toEqual({ project: made.link.url });
 		expect(cloud.saves("learn-harness")).toHaveLength(saves);
 		expect(cloud.has("588-some-task") || cloud.has("601-another-task")).toBe(false);

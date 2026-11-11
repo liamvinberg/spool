@@ -13,7 +13,7 @@ import { registerAndOpenProject } from "./daemon/session";
 import { forgetStartedHere, markStartedHere } from "./daemon/started-here";
 import { type OpenSyncSocket, syncLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
-import { checkoutOf, type ProjectNameSource, teamProjectNameAt } from "./git-remote";
+import { checkoutOf, type ProjectName, teamProjectNameAt } from "./git-remote";
 import { fetchLocalCopy } from "./open";
 import { expandHome, realDir } from "./paths";
 import { readRegistry } from "./registry";
@@ -69,7 +69,7 @@ export type TeamInitResult = {
 	/** The team, by its name. */
 	team: string;
 	/** The name init wanted, and where it came from. */
-	named: { name: string; from: ProjectNameSource };
+	named: ProjectName;
 	/** The file the AGENTS.md line went into, in a checkout. */
 	agents?: string;
 } & (
@@ -118,7 +118,7 @@ export async function initTeamProject(
 		}
 		let made: { link: ProjectLink; agents?: string };
 		try {
-			made = await makeTeamProject(root, spoolDir, teams, team, named.name, "init");
+			made = await makeTeamProject(root, spoolDir, teams, team, named.name);
 		} catch (error) {
 			if (error instanceof ProjectNameTaken && tries === 0) continue;
 			throw error;
@@ -149,7 +149,7 @@ export type TeamProjectChoice =
  */
 export function joinOrStart(
 	projects: readonly CloudTeamProject[],
-	named: { name: string; from: ProjectNameSource },
+	named: ProjectName,
 	repo: string | undefined,
 ): TeamProjectChoice {
 	const wanted = named.name.toLowerCase();
@@ -204,10 +204,11 @@ async function agentsLine(root: string): Promise<string | undefined> {
 /** A name the team's project holds that init won't join: `--name` is the way to another. */
 function takenRefusal(team: string, project: CloudTeamProject): ProjectNameTaken {
 	const whose = project.repo === null ? "" : ` for ${project.repo}`;
-	return new ProjectNameTaken(
-		`${team} already has a project called "${project.name}"${whose}; pass \`--name <name>\` to start this one under another name`,
-	);
+	return new ProjectNameTaken(`${team} already has a project called "${project.name}"${whose}; ${ANOTHER_NAME}`);
 }
+
+/** How init is told to start under another name than the one taken. */
+const ANOTHER_NAME = "pass `--name <name>` to start this one under another name";
 
 /**
  * The team's project made at spool.page under `name`, then scaffolded, linked and registered here. Nothing is
@@ -219,7 +220,6 @@ async function makeTeamProject(
 	teams: CloudTeamsClient,
 	team: CloudTeam,
 	name: string,
-	asked: RefusalFor,
 ): Promise<{ root: string; link: ProjectLink; agents?: string }> {
 	// where the code lives, as the team will see it: information, never a permission
 	const repo = (await checkoutOf(root))?.repo;
@@ -227,7 +227,7 @@ async function makeTeamProject(
 	try {
 		created = await teams.createProject(team.address, name, repo);
 	} catch (error) {
-		throw teamProjectRefusal(error, team.name, name, asked);
+		throw teamProjectRefusal(error, team.name, name, "init");
 	}
 	const link = parseProjectLink(created.url);
 	if (link === undefined) throw new SpoolError("spool.page returned an invalid team project");
@@ -333,15 +333,12 @@ export type RefusalFor = "init" | "move";
 export function teamProjectRefusal(error: unknown, team: string, name: string, asked: RefusalFor): unknown {
 	// the team's, not the project's: said as spool.page says it
 	if (!(error instanceof CloudTeamRefused) || error.code === "unpaid") return error;
-	const other =
-		asked === "init"
-			? "pass `--name <name>` to start this one under another name"
-			: "rename that one in the team first";
+	const other = asked === "init" ? ANOTHER_NAME : "rename that one in the team first";
 	if (error.code === "project_taken")
 		return new ProjectNameTaken(`${team} already has a project called "${name}"; ${other}`);
 	if (error.code === "name_in_trash")
 		return new ProjectNameTaken(
-			`a project in ${team}'s trash holds the name "${name}"; restore or delete it there${asked === "init" ? ", or pass `--name <name>` to start this one under another name" : ""}`,
+			`a project in ${team}'s trash holds the name "${name}"; restore or delete it there${asked === "init" ? `, or ${ANOTHER_NAME}` : ""}`,
 		);
 	if (error.code === "invalid_project_name" || error.code === "project_name_reserved")
 		return new SpoolError(
@@ -416,7 +413,7 @@ export async function startTeamProject(
 		markStartedHere(spoolDir, realDir(target));
 		try {
 			// the daemon's own copy of it uploads the scaffold, as it does any change: nothing waits on that here
-			return await makeTeamProject(realDir(target), spoolDir, teams, team, folder, "init");
+			return await makeTeamProject(realDir(target), spoolDir, teams, team, folder);
 		} catch (error) {
 			forgetStartedHere(spoolDir, realDir(target));
 			rmSync(target, { recursive: true, force: true });

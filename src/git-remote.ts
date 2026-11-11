@@ -111,26 +111,26 @@ export async function checkoutOf(dir: string): Promise<Checkout | undefined> {
  */
 export type ProjectNameSource = "flag" | "repo" | "checkout" | "folder";
 
+/** The name a team project takes, and where it came from. */
+export interface ProjectName {
+	name: string;
+	from: ProjectNameSource;
+}
+
 /**
  * The name a team project started or moved in at `root` takes (spool#295). `--name` first; then, at the top of a
  * checkout, the repo's own name from `origin`, or with no `origin` the main checkout's folder, so that a worktree's
  * folder, named after its task, never names the project; anywhere else, outside git or in a subfolder of a checkout,
- * the folder's name. A name from the repo is cleaned as spool.page cleans one (`my_app` is `my-app`); a folder's and
- * `--name` go as typed, for spool.page to take or refuse.
+ * the folder's name. A name from the repo is cleaned as spool.page cleans one (`my_app` is `my-app`), and kept as it
+ * is when nothing is left of it, for spool.page to refuse; a folder's and `--name` go as typed.
  */
-export function teamProjectNameAt(
-	root: string,
-	checkout: Checkout | undefined,
-	flag?: string,
-): { name: string; from: ProjectNameSource } {
+export function teamProjectNameAt(root: string, checkout: Checkout | undefined, flag?: string): ProjectName {
 	if (flag !== undefined) return { name: flag.trim(), from: "flag" };
+	const cleaned = (name: string) => teamProjectName(name) ?? name;
 	if (checkout !== undefined && checkout.top === root) {
 		const repo = checkout.repo?.split("/").at(-1);
-		const named = repo === undefined ? undefined : teamProjectName(repo);
-		if (named !== undefined) return { name: named, from: "repo" };
-		const main =
-			checkout.main === undefined ? undefined : teamProjectName(basename(checkout.main).replace(/\.git$/iu, ""));
-		if (main !== undefined) return { name: main, from: "checkout" };
+		if (repo !== undefined) return { name: cleaned(repo), from: "repo" };
+		if (checkout.main !== undefined) return { name: cleaned(basename(checkout.main)), from: "checkout" };
 	}
 	return { name: basename(root), from: "folder" };
 }
