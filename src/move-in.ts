@@ -17,7 +17,7 @@ import {
 	unconfirmedFiles,
 } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
-import { checkoutOf } from "./git-remote";
+import { checkoutOf, teamProjectNameAt } from "./git-remote";
 import { chosenTeam, type TeamInitOptions, teamProjectRefusal } from "./init";
 import { realDir } from "./paths";
 import { registerProject } from "./registry";
@@ -84,12 +84,15 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 	const record = join(design, ".spool", "moving.json");
 	const link = movingTo(record, team.address) ?? (await started());
 	async function started(): Promise<ProjectLink> {
-		const repo = (await checkoutOf(root))?.repo;
+		const checkout = await checkoutOf(root);
+		const repo = checkout?.repo;
+		// named as `spool init --team` names one: after the repo, never a worktree's folder (spool#295)
+		const { name } = teamProjectNameAt(root, checkout);
 		let created: CloudTeamProject;
 		try {
-			created = await teams.createProject(team.address, basename(root), repo);
+			created = await teams.createProject(team.address, name, repo);
 		} catch (error) {
-			throw teamProjectRefusal(error, team.name, basename(root));
+			throw teamProjectRefusal(error, team.name, name, "move");
 		}
 		const made = parseProjectLink(created.url);
 		if (made === undefined) throw new SpoolError("spool.page returned an invalid team project");

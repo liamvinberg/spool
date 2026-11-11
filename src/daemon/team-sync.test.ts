@@ -51,12 +51,13 @@ describe("spool init --team", () => {
 		const cloud = fakeTeam();
 		const ana = cloud.machine("ana");
 		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, link, uploaded } = await initTeamProject(repo("checkout"), spoolDir, {
+		const made = await initTeamProject(repo("checkout"), spoolDir, {
 			team: "Devosurf",
 			origin: TEAM_ORIGIN,
 			request: ana.request,
 			openSocket: ana.openSocket,
 		});
+		const { root, link } = made;
 
 		expect(link.url).toBe(`${TEAM_ORIGIN}/devosurf/checkout`);
 		expect(JSON.parse(readFileSync(join(root, "spool.json"), "utf8"))).toEqual({ project: link.url });
@@ -65,7 +66,7 @@ describe("spool init --team", () => {
 		// the repo's agents are told where the canvas is, beside spool.json, for the commit that takes it in
 		expect(status(root)).toEqual(["?? AGENTS.md", "?? spool.json"]);
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root]);
-		expect(uploaded).toBe(true);
+		expect(made).toMatchObject({ started: "made", uploaded: true });
 		expect(cloud.paths("checkout")).toEqual([
 			"AGENTS.md",
 			"CLAUDE.md",

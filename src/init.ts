@@ -13,7 +13,8 @@ import { registerAndOpenProject } from "./daemon/session";
 import { forgetStartedHere, markStartedHere } from "./daemon/started-here";
 import { type OpenSyncSocket, syncLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
-import { checkoutOf } from "./git-remote";
+import { checkoutOf, type ProjectName, teamProjectNameAt } from "./git-remote";
+import { fetchLocalCopy } from "./open";
 import { expandHome, realDir } from "./paths";
 import { readRegistry } from "./registry";
 import {
@@ -59,58 +60,180 @@ export interface TeamInitOptions {
 	openSocket?: OpenSyncSocket;
 }
 
+/** Why init joined a project the team already had: it is this repo's, or it had this repo's name and no repo yet. */
+export type JoinReason = "repo" | "repaired";
+
+export type TeamInitResult = {
+	root: string;
+	link: ProjectLink;
+	/** The team, by its name. */
+	team: string;
+	/** The name init wanted, and where it came from. */
+	named: ProjectName;
+	/** The file the AGENTS.md line went into, in a checkout. */
+	agents?: string;
+} & (
+	| {
+			started: "made" /** Whether the scaffold reached spool.page; the daemon sends it otherwise. */;
+			uploaded: boolean;
+	  }
+	| { started: "joined"; why: JoinReason }
+);
+
 /**
- * `spool init --team`: start the project in the team at spool.page first, then
- * scaffold design/ with its own `.gitignore` of everything, write the `spool.json` link beside it, and upload
- * the scaffold as the team's first saves. Nothing is staged or committed: design/ never enters git, and
- * spool.json is the repo's to commit. In a checkout, the AGENTS.md line goes beside it (task 136), for the same
- * commit; `agents` is the file it went into. A project spool.page refuses leaves nothing on disk.
+ * `spool init --team`: name the project as `teamProjectNameAt` says, then start it in the team at spool.page, or join
+ * the one the team already has for this repo (spool#295), as `joinOrStart` decides from the team's projects.
+ *
+ * Started, design/ is scaffolded with its own `.gitignore` of everything, the `spool.json` link is written beside it,
+ * and the scaffold is uploaded as the team's first saves. Joined, nothing is scaffolded and nothing goes up: the link
+ * is written and the team's design/ fetched, as `spool open` fills a fresh clone, and a failed fetch leaves neither
+ * behind. `refuseExisting` runs first, so no design/ is here to lose either way.
+ *
+ * Nothing is staged or committed: design/ never enters git, and spool.json is the repo's to commit. In a checkout,
+ * the AGENTS.md line goes beside it (task 136), for the same commit; `agents` is the file it went into. A project
+ * spool.page refuses leaves nothing on disk.
  */
 export async function initTeamProject(
 	targetDir: string,
 	spoolDir: string,
-	options: TeamInitOptions,
-): Promise<{ root: string; link: ProjectLink; uploaded: boolean; agents?: string }> {
+	options: TeamInitOptions & { name?: string | undefined },
+): Promise<TeamInitResult> {
 	const root = realDir(targetDir);
 	refuseExisting(root);
 	refuseForeignLink(root);
 	const teams = cloudTeams(spoolDir, { ...options.request, origin: options.origin });
 	const team = await chosenTeam(teams, options.team);
-	const made = await makeTeamProject(root, spoolDir, teams, team);
-	let uploaded = true;
-	try {
-		await syncLocalCopy(root, spoolDir, options);
-	} catch {
-		// the files are here and the daemon sends them the next time it can reach spool.page
-		uploaded = false;
+	const checkout = await checkoutOf(root);
+	const named = teamProjectNameAt(root, checkout, options.name);
+	const repo = checkout?.repo;
+	const about = { root, team: team.name, named };
+	// a project made between the read and the create is decided again, once, from what the team has then
+	for (let tries = 0; ; tries++) {
+		const { projects } = await teams.projects(team.address);
+		const choice = joinOrStart(projects, named, repo);
+		if (choice.kind === "taken") throw takenRefusal(team.name, choice.project);
+		if (choice.kind === "join") {
+			const joined = await joinTeamProject(root, spoolDir, teams, team, choice, repo, options);
+			return { ...about, ...joined, started: "joined", why: choice.why };
+		}
+		let made: { link: ProjectLink; agents?: string };
+		try {
+			made = await makeTeamProject(root, spoolDir, teams, team, named.name);
+		} catch (error) {
+			if (error instanceof ProjectNameTaken && tries === 0) continue;
+			throw error;
+		}
+		let uploaded = true;
+		try {
+			await syncLocalCopy(root, spoolDir, options);
+		} catch {
+			// the files are here and the daemon sends them the next time it can reach spool.page
+			uploaded = false;
+		}
+		return { ...about, ...made, started: "made", uploaded };
 	}
-	return { ...made, uploaded };
+}
+
+/** What init does with the team's projects: start a new one, join one, or refuse a name another project holds. */
+export type TeamProjectChoice =
+	| { kind: "start" }
+	| { kind: "join"; project: CloudTeamProject; why: JoinReason }
+	| { kind: "taken"; project: CloudTeamProject };
+
+/**
+ * Whether `spool init --team` joins a project the team has or starts one (spool#295), from the team's projects, the
+ * name init wants and the checkout's repo. A project of this name and this repo is joined, anywhere. At the top of a
+ * checkout, where the name came from the repo, the repo's only project is joined whatever its name, and a project of
+ * the repo's name with no repo recorded is joined and given it. Otherwise a name another project holds is refused,
+ * and a free one started: `--name` is how a repo gets a second project on purpose.
+ */
+export function joinOrStart(
+	projects: readonly CloudTeamProject[],
+	named: ProjectName,
+	repo: string | undefined,
+): TeamProjectChoice {
+	const wanted = named.name.toLowerCase();
+	const same = projects.find((project) => project.name === wanted);
+	if (same !== undefined && repo !== undefined && same.repo === repo)
+		return { kind: "join", project: same, why: "repo" };
+	if (named.from === "repo" && repo !== undefined) {
+		const ours = projects.filter((project) => project.repo === repo);
+		const [only] = ours;
+		if (ours.length === 1 && only !== undefined) return { kind: "join", project: only, why: "repo" };
+		if (same !== undefined && same.repo === null) return { kind: "join", project: same, why: "repaired" };
+	}
+	return same === undefined ? { kind: "start" } : { kind: "taken", project: same };
 }
 
 /**
- * The team's project made at spool.page under the folder's name, then scaffolded, linked and registered here. Nothing
- * is uploaded yet: that is the caller's, once or by the daemon's own copy.
+ * A project the team has, joined here: its repo recorded first when it had none, then the link written and its
+ * design/ fetched from the team, never scaffolded, so nothing on this Mac goes up over the team's canvas. A fetch
+ * that fails takes the link and whatever came down with it.
+ */
+async function joinTeamProject(
+	root: string,
+	spoolDir: string,
+	teams: CloudTeamsClient,
+	team: CloudTeam,
+	choice: { project: CloudTeamProject; why: JoinReason },
+	repo: string | undefined,
+	options: TeamInitOptions,
+): Promise<{ link: ProjectLink; agents?: string }> {
+	const link = parseProjectLink(choice.project.url);
+	if (link === undefined) throw new SpoolError("spool.page returned an invalid team project");
+	if (choice.why === "repaired" && repo !== undefined) await teams.setRepo(team.address, choice.project.name, repo);
+	writeProjectLink(root, link);
+	try {
+		await fetchLocalCopy(root, spoolDir, options);
+	} catch (error) {
+		rmSync(join(root, "design"), { recursive: true, force: true });
+		rmSync(join(root, PROJECT_LINK), { force: true });
+		throw error;
+	}
+	const agents = await agentsLine(root);
+	registerAndOpenProject(spoolDir, root);
+	return { link, ...(agents === undefined ? {} : { agents }) };
+}
+
+/** The AGENTS.md line, beside spool.json for the same commit, in a checkout. */
+async function agentsLine(root: string): Promise<string | undefined> {
+	const checkout = await checkoutOf(root);
+	return checkout === undefined ? undefined : await addAgentsLine(checkout.top);
+}
+
+/** A name the team's project holds that init won't join: `--name` is the way to another. */
+function takenRefusal(team: string, project: CloudTeamProject): ProjectNameTaken {
+	const whose = project.repo === null ? "" : ` for ${project.repo}`;
+	return new ProjectNameTaken(`${team} already has a project called "${project.name}"${whose}; ${ANOTHER_NAME}`);
+}
+
+/** How init is told to start under another name than the one taken. */
+const ANOTHER_NAME = "pass `--name <name>` to start this one under another name";
+
+/**
+ * The team's project made at spool.page under `name`, then scaffolded, linked and registered here. Nothing is
+ * uploaded yet: that is the caller's, once or by the daemon's own copy.
  */
 async function makeTeamProject(
 	root: string,
 	spoolDir: string,
 	teams: CloudTeamsClient,
 	team: CloudTeam,
+	name: string,
 ): Promise<{ root: string; link: ProjectLink; agents?: string }> {
 	// where the code lives, as the team will see it: information, never a permission
-	const checkout = await checkoutOf(root);
-	const repo = checkout?.repo;
+	const repo = (await checkoutOf(root))?.repo;
 	let created: CloudTeamProject;
 	try {
-		created = await teams.createProject(team.address, basename(root), repo);
+		created = await teams.createProject(team.address, name, repo);
 	} catch (error) {
-		throw teamProjectRefusal(error, team.name, basename(root));
+		throw teamProjectRefusal(error, team.name, name, "init");
 	}
 	const link = parseProjectLink(created.url);
 	if (link === undefined) throw new SpoolError("spool.page returned an invalid team project");
 	scaffold(root, { ...scaffoldFiles(false), ".gitignore": TEAM_GITIGNORE });
 	writeProjectLink(root, link);
-	const agents = checkout === undefined ? undefined : await addAgentsLine(checkout.top);
+	const agents = await agentsLine(root);
 	registerAndOpenProject(spoolDir, root);
 	return { root, link, ...(agents === undefined ? {} : { agents }) };
 }
@@ -198,23 +321,30 @@ export async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promi
 	return team;
 }
 
-/** The team already has a project by the folder's name, live or in its trash. */
+/** The team already has a project by the name asked for, live or in its trash. */
 class ProjectNameTaken extends SpoolError {}
 
-export function teamProjectRefusal(error: unknown, team: string, folder: string): unknown {
+/**
+ * Who asked for the project, for how a refusal says to try again: `init` (and the app's New project, which tries the
+ * next name itself) takes `--name`; a move in takes the name init would, so a clash is the team's project to rename.
+ */
+export type RefusalFor = "init" | "move";
+
+export function teamProjectRefusal(error: unknown, team: string, name: string, asked: RefusalFor): unknown {
 	// the team's, not the project's: said as spool.page says it
 	if (!(error instanceof CloudTeamRefused) || error.code === "unpaid") return error;
+	const other = asked === "init" ? ANOTHER_NAME : "rename that one in the team first";
 	if (error.code === "project_taken")
-		return new ProjectNameTaken(
-			`${team} already has a project called "${folder}"; start this one in a folder with another name`,
-		);
+		return new ProjectNameTaken(`${team} already has a project called "${name}"; ${other}`);
 	if (error.code === "name_in_trash")
 		return new ProjectNameTaken(
-			`a project in ${team}'s trash holds the name "${folder}"; restore or delete it there, or start this one in a folder with another name`,
+			`a project in ${team}'s trash holds the name "${name}"; restore or delete it there${asked === "init" ? `, or ${ANOTHER_NAME}` : ""}`,
 		);
 	if (error.code === "invalid_project_name" || error.code === "project_name_reserved")
 		return new SpoolError(
-			`"${folder}" can't name a team project; use a folder named with 2 to 40 letters, digits and hyphens`,
+			asked === "init"
+				? `"${name}" can't name a team project; pass \`--name\` with 2 to 40 letters, digits and hyphens`
+				: `"${name}" can't name a team project; use a folder named with 2 to 40 letters, digits and hyphens`,
 		);
 	if (error.code === "editor_required")
 		return new SpoolError(`you're a viewer of ${team}; only its editors and admins start team projects`);
@@ -283,7 +413,7 @@ export async function startTeamProject(
 		markStartedHere(spoolDir, realDir(target));
 		try {
 			// the daemon's own copy of it uploads the scaffold, as it does any change: nothing waits on that here
-			return await makeTeamProject(realDir(target), spoolDir, teams, team);
+			return await makeTeamProject(realDir(target), spoolDir, teams, team, folder);
 		} catch (error) {
 			forgetStartedHere(spoolDir, realDir(target));
 			rmSync(target, { recursive: true, force: true });
