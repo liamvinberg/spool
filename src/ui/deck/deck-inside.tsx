@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Size } from "../../deck/deck-file";
 import { slotBox } from "../../deck/layout";
 import { openSession, type StageSession, type TalkSlide } from "../../deck/stage-session";
@@ -27,11 +27,12 @@ import { talkSource } from "./talk-source";
  * room in place, so the room's keys are nobody's there, and ? lists the rest.
  *
  * The talk's stage is built in the background as the deck page opens, unseen over the canvas, and rests on the slide
- * selected once the selection has stood a moment, so going in is instant. Going in never blinks: the canvas's own
- * picture of the slide (its last beat) stays until the camera has landed and the stage has drawn the same beat over it.
- * Nothing of the slide starts while the camera flies (spool#305): a slide drawn anew for the first time, the stage's
- * or its own document, holds the window's frames back while it starts, so the stage takes the slide on as the camera
- * lands, the slide's own document waits for it too, and a click that is the first of a double-click moves nothing.
+ * selected once it has settled, so going in is instant. Going in never blinks: the canvas's own picture of the slide
+ * (its last beat) stays until the camera has landed and the stage has drawn the same beat over it.
+ * Nothing of a slide starts while the camera flies into it (spool#305): a slide drawn anew, by the stage or by its own
+ * document, holds the window's frames back while it starts. So a slide held settles, its document starting and the
+ * stage resting on it, only once its selection has stood longer than a double-click, and a slide not settled when the
+ * camera sets off is taken on by both as it lands.
  *
  * `useDeckInside` is the whole of it for the canvas, `DeckStage` the stage it draws over the slide, `DeckKeyList` the
  * keys ? lists over the canvas.
@@ -86,10 +87,10 @@ const stillness = () =>
 	typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /**
- * How long a slide held stands before the stage rests on it: longer than a double-click, whose first click selects the
- * slide the second goes into, so that one starts nothing under the flight.
+ * How long a slide held stands before it settles, its own document starting and the stage resting on it: longer than a
+ * double-click, whose first click selects the slide the second goes into, so that click starts nothing under the flight.
  */
-const REST_AFTER_MS = 500;
+const SETTLE_MS = 500;
 
 /** A frame's own name, the last part of its path. */
 const leafOf = (name: string) => name.slice(name.lastIndexOf("/") + 1);
@@ -310,27 +311,39 @@ export function useDeckInside({
 		[camera, viewSize],
 	);
 
-	// resting on the slide held, so going into it is instant: its last beat drawn, unseen
+	// a slide held settles once its selection has stood longer than a double-click, and the slide the talk is on once
+	// the camera is there
 	const held = useCanvasState(store, (state) => (state.selected.length === 1 ? (state.selected[0] ?? null) : null));
+	const heldSlide = held !== null && read?.slides.some((slide) => slide.name === held) === true ? held : null;
+	const [settled, setSettled] = useState<string | null>(null);
 	useEffect(() => {
-		if (said === 0 || inside !== null || held === null || read === undefined) return;
-		const rest = setTimeout(() => {
-			const stage = host.current;
-			if (stage === null) return;
-			const talk = stage.talk();
-			const at = talk.findIndex((slide) => slide.frame === held);
-			const resting = stage.session()?.at;
-			const beat = (talk[at]?.beats ?? 1) - 1;
-			if (at < 0 || (resting?.slide === at && resting.beat === beat)) return;
-			stage.apply(openSession(talk, { slide: at, beat }, stage.session()?.state ?? {}), "own", true);
-		}, REST_AFTER_MS);
-		return () => clearTimeout(rest);
-	}, [held, inside, read, said]);
+		if (heldSlide === null || inside !== null) return;
+		const settle = setTimeout(() => setSettled(heldSlide), SETTLE_MS);
+		return () => clearTimeout(settle);
+	}, [heldSlide, inside]);
+	const flying = inside?.phase === "in" && !inside.flown;
+	useEffect(() => {
+		if (inside !== null && !flying) setSettled(inside.slide);
+	}, [inside, flying]);
+	// until then it holds no document of its own on the canvas, which reads the slides and the one settled to know
+	const slides = useMemo(() => (read === undefined ? null : new Set(read.slides.map((slide) => slide.name))), [read]);
+	useEffect(
+		() => store.set({ deckSlides: slides === null ? null : { names: slides, settled } }),
+		[store, slides, settled],
+	);
+	useEffect(() => () => store.set({ deckSlides: null }), [store]);
 
-	// the slide flown into holds no document of its own on the canvas until the camera is there
-	const flyingInto = inside?.phase === "in" && !inside.flown ? inside.slide : null;
-	useEffect(() => store.set({ flyingInto }), [store, flyingInto]);
-	useEffect(() => () => store.set({ flyingInto: null }), [store]);
+	// resting on the slide settled, so going into it is instant: its last beat drawn, unseen
+	useEffect(() => {
+		const stage = host.current;
+		if (said === 0 || inside !== null || settled === null || settled !== heldSlide || stage === null) return;
+		const talk = stage.talk();
+		const at = talk.findIndex((slide) => slide.frame === settled);
+		const resting = stage.session()?.at;
+		const beat = (talk[at]?.beats ?? 1) - 1;
+		if (at < 0 || (resting?.slide === at && resting.beat === beat)) return;
+		stage.apply(openSession(talk, { slide: at, beat }, stage.session()?.state ?? {}), "own", true);
+	}, [settled, heldSlide, inside, said]);
 
 	// presenting takes the talk to the presenter view: the canvas lets go of it where it stands
 	const presenting = usePresentAsk() !== null;
@@ -401,7 +414,7 @@ export function useDeckInside({
 		slide === null ? null : inside?.keys === true ? `${leafOf(slide)} has the keys · esc` : "live · esc exits";
 	const view = {
 		// flying in, the stage waits unseen where the slide lands, rather than being drawn anew at every step of the zoom
-		slot: inside === null || flyingInto !== null ? null : slotOf(inside.slide),
+		slot: inside === null || flying ? null : slotOf(inside.slide),
 		shown: inside !== null && inside.phase !== "in",
 		talk,
 		hold,

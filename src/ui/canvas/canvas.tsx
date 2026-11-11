@@ -1034,10 +1034,12 @@ function CanvasField({
 		[frameReads],
 	);
 
-	const flyingInto = useCanvasState(store, (state) => state.flyingInto);
+	const deckSlides = useCanvasState(store, (state) => state.deckSlides);
+	const only = selected.length === 1 ? selected[0] : undefined;
+	const settling = only !== undefined && deckSlides?.names.has(only) && deckSlides.settled !== only ? only : null;
 	const selectionTargets = useMemo(
-		() => selectionTargetsOf({ picked, pointerTool, selected, accelDown, entered, flyingInto }),
-		[pointerTool, picked, selected, accelDown, entered, flyingInto],
+		() => selectionTargetsOf({ picked, pointerTool, selected, accelDown, entered, settling }),
+		[pointerTool, picked, selected, accelDown, entered, settling],
 	);
 	// the walks this page can take that no arrow can reach: the ones that land
 	// on another page (#151). Derived at rest — the layer is never gated on a
