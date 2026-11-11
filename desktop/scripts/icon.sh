@@ -13,9 +13,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$ROOT/.." && pwd)"
 
-ICONSET="$(cd "$REPO" && pnpm exec tsx desktop/scripts/icon.ts | tail -n 1)"
+SETS="$(cd "$REPO" && pnpm exec tsx desktop/scripts/icon.ts | tail -n 2)"
+BETA_ICONSET="$(printf '%s\n' "$SETS" | head -n 1)"
+ICONSET="$(printf '%s\n' "$SETS" | tail -n 1)"
 iconutil --convert icns "$ICONSET" --output "$ROOT/assets/icon.icns"
-rm -rf "$ICONSET"
+iconutil --convert icns "$BETA_ICONSET" --output "$ROOT/assets/iconBeta.icns"
+rm -rf "$ICONSET" "$BETA_ICONSET"
 
-echo "wrote $ROOT/assets/icon.icns"
-echo "wrote $ROOT/assets/markTemplate.png and markTemplate@2x.png"
+echo "wrote $ROOT/assets/icon.icns and iconBeta.icns"
+echo "wrote $ROOT/assets/markTemplate.png, markBetaTemplate.png and their @2x"
