@@ -12,6 +12,7 @@ import type { StageCommand } from "./stage-session";
  *   digits then ↵             that slide
  *   B .                       the room's screen black; any key brings it back and does nothing else
  *   F                         the room's screen holds its picture; F again and it catches up
+ *                             (with no room, played in place on the canvas, these three are nobody's)
  *   R                         this slide from its start
  *   X                         the room's screen is the other screen
  *   ?                         these keys
@@ -56,6 +57,8 @@ export interface KeyPlace {
 	readonly keys: boolean;
 	readonly black: boolean;
 	readonly frozen: boolean;
+	/** no room watches the talk (it plays in place on the canvas): B, the period and F have no screen to act on */
+	readonly alone: boolean;
 }
 
 /** What a key did: the command it is, if any, the digits typed so far, and whether the key was the talk's to take. */
@@ -113,10 +116,10 @@ function commandOf(pressed: PressedKey, place: KeyPlace): KeyCommand | undefined
 		case "b":
 		case "B":
 		case ".":
-			return { kind: "black", on: true };
+			return place.alone ? undefined : { kind: "black", on: true };
 		case "f":
 		case "F":
-			return { kind: "freeze", on: !place.frozen };
+			return place.alone ? undefined : { kind: "freeze", on: !place.frozen };
 		case "r":
 		case "R":
 			return { kind: "restart" };

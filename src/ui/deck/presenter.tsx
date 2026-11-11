@@ -12,8 +12,8 @@ import { desktopWindow, type RoomReport } from "../desktop-window";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Button } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
-import { Scrim, Sheet } from "../primitives/overlays";
 import { type DeckMotion, useDeckMotion } from "./deck-motion";
+import { KeyList } from "./key-list";
 import { openRoom, type PresentAsk } from "./present";
 import { presenterLayout } from "./presenter-layout";
 import { talkSource } from "./talk-source";
@@ -489,7 +489,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 				/>
 			</motion.div>
 
-			{help ? <KeyList swaps={swaps} onClose={() => setHelp(false)} /> : null}
+			{help ? <KeyList place={{ at: "presenter", swaps }} onClose={() => setHelp(false)} /> : null}
 		</div>
 	);
 }
@@ -589,86 +589,6 @@ function TalkLine({
 				);
 			})}
 		</div>
-	);
-}
-
-/** The keys of presenting, as the presenter's ? lists them. */
-const PRESENTER_KEYS: readonly { group: string; rows: readonly { label: string; keys: readonly string[] }[] }[] = [
-	{
-		group: "move",
-		rows: [
-			{ label: "Next", keys: ["→", "space", "↵", "N"] },
-			{ label: "Back", keys: ["←", "P", "⌫"] },
-			{ label: "Next slide, its beats skipped", keys: ["⇧→"] },
-			{ label: "Previous slide", keys: ["⇧←"] },
-		],
-	},
-	{
-		group: "jump",
-		rows: [
-			{ label: "First slide", keys: ["home"] },
-			{ label: "Last slide", keys: ["end"] },
-			{ label: "Slide by number", keys: ["3", "↵"] },
-			{ label: "End the talk", keys: ["esc"] },
-		],
-	},
-	{
-		group: "room",
-		rows: [
-			{ label: "Black screen", keys: ["B", "."] },
-			{ label: "Freeze, then catch up", keys: ["F"] },
-		],
-	},
-	{
-		group: "live slide",
-		rows: [
-			{ label: "Give it the keys", keys: ["⇥"] },
-			{ label: "Take them back", keys: ["esc"] },
-			{ label: "Restart the slide", keys: ["R"] },
-		],
-	},
-];
-
-/** The keys, with X when the Mac app has a second screen for the room to trade with spool's window. */
-function presenterKeys(swaps: boolean): typeof PRESENTER_KEYS {
-	if (!swaps) return PRESENTER_KEYS;
-	return PRESENTER_KEYS.map((group) =>
-		group.group === "room" ? { ...group, rows: [...group.rows, { label: "Swap screens", keys: ["X"] }] } : group,
-	);
-}
-
-/** ? on the presenter's screen: the presentation's keys, in spool's own sheet; esc or ? puts it away. */
-function KeyList({ swaps, onClose }: { swaps: boolean; onClose: () => void }) {
-	return (
-		<>
-			<Scrim label="Close the key list" onMouseDown={onClose} />
-			<div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center px-8">
-				<Sheet
-					aria-label="Presenting keys"
-					title="Presenting keys"
-					hint="esc closes"
-					className="pointer-events-auto max-h-[calc(100%-128px)]"
-				>
-					<div className="columns-2 gap-x-12">
-						{presenterKeys(swaps).map(({ group, rows }) => (
-							<section key={group} className="mb-5 break-inside-avoid">
-								<h3 className="mb-1.5 text-secondary type-label">{group}</h3>
-								{rows.map((row) => (
-									<div key={row.label} className="flex h-7 items-center justify-between gap-4">
-										<span className="truncate text-primary type-control">{row.label}</span>
-										<span className="flex shrink-0 items-center gap-1.5">
-											{row.keys.map((face) => (
-												<Kbd key={face}>{face}</Kbd>
-											))}
-										</span>
-									</div>
-								))}
-							</section>
-						))}
-					</div>
-				</Sheet>
-			</div>
-		</>
 	);
 }
 

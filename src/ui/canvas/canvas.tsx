@@ -63,7 +63,7 @@ import {
 	writeKnob,
 } from "../api";
 import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
-import { type DeckInside, DeckStage, useDeckInside } from "../deck/deck-inside";
+import { type DeckInside, DeckKeyList, DeckStage, useDeckInside } from "../deck/deck-inside";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
@@ -6199,6 +6199,7 @@ function CanvasField({
 						)}
 						{framed && deckPage.on && <DeckStage inside={deckInside} camera={camera} view={viewChanges} />}
 					</div>
+					{framed && deckPage.on && <DeckKeyList inside={deckInside} />}
 
 					{framed && (
 						<>

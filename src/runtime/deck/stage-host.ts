@@ -28,6 +28,8 @@ export interface StageHostOptions {
 	mode: StageMode;
 	/** the stage draws the room's states, black and frozen */
 	room: boolean;
+	/** no room watches the talk (it plays in place on the canvas): B, the period and F are nobody's keys */
+	alone?: boolean;
 	/** where it opens: a session, or a slide by its frame (its first beat); the talk's first slide otherwise */
 	session?: StageSession;
 	frame?: string;
@@ -185,6 +187,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				spool: "stage-open",
 				mode,
 				room: options.room,
+				...(options.alone === true ? { alone: true } : {}),
 				...(session === undefined ? {} : { session }),
 				...(frameOf === undefined ? {} : { frame: frameOf }),
 			});
@@ -355,6 +358,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 					// the room's screen is black wherever the talk is shown from: any key brings it back, and does nothing else
 					black: at?.black === true,
 					frozen: at?.frozen !== null && at?.frozen !== undefined,
+					alone: options.alone === true,
 				},
 				digits,
 			);

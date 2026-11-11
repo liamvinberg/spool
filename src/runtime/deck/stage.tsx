@@ -215,6 +215,8 @@ export function bootStage(runtime: StageRuntime): void {
 
 	let mode: StageMode = "own";
 	let room = true;
+	/** no room watches the talk: B, the period and F are nobody's keys */
+	let alone = false;
 	let opened = !embedded;
 	let session: StageSession = openSession(talk, { slide: startAt, beat: 0 }, runtime.state.read());
 	const copies = new Map<string, Copy>();
@@ -735,6 +737,7 @@ export function bootStage(runtime: StageRuntime): void {
 		if (message.spool === "stage-open") {
 			mode = message.mode;
 			room = message.room;
+			alone = message.alone === true;
 			opened = true;
 			let next = message.session;
 			if (next !== undefined && message.frame !== undefined && talk[next.at.slide]?.frame !== message.frame) {
@@ -802,6 +805,7 @@ export function bootStage(runtime: StageRuntime): void {
 				// black is the room's, whichever window the key is pressed in: any key brings it back
 				black: session.black,
 				frozen: session.frozen !== null,
+				alone,
 			},
 			digits,
 		);
