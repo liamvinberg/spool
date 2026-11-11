@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { Agent } from "undici";
 import { installAutostart, removeAutostart } from "./autostart";
 import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
+import { BETA } from "./channel";
 import { checkStart, runCheck } from "./check-command";
 import { cliName } from "./cli-name";
 import { cloudOrigin, login, logout } from "./cloud-auth";
@@ -397,14 +398,21 @@ async function fetchFirst(start: string): Promise<void> {
  * The project a command that needs no daemon works on, read the way the daemon
  * reads one first: a project still naming frames by folder has its walks
  * renamed before anything reads them (#336), unless the verb is read-only,
- * which says the migration is due instead. A team project's missing design/
- * is fetched first.
+ * which says the migration is due instead. Spool Beta's says so too, and leaves
+ * the yes to its canvas (spool#282). A team project's missing design/ is
+ * fetched first.
  */
 async function offlineProject(start: string, { migrate = true } = {}): Promise<string> {
 	await fetchFirst(start);
 	const root = resolveProjectRoot(start);
 	if (root === undefined) {
 		throw new SpoolError("not inside a spool project — no design/canvas.json here or above; `spool init` starts one");
+	}
+	if (BETA && readCanvasFields(root).format === FOLDER_NAMES_FORMAT) {
+		process.stderr.write(
+			"spool: this project is in an older format, and Spool Beta upgrades it only when you say so: open it in Spool Beta and choose Upgrade. Until then a walk to a frame on a page reads as missing\n",
+		);
+		return root;
 	}
 	if (!migrate) {
 		if (readCanvasFields(root).format === FOLDER_NAMES_FORMAT) {
