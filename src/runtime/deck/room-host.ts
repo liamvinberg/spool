@@ -89,6 +89,8 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	});
 	root.append(shield);
 	new ResizeObserver(() => dot.draw()).observe(root);
+	const app = roomWindow();
+	if (app !== undefined) dragStrip(root, app);
 
 	channel.addEventListener("message", (event) => {
 		const message = parseTalkMessage(event.data);
@@ -109,8 +111,11 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	say({ kind: "ask" });
 	addEventListener("pagehide", () => say({ kind: "gone" }));
 
-	/** The first key or click in a window not yet full screen puts it full screen, and is spent on that. */
-	let first = true;
+	/**
+	 * The first key or click in a window not yet full screen puts it full screen, and is spent on that. Not in the Mac
+	 * app, which places the room itself: full screen on the room's display, or a window when there is only one.
+	 */
+	let first = app === undefined;
 	const fullScreen = (event: Event): boolean => {
 		if (!first) return false;
 		first = false;
@@ -133,6 +138,37 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 			say({ kind: "command", command: { kind: "next" } });
 	});
 	return host;
+}
+
+/** The Mac app's word to the room's window: whether it is a window just now, rather than full screen. */
+interface RoomWindow {
+	windowed: boolean;
+	onWindowed(listener: (windowed: boolean) => void): () => void;
+}
+
+function roomWindow(): RoomWindow | undefined {
+	const bridge = (window as { spoolRoomWindow?: unknown }).spoolRoomWindow;
+	if (typeof bridge !== "object" || bridge === null) return undefined;
+	const candidate = bridge as Partial<RoomWindow>;
+	if (typeof candidate.onWindowed !== "function") return undefined;
+	return candidate as RoomWindow;
+}
+
+/**
+ * The room's window in the Mac app has no title bar, so while it is a window a strip along its top is what it is
+ * dragged by. Nothing shows of it: the room draws the slide and nothing else.
+ */
+function dragStrip(root: HTMLElement, app: RoomWindow): void {
+	const strip = document.createElement("div");
+	strip.setAttribute("aria-hidden", "true");
+	Object.assign(strip.style, { position: "absolute", top: "0", left: "0", right: "0", height: "28px", zIndex: "3" });
+	strip.style.setProperty("-webkit-app-region", "drag");
+	const set = (windowed: boolean) => {
+		strip.style.display = windowed ? "block" : "none";
+	};
+	set(app.windowed);
+	app.onWindowed(set);
+	root.append(strip);
 }
 
 /** The dot's spring, the design's: stiff and heavily damped, so it follows the pointer closely and never overshoots. */
