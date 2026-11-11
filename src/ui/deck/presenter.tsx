@@ -318,10 +318,11 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 							: screenOf?.unplugged !== undefined && screenOf.screen === null
 								? cue(
 										"unplugged",
-										// a narrow window keeps what it can of it, and the room's name beside it says the rest
-										<span className="truncate" title={`${screenOf.unplugged} was unplugged · the room is a window`}>
-											{screenOf.unplugged} was unplugged · the room is a window
-										</span>,
+										// a narrow window shortens the display's name, never what became of the room
+										<>
+											<span className="truncate">{screenOf.unplugged} was unplugged </span>
+											<span className="shrink-0">· the room is a window</span>
+										</>,
 										"text-secondary type-detail",
 									)
 								: black
