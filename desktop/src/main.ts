@@ -188,20 +188,23 @@ function startSetupOpen(showing: BrowserWindow): void {
 	else showing.once("show", tell);
 }
 
-/** spool's window covers its display for a talk's slides, and was made to by the talk */
-let presentFilled = false;
+/** where spool's window stood before it covered its display for a talk's slides, while it does */
+let presentFilled: Electron.Rectangle | undefined;
 
 /**
  * Spool's window over its whole display for a talk's slides, at once: simple full screen, which macOS plays with no
  * Space of its own to slide to, so the slide growing from its card is the only thing that moves. The lights go with
- * it, since nothing of the window's own may stand over the slides. A window already full screen is left as it is.
+ * it, since nothing of the window's own may stand over the slides. It comes back at once too, to exactly where it
+ * stood, as the slide flies home. A window already full screen is left as it is.
  */
 function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
-	if (showing.isDestroyed() || on === presentFilled) return false;
+	if (showing.isDestroyed() || on === (presentFilled !== undefined)) return false;
 	if (on && (showing.isFullScreen() || showing.isSimpleFullScreen())) return false;
-	presentFilled = on;
+	const stood = presentFilled;
+	presentFilled = on ? showing.getBounds() : undefined;
 	if (process.platform === "darwin") showing.setWindowButtonVisibility(!on);
 	showing.setSimpleFullScreen(on);
+	if (stood !== undefined) showing.setBounds(stood, false);
 	return true;
 }
 
