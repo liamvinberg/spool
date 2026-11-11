@@ -12,12 +12,17 @@ it("opens nothing with the experiment off, and on, the room's window as the room
 	const open = vi.fn(() => null);
 	const from = { project: "kaffe", page: "talk", slide: "talk/sense" };
 	vi.stubGlobal("window", { open, __SPOOL_EXPERIMENTS__: [] });
-	presentDeck(from);
+	presentDeck(from, "other");
 	expect(open).not.toHaveBeenCalled();
 
 	vi.stubGlobal("window", { open, __SPOOL_EXPERIMENTS__: ["deck"] });
+	// one display: the slides fill the screen, with no room
 	presentDeck(from);
-	presentDeck({ ...from, slide: "talk/title" });
+	expect(open).not.toHaveBeenCalled();
+	presentDone();
+	// the other way, the presenter view: its room opens
+	presentDeck(from, "other");
+	presentDeck({ ...from, slide: "talk/title" }, "other");
 	expect(open).toHaveBeenCalledTimes(1);
 	const [address] = open.mock.calls[0] as unknown as [string];
 	const url = new URL(address, "http://spool");

@@ -1,7 +1,10 @@
 import { useSyncExternalStore } from "react";
 import type { Box } from "../../deck/layout";
 import { mintTalk } from "../../deck/present-wire";
+import { desktopWindow } from "../desktop-window";
 import { experimentOn } from "../experiments";
+import { settingNow, writeSetting } from "../settings";
+import { type PresentHow, type PresentWay, presentPlan, wayPresentTakes } from "./present-way";
 import { presenterLayout } from "./presenter-layout";
 
 /** Where a talk is presented from: a deck page of a project, and the slide it starts on, by its path. */
@@ -17,21 +20,79 @@ export interface PresentAsk extends PresentFrom {
 	readonly talk: string;
 	/** when Present was pressed, which the presenter's clock counts from */
 	readonly pressed: number;
+	/** the slides filling this screen, or the presenter view here (spool#298) */
+	readonly way: PresentWay;
+	/** a room's window was asked for: the presenter view's, or the slides' on another display */
+	readonly roomAsked: boolean;
 	/** the room's window, when the browser let it open and handed it over */
 	readonly room: Window | null;
 }
 
 /**
- * Present a deck from one of its slides (spool#265): what a slide's play on its name label, the Present action on a
- * deck's row in Pages, and ⌘↵ and ⇧⌘↵ on a deck page do. The room's window opens here, while the press that asked
- * for it is still the user's, and the canvas (`presenting.tsx`) turns spool's own window into the presenter view. One
- * talk at a time: a press while one is on does nothing.
+ * Present a deck from one of its slides (spool#265, spool#298): what Present on the canvas, a slide's play on its name
+ * label, the Present action on a deck's row in Pages, and ⌘↵, ⌥⌘↵ and ⇧⌘↵ on a deck page do. How it plays is
+ * `presentPlan`'s: the slides fill this screen, or spool's own window turns into the presenter view (`presenting.tsx`).
+ * Whatever needs the press that asked for it happens here, while the press is still the user's: the window made full
+ * screen, the room's window opened. One talk at a time: a press while one is on does nothing.
  */
-export function presentDeck(from: PresentFrom): void {
-	if (!experimentOn("deck") || asked !== null) return;
+export function presentDeck(from: PresentFrom, how: PresentHow = "present"): void {
+	if (!experimentOn("deck")) return;
+	if (asked !== null) {
+		presentAgain();
+		return;
+	}
+	const plan = presentPlan({ displays: displayCount(), remembered: rememberedWay(), how });
 	const talk = mintTalk();
-	asked = { ...from, talk, pressed: Date.now(), room: openRoom(from, talk) };
+	const room = plan.room ? openRoom(from, talk) : null;
+	if (plan.way === "slides") fillScreen(true);
+	asked = { ...from, talk, pressed: Date.now(), way: plan.way, roomAsked: plan.room, room };
+	if (plan.remember !== undefined) void writeSetting("present.way", plan.remember);
 	tell();
+}
+
+/** The way Present takes now, on the displays there are: what the caret's menu checks, and ⌘↵ plays. */
+export function presentTakes(remembered: PresentWay = rememberedWay()): PresentWay {
+	return wayPresentTakes(displayCount(), remembered);
+}
+
+/** How many displays there are to present on: two only where the app, or the browser, says so; else one. */
+export function displayCount(): 1 | 2 {
+	const counted = desktopWindow()?.displays?.();
+	if (counted !== undefined) return counted > 1 ? 2 : 1;
+	const screen = (typeof window === "undefined" ? undefined : window.screen) as
+		| (Screen & { isExtended?: boolean })
+		| undefined;
+	return screen?.isExtended === true ? 2 : 1;
+}
+
+function rememberedWay(): PresentWay {
+	return settingNow("present.way") === "presenter" ? "presenter" : "slides";
+}
+
+/**
+ * Spool's window made full screen for the slides, or let go of again. The Mac app covers the display at once, with no
+ * Space of its own to slide to; a browser takes the page full screen, which only a press may ask, and hands Esc to the
+ * page while the talk lasts, so Esc can step back from a live slide and Notes before it ends the talk.
+ */
+export function fillScreen(on: boolean): void {
+	const app = desktopWindow();
+	if (app?.presentFullScreen !== undefined) {
+		void app.presentFullScreen(on).catch(() => {});
+		return;
+	}
+	if (typeof document === "undefined") return;
+	const keyboard = (navigator as Navigator & { keyboard?: { lock?(keys: string[]): Promise<void>; unlock?(): void } })
+		.keyboard;
+	if (on) {
+		if (document.fullscreenElement !== null || document.documentElement.requestFullscreen === undefined) return;
+		void document.documentElement
+			.requestFullscreen({ navigationUI: "hide" })
+			.then(() => keyboard?.lock?.(["Escape"]))
+			.catch(() => {});
+		return;
+	}
+	keyboard?.unlock?.();
+	if (document.fullscreenElement !== null) void document.exitFullscreen().catch(() => {});
 }
 
 /** The room's address: the deck page's plain play address, as the room of `talk`. */
@@ -103,10 +164,53 @@ export function openRoom(from: PresentFrom, talk: string): Window | null {
 	return window.open(roomAddress(from, talk), `spool-room-${talk}`, roomFeatures());
 }
 
-/** The talk is over: Present may be pressed again. */
+/**
+ * The hand is on its way to Present (the pointer over it, ⌘ held on the deck page): the slide it would play from is
+ * readied out of sight now, so the slide that flies is the slide itself.
+ */
+export function warmPresent(from: PresentFrom): void {
+	if (!experimentOn("deck")) return;
+	if (warm !== null && warm.project === from.project && warm.page === from.page && warm.slide === from.slide) return;
+	warm = from;
+	tell();
+}
+
+/** The slide last readied for Present, while one is. */
+export function usePresentWarm(): PresentFrom | null {
+	return useSyncExternalStore(subscribe, () => warm);
+}
+
+/** Nothing is readied for Present any more, and nothing presents. */
+export function presentCold(): void {
+	if (warm === null || asked !== null) return;
+	warm = null;
+	tell();
+}
+
+/**
+ * What a press of Present does while the slides are on their way home from a talk (spool#298): `turn` sends them back
+ * to fill the screen and says true, or says false once it is too late; null once nothing is on its way.
+ */
+export function onPresentAgain(turn: (() => boolean) | null): void {
+	turnBack = turn;
+}
+
+/**
+ * Present pressed while a talk's slides fly home: they turn round from where they are, and the talk goes on. True when
+ * they did, whatever is held on the canvas meanwhile.
+ */
+export function presentAgain(): boolean {
+	if (asked?.way !== "slides" || turnBack?.() !== true) return false;
+	fillScreen(true);
+	return true;
+}
+
+/** The talk is over: Present may be pressed again, and nothing is readied for it any more. */
 export function presentDone(): void {
-	if (asked === null) return;
+	if (asked === null && warm === null) return;
 	asked = null;
+	warm = null;
+	turnBack = null;
 	tell();
 }
 
@@ -135,6 +239,8 @@ export function presentKeyFrom(
 }
 
 let asked: PresentAsk | null = null;
+let warm: PresentFrom | null = null;
+let turnBack: (() => boolean) | null = null;
 const listeners = new Set<() => void>();
 
 function tell(): void {

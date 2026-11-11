@@ -65,6 +65,8 @@ import {
 import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
 import { type DeckInside, DeckKeyList, DeckStage, useDeckInside } from "../deck/deck-inside";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
+import { presentAgain, presentTakes, warmPresent } from "../deck/present";
+import { PresentControl } from "../deck/present-controls";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
@@ -1936,6 +1938,14 @@ function CanvasField({
 	});
 	const deckOwns = deckPage.owns;
 	const presentKey = deckPage.presentKey;
+	// ⌘ held over a slide of a deck page: ⌘↵ is likely next, so the slide it would play is readied now (spool#298)
+	const presentFromHeld = deckPage.presentFrom;
+	useEffect(() => {
+		if (!accelDown || !deckPage.on || presentTakes() !== "slides") return;
+		const [only, ...more] = store.get().selected;
+		const from = presentFromHeld();
+		if (from !== undefined && more.length === 0 && only === from.slide) warmPresent(from);
+	}, [accelDown, deckPage.on, presentFromHeld, store]);
 	const deckInside = useDeckInside({
 		project,
 		page: activePage,
@@ -5308,13 +5318,18 @@ function CanvasField({
 			"canvas.descend": (event) => {
 				if (store.get().entered !== null) return;
 				event?.preventDefault();
-				// on a deck page ⌘↵ presents from the slide held (spool#265)
-				if (presentKey(false)) return;
+				// on a deck page ⌘↵ presents from the slide held (spool#265), or turns round slides on their way home
+				if (presentAgain() || presentKey(false)) return;
 				setPreview(null);
 				openHeld();
 			},
 			"canvas.present-first": (event) => {
-				if (store.get().entered !== null || !presentKey(true)) return;
+				if (store.get().entered !== null || !(presentAgain() || presentKey(true))) return;
+				event?.preventDefault();
+			},
+			// ⌥⌘↵ presents the other way: the caret's second row (spool#298)
+			"canvas.present-other": (event) => {
+				if (store.get().entered !== null || !(presentAgain() || presentKey(false, "other"))) return;
 				event?.preventDefault();
 			},
 			"canvas.ascend": (event) => {
@@ -6541,6 +6556,21 @@ function CanvasField({
 							after={presenceFaces}
 							tail={<FindDoor hidden={finding} onOpen={() => setFinding(true)} />}
 						/>
+					)}
+					{/* a deck page presents from its top right (spool#298) */}
+					{loaded && deckPage.on && (deckPage.read?.slides.length ?? 0) > 0 && (
+						<div
+							className="absolute top-3 right-3 z-20"
+							onPointerDown={(event) => event.stopPropagation()}
+							onPointerMove={(event) => event.stopPropagation()}
+							onDoubleClick={(event) => event.stopPropagation()}
+							onContextMenu={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+							}}
+						>
+							<PresentControl from={deckPage.presentFrom} />
+						</div>
 					)}
 					<PagePeekCard
 						project={project}
