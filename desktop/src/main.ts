@@ -670,11 +670,11 @@ async function startBundled(): Promise<
 	if (cli === undefined) {
 		log("daemon", "FAIL", "no bundled spool");
 		tell(
-			"This copy of Spool has no daemon in it.",
-			"The app carries its own copy of the spool package, and it is not where it should be. Download Spool again from the releases page.",
+			`This copy of ${NAME} has no daemon in it.`,
+			`The app carries its own copy of the spool package, and it is not where it should be. Download ${NAME} again from the releases page.`,
 			"error",
 		);
-		fallback("Spool could not start", "This copy has no daemon in it. Download it again from the releases page.");
+		fallback(`${NAME} could not start`, "This copy has no daemon in it. Download it again from the releases page.");
 		return undefined;
 	}
 	// The daemon spawns the agent the person already installed and shells out to
@@ -703,8 +703,8 @@ async function startBundled(): Promise<
 	} catch (error) {
 		const detail = (error as Error).message;
 		log("daemon", "FAIL", detail);
-		tell("Spool could not start its daemon.", detail, "error");
-		fallback("Spool could not start its daemon", `${DIRECTORY}/daemon.log says why.`);
+		tell(`${NAME} could not start its daemon.`, detail, "error");
+		fallback(`${NAME} could not start its daemon`, `${DIRECTORY}/daemon.log says why.`);
 		return undefined;
 	}
 }
@@ -1155,7 +1155,7 @@ function handOpenedPaths(): void {
 	if (tunnel !== undefined && remote !== undefined) {
 		if (openedPaths.splice(0).length > 0)
 			tell(
-				`Spool is on ${remote.name}.`,
+				`${NAME} is on ${remote.name}.`,
 				`A file on this Mac can't be opened there. Uncheck Connect to ${remote.name} to open it here.`,
 				"info",
 			);
@@ -1508,13 +1508,13 @@ function updateItem(): MenuItemConstructorOptions {
 	if (update === null) return { label: "Check for Updates…", click: () => void checkForUpdates() };
 	switch (update.kind) {
 		case "ready":
-			return { label: "Restart Spool to Update…", click: () => void offerRestart() };
+			return { label: `Restart ${NAME} to Update…`, click: () => void offerRestart() };
 		case "downloading":
 			return { label: "Downloading Update…", enabled: false };
 		case "checking":
 			return { label: "Checking for updates…", enabled: false };
 		case "preparing":
-			return { label: `Preparing Spool ${update.version}…`, enabled: false };
+			return { label: `Preparing ${NAME} ${update.version}…`, enabled: false };
 		case "restarting":
 			return { label: `Restarting into ${update.version}…`, enabled: false };
 		case "failed":
@@ -1522,7 +1522,7 @@ function updateItem(): MenuItemConstructorOptions {
 				const { version: target } = update;
 				return { label: `Retry update to ${target}…`, click: () => void prepareUpdate(target) };
 			}
-			if (update.restart) return { label: "Restart Spool to Retry Update…", click: () => relaunchToRetryUpdate() };
+			if (update.restart) return { label: `Restart ${NAME} to Retry Update…`, click: () => relaunchToRetryUpdate() };
 			return { label: `Download ${NAME} ${update.version}…`, click: () => void shell.openExternal(DOWNLOAD) };
 	}
 }
@@ -1563,7 +1563,7 @@ function showUpdateProgress(): void {
 			resizable: false,
 			minimizable: false,
 			maximizable: false,
-			title: "Spool update",
+			title: `${NAME} update`,
 			backgroundColor: "#0e0e0e",
 			webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
 		});
@@ -1576,7 +1576,7 @@ function showUpdateProgress(): void {
 			}
 		});
 		void panel
-			.loadURL(holdingPage("Checking for updates…", "You can keep working while Spool updates."))
+			.loadURL(holdingPage("Checking for updates…", `You can keep working while ${NAME} updates.`))
 			.then(() => {
 				if (updateWindow !== panel) return;
 				updateWindowLoaded = true;
@@ -1602,10 +1602,10 @@ function renderUpdateProgress(): void {
 			heading = "Checking for updates…";
 			break;
 		case "downloading":
-			heading = `Downloading Spool ${update.version}: ${update.percent}%`;
+			heading = `Downloading ${NAME} ${update.version}: ${update.percent}%`;
 			break;
 		case "preparing":
-			heading = `Preparing Spool ${update.version}…`;
+			heading = `Preparing ${NAME} ${update.version}…`;
 			break;
 		default:
 			return;
@@ -1686,7 +1686,7 @@ async function reloadCanvasWindow(): Promise<void> {
 	} catch (error) {
 		uncover();
 		log("canvas", "FAIL reload", String(error));
-		tell("Spool could not refresh yet.", String(error), "warning");
+		tell(`${NAME} could not refresh yet.`, String(error), "warning");
 	}
 }
 
@@ -1768,7 +1768,7 @@ async function checkForUpdates(): Promise<void> {
 	if (installed === undefined) {
 		log("updates", "FAIL", "no version in bundle");
 		tell(
-			"Spool cannot tell which version it is.",
+			`${NAME} cannot tell which version it is.`,
 			"This copy has no version number in it, which usually means it was not packaged by scripts/build.sh. Compare it against the releases page yourself.",
 			"warning",
 		);
@@ -1784,7 +1784,7 @@ async function checkForUpdates(): Promise<void> {
 		} catch (error) {
 			const detail = error instanceof UpdateCheckError ? error.message : String(error);
 			log("updates", "FAIL", detail);
-			tell("Spool could not check for updates.", `${detail}\n\nYou have ${formatVersion(installed)}.`, "warning");
+			tell(`${NAME} could not check for updates.`, `${detail}\n\nYou have ${formatVersion(installed)}.`, "warning");
 			return;
 		}
 		log(
@@ -1798,13 +1798,13 @@ async function checkForUpdates(): Promise<void> {
 		// every machine that ever builds this app, and offering it a downgrade
 		// would be nonsense.
 		if (compareVersions(latest.version, installed) <= 0) {
-			tell("Spool is up to date.", `You have ${formatVersion(installed)}, which is the latest release.`, "info");
+			tell(`${NAME} is up to date.`, `You have ${formatVersion(installed)}, which is the latest release.`, "info");
 			return;
 		}
 		const answer = await dialog.showMessageBox({
 			type: "info",
-			message: `Spool ${formatVersion(latest.version)} is available.`,
-			detail: `You have ${formatVersion(installed)}. This copy was built from a checkout, so it cannot replace itself: Download starts the dmg, and replacing Spool in Applications by hand is the rest.`,
+			message: `${NAME} ${formatVersion(latest.version)} is available.`,
+			detail: `You have ${formatVersion(installed)}. This copy was built from a checkout, so it cannot replace itself: Download starts the dmg, and replacing ${NAME} in Applications by hand is the rest.`,
 			buttons: ["Download", "Later"],
 			defaultId: 0,
 			cancelId: 1,
@@ -1825,7 +1825,7 @@ async function checkForUpdates(): Promise<void> {
 		setUpdate(null);
 		const detail = error instanceof UpdateCheckError ? error.message : String(error);
 		log("updates", "FAIL", detail);
-		tell("Spool could not check for updates.", `${detail}\n\nYou have ${formatVersion(installed)}.`, "warning");
+		tell(`${NAME} could not check for updates.`, `${detail}\n\nYou have ${formatVersion(installed)}.`, "warning");
 		return;
 	}
 	busy = false;
@@ -1842,7 +1842,7 @@ async function checkForUpdates(): Promise<void> {
 	if (!found.newer) {
 		closeUpdateProgress();
 		setUpdate(null);
-		tell("Spool is up to date.", `You have ${formatVersion(installed)}, which is the latest release.`, "info");
+		tell(`${NAME} is up to date.`, `You have ${formatVersion(installed)}, which is the latest release.`, "info");
 		return;
 	}
 
@@ -1857,10 +1857,10 @@ async function checkForUpdates(): Promise<void> {
 function whyNotInstallable(): string | undefined {
 	if (process.platform !== "darwin" || !app.isPackaged || LANE) return undefined;
 	if (process.execPath.includes("/AppTranslocation/")) {
-		return "Spool is running from a quarantined copy, which macOS does not let it replace. Move Spool to Applications and open it from there.";
+		return `${NAME} is running from a quarantined copy, which macOS does not let it replace. Move ${NAME} to Applications and open it from there.`;
 	}
 	if (!app.isInApplicationsFolder()) {
-		return "Spool is not in the Applications folder, so macOS will not let it replace itself. Move it there and open it again.";
+		return `${NAME} is not in the Applications folder, so macOS will not let it replace itself. Move it there and open it again.`;
 	}
 	return undefined;
 }
@@ -1879,9 +1879,8 @@ async function offerApplicationsFolder(): Promise<void> {
 	if (existsSync(declined)) return;
 	const answer = await dialog.showMessageBox({
 		type: "question",
-		message: "Move Spool to the Applications folder?",
-		detail:
-			"Spool runs from anywhere, but it can only update itself from Applications. Moving it takes a moment and opens it again from there.",
+		message: `Move ${NAME} to the Applications folder?`,
+		detail: `${NAME} runs from anywhere, but it can only update itself from Applications. Moving it takes a moment and opens it again from there.`,
 		buttons: ["Move to Applications", "Not Now"],
 		defaultId: 0,
 		cancelId: 1,
@@ -1946,12 +1945,16 @@ async function offerCommand(): Promise<void> {
 async function installCommand(): Promise<void> {
 	const launcher = launcherPath(process.resourcesPath);
 	if (!existsSync(launcher)) {
-		tell("This copy of Spool has no spool command in it.", "Download Spool again from the releases page.", "error");
+		tell(
+			`This copy of ${NAME} has no spool command in it.`,
+			`Download ${NAME} again from the releases page.`,
+			"error",
+		);
 		return;
 	}
 	if (!app.isInApplicationsFolder()) {
 		tell(
-			"Move Spool to the Applications folder first.",
+			`Move ${NAME} to the Applications folder first.`,
 			"The command points into the app, so it would stop working the moment the app moved.",
 			"warning",
 		);
@@ -1994,7 +1997,7 @@ async function prepareUpdate(target: string, manual = true, offer = manual): Pro
 		setUpdate({ kind: "failed", version: target, message: refusal, retryable: false });
 		if (manual)
 			tell(
-				"Spool cannot update itself from here.",
+				`${NAME} cannot update itself from here.`,
 				`${refusal}\n\nDownload starts the dmg, which is the other way onto ${target}.`,
 				"warning",
 			);
@@ -2031,7 +2034,7 @@ async function prepareUpdate(target: string, manual = true, offer = manual): Pro
 		});
 		closeUpdateProgress();
 		if (update?.kind === "failed" && update.retryable) scheduleCheckIn(5 * 60_000);
-		if (manual) tell("Spool could not prepare the update.", detail, "warning");
+		if (manual) tell(`${NAME} could not prepare the update.`, detail, "warning");
 		return;
 	}
 	busy = false;
@@ -2057,9 +2060,9 @@ async function offerRestart(): Promise<void> {
 	try {
 		const answer = await dialog.showMessageBox({
 			type: "info",
-			message: "A Spool update is ready.",
-			detail: `Restart to use Spool ${update.version}. If you choose Later, the update will finish when you quit Spool.`,
-			buttons: ["Restart Spool", "Later"],
+			message: `A ${NAME} update is ready.`,
+			detail: `Restart to use ${NAME} ${update.version}. If you choose Later, the update will finish when you quit ${NAME}.`,
+			buttons: [`Restart ${NAME}`, "Later"],
 			defaultId: 0,
 			cancelId: 1,
 		});
@@ -2146,7 +2149,7 @@ async function restartUpdate(relaunch = true): Promise<void> {
 		log("updates", "FAIL", String(error));
 		uncover();
 		setUpdate({ kind: "ready", version: target });
-		tell("Spool could not restart yet.", error instanceof Error ? error.message : String(error), "warning");
+		tell(`${NAME} could not restart yet.`, error instanceof Error ? error.message : String(error), "warning");
 		void openCanvas();
 	}
 }
@@ -2208,7 +2211,7 @@ function reveal({ root, frame }: Reveal): void {
 async function cloudAccount(command: "login" | "logout"): Promise<void> {
 	const spec = cloudCommand(process.execPath, process.resourcesPath, DIRECTORY, command, process.env);
 	if (spec === undefined) {
-		tell("This copy of Spool cannot open its account.", "Download Spool again from the releases page.", "error");
+		tell(`This copy of ${NAME} cannot open its account.`, `Download ${NAME} again from the releases page.`, "error");
 		return;
 	}
 	const result = await new Promise<{ code: number; stderr: string }>((done) => {
@@ -2217,7 +2220,7 @@ async function cloudAccount(command: "login" | "logout"): Promise<void> {
 			stdio: ["ignore", "ignore", "pipe"],
 		});
 		let stderr = "";
-		if (child.stderr === null) return done({ code: 1, stderr: "Spool could not start its account command." });
+		if (child.stderr === null) return done({ code: 1, stderr: `${NAME} could not start its account command.` });
 		child.stderr.setEncoding("utf8");
 		child.stderr.on("data", (part: string) => (stderr += part));
 		child.on("error", (error) => done({ code: 1, stderr: error.message }));
@@ -2230,7 +2233,7 @@ async function cloudAccount(command: "login" | "logout"): Promise<void> {
 	const detail = result.stderr.trim().split("\n").at(-1) || "Try again.";
 	log("cloud account", "FAIL", `command=${command}`, `code=${result.code}`);
 	// The CLI owns redaction. This process never receives its stdout or credential.
-	tell(command === "login" ? "Spool could not sign in." : "Spool could not sign out.", detail, "error");
+	tell(command === "login" ? `${NAME} could not sign in.` : `${NAME} could not sign out.`, detail, "error");
 }
 
 // MARK: - Lifecycle
@@ -2356,7 +2359,7 @@ export function boot(): void {
 		log("boot", `pid=${process.pid}`, `v${version()}`, DIRECTORY);
 		if (restart === "expired")
 			tell(
-				"Spool did not finish updating.",
+				`${NAME} did not finish updating.`,
 				"The previous update did not finish. Check for Updates to try again.",
 				"warning",
 			);
