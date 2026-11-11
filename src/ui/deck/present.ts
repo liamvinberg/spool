@@ -189,7 +189,7 @@ export function presentCold(): void {
 
 /**
  * What a press of Present does while the slides are on their way home from a talk (spool#298): `turn` sends them back
- * to fill the screen and says true, or says false once it is too late; null once nothing is on its way.
+ * to fill the screen and says true, or says false when nothing is on its way; null once nothing can fly.
  */
 export function onPresentAgain(turn: (() => boolean) | null): void {
 	turnBack = turn;
@@ -210,7 +210,6 @@ export function presentDone(): void {
 	if (asked === null && warm === null) return;
 	asked = null;
 	warm = null;
-	turnBack = null;
 	tell();
 }
 
