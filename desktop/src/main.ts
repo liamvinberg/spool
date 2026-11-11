@@ -684,6 +684,9 @@ async function startBundled(): Promise<
 	const path = terminalPath();
 	log("path", path === undefined ? "as launched" : "from the login shell");
 	try {
+		const address = daemon.configuredAddress(DIRECTORY, process.env, BETA);
+		const moved = await daemon.moveOffTakenPort(DIRECTORY, address);
+		if (moved !== undefined) log("daemon", "port", `${address.port} is another app's, moved to ${moved}`);
 		const status = await daemon.start({
 			execPath: process.execPath,
 			nodeArgs: ["-r", bundledShim(process.resourcesPath)],

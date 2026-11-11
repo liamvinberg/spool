@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
+import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -392,6 +392,38 @@ export async function start(options: StartOptions): Promise<DaemonStatus> {
 		);
 	}
 	throw new DaemonStartError(`the spool daemon did not come up, see ${join(directory, "daemon.log")}`);
+}
+
+/**
+ * Another app on the port nobody chose, as Spotify can be (it takes a random port each time it starts): the daemon
+ * moves to the first free port ten, twenty, up to ninety above it, and config.json keeps it there, so the CLI, the
+ * app and every later start agree. A port config.json or SPOOL_PORT already names is left alone, taken or not, and
+ * so is a config.json that does not read: the start then says what is wrong instead.
+ */
+export async function moveOffTakenPort(
+	directory: string,
+	address: { host: string; port: number },
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<number | undefined> {
+	if (env.SPOOL_PORT !== undefined && env.SPOOL_PORT !== "") return undefined;
+	const file = join(directory, "config.json");
+	let config: Record<string, unknown> = {};
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+		config = parsed as Record<string, unknown>;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+	}
+	if (config.port !== undefined) return undefined;
+	const { host, port } = address;
+	if (!(await listening(host, port)) || (await health(daemonUrl(host, port))) !== undefined) return undefined;
+	for (let step = 10; step < 100; step += 10) {
+		if (await listening(host, port + step)) continue;
+		writeFileSync(file, `${JSON.stringify({ ...config, port: port + step }, null, "\t")}\n`);
+		return port + step;
+	}
+	return undefined;
 }
 
 /** Whether anything accepts a connection on the address. */
