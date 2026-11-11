@@ -268,7 +268,7 @@ export const FrameLabel = memo(function FrameLabel({
 	);
 });
 
-/** Play a frame, from its label: a ghost until pointed at. */
+/** Play a frame, from its label: a ghost until pointed at, and gone, room and all, from a frame too small for verbs. */
 function PlayButton({
 	name,
 	leaf,
@@ -285,7 +285,7 @@ function PlayButton({
 			type="button"
 			aria-label={title ?? `Play ${leaf}`}
 			title={title}
-			className="flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-[color,opacity] duration-fast ease-out hover:text-accent-strong group-data-away/label:pointer-events-none group-data-away/label:opacity-0 type-detail"
+			className="flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-colors duration-fast ease-out hover:text-accent-strong group-data-away/label:hidden type-detail"
 			onPointerDown={(event) => {
 				event.stopPropagation();
 				onPlay(name);

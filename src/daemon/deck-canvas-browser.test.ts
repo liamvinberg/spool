@@ -186,4 +186,10 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	await page.locator('[data-deck-stage="presentation/number"][data-deck-stage-shown]').waitFor();
 	await page.keyboard.press("Escape");
 	await expect.poll(camera).toEqual(out);
+
+	// zoomed out until the slides are too small for their verbs, the selected slide's label still names it
+	await page.setViewportSize({ width: 480, height: 900 });
+	await page.keyboard.press("Shift+1");
+	const named = page.locator('[data-frame-label="presentation/number"][data-away] [data-slide-number] + span');
+	await expect.poll(() => named.evaluate((name) => name.getBoundingClientRect().width)).toBeGreaterThan(8);
 });
