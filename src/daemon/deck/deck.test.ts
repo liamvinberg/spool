@@ -14,8 +14,10 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { DeckChange, DeckChangeAnswer, DecksRead } from "../../deck/wire";
 import { switchExperiment } from "../../experiments-verb";
 import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writePageFrame } from "../../test-helpers";
+import type { ChangeEvent } from "../events";
 import { createSettingsStore } from "../settings";
 import { reconcileDeck } from "./change";
+import { createDeckKeeper } from "./keeper";
 
 /**
  * The deck on disk over a fixture design/ (spool#265): what the daemon writes for a deck, when, and what it never
@@ -126,6 +128,30 @@ describe("a deck on disk", () => {
 		writeDesignFile(deck.root, "frames/talk/deck.json", json({ version: 1, slides: ["sense", "title"] }));
 		await wait(QUIET);
 		expect(deck.sidecar("title")).toEqual(box(0, 0));
+	});
+
+	it("keeps a page's quiet period when its decks are read inside a burst of writes", async () => {
+		const deck = deckProject({ on: false });
+		let hear: (event: ChangeEvent) => void = () => {};
+		const subscribe = (_root: string, listener: (event: ChangeEvent) => void) => {
+			hear = listener;
+			return () => {};
+		};
+		const keeper = createDeckKeeper({ subscribe, on: () => true });
+		onTestFinished(() => keeper.close());
+		writePageFrame(deck.root, "talk", "a", tsx("a"));
+		writeDesignFile(deck.root, "frames/talk/deck.json", json({ version: 1, slides: ["a"] }));
+		// a first read catches the page up at once
+		keeper.watch(deck.root);
+		keeper.settleAll(deck.root);
+		expect(deck.sidecar("a")).toEqual(box(0, 0));
+		// a write heard: a read before the page is quiet writes nothing, and the page is laid out once it is
+		writePageFrame(deck.root, "talk", "b", tsx("b"));
+		writeDesignFile(deck.root, "frames/talk/deck.json", json({ version: 1, slides: ["b", "a"] }));
+		hear({ kind: "deck", page: "talk" });
+		keeper.settleAll(deck.root);
+		expect(deck.sidecar("a")).toEqual(box(0, 0));
+		await vi.waitFor(() => expect(deck.sidecar("a")).toEqual(box(1440, 0)), { timeout: 5_000 });
 	});
 
 	it("brings two machines to the same bytes, and to rest, whichever of their writes sync kept", async () => {

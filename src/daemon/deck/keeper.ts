@@ -46,7 +46,8 @@ export function createDeckKeeper(deps: {
 	const watches = new Map<string, () => void>();
 	/** the projects this keeper answers `deckPlaceOf` for */
 	const mine = new Set<string>();
-	const waiting = new Map<string, { root: string; timer: NodeJS.Timeout }>();
+	/** pages to lay out once quiet: `heard` when a write was heard on them, rather than caught up at a first watch */
+	const waiting = new Map<string, { root: string; timer: NodeJS.Timeout; heard: boolean }>();
 	const quiet = deps.quietMs ?? DECK_QUIET_MS;
 	const now = deps.now ?? Date.now;
 	/** per page: the deck's file as last laid out, and each frame's last rewrite, how often and since when */
@@ -107,7 +108,7 @@ export function createDeckKeeper(deps: {
 		}
 	}
 
-	function soon(root: string, page: string): void {
+	function soon(root: string, page: string, heard: boolean): void {
 		const key = keyOf(root, page);
 		const held = waiting.get(key);
 		if (held !== undefined) clearTimeout(held.timer);
@@ -116,15 +117,15 @@ export function createDeckKeeper(deps: {
 			run(root, page);
 		}, quiet);
 		timer.unref?.();
-		waiting.set(key, { root, timer });
+		waiting.set(key, { root, timer, heard: heard || held?.heard === true });
 	}
 
 	function heard(root: string, event: ChangeEvent): void {
 		if (!deps.on()) return;
-		if (event.kind === "deck") soon(root, event.page);
+		if (event.kind === "deck") soon(root, event.page, true);
 		else if (event.kind === "frame" || event.kind === "geometry") {
 			const page = pageParent(event.frame);
-			if (page !== ROOT_PAGE && holdsDeck(root, page)) soon(root, page);
+			if (page !== ROOT_PAGE && holdsDeck(root, page)) soon(root, page, true);
 		}
 	}
 
@@ -144,7 +145,7 @@ export function createDeckKeeper(deps: {
 		try {
 			const designDir = realDesignDir(root);
 			interrupted.set(root, new Set(recoverDeckChanges(designDir, deps.log)));
-			for (const page of deckPages(root)) soon(root, page);
+			for (const page of deckPages(root)) soon(root, page, false);
 		} catch (error) {
 			deps.log?.(`could not catch up decks in ${root}: ${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -179,10 +180,20 @@ export function createDeckKeeper(deps: {
 			for (const root of [...watches.keys()]) if (!on || !roots.includes(root)) stop(root);
 			for (const root of roots) watch(root);
 		},
-		/** Every deck of a project laid out now, as a read of its decks first does. */
+		/**
+		 * Every deck of a project laid out now, as a read of its decks first does, but a page somebody is writing: it
+		 * keeps its quiet period, so a window reading on every change never lays a page out inside a burst of writes.
+		 */
 		settleAll(root: string): void {
 			if (!deps.on()) return;
-			for (const page of deckPages(root)) run(root, page);
+			for (const page of deckPages(root)) {
+				const key = keyOf(root, page);
+				const held = waiting.get(key);
+				if (held?.heard === true) continue;
+				if (held !== undefined) clearTimeout(held.timer);
+				waiting.delete(key);
+				run(root, page);
+			}
 		},
 		/** What the keeper knows is wrong with a deck that its files do not say. */
 		problems(root: string, page: string): DeckProblem[] {
