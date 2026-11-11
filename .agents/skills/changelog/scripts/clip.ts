@@ -24,6 +24,8 @@ export interface Clip {
 	kit?: readonly string[];
 	/** More environment for the clip's spool, such as SPOOL_WHATS_NEW to play What's new on a checkout. */
 	env?: Readonly<Record<string, string>>;
+	/** Machine settings for the clip's spool, by key, such as `{ "experimental.deck": true }` for a feature behind Experimental. */
+	settings?: Readonly<Record<string, unknown>>;
 	/** The window's size in CSS pixels; 1440×900 by default, the page's 16:10. */
 	viewport?: { w: number; h: number };
 	/** What the replayed take does; a live clip walks its own. */
@@ -81,8 +83,8 @@ export type Target = { x: number; y: number } | string | { selector: string; fra
 export type Step =
 	/** glide the pointer there */
 	| { move: Target; ms?: number }
-	/** glide there and click */
-	| { click: Target; ms?: number }
+	/** glide there and click: with the right button to open a context menu, or twice for a double click */
+	| { click: Target; ms?: number; button?: "right"; double?: boolean }
 	/** press there, glide to a target or by an offset from where it pressed, let go */
 	| { drag: Target; to: Target; ms?: number }
 	| { drag: Target; by: { dx: number; dy: number }; ms?: number }
@@ -218,11 +220,16 @@ export async function rehearse(
 			t += ms;
 			at = to;
 			if ("click" in step) {
-				inputs.push({ t: t + 60, kind: "down", ...to, button: 0 }, { t: t + 140, kind: "up", ...to, button: 0 });
-				await page.mouse.down();
-				await page.waitForTimeout(80);
-				await page.mouse.up();
-				t += 300;
+				const button = step.button === "right" ? 2 : 0;
+				const presses = step.double === true ? 2 : 1;
+				for (let count = 1; count <= presses; count++) {
+					inputs.push({ t: t + 60, kind: "down", ...to, button }, { t: t + 140, kind: "up", ...to, button });
+					await page.mouse.down({ button: step.button ?? "left", clickCount: count });
+					await page.waitForTimeout(80);
+					await page.mouse.up({ button: step.button ?? "left", clickCount: count });
+					if (count < presses) await page.waitForTimeout(80);
+					t += count < presses ? 160 : 300;
+				}
 				await page.waitForTimeout(220);
 			}
 		} else if ("drag" in step) {
@@ -360,7 +367,9 @@ async function withLane<T>(
 			writeFileSync(join(project, path), content);
 		}
 		// a project the clip makes (New project, a dropped file) lands in the lane, never in ~/spool
-		createSettingsStore(join(lane, "state")).write("projects.location", join(lane, "projects"));
+		const settings = createSettingsStore(join(lane, "state"));
+		settings.write("projects.location", join(lane, "projects"));
+		for (const [key, value] of Object.entries(clip.settings ?? {})) settings.write(key, value);
 		const served = spool(["serve"], env);
 		if (served.status !== 0) throw new Error(`spool did not start: ${served.stdout}${served.stderr}`);
 		return await use(`http://127.0.0.1:${env.SPOOL_PORT}/p/clip`, {
