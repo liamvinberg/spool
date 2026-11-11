@@ -4,17 +4,16 @@ import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
 import type { KeyCommand } from "../../deck/stage-keys";
 import { type At, nextAt, roomPicture, type StageSession, type TalkSlide } from "../../deck/stage-session";
-import { type SlideReadiness, type StagePointer, stageChange } from "../../deck/stage-wire";
+import type { SlideReadiness, StagePointer } from "../../deck/stage-wire";
 import type { DeckRead } from "../../deck/wire";
 import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
-import { controlFetch } from "../api";
 import { cn } from "../cn";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Kbd } from "../primitives/display";
 import { Scrim, Sheet } from "../primitives/overlays";
-import { onStageChange } from "./deck-api";
 import { openRoom, type PresentAsk } from "./present";
 import { presenterLayout } from "./presenter-layout";
+import { talkSource } from "./talk-source";
 
 /**
  * The presenter view (spool#265, the team canvas's `app/spool-deck--presenter`): spool's own window while a talk is
@@ -37,8 +36,6 @@ const SNAP = [0.32, 0.72, 0, 1] as const;
 const ROOM_GONE_MS = 1500;
 /** How long a room's window has to say it opened before the browser is taken to have kept it closed. */
 const ROOM_PATIENCE_MS = 10_000;
-/** How long the folder has to be quiet before a saved change is taken: an editor's save is often several writes. */
-const QUIET_MS = 250;
 
 export interface PresenterProps {
 	readonly ask: PresentAsk;
@@ -84,20 +81,8 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		if (main === null || after === null) return;
 		const channel = new BroadcastChannel(talkChannel(ask.talk));
 		const say = (message: TalkMessage) => channel.postMessage(message);
-		const api = `/api/p/${encodeURIComponent(ask.project)}`;
-		/** the talk the newest document was opened on, as the daemon said it */
-		let playing = "";
-		const address = async () => {
-			const response = await controlFetch(`${api}/deck-stage`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ page: ask.page }),
-			});
-			if (!response.ok) throw new Error((await response.text()) || "the talk could not be played");
-			const answer = (await response.json()) as { address: string; size: Size; talk: unknown };
-			playing = JSON.stringify(answer.talk);
-			return answer;
-		};
+		const source = talkSource(ask.project, ask.page);
+		const address = source.address;
 		let pictured = false;
 		let keys = false;
 		const end = () => {
@@ -180,26 +165,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		}, 500);
 
 		// a saved change to the talk taken in place, by both stages, once the folder is quiet
-		let build: ReturnType<typeof setTimeout> | undefined;
-		const reload = () => {
-			host.reload();
-			next.reload();
-		};
-		const stopHearing = onStageChange((change) => {
-			const kind = stageChange(
-				change,
-				host.talk().map((slide) => slide.frame),
-				ask.page,
-			);
-			if (kind === undefined) return;
-			clearTimeout(build);
-			build = setTimeout(() => {
-				if (kind === "build") return reload();
-				void controlFetch(`${api}/deck-stage?page=${encodeURIComponent(ask.page)}`)
-					.then(async (response) => response.ok && JSON.stringify(await response.json()) !== playing)
-					.then((changed) => changed && reload());
-			}, QUIET_MS);
-		});
+		const stopHearing = source.follow(() => [host, next]);
 
 		// closing or reloading spool's window ends the talk, and the room's window with it
 		const leave = () => say({ kind: "end" });
@@ -207,7 +173,6 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		return () => {
 			removeEventListener("pagehide", leave);
 			stopHearing();
-			clearTimeout(build);
 			clearTimeout(gone);
 			clearTimeout(opening);
 			clearInterval(watch);
