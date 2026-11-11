@@ -62,6 +62,8 @@ export interface StageHost {
 	key(event: KeyboardEvent): boolean;
 	/** take a new build of the talk, staying on its slide and beat */
 	reload(): void;
+	/** the keyboard to the stage's own document, where a live slide given the keys hears them */
+	focus(): void;
 	/** the newest session the host knows */
 	session(): StageSession | undefined;
 	/** the talk, once the stage said it */
@@ -312,6 +314,9 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		},
 		reload() {
 			void open();
+		},
+		focus() {
+			current?.frame.focus();
 		},
 		session: () => session,
 		talk: () => current?.talk ?? [],
