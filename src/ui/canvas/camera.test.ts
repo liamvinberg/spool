@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	type Box,
 	entryCamera,
+	fitBand,
 	fitCamera,
 	moveCamera,
 	revealCamera,
@@ -170,5 +171,30 @@ describe("zoomAt with a floor", () => {
 	it("keeps the 2% floor without one, or with a lower one", () => {
 		expect(zoomAt({ x: 0, y: 0, k: 0.03 }, 0, 0, 0.5).k).toBe(0.02);
 		expect(zoomAt({ x: 0, y: 0, k: 0.03 }, 0, 0, 0.5, 0.001).k).toBe(0.02);
+	});
+});
+
+describe("a deck page fitted (spool#299)", () => {
+	const talk = { w: 1280, h: 720 };
+	/** a talk of `n` slides, its band from the page's left, and a grid of loose frames under it */
+	const field = (n: number): Box => ({ x: 0, y: 0, w: n * 1440 - 160, h: 2000 });
+
+	it("fits five slides' worth across the view, and never draws a slide under 120 px, opening at the band's left end", () => {
+		const short = fitBand({ talk, slides: 3 }, field(3), 1440, 900);
+		expect(short.k).toBeCloseTo((1440 - 72) / (5 * 1440 - 160));
+		expect(short.x).toBe(36);
+		const long = fitBand({ talk, slides: 100 }, field(100), 1440, 900);
+		expect(long.k * talk.w).toBe(120);
+		expect(long.x).toBe(36);
+	});
+
+	it("opens with a slide chosen in view, and leaves the band at its end when the slide is already there", () => {
+		const k = 120 / talk.w;
+		const sixtieth: Box = { x: 59 * 1440, y: 0, ...talk };
+		const shown = fitBand({ talk, slides: 100 }, field(100), 1440, 900, sixtieth);
+		const left = shown.x + sixtieth.x * k;
+		expect(left).toBeGreaterThan(0);
+		expect(left + talk.w * k).toBeLessThan(1440);
+		expect(fitBand({ talk, slides: 100 }, field(100), 1440, 900, { x: 1440, y: 0, ...talk }).x).toBe(36);
 	});
 });

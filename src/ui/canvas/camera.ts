@@ -4,6 +4,8 @@
  * exponential wheel zoom, cubic ease-out flights.
  */
 
+import type { Size } from "../../deck/deck-file";
+import { colStride, GAP } from "../../deck/layout";
 import type { Camera } from "../api";
 
 export interface Box {
@@ -107,6 +109,33 @@ export function zoomFloor(bounds: Box | null, vw: number, vh: number): number {
 export function fitCamera(bounds: Box, vw: number, vh: number): Camera {
 	const k = clamp(Math.min((vw - FIT_INSET) / bounds.w, (vh - FIT_INSET) / bounds.h), K_MIN, 1);
 	return { k, x: (vw - bounds.w * k) / 2 - bounds.x * k, y: (vh - bounds.h * k) / 2 - bounds.y * k };
+}
+
+/** The narrowest a slide is drawn when a deck page is fitted, in screen pixels (spool#299). */
+const SLIDE_FLOOR = 120;
+/** How far in from the view's side a fitted deck page's band starts, in screen pixels. */
+const BAND_INSET = 36;
+
+/**
+ * A deck page fitted (spool#299): its talk on one line, at least five slides' worth across the view and never a slide
+ * under `SLIDE_FLOOR` wide, past which the band runs off the view's sides. It opens at the band's left end,
+ * `BAND_INSET` in, or with the slide `chosen` in view, and the page's frames, `bounds`, centred down the view.
+ */
+export function fitBand(
+	band: { talk: Size; slides: number },
+	bounds: Box,
+	vw: number,
+	vh: number,
+	chosen?: Box,
+): Camera {
+	const fit = (vw - BAND_INSET * 2) / (Math.max(5, band.slides) * colStride(band.talk) - GAP);
+	const k = clamp(Math.max(fit, SLIDE_FLOOR / band.talk.w), K_MIN, 1);
+	const y = Math.max(FIT_MARGIN, (vh - bounds.h * k) / 2) - bounds.y * k;
+	const x = BAND_INSET;
+	if (chosen === undefined) return { k, x, y };
+	const left = x + chosen.x * k;
+	const shown = left >= BAND_INSET && left + chosen.w * k <= vw - BAND_INSET;
+	return { k, x: shown ? x : vw / 2 - (chosen.x + chosen.w / 2) * k, y };
 }
 
 /** Pan (same zoom) so the box is centered — the flow-walk's camera move (#5). */
