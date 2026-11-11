@@ -170,3 +170,15 @@ it("never lets a mirror's slide change the talk's state on its own, but keeps a 
 	expect(document.querySelector("[data-spool-stage-shown] .count")?.textContent).toBe("1");
 	expect(on.state()).toEqual({ count: 1, seen: true });
 });
+
+it("keeps every slide it readied ready, so a jump far across the talk is on at once", async () => {
+	const names = ["a", "b", "c", "d", "e", "f"];
+	const on = await stage(
+		names.map((name) => ({ frame: `talk/${name}`, screen: plain(name) })),
+		{ mode: "own", room: true },
+	);
+	await vi.waitFor(() => expect(on.slides().map((slide) => slide.status)).toEqual(names.map(() => "ready")));
+	on.send({ spool: "stage-command", command: { kind: "last" } });
+	await vi.waitFor(() => expect(on.shown().at(-1)?.at.slide).toBe(5));
+	expect(on.shown().at(-1)).toMatchObject({ ready: true, held: false });
+});

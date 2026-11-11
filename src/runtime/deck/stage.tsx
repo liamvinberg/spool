@@ -142,8 +142,6 @@ interface SlideHeld {
 	module: "waiting" | "loading" | "in" | "broken";
 	style: "waiting" | "loading" | "in" | "failed";
 	broken?: { why: string; when: "compile" | "load" | "mount" | "later"; kept?: "picture" | "picture-without-webgl" };
-	/** it was ready once in this document: its module, stylesheet, fonts and images are in */
-	wasReady: boolean;
 	/** its fonts and pictures, held for the whole talk so the browser keeps them */
 	warmed?: Warmed;
 }
@@ -164,7 +162,7 @@ interface Copy {
 
 /**
  * The slides kept rendered out of sight around the one on screen: the next two and the one before. Beyond them the rest of the
- * talk is readied one slide at a time, nearest first, and let go once it has been.
+ * talk is readied one slide at a time, nearest first, and kept rendered once it has been.
  */
 const AHEAD = 2;
 const BEHIND = 1;
@@ -184,7 +182,6 @@ export function bootStage(runtime: StageRuntime): void {
 		config: slide,
 		module: "waiting",
 		style: "waiting",
-		wasReady: false,
 	}));
 	const startAt = Math.max(
 		0,
@@ -295,24 +292,30 @@ export function bootStage(runtime: StageRuntime): void {
 	}
 
 	/**
-	 * The copies to keep rendered: the window around the slide wanted, at the takes the talk is on, and once all of
-	 * those are ready, the nearest slide of the rest that has never been, for as long as it takes to ready it.
+	 * The copies to keep rendered: the window around the slide wanted, at the takes the talk is on; every other slide
+	 * readied at the take it is on, so a jump to it is on in the next frame too; and once all of those are ready, the
+	 * nearest slide of the rest that has not been, for as long as it takes to ready it.
 	 */
 	function wantedCopies(): Copy[] {
 		const at = picture();
 		const target = at.at.slide;
+		const near = (index: number) => index >= target - BEHIND && index <= target + AHEAD;
 		const out: Copy[] = [];
 		for (let index = target - BEHIND; index <= target + AHEAD; index++) {
 			const slide = slides[index];
 			if (slide === undefined || slide.module !== "in") continue;
 			out.push(copyFor(index, takeOf(index, at.takes)));
 		}
+		slides.forEach((_, index) => {
+			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
+			if (!near(index) && copy !== undefined && !copy.broken) out.push(copy);
+		});
 		if (out.some((copy) => !copy.broken && !ready(copy))) return out;
 		for (const index of order(target)) {
-			if (index >= target - BEHIND && index <= target + AHEAD) continue;
+			const key = keyOf(index, takeOf(index, at.takes));
+			if (near(index) || copies.has(key)) continue;
 			const slide = slides[index];
-			if (slide === undefined || slide.wasReady || slide.broken !== undefined) continue;
-			if (slide.module !== "in" || !styled(slide)) continue;
+			if (slide === undefined || slide.broken !== undefined || slide.module !== "in" || !styled(slide)) continue;
 			out.push(copyFor(index, takeOf(index, at.takes)));
 			break;
 		}
@@ -335,10 +338,7 @@ export function bootStage(runtime: StageRuntime): void {
 		void warmSlide(copy.box, style?.sheet ?? null, style?.textContent ?? "").then((warmed) => {
 			copy.warming = false;
 			copy.warm = true;
-			if (slide !== undefined && !copy.broken) {
-				slide.wasReady = true;
-				slide.warmed = warmed;
-			}
+			if (slide !== undefined && !copy.broken) slide.warmed = warmed;
 			settle();
 		});
 	}
@@ -720,7 +720,8 @@ export function bootStage(runtime: StageRuntime): void {
 				return { frame, status: "broken", why, when, ...(kept === undefined ? {} : { kept }) };
 			}
 			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
-			return { frame, status: ready(copy) || (copy === undefined && slide.wasReady) ? "ready" : "loading" };
+			if (ready(copy)) return { frame, status: "ready" };
+			return { frame, status: "loading" };
 		});
 		const text = JSON.stringify(report);
 		if (text === said) return;
