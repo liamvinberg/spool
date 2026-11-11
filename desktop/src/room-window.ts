@@ -39,25 +39,65 @@ export function roomDisplay(displays: readonly RoomDisplay[], canvas: number): R
 	return [...others].sort((a, b) => Number(a.internal) - Number(b.internal) || area(b) - area(a))[0];
 }
 
-/** Where the room opens: full screen on another display when there is one, else a window on the canvas's. */
-export function roomPlace(displays: readonly RoomDisplay[], canvas: number): RoomPlace {
+/**
+ * Where the room opens: full screen on another display when there is one, else a window on the canvas's, placed
+ * against spool's window (`canvasRect`) as `roomWindowRect` says.
+ */
+export function roomPlace(displays: readonly RoomDisplay[], canvas: number, canvasRect?: WindowRect): RoomPlace {
 	const other = roomDisplay(displays, canvas);
 	if (other !== undefined) return { kind: "screen", display: other };
 	const home = displays.find((display) => display.id === canvas) ?? displays[0];
-	return { kind: "window", rect: roomWindowRect(home?.workArea ?? { x: 0, y: 0, ...ROOM_WINDOW_AREA }) };
+	return { kind: "window", rect: roomWindowRect(home?.workArea ?? { x: 0, y: 0, ...ROOM_WINDOW_AREA }, canvasRect) };
 }
 
 const ROOM_WINDOW_AREA = { width: ROOM_WINDOW.w, height: ROOM_WINDOW.h };
 
+/** The narrowest room worth opening beside spool's window rather than over it. */
+const BESIDE_LEAST = 480;
+/** The smallest the room opens over spool's window, as a share of the small screen. */
+const SMALLEST = 1 / 3;
 /**
- * The room as a window on a display: the small screen's size, or the display's when it is smaller, against the right
- * edge and centred in height, as a play window opens, so the presenter view's left side stays in sight beside it.
+ * The presenter view's slide in spool's window, as `src/ui/deck/presenter-layout.ts` lays it out: 40 in from the left
+ * and 96 down, with the next-and-notes column (400 with its gutter and margin) beside it and 240 kept below it.
  */
-export function roomWindowRect(area: WorkArea): WindowRect {
-	const scale = Math.min(1, area.width / ROOM_WINDOW.w, area.height / ROOM_WINDOW.h);
-	const w = Math.round(ROOM_WINDOW.w * scale);
-	const h = Math.round(ROOM_WINDOW.h * scale);
-	return { x: area.x + area.width - w, y: area.y + Math.round((area.height - h) / 2), w, h };
+const PRESENTER_SLIDE = { left: 40, top: 96, beside: 400, below: 240 } as const;
+
+/**
+ * The room as a window on a display: beside spool's window (`canvas`) when there is room for it there, centred on it,
+ * and otherwise over the presenter view's own slide, the one part of spool's window that shows what the room shows
+ * already, so the clock, what comes next, the notes, End and the bar stay in sight. The small screen's size, or less
+ * where that does not fit. With no window of spool's to go by, against the display's right edge, centred in height.
+ */
+export function roomWindowRect(area: WorkArea, canvas?: WindowRect): WindowRect {
+	const fit = (width: number, height: number, least = 0) => {
+		const scale = Math.max(least, Math.min(1, width / ROOM_WINDOW.w, height / ROOM_WINDOW.h));
+		return { w: Math.round(ROOM_WINDOW.w * scale), h: Math.round(ROOM_WINDOW.h * scale) };
+	};
+	const within = (at: number, size: number, from: number, span: number) =>
+		Math.round(Math.max(from, Math.min(at, from + span - size)));
+	if (canvas === undefined) {
+		const { w, h } = fit(area.width, area.height);
+		return { x: area.x + area.width - w, y: area.y + Math.round((area.height - h) / 2), w, h };
+	}
+	const left = canvas.x - area.x;
+	const right = area.x + area.width - (canvas.x + canvas.w);
+	const beside = Math.max(left, right);
+	if (beside >= BESIDE_LEAST) {
+		const { w, h } = fit(beside, area.height);
+		const y = within(canvas.y + (canvas.h - h) / 2, h, area.y, area.height);
+		return { x: right >= left ? canvas.x + canvas.w : canvas.x - w, y, w, h };
+	}
+	// the presenter view's slide, as large as fits its column, and the room centred over it
+	const column = Math.max(160, canvas.w - PRESENTER_SLIDE.left - PRESENTER_SLIDE.beside);
+	const tall = Math.max(90, Math.min((column * 9) / 16, canvas.h - PRESENTER_SLIDE.top - PRESENTER_SLIDE.below));
+	const slide = { w: Math.min(column, (tall * 16) / 9), h: Math.min(tall, (column * 9) / 16) };
+	const { w, h } = fit(slide.w, slide.h, SMALLEST);
+	return {
+		x: within(canvas.x + PRESENTER_SLIDE.left + (column - w) / 2, w, area.x, area.width),
+		y: within(canvas.y + PRESENTER_SLIDE.top + (slide.h - h) / 2, h, area.y, area.height),
+		w,
+		h,
+	};
 }
 
 /**

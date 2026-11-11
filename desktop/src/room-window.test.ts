@@ -34,8 +34,16 @@ test("with two displays the room goes full screen on the one spool's window is n
 	assert.deepEqual(roomPlace([LAPTOP, PROJECTOR, STUDIO], PROJECTOR.id), { kind: "screen", display: STUDIO });
 });
 
-test("with one display the room is an ordinary window beside the presenter view, never larger than the screen", () => {
-	assert.deepEqual(roomPlace([LAPTOP], LAPTOP.id), { kind: "window", rect: { x: 552, y: 238, w: 960, h: 540 } });
+test("with one display the room opens beside spool's window, or over the presenter's own slide when it fills the screen", () => {
+	// spool's window on the left half: the room beside it, centred on it
+	const half = { x: 0, y: 33, w: 900, h: 949 };
+	assert.deepEqual(roomPlace([LAPTOP], LAPTOP.id, half), { kind: "window", rect: { x: 900, y: 336, w: 612, h: 344 } });
+	// spool's window filling the screen: over the slide alone, so the clock, what comes next, the notes, End and the
+	// bar stay in sight
+	const full = { x: 0, y: 33, w: 1512, h: 949 };
+	const over = roomPlace([LAPTOP], LAPTOP.id, full);
+	assert.deepEqual(over, { kind: "window", rect: { x: 96, y: 161, w: 960, h: 540 } });
+	// never larger than the screen, nor off it
 	const small = { ...LAPTOP, workArea: { x: 0, y: 25, width: 800, height: 600 } };
 	assert.deepEqual(roomPlace([small], small.id), { kind: "window", rect: { x: 0, y: 100, w: 800, h: 450 } });
 });

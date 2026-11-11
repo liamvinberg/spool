@@ -63,6 +63,14 @@ export function installRooms(host: RoomsHost): Rooms {
 			: screen.getDisplayMatching(canvas.getBounds()).id;
 	};
 
+	/** spool's window's page, the presenter view, on its display */
+	const canvasRect = () => {
+		const canvas = host.canvas();
+		if (canvas === undefined || canvas.isDestroyed()) return undefined;
+		const { x, y, width, height } = canvas.getContentBounds();
+		return { x, y, w: width, h: height };
+	};
+
 	const report = (room: Room) => {
 		const canvas = host.canvas();
 		if (canvas === undefined || canvas.isDestroyed()) return;
@@ -110,7 +118,7 @@ export function installRooms(host: RoomsHost): Rooms {
 			return;
 		}
 		watchDisplays();
-		const where = roomPlace(displays(), canvasDisplay());
+		const where = roomPlace(displays(), canvasDisplay(), canvasRect());
 		const rect =
 			where.kind === "screen"
 				? {
@@ -218,7 +226,7 @@ export function installRooms(host: RoomsHost): Rooms {
 			host.log("room", room.talk.slice(0, 6), "display gone", gone.label);
 			room.unplugged = gone.label || "The room's display";
 			const home = all.find((display) => display.id === here) ?? all[0];
-			if (home !== undefined) place(room, { rect: roomWindowRect(home.workArea) });
+			if (home !== undefined) place(room, { rect: roomWindowRect(home.workArea, canvasRect()) });
 		}
 	};
 
