@@ -1,19 +1,43 @@
 /**
- * The slide's flight while it fills the screen (spool#298): one spring for everything that moves, tuned the way
- * WWDC23 tunes springs, by perceptual duration and bounce (mass 1, stiffness (2π / T)², damping 4π(1 − bounce) / T).
- * Aimed again mid-way it turns round from where it is, at the speed it has, never from rest; with no bounce it lands
- * once, never passing its mark. The design's `spring.ts` is the same physics.
+ * The slide's flight while it fills the screen (spool#298): one spring for everything that moves. It is the design's
+ * Motion spring, `{ type: "spring", duration, bounce }`: tuned from its duration and bounce as Motion resolves one,
+ * so it is within a thousandth of its mark by its duration, and on it then. Aimed again mid-way it turns round from where it is, at
+ * the speed it has, never from rest; with no bounce it lands once, never passing its mark.
  */
 
 export interface Tune {
 	readonly k: number;
 	readonly c: number;
+	/** seconds from an aim to the landing, where Motion's spring ends on its mark */
+	readonly duration: number;
 }
 
-export const tune = (duration: number, bounce = 0): Tune => ({
-	k: ((2 * Math.PI) / duration) ** 2,
-	c: (4 * Math.PI * (1 - bounce)) / duration,
-});
+/** Where the envelope of a move from rest has fallen to, by the spring's duration. */
+const SETTLED = 0.001;
+
+/**
+ * A spring of mass 1 that settles in `duration` seconds with `bounce`, as Motion's `findSpring` makes one: its
+ * natural frequency found by Newton's method where the envelope of a move from rest falls to `SETTLED`.
+ */
+export function tune(duration: number, bounce = 0): Tune {
+	const ratio = Math.min(1, Math.max(0.05, 1 - bounce));
+	const t = Math.min(10, Math.max(0.01, duration));
+	const ringing = Math.sqrt(1 - ratio * ratio);
+	const envelope =
+		ratio < 1
+			? (w: number) => SETTLED - (ratio / ringing) * Math.exp(-w * ratio * t)
+			: (w: number) => Math.exp(-w * t) * (w * t + 1) - SETTLED;
+	const slope =
+		ratio < 1
+			? (w: number) => {
+					const turn = SETTLED - envelope(w) > 0 ? -1 : 1;
+					return (turn * -(ratio * ratio * w * w * t) * Math.exp(-w * ratio * t)) / (w * w * ringing);
+				}
+			: (w: number) => -Math.exp(-w * t) * w * t * t;
+	let w = 5 / t;
+	for (let step = 1; step < 12; step++) w -= envelope(w) / slope(w);
+	return { k: w * w, c: 2 * ratio * w, duration: t };
+}
 
 /** The longest step the integrator takes: the same physics at any frame rate. */
 const STEP = 1 / 240;
@@ -49,12 +73,15 @@ export function createFlight(from: Pose, spring: Tune): Flight {
 	const to = { ...from };
 	const speed = { x: 0, y: 0, w: 0, r: 0 };
 	let landed: (() => void) | undefined;
+	/** seconds since it was last aimed */
+	let flown = 0;
 	const resting = () => KEYS.every((key) => at[key] === to[key] && speed[key] === 0);
 	return {
 		pose: () => ({ ...at }),
 		aim(next, then) {
 			Object.assign(to, next);
 			landed = then;
+			flown = 0;
 			if (resting()) {
 				landed = undefined;
 				then?.();
@@ -73,6 +100,9 @@ export function createFlight(from: Pose, spring: Tune): Flight {
 		step(dt) {
 			if (resting()) return false;
 			let left = Math.min(dt, 0.064);
+			flown += left;
+			// on its mark by its duration, as Motion's spring ends
+			const over = flown >= spring.duration - 1e-6;
 			while (left > 0) {
 				const h = Math.min(STEP, left);
 				for (const key of KEYS) {
@@ -83,7 +113,7 @@ export function createFlight(from: Pose, spring: Tune): Flight {
 				left -= h;
 			}
 			for (const key of KEYS) {
-				if (Math.abs(at[key] - to[key]) < REST && Math.abs(speed[key]) < REST * 12) {
+				if (over || (Math.abs(at[key] - to[key]) < REST && Math.abs(speed[key]) < REST * 12)) {
 					at[key] = to[key];
 					speed[key] = 0;
 				}

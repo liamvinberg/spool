@@ -11,7 +11,7 @@ function run(flight: ReturnType<typeof createFlight>, frames = 600): Pose[] {
 	return drawn;
 }
 
-it("flies with no bounce in about its duration, landing once without passing its mark", () => {
+it("flies with no bounce in its duration, as the design's Motion spring of that duration, landing once without passing its mark", () => {
 	const flight = createFlight(card, tune(0.5, 0));
 	let landings = 0;
 	flight.aim(screen, () => landings++);
@@ -23,9 +23,10 @@ it("flies with no bounce in about its duration, landing once without passing its
 		expect(pose.w).toBeLessThanOrEqual(screen.w);
 		expect(pose.w).toBeGreaterThanOrEqual(drawn[index - 1]?.w ?? card.w);
 	}
-	// near its mark by its duration, at rest a little after
-	expect(drawn[30]?.w).toBeGreaterThan(1400);
-	expect(drawn.length).toBeLessThan(60);
+	// within a few pixels of its mark a frame before its half second, and on it, at rest, at its half second, as the
+	// design's Motion spring of that duration is
+	expect(screen.w - (drawn[28]?.w ?? 0)).toBeLessThan(3);
+	expect(drawn.length).toBe(30);
 });
 
 it("turns round from where it is at the speed it has, lands only where it was last aimed, and stays put on screen as the window moves", () => {
@@ -35,10 +36,13 @@ it("turns round from where it is at the speed it has, lands only where it was la
 	for (let frame = 0; frame < 9; frame++) flight.step(1 / 60);
 	const mid = flight.pose();
 	flight.aim(card, () => landed.push("card"));
-	// carried on outward for a moment before it turns: its speed kept, never a jump
+	// its speed kept, never a jump: a frame on it stands further out than a slide turned from rest there would
+	const rested = createFlight(mid, tune(0.5, 0));
+	rested.aim(card);
 	flight.step(1 / 60);
-	expect(flight.pose().w).toBeGreaterThan(mid.w);
-	expect(Math.abs(flight.pose().x - mid.x)).toBeLessThan(40);
+	rested.step(1 / 60);
+	expect(flight.pose().w).toBeGreaterThan(rested.pose().w);
+	expect(Math.abs(flight.pose().w - mid.w)).toBeLessThan(40);
 	// the window moved 100 px right under it: on screen it stands where it stood
 	const before = flight.pose();
 	flight.shift(-100, 0);
