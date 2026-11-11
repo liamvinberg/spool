@@ -109,6 +109,7 @@ export function installRooms(host: RoomsHost): Rooms {
 			already.window.showInactive();
 			return;
 		}
+		watchDisplays();
 		const where = roomPlace(displays(), canvasDisplay());
 		const rect =
 			where.kind === "screen"
@@ -197,8 +198,19 @@ export function installRooms(host: RoomsHost): Rooms {
 		if (to !== undefined && from !== undefined) void carry(canvas, from, to);
 	});
 
-	// a display that goes mid-talk: the room on it, or on the one spool's window was carried to, is a window again
-	screen.on("display-removed", (_event, gone: Display) => {
+	// a display that goes mid-talk: the room on it, or on the one spool's window was carried to, is a window again;
+	// heard from the first room on, since `screen` answers only once the app is ready
+	let watching = false;
+	const watchDisplays = () => {
+		if (watching) return;
+		watching = true;
+		screen.on("display-removed", displayRemoved);
+		// one plugged in may be swapped to
+		screen.on("display-added", () => {
+			for (const room of rooms.values()) report(room);
+		});
+	};
+	const displayRemoved = (_event: unknown, gone: Display) => {
 		const all = displays();
 		const here = canvasDisplay();
 		for (const room of rooms.values()) {
@@ -208,11 +220,7 @@ export function installRooms(host: RoomsHost): Rooms {
 			const home = all.find((display) => display.id === here) ?? all[0];
 			if (home !== undefined) place(room, { rect: roomWindowRect(home.workArea) });
 		}
-	});
-	// one plugged in may be swapped to
-	screen.on("display-added", () => {
-		for (const room of rooms.values()) report(room);
-	});
+	};
 
 	return {
 		open,
