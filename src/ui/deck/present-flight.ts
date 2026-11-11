@@ -41,6 +41,8 @@ export function tune(duration: number, bounce = 0): Tune {
 
 /** The longest step the integrator takes: the same physics at any frame rate. */
 const STEP = 1 / 240;
+/** The longest a frame counts for, in seconds, as Motion's frame loop counts it. */
+const MAX_FRAME = 0.04;
 
 /** Where the slide stands on the window: its top left and width in pixels, and its corner's radius on screen. */
 export interface Pose {
@@ -99,7 +101,8 @@ export function createFlight(from: Pose, spring: Tune): Flight {
 		},
 		step(dt) {
 			if (resting()) return false;
-			let left = Math.min(dt, 0.064);
+			// a frame late by more than Motion's frame loop allows moves on no further than it would
+			let left = Math.min(dt, MAX_FRAME);
 			flown += left;
 			// on its mark by its duration, as Motion's spring ends
 			const over = flown >= spring.duration - 1e-6;
