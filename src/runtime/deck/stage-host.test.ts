@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from "vitest";
 import { openSession, type StageSession, type TalkSlide } from "../../deck/stage-session";
-import type { HostMessage, StageMessage } from "../../deck/stage-wire";
+import type { HostMessage, SlideReadiness, StageMessage } from "../../deck/stage-wire";
 import { mountStage, type StageHost, type StageHostEvents } from "./stage-host";
 
 /**
@@ -125,14 +125,24 @@ it("keeps the last picture the room saw through every build that cannot show its
 	expect([seen(first), seen(again)]).toEqual(["gone", "on"]);
 });
 
-it("takes a new build that readied while a slide wrote ui.state, once it shows the newest", async () => {
-	const { host, opened } = await room();
+it("takes a new build that readied while a slide wrote ui.state once it shows the newest, and names its slides as it said them", async () => {
+	let slides: readonly SlideReadiness[] = [];
+	const { host, opened } = await room({ slides: (now) => (slides = now) });
 	host.apply(at(1, 1));
 	const first = await opened();
+	const ready: SlideReadiness[] = TALK.map(({ frame }) => ({ frame, status: "ready" }));
+	await first.say({ spool: "stage-slides", slides: ready });
 	await first.say(shown(1, false));
 
 	host.reload();
 	const next = await opened();
+	const report: SlideReadiness[] = [
+		ready[0] as SlideReadiness,
+		{ frame: "talk/words", status: "broken", why: "boom", when: "compile" },
+	];
+	await next.say({ spool: "stage-slides", slides: report });
+	expect(slides).toEqual(ready);
+
 	// what a slide wrote while the build readied moved nothing: the new build is handed it, and says when it shows it
 	host.apply(at(1, 2, { state: { count: 1 } }));
 	await next.say(shown(1, false));
@@ -140,4 +150,5 @@ it("takes a new build that readied while a slide wrote ui.state, once it shows t
 	expect([seen(first), seen(next)]).toEqual(["on", "readying"]);
 	await next.say({ spool: "stage-applied", revision: 2 });
 	expect([seen(first), seen(next)]).toEqual(["gone", "on"]);
+	expect(slides).toEqual(report);
 });

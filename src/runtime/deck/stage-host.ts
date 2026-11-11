@@ -92,6 +92,8 @@ interface StageDocument {
 	applied?: number;
 	/** it has painted a picture, and whether that was the picture it had, its slide being broken */
 	pictured?: { held: boolean };
+	/** each slide's readiness as it last said it, for the host to hear once it is the document on screen */
+	slides?: readonly SlideReadiness[];
 	shown: boolean;
 	timer?: ReturnType<typeof setTimeout>;
 	stop(): void;
@@ -234,6 +236,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				if (live) on.pointer?.(message.at);
 				return;
 			case "stage-slides":
+				doc.slides = message.slides;
 				if (live) on.slides?.(message.slides);
 				return;
 			case "stage-command":
@@ -312,6 +315,8 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		// keys pressed in the stage go on reaching the build that now plays the talk
 		if (focused) doc.frame.focus();
 		on.talk?.(doc.talk);
+		// what the new build said of its slides while it readied: a slide broken in it is named as it takes the screen
+		if (doc.slides !== undefined) on.slides?.(doc.slides);
 		// the session as the new build holds it, its slide found again in a talk that changed since
 		const said = doc.said;
 		if (mode === "own" && said !== undefined && (session === undefined || said.revision >= session.revision)) {
