@@ -1,5 +1,30 @@
-import { expect, it } from "vitest";
-import { presentKeyFrom } from "./present";
+import { afterEach, expect, it, vi } from "vitest";
+import { TALK_NAME } from "../../deck/present-wire";
+import { presentDeck, presentDone, presentKeyFrom } from "./present";
+
+afterEach(() => {
+	presentDone();
+	vi.unstubAllGlobals();
+});
+
+it("opens nothing with the experiment off, and on, the room's window as the room of a fresh talk, one talk at a time", () => {
+	const open = vi.fn(() => null);
+	const from = { project: "kaffe", page: "talk", slide: "talk/sense" };
+	vi.stubGlobal("window", { open, __SPOOL_EXPERIMENTS__: [] });
+	presentDeck(from);
+	expect(open).not.toHaveBeenCalled();
+
+	vi.stubGlobal("window", { open, __SPOOL_EXPERIMENTS__: ["deck"] });
+	presentDeck(from);
+	presentDeck({ ...from, slide: "talk/title" });
+	expect(open).toHaveBeenCalledTimes(1);
+	const [address] = open.mock.calls[0] as unknown as [string];
+	const url = new URL(address, "http://spool");
+	expect(url.pathname).toBe("/play/kaffe");
+	expect(url.searchParams.get("deck")).toBe("talk");
+	expect(url.searchParams.get("frame")).toBe("talk/sense");
+	expect(url.searchParams.get("room")).toMatch(TALK_NAME);
+});
 
 const talk = ["talk/title", "talk/sense", "talk/close"];
 const held = (frames: string[], elements = 0) => ({ frames, elements });
