@@ -70,6 +70,12 @@ ${still === undefined ? "" : `<div class="spool-talk-still" style="background-im
 export const TALK_HINT = "→ next · F full screen";
 
 /**
+ * The words while the window doesn't have the keys: Safari keeps them in its address bar for a file it opens, and no
+ * page can take them from there, so the first click only hands them over.
+ */
+export const TALK_HINT_CLICK = "click, then → next · F full screen";
+
+/**
  * The file's own rules over the stage's. Until the stage fits the body to the talk, the body is the window, so the
  * still shows fitted the same way before and after. The still goes the moment a slide is on screen. The hint sits
  * in the ground under the talk when the window leaves room there, and low over it when not.
@@ -96,18 +102,37 @@ body:has([data-spool-stage-shown]) .spool-talk-still { display: none; }
 @media (prefers-reduced-motion: reduce) { .spool-talk-hint { transition: none; } }
 `;
 
-/** The hint, put beside the body the stage scales so it stays the window's, and faded for good on the first key. */
+/**
+ * The hint, put beside the body the stage scales so it stays the window's, and faded for good on the first key. A
+ * click into a window without the keys takes them and nothing else: it moves no slide, and the hint stays to say so.
+ */
 const HINT = `(() => {
 	const hint = document.createElement("div");
 	hint.className = "spool-talk-hint";
-	hint.textContent = ${JSON.stringify(TALK_HINT)};
+	const say = () => (hint.textContent = document.hasFocus() ? ${JSON.stringify(TALK_HINT)} : ${JSON.stringify(TALK_HINT_CLICK)});
+	say();
 	document.documentElement.append(hint);
-	const gone = () => {
+	let away = false;
+	const press = () => (away = !document.hasFocus());
+	const click = (event) => {
+		if (!away) return;
+		away = false;
+		event.preventDefault();
+		setTimeout(say);
+	};
+	const gone = (event) => {
+		if (event.type === "pointerdown" && away) return;
 		removeEventListener("keydown", gone, true);
 		removeEventListener("pointerdown", gone, true);
+		removeEventListener("focus", say);
+		removeEventListener("blur", say);
 		hint.classList.add("is-gone");
 		setTimeout(() => hint.remove(), 600);
 	};
+	addEventListener("pointerdown", press, true);
+	addEventListener("click", click, true);
 	addEventListener("keydown", gone, true);
 	addEventListener("pointerdown", gone, true);
+	addEventListener("focus", say);
+	addEventListener("blur", say);
 })();`;
