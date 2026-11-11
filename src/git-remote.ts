@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
+import { basename, dirname } from "node:path";
 import { promisify } from "node:util";
+import { teamProjectName } from "./team-project-name";
 
 /**
  * The repo a checkout's code lives in, read from its git `origin`. Spool Cloud records it on a team project as
@@ -59,6 +61,8 @@ export interface Checkout {
 	top: string;
 	/** `host/path`, or undefined when `origin` is missing or a path on this machine. */
 	repo: string | undefined;
+	/** The main checkout's folder when this work tree is a linked worktree of it (git's common dir), else undefined. */
+	main?: string;
 }
 
 const run = promisify(execFile);
@@ -88,5 +92,45 @@ export async function checkoutOf(dir: string): Promise<Checkout | undefined> {
 	};
 	const top = await git(["rev-parse", "--show-toplevel"]);
 	if (top === undefined || top === "") return undefined;
-	return { top, repo: repoOf(await git(["remote", "get-url", "origin"])) };
+	const repo = repoOf(await git(["remote", "get-url", "origin"]));
+	const [own, common] =
+		(await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]))?.split("\n") ?? [];
+	// a linked worktree keeps its own git dir under the main checkout's: the common dir is the main one's `.git`
+	const main =
+		own === undefined || common === undefined || own === common
+			? undefined
+			: basename(common) === ".git"
+				? dirname(common)
+				: common;
+	return { top, repo, ...(main === undefined ? {} : { main }) };
+}
+
+/**
+ * Where a team project's name came from: `--name`, the repo's `origin`, the main checkout's folder (a worktree of a
+ * repo with no `origin`), or the folder it was started in.
+ */
+export type ProjectNameSource = "flag" | "repo" | "checkout" | "folder";
+
+/**
+ * The name a team project started or moved in at `root` takes (spool#295). `--name` first; then, at the top of a
+ * checkout, the repo's own name from `origin`, or with no `origin` the main checkout's folder, so that a worktree's
+ * folder, named after its task, never names the project; anywhere else, outside git or in a subfolder of a checkout,
+ * the folder's name. A name from the repo is cleaned as spool.page cleans one (`my_app` is `my-app`); a folder's and
+ * `--name` go as typed, for spool.page to take or refuse.
+ */
+export function teamProjectNameAt(
+	root: string,
+	checkout: Checkout | undefined,
+	flag?: string,
+): { name: string; from: ProjectNameSource } {
+	if (flag !== undefined) return { name: flag.trim(), from: "flag" };
+	if (checkout !== undefined && checkout.top === root) {
+		const repo = checkout.repo?.split("/").at(-1);
+		const named = repo === undefined ? undefined : teamProjectName(repo);
+		if (named !== undefined) return { name: named, from: "repo" };
+		const main =
+			checkout.main === undefined ? undefined : teamProjectName(basename(checkout.main).replace(/\.git$/iu, ""));
+		if (main !== undefined) return { name: main, from: "checkout" };
+	}
+	return { name: basename(root), from: "folder" };
 }
