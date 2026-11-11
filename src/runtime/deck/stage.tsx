@@ -40,7 +40,7 @@ import { onWebglMade, releaseWebgl, WEBGL_KEPT, watchWebgl, webglIn } from "./st
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
- * entered slide on the canvas alike. One slide shows at the talk's size, on black; the slides around it are rendered
+ * entered slide on the canvas alike. One slide shows at the talk's size, on the ground; the slides around it are rendered
  * out of sight beside it, their fonts loaded and images decoded in this document, so a step to one of them is the
  * same-document swap a walk is, committed in the next frame, its shared `view-transition-name`s carried and the rest
  * dissolved. A step to a slide that is not ready holds the picture on screen until it is. A slide that will not
@@ -975,7 +975,7 @@ export function bootStage(runtime: StageRuntime): void {
 
 /**
  * The page is the talk's screen: the body is the stage, the talk's size, fitted into whatever viewport the document
- * has and centred on black. A host that lays the document out at the talk's size leaves it unscaled. A slide's styles
+ * has and centred on the ground. A host that lays the document out at the talk's size leaves it unscaled. A slide's styles
  * that size the body give way to it.
  */
 function fitBody(size: StageConfig["size"]): void {

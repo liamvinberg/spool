@@ -9,7 +9,7 @@ import { writeDesignFile } from "../../test-helpers";
  * document's face come slowly from `/fixture/`, and a slide's own stylesheet carries another face inline; it holds a
  * large picture, a WebGL canvas, a live slide, a slide of another shape, and three broken slides: one that throws as
  * it mounts, one that throws on its second beat (over a WebGL canvas), and one that does not compile. Every slide that
- * shows has a ground of its own, from its own stylesheet, so a frame with no slide styled in it reads as black.
+ * shows has a ground of its own, from its own stylesheet, so a frame with no slide styled in it reads as the stage's.
  *
  * As each slide is put on screen it notes, before the browser paints, whether the face its words are set in is loaded
  * and whether its picture has come: a slide swapped in before its font or its picture was ready says so.
@@ -47,9 +47,20 @@ export const BROKEN_GL_COLOUR: [number, number, number] = [0, 255, 136];
 
 type Rgb = readonly [number, number, number];
 
+/** The stage's ground, around the talk and beside a slide of another shape: never the pure black of B. */
+export const GROUND: Rgb = [10, 10, 11];
+
+/** Every colour is the stage's ground: no slide is on the screen, and it is not blacked out. */
+export const onGround = (colours: readonly Rgb[]) =>
+	colours.every((colour) => colour.every((channel, at) => Math.abs(channel - (GROUND[at] ?? 0)) <= 2));
+
+/** Every colour is pure black, as B draws it. */
+export const blackedOut = (colours: readonly Rgb[]) =>
+	colours.every((colour) => colour.every((channel) => channel <= 2));
+
 /**
  * Where the room's screen is read, at the talk's size: low on the ground every slide has; where the pictures are, inside
- * one band of their stripes; and beside the slide of another shape, where it leaves black.
+ * one band of their stripes; and beside the slide of another shape, where it leaves the ground.
  */
 export const SCREEN_POINTS = [
 	{ x: 640, y: 710 },
@@ -69,7 +80,7 @@ export function slideLooks(): Record<string, readonly Rgb[]> {
 	set("gl", 1, GL_COLOUR);
 	set("beat-throws", 1, BROKEN_GL_COLOUR);
 	set("end", 1, [255, 214, 10]);
-	set("tall", 2, [0, 0, 0]);
+	set("tall", 2, GROUND);
 	return looks;
 }
 
@@ -494,7 +505,7 @@ export async function recordScreen(page: Page) {
 }
 
 /**
- * What the frames showed, in order, each as the slide or two it is (of `looks`); black before the first picture, when
+ * What the frames showed, in order, each as the slide or two it is (of `looks`); the ground before the first picture, when
  * the talk has not started. Fails on the first frame that is none of that.
  */
 export function readScreen(
@@ -504,7 +515,7 @@ export function readScreen(
 	const read: { from: string; to: string; mix: number }[] = [];
 	frames.forEach((png, index) => {
 		const colours = pixelsOf(png, SCREEN_POINTS);
-		if (read.length === 0 && colours.every((colour) => colour.every((channel) => channel <= 2))) return;
+		if (read.length === 0 && onGround(colours)) return;
 		const seen = explainFrame(colours, looks);
 		if (seen === undefined) {
 			throw new Error(`frame ${index} of ${frames.length} is no slide: ${JSON.stringify(colours)}`);

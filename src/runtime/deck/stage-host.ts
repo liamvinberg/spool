@@ -1,5 +1,5 @@
 import type { Size } from "../../deck/deck-file";
-import { fitIn } from "../../deck/stage-fit";
+import { fitIn, STAGE_GROUND } from "../../deck/stage-fit";
 import { DIGITS_FORGET_MS, type KeyCommand, pressedKey, readKey, typingIn } from "../../deck/stage-keys";
 import type { StageCommand, StageSession, TalkSlide } from "../../deck/stage-session";
 import {
@@ -14,7 +14,7 @@ import {
 /**
  * A stage hosted in a window of spool's (spool#265): the room's window, the presenter view, the canvas over an entered
  * slide, or the plain play address of a deck page. It lays the stage's document out at the talk's size, fitted into
- * the element it is given and centred on black, speaks to it over its private port, and takes a new build of the talk
+ * the element it is given and centred on the ground, speaks to it over its private port, and takes a new build of the talk
  * without the picture ever leaving the screen: the new document is readied behind the one showing and takes its place
  * only once it has painted the same slide and beat, at the newest session. When that slide is broken in the new build,
  * the last picture the room saw stays over the new one, through any number of builds that cannot show it either, until
@@ -113,7 +113,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 
 	const holder = document.createElement("div");
 	holder.dataset.spoolStage = "";
-	Object.assign(holder.style, { position: "absolute", inset: "0", overflow: "hidden", background: "#000" });
+	Object.assign(holder.style, { position: "absolute", inset: "0", overflow: "hidden", background: STAGE_GROUND });
 	if (getComputedStyle(container).position === "static") container.style.position = "relative";
 	container.append(holder);
 	// the room's black, over every document of the stage and any picture kept from an older build

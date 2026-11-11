@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { z } from "zod";
 import { TALK_NAME } from "../../deck/present-wire";
+import { STAGE_GROUND } from "../../deck/stage-fit";
 import type { StageConfig, StageSlideConfig } from "../../deck/stage-wire";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } from "../document";
 import { type PlayerCompile, type PlayerConfig, playerChunkBase } from "../play";
@@ -135,13 +136,13 @@ export function createStagePlay(deps: StagePlayDeps) {
 }
 
 /**
- * The stage's own look, before any slide's: black around the talk's screen, the slide on show above the ones rendered
+ * The stage's own look, before any slide's: the ground around the talk's screen, the slide on show above the ones rendered
  * out of sight, and the carry and dissolve between slides from the deck's design, which a slide's own styles may
  * override for what it names. The dissolve lays the new slide over the old one, which stays whole beneath it until the
  * new one is: the browser's own cross-fade fades both at once, and when the two fades fall out of step on a busy
  * machine, the room's screen dims between slides.
  */
-export const STAGE_CSS = `html { background: #000; }
+export const STAGE_CSS = `html { background: ${STAGE_GROUND}; }
 #root { position: absolute; inset: 0; }
 .spool-stage-slide { position: absolute; left: 0; top: 0; overflow: hidden; transform-origin: 0 0; z-index: 0; }
 .spool-stage-slide[data-spool-stage-shown] { z-index: 1; }
@@ -182,11 +183,11 @@ ${preload}
 `;
 }
 
-/** A stage document that will not play: black, telling its host why, and showing nothing. */
+/** A stage document that will not play: the ground, telling its host why, and showing nothing. */
 function refusedDocument(message: string): string {
 	return `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><style>html { background: #000; }</style></head>
+<head><meta charset="utf-8"><style>html { background: ${STAGE_GROUND}; }</style></head>
 <body>
 <script>window.parent.postMessage({ spool: "stage-refused", why: ${escapeInlineScript(JSON.stringify(message))} }, "*");</script>
 </body>
@@ -195,7 +196,7 @@ function refusedDocument(message: string): string {
 }
 
 /**
- * The stage's first host: a black page on spool's own origin holding the stage, its keys and its saved changes. With
+ * The stage's first host: a page of the ground on spool's own origin holding the stage, its keys and its saved changes. With
  * `room` it is the room's window of a talk presented from spool's own window.
  */
 function stageHostDocument(
@@ -209,7 +210,7 @@ function stageHostDocument(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(config.page)} · ${escapeHtml(config.project)}</title>
-<style>html, body, #root { width: 100%; height: 100%; margin: 0; background: #000; overflow: hidden; }</style>
+<style>html, body, #root { width: 100%; height: 100%; margin: 0; background: ${STAGE_GROUND}; overflow: hidden; }</style>
 </head>
 <body>
 <div id="root"></div>
