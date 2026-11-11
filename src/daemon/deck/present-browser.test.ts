@@ -247,12 +247,45 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 		})
 		.toEqual(["talk/mount-throws"]);
 
-	// reloading spool's window ends a talk and closes its room (Present again, once the slide is home)
+	// in the Mac app the presenter view names the room's display as the app reports it, X asks the app to swap, and a
+	// display unplugged under the room is said (the app's half is desktop/src/room-window.test.ts)
+	await view.evaluate(() => {
+		type Report = { talk: string; screen: string | null; swaps: boolean; unplugged?: string };
+		const app = {
+			swaps: [] as string[],
+			tell: (_report: Report) => {},
+			onCommand: () => () => {},
+			setCanvasActive: () => {},
+			onRoom(listener: (report: Report) => void) {
+				app.tell = listener;
+				return () => {};
+			},
+			roomReport: async (talk: string): Promise<Report> => ({ talk, screen: "Studio Display", swaps: true }),
+			swapRoom: (talk: string) => app.swaps.push(talk),
+		};
+		(window as unknown as { spoolCanvasWindow: unknown }).spoolCanvasWindow = app;
+	});
 	await expect.poll(() => view.evaluate(() => document.documentElement.hasAttribute("data-deck-moving"))).toBe(false);
 	const last = context.waitForEvent("page");
 	await view.keyboard.press("ControlOrMeta+Shift+Enter");
 	const left = await last;
 	await view.locator("[data-deck-presenter]").waitFor();
+	await view.getByText("Studio Display", { exact: true }).waitFor();
+	await view.keyboard.press("x");
+	const swapped = () =>
+		view.evaluate(() => (window as unknown as { spoolCanvasWindow: { swaps: string[] } }).spoolCanvasWindow.swaps);
+	await expect.poll(swapped).toHaveLength(1);
+	await view.evaluate(() => {
+		const app = (
+			window as unknown as {
+				spoolCanvasWindow: { swaps: string[]; tell: (report: object) => void };
+			}
+		).spoolCanvasWindow;
+		app.tell({ talk: app.swaps[0], screen: null, swaps: false, unplugged: "Studio Display" });
+	});
+	await view.getByText("Studio Display was unplugged · the room is a window").waitFor();
+
+	// reloading spool's window ends a talk and closes its room
 	const ended = left.waitForEvent("close");
 	await view.reload();
 	await ended;
