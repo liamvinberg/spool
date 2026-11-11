@@ -5,6 +5,8 @@
  * every animation stopped where it stood.
  */
 
+import { webglOf } from "./stage-webgl";
+
 /** What became of the slide's canvases in the copy. */
 export type KeptCanvases = "all" | "without-webgl";
 
@@ -13,29 +15,6 @@ export interface KeptPicture {
 	readonly canvases: KeptCanvases;
 	/** puts back what only exists once the copy is in the document: scroll positions */
 	readonly placed: () => void;
-}
-
-/** WebGL canvases by the context they draw with, so a copy knows what it can read back. */
-const webgl = new WeakMap<HTMLCanvasElement, WebGLRenderingContext | WebGL2RenderingContext>();
-
-/**
- * Every WebGL context a slide asks for keeps its drawing buffer, so its last frame can still be read when the slide
- * breaks: without it, a WebGL canvas is cleared once each frame is shown, and a copy reads nothing. Installed once,
- * before any slide runs, in a stage document only. Costs the GPU a copy per frame, which slides can afford.
- */
-export function keepWebglPictures(): void {
-	const original = HTMLCanvasElement.prototype.getContext;
-	function getContext(this: HTMLCanvasElement, kind: string, options?: unknown): RenderingContext | null {
-		const isWebgl = kind === "webgl" || kind === "webgl2" || kind === "experimental-webgl";
-		const settings =
-			isWebgl && (typeof options === "object" || options === undefined)
-				? { ...(options as object | undefined), preserveDrawingBuffer: true }
-				: options;
-		const context = original.call(this, kind as "2d", settings as CanvasRenderingContext2DSettings);
-		if (isWebgl && context !== null) webgl.set(this, context as unknown as WebGLRenderingContext);
-		return context;
-	}
-	HTMLCanvasElement.prototype.getContext = getContext as typeof original;
 }
 
 /** A still copy of everything `box` holds, made while it still shows the slide's last picture. */
@@ -120,7 +99,7 @@ function pair(original: Element, copy: Element, from: Element[], to: Element[]):
 function copyCanvas(original: HTMLCanvasElement, copy: HTMLCanvasElement): boolean {
 	copy.width = original.width;
 	copy.height = original.height;
-	const gl = webgl.get(original);
+	const gl = webglOf(original);
 	if (gl?.isContextLost() === true) return false;
 	const preserved = gl === undefined || gl.getContextAttributes()?.preserveDrawingBuffer === true;
 	try {

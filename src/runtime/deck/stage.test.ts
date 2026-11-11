@@ -1,5 +1,13 @@
 // @vitest-environment happy-dom
-import { type ComponentType, createElement, useEffect, useState, useSyncExternalStore } from "react";
+import {
+	type ComponentType,
+	createElement,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { openSession, type StageSession, type StageState } from "../../deck/stage-session";
 import type { HostMessage, SlideReadiness, StageMessage, StageShown } from "../../deck/stage-wire";
@@ -311,4 +319,68 @@ it("keeps the room's picture when the slide it dissolves to throws on its new be
 	await vi.waitFor(() => expect(on.shown().at(-1)).toMatchObject({ at: { slide: 2, beat: 1 }, held: true }));
 	await new Promise((resolve) => setTimeout(resolve, 50));
 	expect(on.onScreen()).toBe("talk/a");
+});
+
+/** WebGL as a browser gives it: a context per canvas, alive until the page gives it back or the browser takes it. */
+function fakeWebgl() {
+	const lost = new Map<HTMLCanvasElement, boolean>();
+	const take = (canvas: HTMLCanvasElement) => {
+		lost.set(canvas, true);
+		canvas.dispatchEvent(new Event("webglcontextlost"));
+	};
+	vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+		if (!lost.has(this)) lost.set(this, false);
+		return {
+			isContextLost: () => lost.get(this) === true,
+			getExtension: () => ({ loseContext: () => take(this) }),
+			getContextAttributes: () => ({ preserveDrawingBuffer: true }),
+		} as never;
+	});
+	return {
+		alive: () => [...lost.values()].filter((gone) => !gone).length,
+		take,
+		/** the slide on screen draws on a context it still has */
+		drawing: () => {
+			const canvas = document.querySelector<HTMLCanvasElement>("[data-spool-stage-shown] canvas");
+			return canvas !== null && lost.get(canvas) === false;
+		},
+	};
+}
+
+function DrawsWithWebgl() {
+	const canvas = useRef<HTMLCanvasElement>(null);
+	useLayoutEffect(() => {
+		canvas.current?.getContext("webgl");
+	}, []);
+	return createElement("canvas", { ref: canvas });
+}
+
+it("keeps only the slides that draw with WebGL nearest the one on screen, so none goes on blank however many the talk has", async () => {
+	const webgl = fakeWebgl();
+	const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+	const on = await stage(
+		names.map((name) => ({ frame: `talk/${name}`, screen: DrawsWithWebgl })),
+		{ mode: "own", room: true },
+	);
+	for (const [slide, name] of names.entries()) {
+		if (slide > 0) on.send({ spool: "stage-command", command: { kind: "next" } });
+		await vi.waitFor(() => expect(on.onScreen()).toBe(`talk/${name}`));
+		expect(webgl.drawing()).toBe(true);
+	}
+	// the one on screen and the one before: the rest are given back, never left for the browser to take
+	await vi.waitFor(() => expect(webgl.alive()).toBe(2));
+
+	// the browser takes the one kept behind all the same: it is rendered afresh before it goes on
+	const behind = document.querySelector<HTMLCanvasElement>('[data-spool-stage-slide="talk/g"] canvas');
+	if (behind === null) throw new Error("the slide behind is not kept");
+	webgl.take(behind);
+	on.send({ spool: "stage-command", command: { kind: "back" } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/g"));
+	expect(webgl.drawing()).toBe(true);
+
+	// a jump to one given back waits until it is rendered again, the picture held meanwhile
+	on.send({ spool: "stage-command", command: { kind: "first" } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
+	expect(on.shown().at(-1)).toMatchObject({ at: { slide: 0 }, ready: false });
+	expect(webgl.drawing()).toBe(true);
 });

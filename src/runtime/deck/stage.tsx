@@ -34,8 +34,9 @@ import {
 	type StageSlideConfig,
 } from "../../deck/stage-wire";
 import { SlideScope, setSlideBeat } from "../slide-beats";
-import { type KeptPicture, keepPicture, keepWebglPictures } from "./stage-keep";
+import { type KeptPicture, keepPicture } from "./stage-keep";
 import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
+import { onWebglMade, releaseWebgl, WEBGL_KEPT, watchWebgl, webglIn } from "./stage-webgl";
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
@@ -101,7 +102,7 @@ let windowError: ((error: unknown) => void) | undefined;
  * hears kept for the stage to name, never drawn.
  */
 if (deck !== undefined) {
-	keepWebglPictures();
+	watchWebgl();
 	if (embedded) {
 		const channel = new MessageChannel();
 		const port = channel.port1;
@@ -159,6 +160,8 @@ interface SlideHeld {
 	learned: string[];
 	/** its fonts and pictures, held for the whole talk so the browser keeps them */
 	warmed?: Warmed;
+	/** the most WebGL contexts one rendering of it has held: what keeping it rendered costs */
+	webgl?: number;
 }
 
 /** One rendering of a slide: a take of it, out of sight or on screen. */
@@ -323,32 +326,65 @@ export function bootStage(runtime: StageRuntime): void {
 	/**
 	 * The copies to keep rendered: the window around the slide wanted, at the takes the talk is on; every other slide
 	 * readied at the take it is on, so a jump to it is on in the next frame too; and once all of those are ready, the
-	 * nearest slide of the rest that has not been, for as long as it takes to ready it.
+	 * nearest slide of the rest that has not been, for as long as it takes to ready it. Of the slides that draw with
+	 * WebGL, only those nearest the one wanted whose contexts fit the stage's share: a jump to another waits for it.
 	 */
 	function wantedCopies(): Copy[] {
 		const at = picture();
 		const target = at.at.slide;
 		const near = (index: number) => index >= target - BEHIND && index <= target + AHEAD;
+		const over = pastWebglShare(target);
 		const out: Copy[] = [];
 		for (let index = target - BEHIND; index <= target + AHEAD; index++) {
 			const slide = slides[index];
-			if (slide === undefined || slide.module !== "in") continue;
+			if (slide === undefined || slide.module !== "in" || over.has(index)) continue;
 			out.push(copyFor(index, takeOf(index, at.takes)));
 		}
 		slides.forEach((_, index) => {
 			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
-			if (!near(index) && copy !== undefined && !copy.broken) out.push(copy);
+			if (!near(index) && !over.has(index) && copy !== undefined && !copy.broken) out.push(copy);
 		});
 		if (out.some((copy) => !copy.broken && !copy.failed && !ready(copy))) return out;
 		for (const index of order(target)) {
 			const key = keyOf(index, takeOf(index, at.takes));
-			if (near(index) || copies.has(key)) continue;
+			if (near(index) || over.has(index) || copies.has(key)) continue;
 			const slide = slides[index];
 			if (slide === undefined || slide.broken !== undefined || slide.module !== "in" || !styled(slide)) continue;
 			out.push(copyFor(index, takeOf(index, at.takes)));
 			break;
 		}
 		return out;
+	}
+
+	/**
+	 * The slides past this document's share of WebGL contexts: the one wanted and the one on screen hold theirs
+	 * whatever they cost, then the rest nearest first while what they hold fits.
+	 */
+	function pastWebglShare(target: number): Set<number> {
+		const on = shown === null ? undefined : copies.get(shown)?.index;
+		const cost = (index: number | undefined) => (index === undefined ? 0 : (slides[index]?.webgl ?? 0));
+		let left = WEBGL_KEPT - cost(target) - (on === target ? 0 : cost(on));
+		const over = new Set<number>();
+		for (const index of order(target)) {
+			if (index === target || index === on || cost(index) === 0) continue;
+			if (cost(index) <= left) left -= cost(index);
+			else over.add(index);
+		}
+		return over;
+	}
+
+	/** Set once a slide makes a WebGL context, for the next settle to learn which. */
+	let webglMade = false;
+	onWebglMade(() => {
+		webglMade = true;
+	});
+	function learnWebgl(): void {
+		if (!webglMade) return;
+		webglMade = false;
+		for (const copy of copies.values()) {
+			const slide = slides[copy.index];
+			if (slide !== undefined && copy.box !== undefined) slide.webgl = Math.max(slide.webgl ?? 0, webglIn(copy.box));
+		}
 	}
 
 	function renderedCopy(rendered: Copy, box: HTMLElement): void {
@@ -418,6 +454,22 @@ export function bootStage(runtime: StageRuntime): void {
 		redraw();
 	};
 
+	// a context the browser took from a slide out of sight anyway would come back blank: that rendering goes, to be
+	// rendered afresh before it is shown
+	addEventListener(
+		"webglcontextlost",
+		(event) => {
+			const box = event.target instanceof Element ? event.target.closest("[data-spool-stage-slide]") : null;
+			for (const copy of copies.values()) {
+				if (copy.box !== box || copy.key === shown || copy.key === revealed?.from) continue;
+				copies.delete(copy.key);
+				settle();
+				return;
+			}
+		},
+		true,
+	);
+
 	// --- showing -----------------------------------------------------------------------------------------
 
 	let pending: { at: At; arrived: number; ready: boolean; frames: number } | undefined;
@@ -459,10 +511,13 @@ export function bootStage(runtime: StageRuntime): void {
 		settling = true;
 		try {
 			fetchAhead();
+			learnWebgl();
 			const want = picture();
 			const target = want.at.slide;
 			const keep = new Set(wantedCopies().map((copy) => copy.key));
 			if (shown !== null) keep.add(shown);
+			// the slide a swap just took off stays while the one it put on can still be undone
+			if (revealed?.from != null) keep.add(revealed.from);
 			for (const key of copies.keys()) if (!keep.has(key)) copies.delete(key);
 			for (const copy of copies.values()) {
 				warm(copy);
@@ -865,7 +920,11 @@ export function bootStage(runtime: StageRuntime): void {
 			check();
 			const observer = new MutationObserver(check);
 			observer.observe(element, { childList: true });
-			return () => observer.disconnect();
+			return () => {
+				observer.disconnect();
+				// a rendering let go gives its WebGL contexts back for another slide to draw with
+				releaseWebgl(element);
+			};
 		}, [copy]);
 		const same = slide.w === size.w && slide.h === size.h;
 		const fit = same ? undefined : fitIn(slide, size);
