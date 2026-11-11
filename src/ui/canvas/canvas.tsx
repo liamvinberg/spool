@@ -63,6 +63,7 @@ import {
 	writeKnob,
 } from "../api";
 import { type DeckEntry, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
+import { type DeckInside, DeckStage, useDeckInside } from "../deck/deck-inside";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
@@ -903,6 +904,8 @@ function CanvasField({
 	 */
 	const pageSessions = useRef(new Map<string, SessionRecord>());
 	const departedFrameDocuments = useRef(new Set<string>());
+	/** a slide of a deck gone into, its talk playing in place (spool#265): read by handlers made before it */
+	const deckIn = useRef<DeckInside | null>(null);
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	/**
@@ -1738,6 +1741,11 @@ function CanvasField({
 			departedFrameDocuments.current.delete(target);
 			walkTarget.current = null;
 			walkSession.current = null;
+			// a slide of a deck is gone into by the deck: its talk plays in place (spool#265)
+			if (deckIn.current?.enter(target) === true) {
+				setEntered(null);
+				return;
+			}
 			setEntered(target);
 			setSelected([]);
 			setPicked([]);
@@ -1928,6 +1936,21 @@ function CanvasField({
 	});
 	const deckOwns = deckPage.owns;
 	const presentKey = deckPage.presentKey;
+	const deckInside = useDeckInside({
+		project,
+		page: activePage,
+		read: deckPage.read,
+		store,
+		camera,
+		viewport: () => viewportRef.current,
+		select: (name) => {
+			setPicked([]);
+			holdChain(null);
+			setSelected([name]);
+			frameAnchor.current = name;
+		},
+	});
+	deckIn.current = deckInside;
 	// what the Pages rail and Properties show of a deck: its rows, its notes, New presentation
 	const deckKit = useMemo(
 		() =>
@@ -4297,6 +4320,12 @@ function CanvasField({
 		if (live.isOpen()) live.cancel();
 		const cam = camera.get();
 		if (cam === null || event.button === 2) return;
+		// inside a slide of a deck, a press anywhere else on the canvas comes out of it (spool#265)
+		if (deckInside.on()) {
+			const hit = datasetHit(event.target, "frame-label") ?? frameAtWorld(toWorld(localPoint(event), cam));
+			if (hit !== deckInside.slide) deckInside.leave();
+			return;
+		}
 		camera.stop();
 		setMenu(null);
 		// a press anywhere on the field puts an open comment card or composer down (spool#169)
@@ -4812,6 +4841,7 @@ function CanvasField({
 
 	const onContextMenu = (event: React.MouseEvent) => {
 		event.preventDefault();
+		if (deckInside.leave()) return;
 		const cam = camera.get();
 		if (cam === null) return;
 		const p = localPoint(event);
@@ -5331,7 +5361,12 @@ function CanvasField({
 				},
 			} satisfies Record<HotkeyIdFor<"finder">, HotkeyHandler>,
 		});
-		const detachCanvas = attachHotkeyLayer({ scope: "canvas", handlers });
+		// a deck's talk playing in place has the keys the canvas would hear (spool#265)
+		const detachCanvas = attachHotkeyLayer({
+			scope: "canvas",
+			active: () => deckIn.current?.on() !== true,
+			handlers,
+		});
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
 			// a C held past a tap, or one a pin was placed under, borrowed the Comment tool: letting go hands back the
@@ -5949,7 +5984,9 @@ function CanvasField({
 					{/* the page you are on and nothing else (spool#224): its own frames on the field, or the
 				    list of its pages when it holds only pages */}
 					<div ref={fieldRef} data-page-field={activePage} className="absolute inset-0">
-						{framed && <DeckLayer deck={deckPage} camera={camera} store={store} />}
+						{framed && (
+							<DeckLayer deck={deckPage} inside={deckInside.slide !== null} camera={camera} store={store} />
+						)}
 						{framed && (
 							<CameraField camera={camera} layer="under">
 								{/* the threads live under the frames: the map, never a hit target */}
@@ -6080,7 +6117,9 @@ function CanvasField({
 						{framed && (
 							<LabelField camera={camera}>
 								{visibleFrames.map((frame) => {
-									const isEntered = entered === frame.name;
+									// a slide of a deck gone into wears the entered frame's chip (spool#265)
+									const inSlide = deckInside.slide === frame.name;
+									const isEntered = entered === frame.name || inSlide;
 									const isSelected = selected.includes(frame.name);
 									const isHovered = pointerTool && hovered?.visible === true && hovered.frame === frame.name;
 									return (
@@ -6102,11 +6141,13 @@ function CanvasField({
 											onPlay={deckPage.playOf(frame.name, playFrame)}
 											playTitle={deckPage.playTitleOf(frame.name)}
 											live={
-												isEntered && live.chip?.frame === frame.name
-													? { ...live.chip, faded: live.overview !== null }
-													: isEntered && live.overview !== null
-														? { at: 0, came: null, note: null, faded: true }
-														: null
+												inSlide
+													? { at: 0, came: null, note: deckInside.chip }
+													: isEntered && live.chip?.frame === frame.name
+														? { ...live.chip, faded: live.overview !== null }
+														: isEntered && live.overview !== null
+															? { at: 0, came: null, note: null, faded: true }
+															: null
 											}
 											clickEnters={
 												entered !== null &&
@@ -6147,6 +6188,7 @@ function CanvasField({
 								onGo={goInsidePage}
 							/>
 						)}
+						{framed && deckPage.on && <DeckStage inside={deckInside} camera={camera} view={viewChanges} />}
 					</div>
 
 					{framed && (

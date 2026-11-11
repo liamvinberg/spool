@@ -13,6 +13,7 @@ const slide = (words: string) => `export default function Slide() {
  * spool#265's canvas flow, one walk: New presentation, a loose frame into the talk, a trade, one taken out, from the
  * canvas and from the Pages rail alike, each one undo, and a note written from Properties. On a deck page the canvas's
  * own snapping stands down and a frame let go sends the deck's change; a row let go in the rail sends the same one.
+ * Then into a slide, the talk played there on its own keys, and out again by esc.
  */
 it("walks a talk from New presentation through the canvas, the Pages rail and Properties, each change one undo", {
 	timeout: 240_000,
@@ -142,4 +143,53 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	await page.getByLabel("Notes for number, number").blur();
 	await page.keyboard.press("Control+z");
 	await expect.poll(() => read("number", "notes.md")).toBe("Say the number.\n\nThen what it means.\n");
+
+	// into a slide: a double-click flies in and the talk plays there, on the slide's last beat
+	const camera = () =>
+		page.locator("[data-canvas-camera]").evaluate((element) => {
+			const at = /translate\(([-\d.e]+)px, ([-\d.e]+)px\) scale\(([-\d.e]+)\)/.exec(
+				(element as HTMLElement).style.transform,
+			);
+			return at === null ? null : { x: Number(at[1]), y: Number(at[2]), k: Number(at[3]) };
+		});
+	const settled = async () => {
+		let last = await camera();
+		await expect
+			.poll(async () => {
+				const now = await camera();
+				const still = JSON.stringify(now) === JSON.stringify(last);
+				last = now;
+				return still;
+			})
+			.toBe(true);
+		return last;
+	};
+	const before = await settled();
+	const into = await pagePointOf(page, { x: 1440 + 640, y: 360 });
+	await page.mouse.dblclick(into.x, into.y);
+	await page.locator('[data-deck-stage="presentation/live"][data-deck-stage-shown]').waitFor();
+	await page.locator('[data-live-chip="presentation/live"]').waitFor();
+	// Space is the talk's next beat, not the Hand: on from live to number, the camera and selection with it
+	await page.keyboard.press("Space");
+	await page.locator('[data-deck-stage="presentation/number"][data-deck-stage-shown]').waitFor();
+	await expect
+		.poll(() => page.getByRole("button", { name: "number frame" }).getAttribute("aria-pressed"))
+		.toBe("true");
+
+	// out from a slide the talk moved on to: the same zoom and height, across that slide, which stays selected
+	await page.keyboard.press("Escape");
+	await page.locator("[data-deck-stage]:not([data-deck-stage-shown])").waitFor({ state: "attached" });
+	const out = await settled();
+	expect(out?.k).toBeCloseTo(before?.k ?? 0, 6);
+	expect(out?.y).toBeCloseTo(before?.y ?? 0, 6);
+	const width = await page.locator("[data-canvas-camera]").evaluate((element) => element.parentElement?.clientWidth);
+	expect((out?.x ?? 0) + (2 * 1440 + 640) * (out?.k ?? 0)).toBeCloseTo((width ?? 0) / 2, 3);
+	expect(await page.getByRole("button", { name: "number frame" }).getAttribute("aria-pressed")).toBe("true");
+
+	// and out from the slide gone into: the very camera it came from
+	const back = await pagePointOf(page, { x: 2 * 1440 + 640, y: 360 });
+	await page.mouse.dblclick(back.x, back.y);
+	await page.locator('[data-deck-stage="presentation/number"][data-deck-stage-shown]').waitFor();
+	await page.keyboard.press("Escape");
+	expect(await settled()).toEqual(out);
 });

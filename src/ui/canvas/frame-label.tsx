@@ -190,6 +190,15 @@ export const FrameLabel = memo(function FrameLabel({
 						>
 							{live?.note ?? "live · esc exits"}
 						</span>
+						{/* a slide of a deck gone into still says which it is, as the talk moves (spool#265) */}
+						{number !== undefined && (
+							<span className="flex min-w-0 items-center gap-2 pl-1 text-accent-strong type-value">
+								<span data-slide-number={number} className="shrink-0 tabular-nums">
+									{number}
+								</span>
+								<span className="min-w-0 truncate">{leaf}</span>
+							</span>
+						)}
 						{/* inside it is where you try the frame, so playing it from there stays one click */}
 						{onPlay !== undefined && <PlayButton name={name} leaf={leaf} onPlay={onPlay} title={playTitle} />}
 					</div>

@@ -272,9 +272,19 @@ export function useDeckPage({
 
 /**
  * Under the frames of a deck page: the band behind the talk, and while a frame is held, the outline where it lands.
- * Nothing on any other page.
+ * Nothing on any other page. The band goes while a frame is entered or a slide gone into (`inside`).
  */
-export function DeckLayer({ deck, camera, store }: { deck: DeckPage; camera: CameraStore; store: CanvasStore }) {
+export function DeckLayer({
+	deck,
+	inside,
+	camera,
+	store,
+}: {
+	deck: DeckPage;
+	inside: boolean;
+	camera: CameraStore;
+	store: CanvasStore;
+}) {
 	const entered = useCanvasState(store, (state) => state.entered);
 	if (!deck.on) return null;
 	return (
@@ -284,7 +294,7 @@ export function DeckLayer({ deck, camera, store }: { deck: DeckPage; camera: Cam
 				talk={deck.view.talk}
 				lifted={deck.view.lifted}
 				sending={deck.view.sending}
-				away={entered !== null}
+				away={entered !== null || inside}
 			/>
 			<Landing camera={camera} landing={deck.view.landing} />
 		</>
