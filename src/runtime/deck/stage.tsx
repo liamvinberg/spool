@@ -570,7 +570,10 @@ export function bootStage(runtime: StageRuntime): void {
 			}
 			if (next !== undefined) next = { ...next, at: clampAt(talk, next.at) };
 			underWay = next !== undefined;
-			session = next ?? openSession(talk, session.at, runtime.state.read());
+			// a talk opened from a slide, with no session yet, starts on that slide's first beat
+			const from = talk.findIndex((slide) => slide.frame === message.frame);
+			const at = next === undefined && from >= 0 ? { slide: from, beat: 0 } : session.at;
+			session = next ?? openSession(talk, at, runtime.state.read());
 			seed(picture().state);
 			if (mode === "own") post({ spool: "stage-session", session });
 			arrived();
