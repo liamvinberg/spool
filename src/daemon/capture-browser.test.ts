@@ -924,3 +924,39 @@ it.each(["inline", "class"] as const)(
 		expect(exportImage.assetSrc.slice(0, 3)).toEqual([255, 255, 255]);
 	},
 );
+
+it("draws a still's text in the faces it carries on the first raster", { timeout: 30_000 }, async () => {
+	const served = await serveCapture();
+	onTestFinished(() => served.close());
+	const captureOrigin = new URL(served.controlOrigin);
+	captureOrigin.hostname = CAPTURE_HOST;
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const page = await browser.newPage();
+	await page.goto(served.url);
+	// as a capture source inlines the faces a text needs: data URLs, each its subset, held invisible until it loads
+	const face = (subset: string, range: string) =>
+		`@font-face{font-family:Probe;font-style:normal;font-weight:400;font-display:block;src:url(data:font/woff2;base64,${readFileSync(
+			join(process.cwd(), `node_modules/@fontsource/fragment-mono/files/fragment-mono-${subset}-400-normal.woff2`),
+		).toString("base64")});unicode-range:${range}}`;
+	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><foreignObject x="0" y="0" width="400" height="200"><div xmlns="http://www.w3.org/1999/xhtml"><style>${face("latin", "U+0-FF")}${face("latin-ext", "U+100-24F")}</style><div style="font-family:Probe;font-size:160px;line-height:200px;color:#000">MMŁ</div></div></foreignObject></svg>`;
+	const { reply } = await directWorkerRequest(page, captureOrigin.origin, svg, { width: 400, height: 200, dpr: 1 });
+	const url = (reply.image as { url: string } | undefined)?.url;
+	if (url === undefined) throw new Error(String(reply.error));
+	const darkest = await page.evaluate(async (url) => {
+		const image = new Image();
+		image.src = url;
+		await image.decode();
+		const canvas = document.createElement("canvas");
+		canvas.width = 400;
+		canvas.height = 200;
+		const context = canvas.getContext("2d");
+		if (context === null) throw new Error("image canvas unavailable");
+		context.drawImage(image, 0, 0);
+		const data = context.getImageData(0, 0, 400, 200).data;
+		let least = 255;
+		for (let i = 0; i < data.length; i += 4) least = Math.min(least, data[i] ?? 255);
+		return least;
+	}, url);
+	expect(darkest).toBeLessThan(64);
+});

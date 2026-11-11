@@ -156,6 +156,30 @@ function encode(canvas: HTMLCanvasElement, type: string): string {
 	return url;
 }
 
+/**
+ * The faces a still carries, loaded in this page before it is drawn (spool#275). An svg image loads its own
+ * @font-face sources only once it is decoded and laid out, so the first draw of text that needs a face not yet
+ * loaded in this renderer shows nothing there, every face being font-display:block: a slide's paragraph whose
+ * last word reached a second subset went missing from its PDF page. Loaded here first, the same data URLs are
+ * ready when the image asks for them.
+ */
+async function loadFaces(svg: string): Promise<void> {
+	const sources = new Set<string>();
+	for (const [, body] of svg.matchAll(/@font-face\{([^}]*)\}/g)) {
+		const src = /(?:^|;)src:(url\(data:font\/[^)]*\))/.exec(body ?? "")?.[1];
+		if (src !== undefined) sources.add(src);
+	}
+	await Promise.all(
+		Array.from(sources, async (src) => {
+			try {
+				await new FontFace("spool-capture-face", src).load();
+			} catch {
+				// a face that won't load draws as it would have anyway
+			}
+		}),
+	);
+}
+
 // One image off one parsed snapshot; the daemon stores the reported raster as-is.
 async function raster(value: unknown, requestId: string): Promise<{ url: string; width: number; height: number }> {
 	const canvas = document.querySelector("canvas");
@@ -165,6 +189,7 @@ async function raster(value: unknown, requestId: string): Promise<{ url: string;
 		const job = await validateJob(value, requestId);
 		const context = canvas.getContext("2d");
 		if (!context) throw new Error("capture canvas unavailable");
+		await loadFaces(job.svg);
 		image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(job.svg)}`;
 		await image.decode();
 		canvas.width = job.outputWidth;
