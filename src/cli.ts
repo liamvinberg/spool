@@ -190,9 +190,13 @@ program
 	.description("scaffold design/, register the project, and open its tab")
 	.argument("[path]", "product root", ".")
 	.option("--history", "start the project with history — spool commits its design/ once the canvas goes quiet", false)
-	.option("--team <team>", "start it as a team project of that team, synced live through spool.page instead of git")
+	.option(
+		"--team <team>",
+		"start it as a team project of that team, synced live through spool.page instead of git; joins the repo's project when the team has one",
+	)
+	.option("--name <name>", "the team project's name, instead of the repo's (or the folder's outside a repo)")
 	.option("--local", "keep it on this Mac only, offline, even while you edit in a team", false)
-	.action(async (path: string, options: { history: boolean; team?: string; local: boolean }) => {
+	.action(async (path: string, options: { history: boolean; team?: string; name?: string; local: boolean }) => {
 		checkInitTarget(path);
 		const origin = cloudOrigin(process.env);
 		const setting = createSettingsStore(spoolDir)
@@ -205,17 +209,33 @@ program
 		);
 		if (target.kind === "team") {
 			if (options.history) throw new SpoolError("a team project keeps no git history; drop --history");
-			const { root, link, uploaded, agents } = await initTeamProject(path, spoolDir, { team: target.team, origin });
-			process.stdout.write(`initialized team project ${link.url} at ${root}\n`);
+			const started = await initTeamProject(path, spoolDir, { team: target.team, origin, name: options.name });
+			const { root, link, agents } = started;
+			if (started.started === "joined")
+				process.stdout.write(
+					started.why === "repo"
+						? `joined ${link.url}, this repo's project in ${started.team}, at ${root}\n`
+						: `joined ${link.url}, the project in ${started.team} by this repo's name, and recorded this repo on it, at ${root}\n`,
+				);
+			else {
+				process.stdout.write(`initialized team project ${link.url} at ${root}\n`);
+				if ((started.named.from === "repo" || started.named.from === "checkout") && link.project !== basename(root))
+					process.stdout.write(
+						`named ${link.project} after ${started.named.from === "repo" ? "this repo" : "the repo's main checkout"}, not its folder; \`--name <name>\` names it otherwise\n`,
+					);
+			}
 			process.stdout.write(
 				agents === undefined
 					? `design/ stays out of git: spool keeps it in step with ${link.team} — commit spool.json, never design/\n`
 					: `design/ stays out of git: spool keeps it in step with ${link.team} — commit spool.json and ${basename(agents)}, never design/\n`,
 			);
-			if (!uploaded) narrate("spool.page could not be reached; the daemon uploads design/ once it can");
+			if (started.started === "made" && !started.uploaded)
+				narrate("spool.page could not be reached; the daemon uploads design/ once it can");
 			if (agents === undefined) process.stdout.write(`\n${rootConfigPointer}`);
 			return;
 		}
+		if (options.name !== undefined)
+			throw new SpoolError("`--name` names a team project; a project on this Mac takes its folder's name");
 		const { root } = initProject(path, spoolDir, { history: options.history });
 		process.stdout.write(`initialized spool project at ${root}\n`);
 		// #78: history is never silent. One line, no prompt — init stays something
