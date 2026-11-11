@@ -104,10 +104,16 @@ export function createCameraStore(): CameraStore {
 			return;
 		}
 		for (const listener of listeners) listener(camera, true);
+		restSoon();
+	};
+
+	const restSoon = () => {
+		clearTimeout(settle);
 		settle = setTimeout(() => {
 			// a camera set since the last frame is a gesture still going: its own
-			// frame is owed, and it starts the quiet window over
-			if (drawn === null || camera !== drawn) return;
+			// frame is owed, and it starts the quiet window over; a flight whose
+			// next frame is late is still flying (spool#305)
+			if (drawn === null || camera !== drawn || flight !== null) return;
 			rested = drawn;
 			for (const listener of listeners) listener(drawn, false);
 		}, REST_MS);
@@ -132,7 +138,9 @@ export function createCameraStore(): CameraStore {
 			schedule();
 		},
 		stop() {
+			if (flight === null) return;
 			flight = null;
+			restSoon();
 		},
 		aim: () => flight?.to ?? camera,
 		rest: () => rested,

@@ -238,6 +238,36 @@ describe("the camera store", () => {
 		expect(rests).toEqual([{ x: 2, y: 0, k: 1 }]);
 	});
 
+	it("rests only once a flight is over, however late its frames come", () => {
+		const store = createCameraStore();
+		const rests: Camera[] = [];
+		store.subscribe((camera, moving) => {
+			if (!moving && camera !== null) rests.push(camera);
+		});
+		store.set({ x: 0, y: 0, k: 1 });
+		frame();
+		vi.advanceTimersByTime(REST_MS);
+		rests.length = 0;
+
+		store.fly({ x: 100, y: 0, k: 1 }, 600);
+		frame(clock + 100);
+		// a frame of the flight a long way off: still flying
+		vi.advanceTimersByTime(REST_MS * 2);
+		expect(rests).toEqual([]);
+		frame(clock + 500);
+		vi.advanceTimersByTime(REST_MS);
+		expect(rests).toEqual([{ x: 100, y: 0, k: 1 }]);
+
+		// stopped while its frame was late: it rests where it stood
+		store.fly({ x: 0, y: 0, k: 1 }, 600);
+		frame(clock + 100);
+		vi.advanceTimersByTime(REST_MS * 2);
+		store.stop();
+		vi.advanceTimersByTime(REST_MS);
+		expect(rests).toHaveLength(2);
+		expect(store.rest()).toBe(store.get());
+	});
+
 	it("forgets a rest the moment the camera goes", () => {
 		const store = createCameraStore();
 		store.set({ x: 1, y: 0, k: 1 });
