@@ -34,13 +34,15 @@ async function makeServer(spoolDir: string, version = "0.0.0-test") {
 }
 
 describe("resolveSpoolDir", () => {
-	it("defaults to ~/.spool", () => {
+	it("defaults to ~/.spool, and Spool Beta's to ~/.spool-beta (spool#282)", () => {
 		expect(resolveSpoolDir({})).toBe(join(homedir(), ".spool"));
+		expect(resolveSpoolDir({}, true)).toBe(join(homedir(), ".spool-beta"));
 	});
 
 	it("honors SPOOL_DIR so a checkout daemon keeps its state beside the daily one", () => {
 		const dir = makeTempDir();
 		expect(resolveSpoolDir({ SPOOL_DIR: dir })).toBe(resolve(dir));
+		expect(resolveSpoolDir({ SPOOL_DIR: dir }, true)).toBe(resolve(dir));
 	});
 
 	it("treats an empty SPOOL_DIR as unset", () => {
@@ -80,6 +82,9 @@ describe("resolveServeConfig", () => {
 			history: true,
 			notices: [],
 		});
+		// Spool Beta's own port, beside Spool's, still overridable (spool#282)
+		expect(resolveServeConfig(makeSpoolDir(), {}, true).port).toBe(7768);
+		expect(resolveServeConfig(makeSpoolDir(), { SPOOL_PORT: "7801" }, true).port).toBe(7801);
 	});
 
 	it.each(["127.0.0.1", "localhost", "::1"])("honors the supported loopback host %s", (host) => {
