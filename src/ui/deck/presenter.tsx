@@ -303,9 +303,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		>
 			{/* the head: the clock, the room's screen, the way out */}
 			<motion.div className="absolute inset-x-10 top-0 flex h-[64px] items-center gap-4" {...arrive(0.1)}>
-				<span data-deck-clock="" className="text-primary tabular-nums type-page">
-					{clock}
-				</span>
+				<span className="text-primary tabular-nums type-page">{clock}</span>
 				<div className="ml-auto flex items-center gap-5 type-value">
 					{/* what the room is doing that the presenter is not seeing: one quiet cue beside its name */}
 					<AnimatePresence mode="wait" initial={false}>
@@ -325,7 +323,6 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					</AnimatePresence>
 					<button
 						type="button"
-						data-deck-room={room}
 						onClick={() => (room === "closed" ? reopen() : roomWindow.current?.focus())}
 						title={
 							room === "closed"
@@ -400,7 +397,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			>
 				<div className="flex h-5 items-center gap-2 text-secondary type-detail">
 					<span>{keys ? "room" : "next"}</span>
-					<span data-deck-next="" className="truncate text-tertiary">
+					<span className="truncate text-tertiary">
 						{keys
 							? "what they see"
 							: atEnd
@@ -445,7 +442,6 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					<AnimatePresence mode="popLayout" initial={false}>
 						<motion.p
 							key={`${at.slide}-${frame}-${at.beat}`}
-							data-deck-notes=""
 							className="text-lg leading-lg text-primary"
 							initial={{ opacity: 0, y: 10 }}
 							animate={{ opacity: 1, y: 0 }}
@@ -529,13 +525,9 @@ function TalkLine({
 						>
 							<span className="truncate">{nameOf(slide.frame)}</span>
 							{state === "broken" ? (
-								<span data-deck-mark="broken" className="shrink-0 text-danger-strong type-detail">
-									broken
-								</span>
+								<span className="shrink-0 text-danger-strong type-detail">broken</span>
 							) : state === "loading" ? (
-								<span data-deck-mark="loading" className="shrink-0 text-tertiary type-detail">
-									loading
-								</span>
+								<span className="shrink-0 text-tertiary type-detail">loading</span>
 							) : null}
 						</button>
 						<div className="flex gap-1">
