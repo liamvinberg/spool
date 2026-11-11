@@ -53,6 +53,8 @@ import {
 	type TunnelStatus,
 	writeRemoteChoice,
 } from "./remote";
+import { installRooms, type Rooms } from "./room";
+import { roomTalk } from "./room-window";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import {
 	FULL,
@@ -416,6 +418,8 @@ function createWindow(): BrowserWindow {
 	});
 	created.on("closed", () => {
 		if (created !== window) return;
+		// the presenter view is gone, and the talk with it
+		rooms?.closeAll();
 		clearTimeout(coverDeadline);
 		coverDeadline = undefined;
 		cover?.close();
@@ -448,6 +452,12 @@ function guard(created: BrowserWindow): void {
 	created.webContents.setWindowOpenHandler(({ url }) => {
 		if (!isDaemonUrl(url)) {
 			void shell.openExternal(url);
+			return { action: "deny" };
+		}
+		// a presented talk's room is a window of its own, placed on the room's screen
+		const talk = roomTalk(url);
+		if (talk !== undefined) {
+			rooms?.open(url, talk);
 			return { action: "deny" };
 		}
 		const play = playRequest(url);
@@ -919,6 +929,9 @@ interface PlayedWindow {
 }
 
 const played = new Map<number, PlayedWindow>();
+
+/** The rooms of talks presented from spool's window, once the app is up. */
+let rooms: Rooms | undefined;
 
 /**
  * The size to fall back on when the daemon will not say. A refusal here is not
@@ -2262,6 +2275,12 @@ export function boot(): void {
 	}
 
 	installPlayChannels();
+	rooms = installRooms({
+		canvas: () => window,
+		guard,
+		webPreferences: { spellcheck: false, ...AUTOPLAY },
+		log: (...words) => log(...words),
+	});
 	installUpdateChannels();
 	installCanvasChannels();
 	app.setAboutPanelOptions({ applicationName: NAME, applicationVersion: version(), credits: "FSL-1.1-MIT" });

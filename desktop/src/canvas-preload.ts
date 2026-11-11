@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { DirectoryRequest } from "./directory-dialog";
 import type { CanvasCommand } from "./main";
 import type { ExportDownloadResult, ProjectDownloadResult } from "./project-download";
+import type { RoomReport } from "./room-window";
 
 // The canvas window's bridge.
 //
@@ -80,6 +81,15 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 	setCanvasActive: (active: boolean) => ipcRenderer.send("spool:canvas-active", active),
 	setMenuKeys: (keys: Partial<Record<CanvasCommand, string>>) => ipcRenderer.send("spool:canvas-menu-keys", keys),
 	closeWindow: () => ipcRenderer.send("spool:canvas-close-window"),
+	// a presented talk's room: which screen it is on, by name, and X trading the two screens (spool#265)
+	onRoom: (listener: (report: RoomReport) => void): (() => void) => {
+		const handler = (_event: unknown, report: RoomReport) => listener(report);
+		ipcRenderer.on("spool:room", handler);
+		return () => ipcRenderer.removeListener("spool:room", handler);
+	},
+	roomReport: (talk: string): Promise<RoomReport | null> => ipcRenderer.invoke("spool:room-report", talk),
+	swapRoom: (talk: string) => ipcRenderer.send("spool:room-swap", talk),
+	showRoom: (talk: string) => ipcRenderer.send("spool:room-show", talk),
 	// the first run's small window, and its growing into spool's (spool#250)
 	setupWindow: (size: "grow" | { w: number; h: number }): Promise<boolean> =>
 		ipcRenderer.invoke("spool:setup-window", size),
