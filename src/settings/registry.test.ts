@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { EXPERIMENT_IDS, EXPERIMENTS, experimentDefault } from "./experiments";
 import { DARK_TOKENS, LIGHT_TOKENS, parseSetting, SETTINGS, themeInline } from "./registry";
 
 describe("settings registry", () => {
@@ -27,6 +28,13 @@ describe("settings registry", () => {
 		for (const [key, entry] of Object.entries(SETTINGS)) {
 			expect(["project", "local", "machine"]).toContain(entry.scope);
 			expect(parseSetting(key as keyof typeof SETTINGS, entry.fallback).ok, key).toBe(true);
+		}
+	});
+
+	it("defaults an experiment by its stage, and every one on in a Spool Beta build (spool#282)", () => {
+		for (const id of EXPERIMENT_IDS) {
+			expect(experimentDefault(id), id).toBe(EXPERIMENTS[id].stage === "beta");
+			expect(experimentDefault(id, true), id).toBe(true);
 		}
 	});
 

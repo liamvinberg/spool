@@ -27,6 +27,13 @@ export const RELEASES_PAGE = "https://github.com/liamvinberg/spool/releases/late
  */
 export const DOWNLOAD_URL = `${UPDATE_HOST}/Spool.dmg`;
 
+/**
+ * Spool Beta's feed (spool#282): everything under `beta/` in the same bucket,
+ * `latest-mac.yml` there too. electron-builder.beta.ts turns off the channel that would rename it.
+ */
+export const BETA_UPDATE_HOST = `${UPDATE_HOST}/beta`;
+export const BETA_DOWNLOAD_URL = `${BETA_UPDATE_HOST}/Spool-Beta.dmg`;
+
 export interface Release {
 	version: Version;
 }
@@ -64,10 +71,10 @@ export function plainUpdateError(raw: string): string {
 }
 
 /** The feed's version, for a copy that cannot install from it. */
-export async function latestRelease(timeoutMs = 10_000): Promise<Release> {
+export async function latestRelease(host = UPDATE_HOST, timeoutMs = 10_000): Promise<Release> {
 	let response: Response;
 	try {
-		response = await fetch(`${UPDATE_HOST}/latest-mac.yml`, { signal: AbortSignal.timeout(timeoutMs) });
+		response = await fetch(`${host}/latest-mac.yml`, { signal: AbortSignal.timeout(timeoutMs) });
 	} catch {
 		throw new UpdateCheckError("Spool could not reach the update server. Check the connection and try again.");
 	}

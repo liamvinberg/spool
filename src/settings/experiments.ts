@@ -1,3 +1,5 @@
+import { BETA } from "../channel";
+
 /**
  * Spool's experimental features, declared once (#238, spool#423).
  *
@@ -88,10 +90,13 @@ export function isExperimentId(name: string): name is ExperimentId {
 	return Object.hasOwn(EXPERIMENTS, name);
 }
 
-/** On for a beta, off for an experiment: what a machine that never chose gets. */
-export function experimentDefault(id: ExperimentId): boolean {
+/**
+ * On for a beta, off for an experiment: what a machine that never chose gets. In a Spool Beta build (spool#282)
+ * every one is on, each still switchable off in Settings.
+ */
+export function experimentDefault(id: ExperimentId, betaBuild = BETA): boolean {
 	const stage: ExperimentStage = EXPERIMENTS[id].stage;
-	return stage === "beta";
+	return betaBuild || stage === "beta";
 }
 
 /** The setting an experiment is: `experimental.fast-refresh`, `{ "experimental": { "fast-refresh": true } }` on disk. */

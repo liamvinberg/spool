@@ -295,6 +295,40 @@ build, so `build.sh` leaves the feed file out of those and Check for Updates
 hands them the dmg instead; and a copy outside Applications, a mounted dmg or a
 translocated one, which the app offers to move on first launch.
 
+## Spool Beta
+
+Spool Beta is main, installable, beside Spool (spool#282): a second app,
+`page.spool.mac.beta`, built by `.github/workflows/beta.yml` from every push to
+main whose full CI passed. Install it once from
+`https://updates.spool.page/beta/Spool-Beta.dmg`; it updates itself from then on,
+and each build is announced in the spool category's `beta` channel on Discord.
+Releasing is untouched: the beta is what to try before merging the release PR.
+
+What makes a build the beta is its version alone: the next patch after
+package.json's and the workflow's run number, `0.55.1-beta.12`. The workflow
+stamps it into the root `package.json` on the runner and never commits it. From
+that suffix:
+
+- `scripts/build.sh` builds from `electron-builder.beta.ts` (Spool's config with
+  the beta's app id, name, light-plated icon and feed, and without the `.spool`
+  file claim) and `bundle-cli.sh` packs this checkout instead of asking npm.
+- The bundled cli and canvas are built with `__SPOOL_BETA__` on
+  (`src/channel.ts`): state in `~/.spool-beta`, port 7768, every experiment on
+  by default, and a project in an older format waits for Upgrade instead of
+  being rewritten on open.
+- The app reads it with `isBeta(version())`: its own state dir, its feed under
+  `updates.spool.page/beta/`, a menu bar mark with a dot, and no
+  `/usr/local/bin/spool`, which stays Spool's.
+
+The feed is the same bucket's `beta/` prefix: `latest-mac.yml` (the updater asks
+for that name, since the beta's config turns off electron-builder's channel
+detection), the newest five builds' zips, blockmaps and dmgs, `Spool-Beta.dmg`,
+and `build.json`, which names the last build's commit so the next announcement
+lists the commits since. `.github/scripts/beta.ts` refuses any key outside
+`beta/`, for writes and deletes alike. The announcement posts through the
+`BETA_DISCORD_WEBHOOK` secret; without it a build still ships and says so as a
+warning.
+
 ## Signing, for a fork
 
 The `dmg` job needs five repository secrets, and without them it fails at the

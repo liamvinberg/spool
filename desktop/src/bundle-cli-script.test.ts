@@ -134,3 +134,23 @@ test("a local build can still bundle a published version", () => {
 		rmSync(setup.directory, { recursive: true, force: true });
 	}
 });
+
+test("a beta packs the checkout it is built from and never asks npm (spool#282)", () => {
+	const setup = fixture(1);
+	setup.env.SPOOL_RELEASE_BUILD = "0";
+	setup.env.VERSION = "9.8.8-beta.4";
+	executable(
+		setup.directory,
+		"pnpm",
+		'echo "$*" >> "$PACK_LOG"\n[ "$1" = pack ] && [ "$2" = --pack-destination ] || exit 99\ntouch "$3/spool.page-$VERSION.tgz"\n',
+	);
+	try {
+		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /spool\.page@9\.8\.8-beta\.4 is a beta, packing this checkout/);
+		assert.match(readFileSync(setup.packLog, "utf8"), /^pack --pack-destination /);
+		assert.throws(() => readFileSync(join(setup.directory, "attempts")));
+	} finally {
+		rmSync(setup.directory, { recursive: true, force: true });
+	}
+});

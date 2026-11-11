@@ -21,8 +21,11 @@ REPO="$(cd "$ROOT/.." && pwd)"
 
 VERSION="$(node -p "require('$REPO/package.json').version")"
 
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-	echo "package.json says version \"$VERSION\", which is not X.Y.Z." >&2
+# A Spool Beta build (spool#282) is the one exception: the beta workflow stamps
+# package.json with the next patch and `-beta.N` before it builds, and never
+# commits it. No release ever carries a suffix.
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
+	echo "package.json says version \"$VERSION\", which is not X.Y.Z or a beta's X.Y.Z-beta.N." >&2
 	echo "The app compares three plain numbers and refuses anything else." >&2
 	exit 1
 fi
@@ -32,6 +35,13 @@ EXPECTED="${1:-}"
 if [ -z "$EXPECTED" ]; then
 	echo "$VERSION"
 	exit 0
+fi
+
+# A release is never a beta: a suffix here would bake Spool Beta's state, port
+# and experiments into the package npm users install.
+if [[ "$VERSION" == *-beta.* ]]; then
+	echo "package.json says $VERSION, a Spool Beta version, which is never released." >&2
+	exit 1
 fi
 
 if [ "${EXPECTED#v}" != "$VERSION" ]; then

@@ -15,9 +15,10 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { BETA } from "../channel";
 import { cliName } from "../cli-name";
 import { SpoolError } from "../errors";
-import { DEFAULT_HOST, DEFAULT_PORT, isLoopbackHost } from "./loopback";
+import { BETA_PORT, DEFAULT_HOST, DEFAULT_PORT, isLoopbackHost } from "./loopback";
 import { renderOriginFor } from "./security";
 
 /**
@@ -45,10 +46,14 @@ export { DEFAULT_HOST, DEFAULT_PORT } from "./loopback";
  * ~/.spool unless SPOOL_DIR says otherwise — the state half of the dogfood
  * split: a checkout daemon rides its own registry, daemon.json and log
  * beside the released daily one (SPOOL_PORT gives it its own port).
+ *
+ * Spool Beta's is ~/.spool-beta (spool#282): the Mac app adopts whatever daemon
+ * its state names and replaces an older one, so on shared state the beta and
+ * Spool would swap daemons under each other.
  */
-export function resolveSpoolDir(env: Record<string, string | undefined>): string {
+export function resolveSpoolDir(env: Record<string, string | undefined>, beta = BETA): string {
 	if (env.SPOOL_DIR !== undefined && env.SPOOL_DIR !== "") return resolve(env.SPOOL_DIR);
-	return join(homedir(), ".spool");
+	return join(homedir(), beta ? ".spool-beta" : ".spool");
 }
 
 /**
@@ -88,10 +93,14 @@ export function configuredPort(spoolDir: string): number | undefined {
  * spool has never written config.json and a program editing a config it does not
  * own is worse than a line of output.
  */
-export function resolveServeConfig(spoolDir: string, env: Record<string, string | undefined>): ServeConfig {
+export function resolveServeConfig(
+	spoolDir: string,
+	env: Record<string, string | undefined>,
+	beta = BETA,
+): ServeConfig {
 	const file = join(spoolDir, "config.json");
 	let host = DEFAULT_HOST;
-	let port = DEFAULT_PORT;
+	let port = beta ? BETA_PORT : DEFAULT_PORT;
 	let updateCheck = true;
 	let history = true;
 	const notices: string[] = [];

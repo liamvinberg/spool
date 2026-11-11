@@ -38,8 +38,13 @@ export interface FrameNamesMigration {
 	ambiguous: string[];
 }
 
+/** Whether a project still waits for this migration: its canvas.json says the format before path names. */
+export function migrationDue(root: string): boolean {
+	return readCanvasFields(root).format === FOLDER_NAMES_FORMAT;
+}
+
 export function migrateFrameNames(root: string): FrameNamesMigration | undefined {
-	if (readCanvasFields(root).format !== FOLDER_NAMES_FORMAT) return undefined;
+	if (!migrationDue(root)) return undefined;
 	const frames = frameNames(root) ?? [];
 	const byFolder = new Map<string, string[]>();
 	for (const frame of frames) {

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
+import { connect } from "node:net";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { compareVersions, parseVersion } from "./version";
@@ -62,10 +63,14 @@ export type DaemonStatus =
  * own daemon beside the daily one. A leading `~` is expanded because this is
  * read out of an app bundle's environment as often as out of a shell's, and a
  * relative path resolves against the process's directory the way the CLI's does.
+ *
+ * Spool Beta's is `~/.spool-beta` (spool#282), which its bundled cli picks the
+ * same way: on one state directory the two apps would each adopt, and replace,
+ * the other's daemon.
  */
-export function stateDirectory(env: NodeJS.ProcessEnv = process.env): string {
+export function stateDirectory(env: NodeJS.ProcessEnv = process.env, beta = false): string {
 	const override = env.SPOOL_DIR;
-	if (override === undefined || override === "") return join(homedir(), ".spool");
+	if (override === undefined || override === "") return join(homedir(), beta ? ".spool-beta" : ".spool");
 	if (override === "~") return homedir();
 	if (override.startsWith("~/")) return join(homedir(), override.slice(2));
 	return isAbsolute(override) ? override : resolve(override);
@@ -254,16 +259,17 @@ export async function status(directory: string): Promise<DaemonStatus> {
 /**
  * Where a daemon would listen, read the way `spool serve` reads it: config.json
  * `{host, port}` in the state directory, SPOOL_HOST and SPOOL_PORT on top,
- * loopback 7766 when nothing says otherwise. A value this cannot read is the
+ * loopback 7766 when nothing says otherwise, 7768 for Spool Beta. A value this cannot read is the
  * default rather than a refusal, because this is only ever used to name a
  * squatter, and the daemon's own start is where a bad config is explained.
  */
 export function configuredAddress(
 	directory: string,
 	env: NodeJS.ProcessEnv = process.env,
+	beta = false,
 ): { host: string; port: number } {
 	let host = "127.0.0.1";
-	let port = 7766;
+	let port = beta ? 7768 : 7766;
 	try {
 		const parsed: unknown = JSON.parse(readFileSync(join(directory, "config.json"), "utf8"));
 		if (typeof parsed === "object" && parsed !== null) {
@@ -293,8 +299,9 @@ export function configuredAddress(
 export async function unrecordedDaemon(
 	directory: string,
 	env: NodeJS.ProcessEnv = process.env,
+	beta = false,
 ): Promise<{ url: string; pid: number; version: string } | undefined> {
-	const { host, port } = configuredAddress(directory, env);
+	const { host, port } = configuredAddress(directory, env, beta);
 	const url = daemonUrl(host, port);
 	const live = await health(url);
 	return live === undefined ? undefined : { url, pid: live.pid, version: live.version };
@@ -309,6 +316,8 @@ export interface StartOptions {
 	cli: string;
 	directory: string;
 	env?: NodeJS.ProcessEnv;
+	/** Spool Beta's daemon, on its own default port. */
+	beta?: boolean;
 	timeoutMs?: number;
 }
 
@@ -347,14 +356,20 @@ export async function start(options: StartOptions): Promise<DaemonStatus> {
 		// config.json, the same as when the CLI starts it.
 		env: { ...(options.env ?? process.env), ELECTRON_RUN_AS_NODE: "1" },
 	});
+	// a daemon that exits never comes up: it is not waited out
+	let exited = false;
+	child.once("exit", () => {
+		exited = true;
+	});
 	child.unref();
 	log.close();
 
 	const live = await poll(options.timeoutMs ?? 30_000, async () => {
 		const current = await status(directory);
-		return current.running ? current : undefined;
+		if (current.running) return current;
+		return exited ? current : undefined;
 	});
-	if (live !== undefined) return live;
+	if (live?.running) return live;
 	try {
 		process.kill(child.pid ?? 0, "SIGTERM");
 	} catch {
@@ -363,13 +378,34 @@ export async function start(options: StartOptions): Promise<DaemonStatus> {
 	// The one failure with a name: a daemon nobody recorded holds the port, and
 	// the child died on the bind. Everything else is in daemon.log, which is the
 	// only place worth pointing at: this app has no console.
-	const squatter = await unrecordedDaemon(directory, options.env ?? process.env);
+	const squatter = await unrecordedDaemon(directory, options.env ?? process.env, options.beta);
 	if (squatter !== undefined) {
 		throw new DaemonStartError(
 			`a spool daemon (v${squatter.version}, pid ${squatter.pid}) already serves ${squatter.url}, but nothing records it, so it cannot be adopted. Run \`spool stop --force\` in a terminal, then open Spool again.`,
 		);
 	}
+	// The other: something that is not spool holds the port, which the daemon can only refuse
+	const { host, port } = configuredAddress(directory, options.env ?? process.env, options.beta);
+	if (await listening(host, port)) {
+		throw new DaemonStartError(
+			`port ${port} on ${host} is taken by another app. Set another "port" in ${join(directory, "config.json")}, such as { "port": ${port + 2} }, then open the app again.`,
+		);
+	}
 	throw new DaemonStartError(`the spool daemon did not come up, see ${join(directory, "daemon.log")}`);
+}
+
+/** Whether anything accepts a connection on the address. */
+function listening(host: string, port: number): Promise<boolean> {
+	return new Promise((done) => {
+		const socket = connect({ host: connectHost(host), port, timeout: 1000 });
+		const end = (open: boolean) => {
+			socket.destroy();
+			done(open);
+		};
+		socket.once("connect", () => end(true));
+		socket.once("error", () => end(false));
+		socket.once("timeout", () => end(false));
+	});
 }
 
 /**

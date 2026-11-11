@@ -25,6 +25,16 @@ const assets = join(here, "..", "assets");
 /** The canvas's ground, from src/ui/ui.css. If it moves there, move it here. */
 const GROUND = "#0e0e0e";
 
+/**
+ * Spool Beta's plate (spool#282): the same mark and thread on a light ground, so
+ * the two apps are told apart in the Dock at a glance. Not blue, which is a
+ * checkout lane's.
+ */
+const BETA_GROUND = "#f4f1ec";
+
+/** Spool Beta's menu bar mark leaves room on its right for a dot. */
+const BETA_TRAY_VIEW_BOX = "250 182 660 660";
+
 /** The identity's viewBox, and the box the ribbon is fitted into inside it. */
 const VIEW_BOX = "250 182 524 660";
 
@@ -53,11 +63,11 @@ const ICONSET: readonly (readonly [string, number])[] = [
 	["icon_512x512@2x", 1024],
 ];
 
-function appIcon(pixels: number, thread: string): string {
+function appIcon(pixels: number, thread: string, ground = GROUND): string {
 	const side = PLATE_SIDE * MARK_SHARE;
 	const offset = 512 - side / 2;
 	return `<svg xmlns="http://www.w3.org/2000/svg" width="${pixels}" height="${pixels}" viewBox="0 0 1024 1024">
-	<rect x="${PLATE_INSET}" y="${PLATE_INSET}" width="${PLATE_SIDE}" height="${PLATE_SIDE}" rx="${PLATE_RADIUS}" ry="${PLATE_RADIUS}" fill="${GROUND}"/>
+	<rect x="${PLATE_INSET}" y="${PLATE_INSET}" width="${PLATE_SIDE}" height="${PLATE_SIDE}" rx="${PLATE_RADIUS}" ry="${PLATE_RADIUS}" fill="${ground}"/>
 	<svg x="${offset}" y="${offset}" width="${side}" height="${side}" viewBox="${VIEW_BOX}" preserveAspectRatio="xMidYMid meet">
 		<path d="${SPOOL_MARK_PATH}" fill="${thread}" fill-rule="evenodd"/>
 	</svg>
@@ -72,18 +82,24 @@ function appIcon(pixels: number, thread: string): string {
  * The development lane is the one exception, and it takes the cost knowingly: it
  * is drawn in the development blue and used untinted, because two identical marks
  * in one menu bar is a status item nobody can aim at.
+ *
+ * Spool Beta's stays a template, since both apps run at once, and wears a dot
+ * at its foot to be told apart.
  */
-function trayMark(pixels: number, fill = "#000000"): string {
-	return `<svg xmlns="http://www.w3.org/2000/svg" width="${pixels}" height="${pixels}" viewBox="${VIEW_BOX}" preserveAspectRatio="xMidYMid meet">
-	<path d="${SPOOL_MARK_PATH}" fill="${fill}" fill-rule="evenodd"/>
+function trayMark(pixels: number, fill = "#000000", beta = false): string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" width="${pixels}" height="${pixels}" viewBox="${beta ? BETA_TRAY_VIEW_BOX : VIEW_BOX}" preserveAspectRatio="xMidYMid meet">
+	<path d="${SPOOL_MARK_PATH}" fill="${fill}" fill-rule="evenodd"/>${beta ? `\n\t<circle cx="850" cy="782" r="60" fill="${fill}"/>` : ""}
 </svg>`;
 }
 
 async function main(): Promise<void> {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	const iconset = join(here, "..", ".build", "AppIcon.iconset");
-	rmSync(iconset, { recursive: true, force: true });
-	mkdirSync(iconset, { recursive: true });
+	const betaIconset = join(here, "..", ".build", "AppIconBeta.iconset");
+	for (const set of [iconset, betaIconset]) {
+		rmSync(set, { recursive: true, force: true });
+		mkdirSync(set, { recursive: true });
+	}
 	mkdirSync(assets, { recursive: true });
 
 	try {
@@ -100,6 +116,13 @@ async function main(): Promise<void> {
 		await shoot(trayMark(16), 16, join(assets, "markTemplate.png"));
 		await shoot(trayMark(32), 32, join(assets, "markTemplate@2x.png"));
 
+		// Spool Beta's set: its own bundle icon, and a template mark of its own.
+		for (const [name, pixels] of ICONSET) {
+			await shoot(appIcon(pixels, SPOOL_THREAD, BETA_GROUND), pixels, join(betaIconset, `${name}.png`));
+		}
+		await shoot(trayMark(16, "#000000", true), 16, join(assets, "markBetaTemplate.png"));
+		await shoot(trayMark(32, "#000000", true), 32, join(assets, "markBetaTemplate@2x.png"));
+
 		// The lane's set. Not an iconset: the bundle has one icon and this one is
 		// handed to the Dock at runtime, so a single large raster is all it needs.
 		await shoot(appIcon(1024, SPOOL_DEVELOPMENT_THREAD), 1024, join(assets, "iconDev.png"));
@@ -109,7 +132,8 @@ async function main(): Promise<void> {
 		await browser.close();
 	}
 
-	process.stdout.write(`${iconset}\n`);
+	// the beta's first: icon.sh reads the last line as Spool's own
+	process.stdout.write(`${betaIconset}\n${iconset}\n`);
 }
 
 main().catch((error: unknown) => {

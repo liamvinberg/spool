@@ -9,6 +9,8 @@
 
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 7766; // SPOO on a phone keypad
+/** Spool Beta's (spool#282), beside Spool's: 7767 is a checkout's, 7788 the main lane on devobee. */
+export const BETA_PORT = 7768;
 
 /** The hosts the daemon binds, and the hosts allowed to read health cross-origin. */
 export function isLoopbackHost(host: string): boolean {

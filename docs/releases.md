@@ -46,3 +46,9 @@ The next version applies the highest bump among pending changesets: any pending 
 6. The dmg job builds the Mac app on that version, puts it and the app's update feed on `updates.spool.page` (an R2 bucket, where the app updates from and the site links the dmg), then creates the GitHub release with the changelog and the same files. Each feed names a version only once its files are there.
 
 If the publish gates fail, the Git tag may exist while npm remains unpublished and no GitHub release has been created. Fix the failure, then publish that tag by hand with `gh workflow run publish.yml -f tag=vX.Y.Z` rather than creating a new version. Recovery also requires full CI on the tag’s commit. If it has no successful full run, run `gh workflow run ci.yml --ref vX.Y.Z` first; a design-only check does not qualify.
+
+## Try main first: Spool Beta
+
+Every push to `main` whose full CI passed also builds Spool Beta, a second Mac app installed beside Spool that updates itself from `https://updates.spool.page/beta/` and is announced in Discord (`desktop/README.md` says how). Use it before merging the release PR. Everything it ships lives under `beta/` in the bucket; npm, the GitHub release and the bucket's root stay the release's.
+
+Its version is the next patch with the workflow's run number, `X.Y.(Z+1)-beta.N`, so `.github/workflows/beta.yml` keeps its name: GitHub restarts the run number for a renamed workflow, and the installed betas would stop seeing newer builds as newer.

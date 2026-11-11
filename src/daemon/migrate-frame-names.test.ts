@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -135,5 +135,37 @@ describe("when the migration runs", () => {
 
 		expect(flows.edges).toEqual([expect.objectContaining({ from: "home", to: "shop/checkout" })]);
 		expect(flows.edges[0]?.missing).toBeUndefined();
+	});
+
+	it("waits for a yes in Spool Beta, the project open meanwhile and its files untouched (spool#282)", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		legacyProject(root);
+		writePageFrame(root, "shop", "checkout", `export default () => <p>checkout</p>;\n`);
+		writeFrame(root, "home", `export default () => <a data-go="checkout">buy</a>;\n`);
+		const app = makeApp(spoolDir, { askBeforeUpgrade: true });
+		const sync = async () => (await (await app.request(`/api/p/${name}/sync`)).json()) as { formatUpgrade?: true };
+
+		const flows = (await (await app.request(`/api/p/${name}/flows`)).json()) as {
+			edges: { to: string; missing?: true }[];
+		};
+		expect(flows.edges).toEqual([expect.objectContaining({ to: "checkout", missing: true })]);
+		expect(readCanvasFields(root).format).toBe(FOLDER_NAMES_FORMAT);
+		expect(read(root, "frames/home/frame.tsx")).toContain(`data-go="checkout"`);
+		expect((await sync()).formatUpgrade).toBe(true);
+
+		const upgrade = async () => (await app.request(`/api/p/${name}/upgrade`, { method: "POST" })).json();
+		// a yes that fails leaves the offer standing, so the person can try again
+		const home = join(root, "design", "frames", "home");
+		chmodSync(home, 0o555);
+		try {
+			expect(await upgrade()).toEqual({ upgraded: false });
+		} finally {
+			chmodSync(home, 0o755);
+		}
+		expect((await sync()).formatUpgrade).toBe(true);
+		expect(await upgrade()).toEqual({ upgraded: true });
+		expect(read(root, "frames/home/frame.tsx")).toContain(`data-go="shop/checkout"`);
+		expect((await sync()).formatUpgrade).toBeUndefined();
 	});
 });

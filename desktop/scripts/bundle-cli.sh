@@ -80,10 +80,22 @@ published() {
 	return 1
 }
 
+# This checkout, packed and built as npm would get it.
+pack_checkout() {
+	(cd "$REPO" && pnpm pack --pack-destination "$WORK" > /dev/null)
+	SPEC="$(ls "$WORK"/spool.page-*.tgz | head -n 1)"
+	echo "using $SPEC"
+}
+
 SPEC="spool.page@$VERSION"
 if [ -n "${SPOOL_TARBALL:-}" ]; then
 	SPEC="$SPOOL_TARBALL"
 	echo "using $SPEC"
+elif [[ "$VERSION" == *-beta.* ]]; then
+	# Spool Beta (spool#282) is the checkout it was built from: no beta is ever
+	# on npm, so the registry is not asked.
+	echo "spool.page@$VERSION is a beta, packing this checkout"
+	pack_checkout
 elif published; then
 	echo "installing $SPEC from the registry"
 	SPEC="$WORK/spool.page-$VERSION.tgz"
@@ -96,9 +108,7 @@ else
 	# CLI change together, and testing the app against last week's published
 	# daemon would test the wrong thing. This path needs the checkout's dev
 	# dependencies installed, because pnpm pack runs the build.
-	(cd "$REPO" && pnpm pack --pack-destination "$WORK" > /dev/null)
-	SPEC="$(ls "$WORK"/spool.page-*.tgz | head -n 1)"
-	echo "using $SPEC"
+	pack_checkout
 fi
 
 rm -rf "$CLI_OUT"

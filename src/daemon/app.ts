@@ -9,6 +9,7 @@ import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
+import { BETA } from "../channel";
 import { account, type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
@@ -96,7 +97,7 @@ import { createHtmlExport } from "./html-export";
 import { oversizedImages } from "./image-size";
 import { isLoopbackHost } from "./loopback";
 import { machineRoutes } from "./machine-routes";
-import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
+import { describeMigration, migrateFrameNames, migrationDue } from "./migrate-frame-names";
 import { movedAwayRoots } from "./moved-away";
 import { watchForMoves } from "./moved-in";
 import { openRoutes } from "./open-routes";
@@ -194,6 +195,8 @@ export interface DaemonOptions {
 	uiDir?: string | undefined;
 	/** The checkout daemon keeps its browser identity distinct from the release. */
 	development?: boolean | undefined;
+	/** Spool Beta's (spool#282): a project's format is raised only once a person says yes. A beta build's default. */
+	askBeforeUpgrade?: boolean | undefined;
 	/** The OS Trash (#7: spool never manages it) — swapped out by seam tests. */
 	moveToTrash?: (paths: string[]) => Promise<void>;
 	/** #30 phone-home: on only when `spool serve` resolves it on from config. */
@@ -426,6 +429,7 @@ export function createDaemonApp({
 	controlToken: providedControlToken,
 	uiDir,
 	development,
+	askBeforeUpgrade = BETA,
 	moveToTrash,
 	updateCheck,
 	history: historyAllowed,
@@ -805,7 +809,7 @@ export function createDaemonApp({
 		...(updateAskMs === undefined ? {} : { updateAskMs }),
 		...(updateHow === undefined ? {} : { updateHow }),
 		// a team project's copy takes this Spool's format once caught up, and its writes go up as saves (#206)
-		migrate: (root) => migrateNow(root),
+		migrate: (root) => migrateWhenAllowed(root),
 	});
 	/** What a copy's tab and cover show of its sync: a pause on a limit, or the copy gone local. */
 	const syncMarks = (root: string) => {
@@ -1232,7 +1236,22 @@ export function createDaemonApp({
 	function migrateOnce(root: string): void {
 		if (migrated.has(root) || followedLink(root) !== undefined) return;
 		migrated.add(root);
-		migrateNow(root);
+		migrateWhenAllowed(root);
+	}
+	/**
+	 * Spool Beta never raises a project's format by itself (spool#282): the migration rewrites the project's files and,
+	 * for a team project, the team's format, after which released Spool is paused as too old. So a due project waits,
+	 * its canvas says so on the sync notice, and `POST /api/p/:project/upgrade` is the yes. Waiting is safe for the one
+	 * migration there is: until it runs, a walk to a frame on a page reads as missing, as after a failed migration.
+	 */
+	const awaitingUpgrade = new Set<string>();
+	function migrateWhenAllowed(root: string): void {
+		if (!askBeforeUpgrade || !migrationDue(root)) {
+			migrateNow(root);
+			return;
+		}
+		awaitingUpgrade.add(root);
+		hub.publish(root, { kind: "sync", message: "" });
 	}
 	function migrateNow(root: string): void {
 		try {
@@ -2298,7 +2317,19 @@ export function createDaemonApp({
 				...teamSync.state(root),
 				...(moved === undefined ? {} : { moved }),
 				...(backInGit ? { backInGit } : {}),
+				...(awaitingUpgrade.has(root) && migrationDue(root) ? { formatUpgrade: true } : {}),
 			});
+		}),
+	);
+	/** The yes to a format upgrade a beta held (spool#282): runs the migration it waited with, and nothing else. */
+	app.post("/api/p/:project/upgrade", (c) =>
+		withProject(c, resolveProject, (root) => {
+			if (awaitingUpgrade.has(root)) migrateNow(root);
+			const upgraded = !migrationDue(root);
+			// a yes that failed leaves the offer standing, to be tried again
+			if (upgraded) awaitingUpgrade.delete(root);
+			hub.publish(root, { kind: "sync", message: "" });
+			return c.json({ upgraded });
 		}),
 	);
 	/** Put design/ back in git (#198): a copy that ended or went local here, in its checkout, with one commit. */

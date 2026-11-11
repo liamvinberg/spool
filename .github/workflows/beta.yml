@@ -1,0 +1,203 @@
+name: beta
+
+# Spool Beta (spool#282): every push to main whose CI passed, built from that
+# commit as a Mac app of its own, signed, notarized, and put on
+# updates.spool.page/beta, where the installed beta updates from, then said in
+# the spool category's beta channel on Discord. Nothing is published to npm and
+# no GitHub release is made. Releasing is publish.yml's, and this touches none
+# of it: every key it writes or deletes is under beta/ in the bucket.
+#
+# Keep this file's name: a beta's version counts this workflow's run number,
+# which restarts if the file is renamed.
+
+on:
+  push:
+    branches: [main]
+    # CI runs no full gate for these, and they change nothing a beta carries
+    paths-ignore: ["design/**", "docs/**"]
+
+# A newer push supersedes a build still under way. Every file a run writes is
+# its own version's until the feed is written last, so a cancelled run leaves
+# at most files the next prune deletes.
+concurrency:
+  group: beta
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  ci:
+    if: github.repository == 'liamvinberg/spool'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      # Waited out here rather than on the Mac, whose minutes are the dear ones.
+      - name: Require full CI on this commit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node --experimental-strip-types .github/scripts/wait-for-ci.ts "$GITHUB_SHA"
+
+  build:
+    needs: ci
+    # Pushes to main on this repo only: the signing, notary and bucket secrets
+    # below are never reachable from a pull request or another branch.
+    if: github.repository == 'liamvinberg/spool' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # the commits since the last beta, for its announcement
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      # The beta bundles this checkout, packed, rather than anything from npm.
+      - run: pnpm install --frozen-lockfile
+      # Stamped into package.json on this runner and never committed: the
+      # bundled cli, the daemon and the app all carry it, and the -beta.N suffix
+      # is what makes each of them a beta (src/channel.ts, desktop/src/version.ts).
+      - id: version
+        name: Version this beta
+        run: |
+          released=$(node -p "require('./package.json').version")
+          version=$(node --experimental-strip-types .github/scripts/beta.ts version "$released" "$GITHUB_RUN_NUMBER")
+          npm pkg set "version=$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Spool Beta $version from $GITHUB_SHA"
+      # The same import as publish.yml's dmg job, repeated rather than shared so
+      # that file stays as it is.
+      - id: identity
+        name: Import the Developer ID certificate
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$CERTIFICATE" ]; then
+            echo "MACOS_CERTIFICATE is not set. See desktop/README.md for the wizard that sets all five." >&2
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -base64 24)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$keychain" -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          identity=$(security find-identity -v -p codesigning "$keychain" | { grep "Developer ID Application" || true; } | sed -n 's/.*"\(.*\)".*/\1/p')
+          if [ "$(printf '%s\n' "$identity" | grep -c .)" != "1" ]; then
+            echo "Expected exactly one Developer ID Application identity in the keychain, found:" >&2
+            security find-identity -v -p codesigning "$keychain" >&2
+            exit 1
+          fi
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+      - run: pnpm --dir desktop install --frozen-lockfile
+      - run: pnpm --dir desktop typecheck
+      - run: pnpm --dir desktop test
+      - run: pnpm --dir desktop smoke
+      - name: Build, sign, notarize, staple
+        env:
+          SIGN_IDENTITY: ${{ steps.identity.outputs.identity }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY }}
+          SPOOL_COMMIT: ${{ github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$NOTARY_KEY_P8" ]; then
+            echo "NOTARY_KEY is not set, so this would build a dmg Gatekeeper refuses. See desktop/README.md." >&2
+            exit 1
+          fi
+          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          NOTARY_KEY="$RUNNER_TEMP/notary.p8" OUT="$RUNNER_TEMP/dist" desktop/scripts/package.sh
+          rm -f "$RUNNER_TEMP/notary.p8"
+          # the feed must name this build and the bundle must be the beta's
+          grep -qx "version: \"$VERSION\"" "$RUNNER_TEMP/dist/latest-mac.yml"
+          test -d "$RUNNER_TEMP/dist/stage/Spool Beta.app"
+          grep -qx "url: https://updates.spool.page/beta" "$RUNNER_TEMP/dist/stage/Spool Beta.app/Contents/Resources/app-update.yml"
+          grep -qx "updaterCacheDirName: spool-desktop-beta-updater" "$RUNNER_TEMP/dist/stage/Spool Beta.app/Contents/Resources/app-update.yml"
+          if grep -q "^channel:" "$RUNNER_TEMP/dist/stage/Spool Beta.app/Contents/Resources/app-update.yml"; then
+            echo "app-update.yml names a channel, so the updater would not read latest-mac.yml." >&2
+            exit 1
+          fi
+      # Versioned files first and the feed last, so the feed never names a zip
+      # that is not there yet. Every key goes through beta.ts's guard, which
+      # refuses anything outside beta/.
+      - id: feed
+        name: Put the beta on updates.spool.page/beta
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ENDPOINT: https://d2b578c66c7297496ef5b60c60895c81.r2.cloudflarestorage.com
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "R2_ACCESS_KEY_ID is not set: an Object Read & Write token on the spool-releases bucket. See desktop/README.md." >&2
+            exit 1
+          fi
+          dist="$RUNNER_TEMP/dist"
+          key() { node --experimental-strip-types .github/scripts/beta.ts key "beta/$1"; }
+          put() {
+            local target
+            target=$(key "$2")
+            aws s3 cp "$1" "s3://spool-releases/$target" --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "$3" --content-type "$4" --no-progress
+          }
+          # the last beta's commit, read before this one replaces it
+          previous=$(curl -fsS https://updates.spool.page/beta/build.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const c=JSON.parse(s).commit;if(/^[0-9a-f]{40}$/.test(c))console.log(c)}catch{}})' || true)
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          forever="public, max-age=31536000, immutable"
+          put "$dist/Spool-Beta-$VERSION-arm64-mac.zip" "Spool-Beta-$VERSION-arm64-mac.zip" "$forever" application/zip
+          put "$dist/Spool-Beta-$VERSION-arm64-mac.zip.blockmap" "Spool-Beta-$VERSION-arm64-mac.zip.blockmap" "$forever" application/octet-stream
+          put "$dist/Spool-Beta-$VERSION.dmg" "Spool-Beta-$VERSION.dmg" "$forever" application/x-apple-diskimage
+          put "$dist/Spool-Beta-$VERSION.dmg" Spool-Beta.dmg "public, max-age=300" application/x-apple-diskimage
+          printf '{"version":"%s","commit":"%s"}\n' "$VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/build.json"
+          put "$RUNNER_TEMP/build.json" build.json no-cache application/json
+          put "$dist/latest-mac.yml" latest-mac.yml no-cache text/yaml
+          # the newest five builds stay; older ones go, by key, each through the guard
+          aws s3api list-objects-v2 --bucket spool-releases --prefix beta/ --endpoint-url "$R2_ENDPOINT" \
+            --query 'Contents[].Key' --output text | tr '\t' '\n' | grep -v '^None$' \
+            | node --experimental-strip-types .github/scripts/beta.ts prune > "$RUNNER_TEMP/prune.txt"
+          while read -r old; do
+            [ -n "$old" ] || continue
+            aws s3 rm "s3://spool-releases/$(node --experimental-strip-types .github/scripts/beta.ts key "$old")" --endpoint-url "$R2_ENDPOINT"
+          done < "$RUNNER_TEMP/prune.txt"
+      - name: Say it in Discord
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS: ${{ steps.feed.outputs.previous }}
+          WEBHOOK: ${{ secrets.BETA_DISCORD_WEBHOOK }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::BETA_DISCORD_WEBHOOK is not set, so this beta was not announced."
+            exit 0
+          fi
+          if [ -n "$PREVIOUS" ] && git cat-file -e "$PREVIOUS^{commit}" 2>/dev/null; then
+            range="$PREVIOUS..$GITHUB_SHA"
+          else
+            range="-10 $GITHUB_SHA"
+          fi
+          # shellcheck disable=SC2086
+          git log --no-merges --format=%s $range \
+            | node --experimental-strip-types .github/scripts/beta.ts announce "$VERSION" "$GITHUB_SHA" https://updates.spool.page/beta/Spool-Beta.dmg \
+            | curl -fsS -X POST -H "Content-Type: application/json" --data-binary @- "$WEBHOOK?wait=true" > /dev/null

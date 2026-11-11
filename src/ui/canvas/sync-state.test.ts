@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { AppUpdate, DesktopBridge } from "../desktop-bridge";
-import { SYNC_CHANGED, SyncNotices, useSyncState } from "./sync-state";
+import { SYNC_CHANGED, SyncNotices, UPGRADE_LINE, useSyncState } from "./sync-state";
 
 function mount(element: React.ReactNode) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -380,4 +380,25 @@ it("starts the Mac app's update from the update line once it is ready, and point
 	const update = [...(notice()?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "Update");
 	act(() => update?.click());
 	expect(install).toHaveBeenCalledTimes(1);
+});
+
+it("asks before Spool Beta upgrades an older project, and says an upgrade that failed (spool#282)", async () => {
+	const answers = [false, true];
+	const asked: boolean[] = [];
+	const host = mount(
+		createElement(SyncNotices, {
+			state: quiet,
+			onUpgrade: async () => {
+				const done = answers.shift() ?? true;
+				asked.push(done);
+				return done ? null : "The upgrade didn't finish.";
+			},
+		}),
+	);
+	expect(host.textContent).toContain(UPGRADE_LINE);
+	const upgrade = () => [...host.querySelectorAll("button")].find((node) => node.textContent === "Upgrade");
+	await act(async () => upgrade()?.click());
+	expect(host.textContent).toContain("The upgrade didn't finish.");
+	await act(async () => upgrade()?.click());
+	expect(asked).toEqual([false, true]);
 });

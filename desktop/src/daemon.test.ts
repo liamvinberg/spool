@@ -26,8 +26,10 @@ function temporary(): string {
 	return mkdtempSync(join(tmpdir(), "spool-desktop-"));
 }
 
-test("the state directory is ~/.spool unless SPOOL_DIR says otherwise", () => {
+test("the state directory is ~/.spool unless SPOOL_DIR says otherwise, and Spool Beta's ~/.spool-beta", () => {
 	assert.equal(stateDirectory({}), join(homedir(), ".spool"));
+	assert.equal(stateDirectory({}, true), join(homedir(), ".spool-beta"));
+	assert.equal(stateDirectory({ SPOOL_DIR: "/tmp/lane" }, true), "/tmp/lane");
 	assert.equal(stateDirectory({ SPOOL_DIR: "" }), join(homedir(), ".spool"));
 	assert.equal(stateDirectory({ SPOOL_DIR: "/tmp/lane" }), "/tmp/lane");
 	assert.equal(stateDirectory({ SPOOL_DIR: "~/.spool-lane" }), join(homedir(), ".spool-lane"));
@@ -222,6 +224,38 @@ test("nothing running is started, waited for, and stopped by pid", async () => {
 	}
 });
 
+test("a port another app holds is named at once, with where to choose another", async () => {
+	const directory = temporary();
+	// Spotify on 7768, say: something that is not spool, on the port the daemon wants
+	const other = createServer((_request, response) => response.end("not spool"));
+	await new Promise<void>((done) => other.listen(0, "127.0.0.1", done));
+	const { port } = other.address() as AddressInfo;
+	writeFileSync(join(directory, "config.json"), JSON.stringify({ port }));
+	const cli = join(directory, "fake-cli.js");
+	// what the real daemon does on a taken port: says so and exits
+	writeFileSync(cli, 'console.error("spool: port is already in use"); process.exit(1);');
+	const began = Date.now();
+	try {
+		await assert.rejects(
+			start({
+				execPath: process.execPath,
+				nodeArgs: ["-r", join(__dirname, "..", "shim", "electron-argv.js")],
+				cli,
+				directory,
+				env: { ...process.env, SPOOL_DIR: directory },
+				timeoutMs: 15_000,
+			}),
+			new RegExp(
+				`port ${port} on 127\\.0\\.0\\.1 is taken by another app\\. Set another "port" in ${join(directory, "config.json").replaceAll(".", "\\.")}`,
+			),
+		);
+		assert.ok(Date.now() - began < 5_000, "a daemon that exits is not waited out");
+	} finally {
+		other.close();
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
 test("stopping a pid that is already gone is a stop", async () => {
 	assert.equal(await stop(0x7ffffff0), true);
 });
@@ -229,6 +263,7 @@ test("stopping a pid that is already gone is a stop", async () => {
 test("the address a daemon would take is config.json's, with SPOOL_HOST and SPOOL_PORT on top", () => {
 	const directory = temporary();
 	assert.deepEqual(configuredAddress(directory, {}), { host: "127.0.0.1", port: 7766 });
+	assert.deepEqual(configuredAddress(directory, {}, true), { host: "127.0.0.1", port: 7768 });
 	writeFileSync(join(directory, "config.json"), JSON.stringify({ host: "localhost", port: 7800 }));
 	assert.deepEqual(configuredAddress(directory, {}), { host: "localhost", port: 7800 });
 	assert.deepEqual(configuredAddress(directory, { SPOOL_PORT: "7767" }), { host: "localhost", port: 7767 });

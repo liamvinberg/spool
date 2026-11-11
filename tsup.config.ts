@@ -1,10 +1,14 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "tsup";
 import { esbuildLicenses } from "./src/bundle-licenses";
+import { channelDefine } from "./src/channel";
 import { buildVendorEntry } from "./src/vendor-entry-build";
 
 // no clean flag: array configs build in parallel, and one config's clean
 // would race the other's write — the build script clears dist/ up front
 const licenses = esbuildLicenses();
+// a Spool Beta build (src/channel.ts) is told so by its version
+const { version } = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
 
 export default defineConfig([
 	{
@@ -14,6 +18,7 @@ export default defineConfig([
 		},
 		format: "esm",
 		target: "node22",
+		define: channelDefine(version),
 		// A package belongs in `dependencies` only when something needs its files at
 		// runtime: a native binary, wasm, vendor files, or a path spool or an agent
 		// resolves. Every other package is bundled here. Bundled CommonJS calls
