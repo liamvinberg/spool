@@ -286,7 +286,8 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 					typing: typingIn(event.target),
 					live: at !== undefined && talk[at.at.slide]?.live === true,
 					keys: at?.keys === true,
-					black: options.room && at?.black === true,
+					// the room's screen is black wherever the talk is shown from: any key brings it back, and does nothing else
+					black: at?.black === true,
 					frozen: at?.frozen !== null && at?.frozen !== undefined,
 				},
 				digits,

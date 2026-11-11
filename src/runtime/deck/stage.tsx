@@ -622,7 +622,8 @@ export function bootStage(runtime: StageRuntime): void {
 				typing: typingIn(event.target),
 				live: talk[session.at.slide]?.live === true,
 				keys: session.keys,
-				black: room && session.black,
+				// black is the room's, whichever window the key is pressed in: any key brings it back
+				black: session.black,
 				frozen: session.frozen !== null,
 			},
 			digits,
