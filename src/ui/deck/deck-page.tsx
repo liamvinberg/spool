@@ -7,8 +7,8 @@ import { useCameraFollow } from "../canvas/camera-store";
 import { type CanvasStore, useCanvasState } from "../canvas/canvas-store";
 import { cn } from "../cn";
 import { changeDeck, type DeckEntry, type DeckReads, useDeckRead, useDeckReads, walkDeck } from "./deck-api";
-import { type Aim, aimOf, BAND_ROOM, deckOfRead, folderOf, nameOf } from "./deck-drag";
-import { createFrameTween, easing, type Point, useDeckMotion } from "./deck-motion";
+import { type Aim, aimOf, BAND_ROOM, deckOfRead, folderOf, nameOf, SLACK } from "./deck-drag";
+import { createFrameTween, easing, HOLD_MS, type Point, useDeckMotion } from "./deck-motion";
 import { presentDeck, presentKeyFrom } from "./present";
 
 /**
@@ -44,14 +44,19 @@ export interface DeckPage {
 	playTitleOf(name: string): string | undefined;
 	/**
 	 * Frames held on the page moved: `origins` where each stood as the drag began, `by` how far the pointer has gone
-	 * since in page pixels, `start` where it was pressed. False when the deck has nothing to say about them (the
-	 * page is no deck), and the canvas moves them its own way.
+	 * since in page pixels, `start` where it was pressed, `zoom` the camera's. False when the deck has nothing to say
+	 * about them (the page is no deck), and the canvas moves them its own way.
 	 */
-	hold(origins: ReadonlyMap<string, Point>, by: Point, start: Point): boolean;
+	hold(origins: ReadonlyMap<string, Point>, by: Point, start: Point, zoom: number): boolean;
 	/** Let go: sends the change the drop makes. False when no deck drag was going on. */
 	drop(): boolean;
 	/** The drag ended without a drop (escaped, or carried off to another page): everything back to its place. */
 	cancel(): void;
+	/**
+	 * Frames as a read of the disk has them, with the deck's own where it is moving them or has moved them and the
+	 * daemon has not written them yet: a read never shows a frame back where it was before it goes on.
+	 */
+	keep<F extends { name: string; x: number; y: number; w: number; h: number }>(read: readonly F[]): F[];
 	/** Run a deck entry of the undo stack back or forward. False when the daemon refused it as stale. */
 	walk(entry: DeckEntry, way: "undo" | "redo"): Promise<boolean>;
 	/** Whether the page in front is a deck, read when called: for handlers made before the deck was read. */
@@ -120,15 +125,18 @@ export function useDeckPage({
 		},
 		[store],
 	);
-	/** Every frame of a deck to its place, gliding; `except` stays where the hand has it. */
+	/**
+	 * Every frame of a deck to its place, gliding; `except` stays where the hand has it. A preview's places are held
+	 * for as long as it shows; a change's until the daemon has written them.
+	 */
 	const settle = useCallback(
-		(deck: Deck, on: string, except: ReadonlySet<string> = new Set()) => {
+		(deck: Deck, on: string, except: ReadonlySet<string> = new Set(), preview = false) => {
 			const goals = new Map<string, Point>();
 			for (const [folder, box] of placesOf(deck)) {
 				const name = nameOf(on, folder);
 				if (!except.has(name)) goals.set(name, { x: box.x, y: box.y });
 			}
-			tween.to(goals);
+			tween.to(goals, preview ? Number.POSITIVE_INFINITY : HOLD_MS);
 		},
 		[tween],
 	);
@@ -152,7 +160,7 @@ export function useDeckPage({
 	const playTitleOf = useCallback((name: string) => (numbers.has(name) ? PRESENT_TITLE : undefined), [numbers]);
 
 	const hold = useCallback(
-		(origins: ReadonlyMap<string, Point>, by: Point, start: Point) => {
+		(origins: ReadonlyMap<string, Point>, by: Point, start: Point, zoom: number) => {
 			const { read: deck, page: on } = live.current;
 			if (deck === undefined) return false;
 			let held = holding.current;
@@ -179,18 +187,18 @@ export function useDeckPage({
 				}),
 			}));
 			const from = origins.get(held.grabbed) as Point;
-			const next = aimOf(held.base, {
-				frames: held.frames,
-				grabbed: folderOf(on, held.grabbed),
-				at: { x: from.x + by.x, y: from.y + by.y },
-			});
+			const next = aimOf(
+				held.base,
+				{ frames: held.frames, grabbed: folderOf(on, held.grabbed), at: { x: from.x + by.x, y: from.y + by.y } },
+				held.aim === null ? undefined : { rule: held.aim.rule, slack: SLACK / zoom },
+			);
 			const key = next === null ? "" : JSON.stringify(next.rule);
 			if (key !== held.key || held.aim === null) {
 				held.aim = next;
 				held.key = key;
 				const names = new Set(origins.keys());
 				setAim({ aim: next, held: names });
-				settle(next?.deck ?? held.base, on, names);
+				settle(next?.deck ?? held.base, on, names, true);
 			}
 			return true;
 		},
@@ -235,15 +243,23 @@ export function useDeckPage({
 	const walk = useCallback(
 		async (entry: DeckEntry, way: "undo" | "redo") => {
 			if (reads === null) return false;
+			const was = reads.deckOf(entry.page)?.size;
 			const sent = await walkDeck(project, reads, entry, way);
 			if (sent.kind === "refused") return false;
 			const deck = sent.answer.deck;
-			if (deck !== null && deck.page === live.current.page) settle(deckOf(deck), deck.page);
+			if (deck === null || deck.page !== live.current.page) return true;
+			// a talk of another size takes its frames to other sizes, which only the daemon's read of them has
+			if (was === undefined || was.w !== deck.size.w || was.h !== deck.size.h) tween.stop();
+			else settle(deckOf(deck), deck.page);
 			return true;
 		},
-		[deckOf, project, reads, settle],
+		[deckOf, project, reads, settle, tween],
 	);
 
+	const keep = useCallback(
+		<F extends { name: string; x: number; y: number; w: number; h: number }>(read: readonly F[]) => tween.keep(read),
+		[tween],
+	);
 	const owns = useCallback(() => live.current.on, []);
 	const presentKey = useCallback(
 		(first: boolean) => {
@@ -267,7 +283,7 @@ export function useDeckPage({
 		[talk, landing, lifted, sending],
 	);
 
-	return { on, read, reads, numberOf, playOf, playTitleOf, hold, drop, cancel, walk, owns, presentKey, view };
+	return { on, read, reads, numberOf, playOf, playTitleOf, hold, drop, cancel, keep, walk, owns, presentKey, view };
 }
 
 /**
