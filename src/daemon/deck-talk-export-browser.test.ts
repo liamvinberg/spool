@@ -76,7 +76,7 @@ export default function Slide() {
 	await talk.getByText("pdf", { exact: true }).click();
 	await expect
 		.poll(() => page.getByRole("menuitem", { name: /^Export talk/ }).textContent())
-		.toBe(`Export talk${project.name}-pitch.pdf`);
+		.toBe("Export talkpitch.pdf");
 	const pdfDownload = page.waitForEvent("download", { timeout: 60_000 });
 	await page.getByRole("menuitem", { name: /^Export talk/ }).click();
 	const pdf = await PDFDocument.load(await saved(await pdfDownload));
@@ -101,7 +101,7 @@ export default function Slide() {
 	const htmlDownload = page.waitForEvent("download", { timeout: 60_000 });
 	await page.keyboard.press("Enter");
 	const download = await htmlDownload;
-	expect(download.suggestedFilename()).toBe(`${project.name}-pitch.html`);
+	expect(download.suggestedFilename()).toBe("pitch.html");
 	const html = (await saved(download)).toString("utf8");
 	expect(html).toContain('<meta name="generator" content="Spool">');
 	expect(html).not.toContain("#ffd60a");

@@ -1,13 +1,7 @@
+import { talkFileName } from "../../deck/wire";
 import { pageName } from "../../page-path";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } from "../document";
-import {
-	type ExportAnswer,
-	type ExportedFile,
-	exportFilename,
-	frameSheets,
-	type HtmlExport,
-	stillOf,
-} from "../html-export";
+import { type ExportAnswer, type ExportedFile, frameSheets, type HtmlExport, stillOf } from "../html-export";
 import type { PlayerFrameRef } from "../player-compile";
 import { listProjectFrames } from "../projection";
 import { STAGE_CSS, stageOf } from "./stage-play";
@@ -68,7 +62,7 @@ ${still === undefined ? "" : `<div class="spool-talk-still" style="background-im
 </body>
 </html>
 `;
-	return { kind: "ok", value: { html, filename: exportFilename(project, page) } };
+	return { kind: "ok", value: { html, filename: talkFileName(page, "html") } };
 }
 
 /** The words under the first slide, in the player's own type and colour. */

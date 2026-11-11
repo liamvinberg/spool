@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { talkFileName as pageFileName } from "../../deck/wire";
 import { pageName } from "../../page-path";
 import { type CanvasStore, visibleFramesOf } from "../canvas/canvas-store";
 import {
@@ -10,7 +11,7 @@ import {
 	saveFiles,
 	useExportSteps,
 } from "../canvas/export-menu";
-import { buildFramePdf, type CapturedFrame, exportFileName } from "../canvas/frame-export";
+import { buildFramePdf, type CapturedFrame } from "../canvas/frame-export";
 import { desktopWindow } from "../desktop-window";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { MenuItem, StepMenu } from "../primitives/overlays";
@@ -40,8 +41,8 @@ export interface Talk {
 	readonly slides: readonly string[];
 }
 
-/** The file a talk exports as, named after its page as a frame's file is after the frame. */
-export const talkFileName = (talk: Talk, format: TalkFormat) => exportFileName(talk.project, talk.page, format);
+/** The file a talk exports as, named after its page, whatever the project. */
+export const talkFileName = (talk: Talk, format: TalkFormat) => pageFileName(talk.page, format);
 
 /** A slide as the export's words name it: its own name, without the page every slide shares. */
 const slideName = (frame: string) => pageName(frame);

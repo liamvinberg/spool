@@ -66,7 +66,7 @@ it("plays the talk from disk with the network off: every key, beats, carry, a li
 	);
 	const res = await app.request(`/api/p/${name}/deck-export?page=talk`);
 	expect(res.status, await res.clone().text()).toBe(200);
-	expect(res.headers.get("content-disposition")).toBe(`attachment; filename="${name}-talk.html"`);
+	expect(res.headers.get("content-disposition")).toBe(`attachment; filename="talk.html"`);
 	const html = await res.text();
 	const file = join(makeTempDir(), `${name}-talk.html`);
 	writeFileSync(file, html);

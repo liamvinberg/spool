@@ -29,7 +29,7 @@ describe("a talk's PDF", () => {
 		const saved = await exportTalk(talk, "pdf", capture, () => {});
 
 		expect(built.pages).toEqual(["pitch/title", "pitch/end"]);
-		expect(saved.file).toBe("kaffe-pitch.pdf");
+		expect(saved.file).toBe("pitch.pdf");
 		expect(saved.left).toEqual(["gl"]);
 	});
 

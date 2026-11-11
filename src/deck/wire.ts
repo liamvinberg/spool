@@ -229,3 +229,8 @@ export function parseDeckChange(value: unknown): DeckChange | undefined {
 			return undefined;
 	}
 }
+
+/** The file a deck's talk exports as, PDF or HTML: named after its page (spool#275), a nested page's path joined. */
+export function talkFileName(page: string, format: "pdf" | "html"): string {
+	return `${page.replaceAll("/", "-")}.${format}`;
+}
