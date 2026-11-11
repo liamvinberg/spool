@@ -1,8 +1,10 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../../test-browser";
 import { COVER_PNG, makeApp, makeProject, makeTempDir, writeDesignFile } from "../../test-helpers";
 import { writeCover } from "../thumbs";
@@ -17,8 +19,32 @@ import { TALK_HINT } from "./talk-file";
 
 const require = createRequire(import.meta.url);
 
-/** The hard talk, with what it fetches from `/fixture/` moved into the project, as a file can only carry that. */
-function talkProject() {
+/**
+ * A package pinned to the web, as a project pins one to esm.sh: its entry imports the module holding its words by an
+ * absolute path, as esm.sh's entries do. It answers only once `serving`, and the test closes it once the file is made.
+ */
+async function webPackage() {
+	const at = { serving: false };
+	const modules: Record<string, string> = {
+		"/words@1": 'export { words } from "/words@1/es2022/words.mjs";\n',
+		"/words@1/es2022/words.mjs": 'export const words = "The hard talk";\n',
+	};
+	const server = createServer((request, response) => {
+		const module = at.serving ? modules[request.url ?? ""] : undefined;
+		response.writeHead(module === undefined ? 404 : 200, { "content-type": "text/javascript" });
+		response.end(module ?? "");
+	});
+	await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+	onTestFinished(() => new Promise<void>((done) => server.close(() => done())));
+	const { port } = server.address() as AddressInfo;
+	return { at, url: `http://127.0.0.1:${port}/words@1`, close: () => server.close() };
+}
+
+/**
+ * The hard talk, with what it fetches from `/fixture/` moved into the project, as a file can only carry that, and its
+ * title's words from a package the project pins to the web.
+ */
+function talkProject(words: string) {
 	const spoolDir = join(makeTempDir(), ".spool");
 	mkdirSync(spoolDir, { recursive: true });
 	writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experimental: { deck: true } }));
@@ -48,11 +74,20 @@ function talkProject() {
 		".photo { view-transition-name: hero; }\n",
 	);
 	writeCover(root, "talk/title", Buffer.from(COVER_PNG));
+	const map = join(root, "design", "shared", "importmap.json");
+	const pinned = JSON.parse(readFileSync(map, "utf8")) as { imports: Record<string, string> };
+	writeFileSync(map, JSON.stringify({ ...pinned, imports: { ...pinned.imports, "talk-words": words } }));
+	const title = join(root, "design", "frames", "talk", "title", "frame.tsx");
+	writeFileSync(
+		title,
+		`import { words } from "talk-words";\n${readFileSync(title, "utf8").replace("The hard talk</span>", "{words}</span>")}`,
+	);
 	return { root, name, app: makeApp(spoolDir) };
 }
 
 it("plays the talk from disk with the network off: every key, beats, carry, a live slide, and no error ever shown", async () => {
-	const { root, name, app } = talkProject();
+	const web = await webPackage();
+	const { root, name, app } = talkProject(web.url);
 
 	// a slide that does not compile stops the file, named
 	const refused = await app.request(`/api/p/${name}/deck-export?page=talk`);
@@ -64,8 +99,16 @@ it("plays the talk from disk with the network off: every key, beats, carry, a li
 		"frames/talk/deck.json",
 		JSON.stringify({ version: 1, w: 1280, h: 720, slides: HARD_TALK.filter((slide) => slide !== "no-compile") }),
 	);
+	// nor is it made while a package the slides import from the web can't be fetched: it would need the network
+	const offline = await app.request(`/api/p/${name}/deck-export?page=talk`);
+	expect(offline.status).toBe(422);
+	expect(await offline.text()).toContain('"talk-words"');
+
+	// fetched, the package comes inside the file, and the web is never asked again
+	web.at.serving = true;
 	const res = await app.request(`/api/p/${name}/deck-export?page=talk`);
 	expect(res.status, await res.clone().text()).toBe(200);
+	web.close();
 	expect(res.headers.get("content-disposition")).toBe(`attachment; filename="talk.html"`);
 	const html = await res.text();
 	const file = join(makeTempDir(), `${name}-talk.html`);
@@ -184,5 +227,6 @@ it("plays the talk from disk with the network off: every key, beats, carry, a li
 
 	expect(asked).toEqual([]);
 	expect(html).not.toContain("this never compiles");
+	expect(html).not.toContain(web.url);
 	await context.close();
 }, 180_000);

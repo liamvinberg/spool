@@ -19,6 +19,7 @@ import {
 } from "./player-compile";
 import { readScenario } from "./project-files";
 import { listProjectFrames, type ProjectedFrame } from "./projection";
+import { type FetchModule, isWebImport, RemoteImportError, remoteModules } from "./remote-imports";
 import { readCoverImage } from "./thumbs";
 import { REACT_SPECIFIERS, vendorReactJs, vendorSpoolJs, vendorSpoolJsxJs } from "./vendor";
 import { WEBFONT_PATH, type Webfonts } from "./webfonts";
@@ -76,6 +77,8 @@ export interface HtmlExportDeps {
 	/** An imported image by the hash and extension its /asset/ URL names. */
 	readAsset: (hash: string, ext: string) => Promise<{ bytes: Uint8Array; type: string } | undefined>;
 	host?: CompileHost;
+	/** How an offline pack fetches a module the import map sends to the web; `fetch` when not given. */
+	fetchModule?: FetchModule;
 }
 
 export function createHtmlExport(deps: HtmlExportDeps) {
@@ -128,14 +131,26 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 	/**
 	 * These frames composed as the player composes them and packed for a file: one module with React beside it in the
 	 * import map, every stylesheet, font and image inlined, and the default scenario's state. A frame that does not
-	 * compile refuses the whole, named.
+	 * compile refuses the whole, named. `offline` brings in too what the import map sends to the web, so the file needs
+	 * no network at all, and refuses the whole, naming the import, when one can't be fetched now.
 	 */
-	async function pack(root: string, refs: PlayerFrameRef[]): Promise<ExportAnswer<PackedFrames>> {
+	async function pack(
+		root: string,
+		refs: PlayerFrameRef[],
+		options: { offline?: boolean } = {},
+	): Promise<ExportAnswer<PackedFrames>> {
 		const composed = await compose(root, refs);
 		if (composed.kind !== "ok") return composed;
 		const bundle = composed.value;
 		const inline = inliner(deps);
-		const js = await inline(await oneModule(bundle));
+		let module: string;
+		try {
+			module = await oneModule(bundle, options.offline === true ? (deps.fetchModule ?? null) : undefined);
+		} catch (error) {
+			if (!(error instanceof RemoteImportError)) throw error;
+			return { kind: "broken", message: error.message };
+		}
+		const js = await inline(module);
 		const styles = new Map<string, string>();
 		for (const resource of bundle.styles.values()) {
 			if (!styles.has(resource)) styles.set(resource, await inline(bundle.chunks.get(resource) ?? ""));
@@ -150,7 +165,7 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 				styleOf: Object.fromEntries(bundle.styles),
 				fonts: bundle.fonts === undefined ? undefined : await inline(bundle.fonts),
 				transitions: bundle.transitions,
-				importMap: exportImportMap(bundle.importMap, await vendorReactJs()),
+				importMap: exportImportMap(bundle.importMap, await vendorReactJs(), options.offline === true),
 				state,
 				inline,
 			},
@@ -241,14 +256,16 @@ export function exportReach(
  * (the module carries the runtime) and every React specifier sent to React as
  * one data: module. React stays a module of its own so a package the project
  * maps to the web, which imports React by name, finds the same React the
- * frames render with.
+ * frames render with. `offline`, the module carries what the map sent to the
+ * web too, so those entries go.
  */
-function exportImportMap(importMap: object, react: string): object {
+function exportImportMap(importMap: object, react: string, offline: boolean): object {
 	const map = importMap as { imports?: Record<string, string> };
 	const reactUrl = `data:text/javascript;base64,${Buffer.from(react).toString("base64")}`;
 	const imports = Object.fromEntries(
 		Object.entries(map.imports ?? {}).filter(
-			([specifier]) => specifier !== "spool" && specifier !== "spool/jsx-dev-runtime",
+			([specifier, target]) =>
+				specifier !== "spool" && specifier !== "spool/jsx-dev-runtime" && !(offline && isWebImport(target)),
 		),
 	);
 	return { ...map, imports: { ...imports, ...Object.fromEntries(REACT_SPECIFIERS.map((spec) => [spec, reactUrl])) } };
@@ -268,9 +285,11 @@ export function exportFilename(project: string, frame: string): string {
 /**
  * The composition and spool's runtime in one module. React stays an import,
  * which the file's import map answers with React's own data: module, and so
- * does whatever else the frames import (a package the project maps to a CDN).
+ * does whatever else the frames import (a package the project maps to a CDN),
+ * unless `offline` is given (a fetcher, or null for the web's own): then what
+ * the map sends to the web is fetched now and comes inside the module.
  */
-async function oneModule(bundle: PlayerBundle): Promise<string> {
+async function oneModule(bundle: PlayerBundle, offline?: FetchModule | null): Promise<string> {
 	const entry = bundle.chunks.get(bundle.entry);
 	if (entry === undefined) throw new Error("the composition has no entry module");
 	const modules = new Map<string, string>([
@@ -281,15 +300,38 @@ async function oneModule(bundle: PlayerBundle): Promise<string> {
 		["spool", async () => (await vendorSpoolJs()).js],
 		["spool/jsx-dev-runtime", async () => (await vendorSpoolJsxJs()).js],
 	]);
+	const imports = (bundle.importMap as { imports?: Record<string, string> }).imports ?? {};
+	// the first module that could not be fetched, which the build's own failure is reported as
+	let failed: RemoteImportError | undefined;
+	const remote =
+		offline === undefined
+			? undefined
+			: remoteModules(
+					// React is the file's own, answered by its import map, never a copy from the web
+					Object.fromEntries(
+						Object.entries(imports).filter(
+							([specifier]) => !(REACT_SPECIFIERS as readonly string[]).includes(specifier),
+						),
+					),
+					offline ?? undefined,
+				);
 	const vendor: Plugin = {
 		name: "spool-export-vendor",
 		setup(on) {
 			on.onResolve({ filter: /.*/ }, (args) => {
 				const module = modules.get(args.path);
-				return module === undefined
-					? { path: args.path, external: true }
-					: { path: module, namespace: "spool-vendor" };
+				if (module !== undefined) return { path: module, namespace: "spool-vendor" };
+				return remote?.resolve(args) ?? { path: args.path, external: true };
 			});
+			if (remote !== undefined)
+				on.onLoad({ filter: /.*/, namespace: remote.namespace }, async (args) => {
+					try {
+						return await remote.load(args);
+					} catch (error) {
+						if (error instanceof RemoteImportError) failed ??= error;
+						throw error;
+					}
+				});
 			on.onLoad({ filter: /.*/, namespace: "spool-vendor" }, async (args) => ({
 				contents: await (vendored.get(args.path) as () => Promise<string>)(),
 				loader: "js",
@@ -307,6 +349,8 @@ async function oneModule(bundle: PlayerBundle): Promise<string> {
 		write: false,
 		logLevel: "silent",
 		plugins: [vendor],
+	}).catch((error: unknown) => {
+		throw failed ?? error;
 	});
 	const js = result.outputFiles[0]?.text;
 	if (js === undefined) throw new Error("the export compiled to no module");

@@ -26,7 +26,8 @@ export async function talkFile(
 		const frame = frames.find((one) => one.name === slide.frame);
 		return { name: slide.frame, ...(frame?.page === undefined ? {} : { page: frame.page }) };
 	});
-	const packed = await htmlExport.pack(root, refs);
+	// a talk is sent to whoever is in the room, to open anywhere: what the slides import from the web comes inside
+	const packed = await htmlExport.pack(root, refs, { offline: true });
 	if (packed.kind !== "ok") return packed;
 	const { js, styles, styleOf, fonts, importMap, state, inline } = packed.value;
 	const start = stage.slides[0]?.frame ?? "";
