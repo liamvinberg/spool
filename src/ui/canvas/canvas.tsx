@@ -62,8 +62,9 @@ import {
 	subscribeSse,
 	writeKnob,
 } from "../api";
-import { type DeckEntry, tellDeckChange, tellFrameChange } from "../deck/deck-api";
+import { type DeckEntry, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
+import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
@@ -3400,6 +3401,7 @@ function CanvasField({
 						void refetchFrames();
 					}
 					if (event.kind === "comments") window.dispatchEvent(new CustomEvent(COMMENTS_CHANGE));
+					tellStageChange(data);
 					if (event.kind === "deck") tellDeckChange((data as { page: string }).page);
 					if ((event.kind === "frame" || event.kind === "geometry") && event.frame !== undefined)
 						tellFrameChange(event.frame);
@@ -6512,6 +6514,26 @@ function CanvasField({
 					/>
 				</div>
 			</PaneWindow>
+			{/* a deck presented (spool#265): spool's window as the presenter view, and back */}
+			<Presenting
+				project={project}
+				store={store}
+				camera={camera}
+				reads={deckPage.reads}
+				viewport={() => viewportRef.current}
+				onEnded={(frame) => {
+					setPicked([]);
+					holdChain(null);
+					setSelected([frame]);
+					frameAnchor.current = frame;
+					const box = store.get().frames.find((one) => one.name === frame);
+					const viewport = viewportRef.current;
+					const cam = camera.get();
+					if (box !== undefined && viewport !== null && cam !== null)
+						camera.set(revealCamera(cam, box, viewport.clientWidth, viewport.clientHeight));
+				}}
+				say={(message) => setNotice({ kind: "error", message })}
+			/>
 			{versions.question}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />

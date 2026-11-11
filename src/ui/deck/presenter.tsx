@@ -1,0 +1,693 @@
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import type { Size } from "../../deck/deck-file";
+import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
+import type { KeyCommand } from "../../deck/stage-keys";
+import { type At, nextAt, roomPicture, type StageSession, type TalkSlide } from "../../deck/stage-session";
+import { type SlideReadiness, type StagePointer, stageChange } from "../../deck/stage-wire";
+import type { DeckRead } from "../../deck/wire";
+import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
+import { controlFetch } from "../api";
+import { cn } from "../cn";
+import { attachHotkeyLayer } from "../hotkey-dispatch";
+import { Kbd } from "../primitives/display";
+import { Scrim, Sheet } from "../primitives/overlays";
+import { onStageChange } from "./deck-api";
+import { openRoom, type PresentAsk } from "./present";
+import { presenterLayout } from "./presenter-layout";
+
+/**
+ * The presenter view (spool#265, the team canvas's `app/spool-deck--presenter`): spool's own window while a talk is
+ * presented, and the one authority over where the talk is. The clock, the room's screen with its cues, the slide live
+ * as the room sees it, what the next key plays, the beat's name, count and notes, and at the foot the talk as one bar
+ * per slide with a segment per beat, each a way there.
+ *
+ * It holds the stage that owns the talk's session and publishes each session whole to the room's window over the
+ * talk's broadcast channel, answering the room as it opens or opens again; what the room's keys and clicks ask for it
+ * carries out. A second stage, following, shows what the next key plays, or the room's own screen while a live slide
+ * has the keys. The talk's keys are the stage's table, read here or in the stage where the focus is; nothing behind the
+ * view hears a key while it is up. A slide that is broken or still loading is named beside its bar, and the one the
+ * talk is on beside the slide.
+ */
+
+const EASE_OUT = [0.22, 0.61, 0.36, 1] as const;
+const SNAP = [0.32, 0.72, 0, 1] as const;
+
+/** How long a room's window that said it was going has to come back, as a reload does, before it counts as closed. */
+const ROOM_GONE_MS = 1500;
+/** How long a room's window has to say it opened before the browser is taken to have kept it closed. */
+const ROOM_PATIENCE_MS = 10_000;
+/** How long the folder has to be quiet before a saved change is taken: an editor's save is often several writes. */
+const QUIET_MS = 250;
+
+export interface PresenterProps {
+	readonly ask: PresentAsk;
+	/** the deck as last read: each slide's beats by name, and its notes */
+	readonly deck: DeckRead | undefined;
+	/** the talk's shape */
+	readonly talk: Size;
+	/** false while the chrome falls away around the slide, before the view is drawn */
+	readonly shown: boolean;
+	/** the stage drew its first picture of the talk */
+	onPicture(): void;
+	/** the talk ended, on this slide */
+	onEnd(frame: string): void;
+	/** the talk could not be played, and why */
+	onRefused(why: string): void;
+}
+
+type RoomState = "opening" | "open" | "closed";
+
+export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, onRefused }: PresenterProps) {
+	const still = useReducedMotion() === true;
+	const view = useRef<HTMLDivElement | null>(null);
+	const slideBox = useRef<HTMLDivElement | null>(null);
+	const nextBox = useRef<HTMLDivElement | null>(null);
+	const window_ = useWindowSize();
+	const layout = presenterLayout(window_, screen);
+	const [session, setSession] = useState<StageSession | undefined>(undefined);
+	const [talk, setTalk] = useState<readonly TalkSlide[]>([]);
+	const [ready, setReady] = useState<readonly SlideReadiness[]>([]);
+	const [room, setRoom] = useState<RoomState>("opening");
+	const [help, setHelp] = useState(false);
+	const [pointer, setPointer] = useState<StagePointer | null>(null);
+	const clock = useTalkClock(ask.pressed);
+	const hands = useRef({ onPicture, onEnd, onRefused, help });
+	hands.current = { onPicture, onEnd, onRefused, help };
+	const roomWindow = useRef(ask.room);
+	const stage = useRef<{ main: StageHost; next: StageHost; say: (message: TalkMessage) => void } | null>(null);
+
+	// the two stages and the channel to the room: for the talk's whole life
+	useEffect(() => {
+		const main = slideBox.current;
+		const after = nextBox.current;
+		if (main === null || after === null) return;
+		const channel = new BroadcastChannel(talkChannel(ask.talk));
+		const say = (message: TalkMessage) => channel.postMessage(message);
+		const api = `/api/p/${encodeURIComponent(ask.project)}`;
+		/** the talk the newest document was opened on, as the daemon said it */
+		let playing = "";
+		const address = async () => {
+			const response = await controlFetch(`${api}/deck-stage`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ page: ask.page }),
+			});
+			if (!response.ok) throw new Error((await response.text()) || "the talk could not be played");
+			const answer = (await response.json()) as { address: string; size: Size; talk: unknown };
+			playing = JSON.stringify(answer.talk);
+			return answer;
+		};
+		let pictured = false;
+		let keys = false;
+		const end = () => {
+			const now = host.session();
+			hands.current.onEnd(now === undefined ? ask.slide : (host.talk()[now.at.slide]?.frame ?? ask.slide));
+		};
+		const publish = () => {
+			const now = host.session();
+			const frame = now === undefined ? undefined : host.talk()[roomPicture(now).at.slide]?.frame;
+			if (now !== undefined && frame !== undefined) say({ kind: "session", session: now, frame });
+		};
+		const ahead = (now: StageSession) => {
+			if (now.keys) return now;
+			const at = nextAt(host.talk(), now.at);
+			return { ...now, at, keys: false, black: false, frozen: null };
+		};
+		const carry = (command: KeyCommand) => {
+			if (command.kind === "escape") end();
+			else if (command.kind === "help") setHelp(true);
+			else if (command.kind !== "swap" && command.kind !== "blur") host.command(command);
+		};
+		const host = mountStage(main, {
+			address,
+			mode: "own",
+			room: false,
+			frame: ask.slide,
+			on: {
+				talk: setTalk,
+				session: (now) => {
+					setSession(now);
+					publish();
+					next.apply(ahead(now));
+					// a live slide given the keys hears them in its own document, and gives them back to the view
+					if (now.keys !== keys) {
+						keys = now.keys;
+						if (keys) host.focus();
+						else view.current?.focus({ preventScroll: true });
+					}
+				},
+				slides: setReady,
+				shown: () => {
+					if (pictured) return;
+					pictured = true;
+					hands.current.onPicture();
+				},
+				command: carry,
+				pointer: (at) => {
+					setPointer(at);
+					say({ kind: "pointer", at });
+				},
+				refused: (why) => {
+					if (!pictured) hands.current.onRefused(why);
+				},
+			},
+		});
+		// what the next key plays, never touched: what its slides write is the talk's echo, not the talk's
+		const next = mountStage(after, { address, mode: "follow", room: true, frame: ask.slide });
+		stage.current = { main: host, next, say };
+
+		let gone: ReturnType<typeof setTimeout> | undefined;
+		const opening = setTimeout(() => setRoom((now) => (now === "opening" ? "closed" : now)), ROOM_PATIENCE_MS);
+		channel.addEventListener("message", (event) => {
+			const message = parseTalkMessage(event.data);
+			if (message === undefined) return;
+			if (message.kind === "ask") {
+				clearTimeout(gone);
+				setRoom("open");
+				publish();
+			} else if (message.kind === "gone") {
+				clearTimeout(gone);
+				gone = setTimeout(() => setRoom("closed"), ROOM_GONE_MS);
+			} else if (message.kind === "command" && roomPasses(message.command)) carry(message.command);
+		});
+		// the window the browser handed over says itself when it closes, and sooner than its last word
+		const watch = setInterval(() => {
+			if (roomWindow.current?.closed === true) {
+				roomWindow.current = null;
+				setRoom("closed");
+			}
+		}, 500);
+
+		// a saved change to the talk taken in place, by both stages, once the folder is quiet
+		let build: ReturnType<typeof setTimeout> | undefined;
+		const reload = () => {
+			host.reload();
+			next.reload();
+		};
+		const stopHearing = onStageChange((change) => {
+			const kind = stageChange(
+				change,
+				host.talk().map((slide) => slide.frame),
+				ask.page,
+			);
+			if (kind === undefined) return;
+			clearTimeout(build);
+			build = setTimeout(() => {
+				if (kind === "build") return reload();
+				void controlFetch(`${api}/deck-stage?page=${encodeURIComponent(ask.page)}`)
+					.then(async (response) => response.ok && JSON.stringify(await response.json()) !== playing)
+					.then((changed) => changed && reload());
+			}, QUIET_MS);
+		});
+
+		// closing or reloading spool's window ends the talk, and the room's window with it
+		const leave = () => say({ kind: "end" });
+		addEventListener("pagehide", leave);
+		return () => {
+			removeEventListener("pagehide", leave);
+			stopHearing();
+			clearTimeout(build);
+			clearTimeout(gone);
+			clearTimeout(opening);
+			clearInterval(watch);
+			say({ kind: "end" });
+			channel.close();
+			roomWindow.current?.close();
+			host.destroy();
+			next.destroy();
+			stage.current = null;
+		};
+	}, [ask]);
+
+	// the keyboard is the talk's while the view is up: nothing behind it hears a key, and spool's own keys rest
+	useEffect(() => {
+		view.current?.focus({ preventScroll: true });
+		const down = (event: KeyboardEvent) => {
+			event.stopPropagation();
+			if (hands.current.help) {
+				if (event.key === "Escape" || event.key === "?") {
+					event.preventDefault();
+					setHelp(false);
+				}
+				return;
+			}
+			if (stage.current?.main.key(event) === true) event.preventDefault();
+		};
+		window.addEventListener("keydown", down, true);
+		const rest = attachHotkeyLayer({ scope: "dialog", handlers: {} });
+		return () => {
+			window.removeEventListener("keydown", down, true);
+			rest();
+		};
+	}, []);
+
+	const at: At = session?.at ?? {
+		slide: Math.max(
+			0,
+			talk.findIndex((slide) => slide.frame === ask.slide),
+		),
+		beat: 0,
+	};
+	const slide = talk[at.slide];
+	const frame = slide?.frame ?? ask.slide;
+	const read = deck?.slides.find((one) => one.name === frame);
+	const beats = read?.beats ?? [];
+	const note = read?.notes[at.beat] ?? "";
+	const live = slide?.live === true;
+	const keys = session?.keys === true;
+	const after = nextAt(talk, at);
+	const atEnd = after.slide === at.slide && after.beat === at.beat;
+	const afterFrame = talk[after.slide]?.frame ?? frame;
+	const afterBeat = deck?.slides.find((one) => one.name === afterFrame)?.beats[after.beat];
+	const black = session?.black === true;
+	const frozen = session?.frozen ?? null;
+	const broken = ready.find((one) => one.frame === frame && one.status === "broken");
+	const picture = session === undefined ? undefined : roomPicture(session);
+	const roomLive = picture !== undefined && talk[picture.at.slide]?.live === true;
+	const rect = layout.slide;
+	const side = layout.side;
+	const nextH = (side.w * screen.h) / screen.w;
+	const arrive = (delay: number) => ({
+		initial: { opacity: 0, y: 8 },
+		animate: shown ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 },
+		transition: { duration: still ? 0 : 0.4, ease: EASE_OUT, delay: still || !shown ? 0 : delay },
+	});
+	const cue = (key: string, children: ReactNode, className?: string) => (
+		<motion.span
+			key={key}
+			className={cn("flex items-center gap-2", className)}
+			initial={{ opacity: 0, y: 4 }}
+			animate={{ opacity: 1, y: 0 }}
+			exit={{ opacity: 0, y: -4 }}
+			transition={{ duration: still ? 0 : 0.18, ease: EASE_OUT }}
+		>
+			{children}
+		</motion.span>
+	);
+	const reopen = () => {
+		roomWindow.current = openRoom(ask, ask.talk);
+		setRoom("opening");
+	};
+
+	return (
+		<div
+			ref={view}
+			tabIndex={-1}
+			data-deck-presenter=""
+			role="dialog"
+			aria-modal="true"
+			aria-label="Presenter view"
+			className="fixed inset-0 z-50 overflow-hidden bg-surface-window font-sans text-primary antialiased outline-none"
+			style={shown ? undefined : { opacity: 0, pointerEvents: "none" }}
+		>
+			{/* the head: the clock, the room's screen, the way out */}
+			<motion.div className="absolute inset-x-10 top-0 flex h-[64px] items-center gap-4" {...arrive(0.1)}>
+				<span data-deck-clock="" className="text-primary tabular-nums type-page">
+					{clock}
+				</span>
+				<div className="ml-auto flex items-center gap-5 type-value">
+					{/* what the room is doing that the presenter is not seeing: one quiet cue beside its name */}
+					<AnimatePresence mode="wait" initial={false}>
+						{room === "closed"
+							? cue("closed", <>The room's window is closed</>, "text-secondary type-detail")
+							: black
+								? cue("black", <>The room's screen is black · any key</>, "text-secondary type-detail")
+								: frozen !== null
+									? cue(
+											"frozen",
+											<>
+												The room is held on {nameOf(talk[frozen.at.slide]?.frame ?? frame)} <Kbd>F</Kbd>
+											</>,
+											"text-secondary type-detail",
+										)
+									: null}
+					</AnimatePresence>
+					<button
+						type="button"
+						data-deck-room={room}
+						onClick={() => (room === "closed" ? reopen() : roomWindow.current?.focus())}
+						title={
+							room === "closed"
+								? "Open the room's window again"
+								: "The room's screen · B blacks it · F freezes it"
+						}
+						className="flex cursor-pointer text-tertiary transition-colors duration-fast ease-out hover:text-primary"
+					>
+						room ·&nbsp;
+						<AnimatePresence mode="wait" initial={false}>
+							{cue(room === "closed" ? "again" : "window", room === "closed" ? "open it again" : "window")}
+						</AnimatePresence>
+					</button>
+					<button
+						type="button"
+						onClick={() => stage.current !== null && onEnd(frame)}
+						title="End the talk · esc"
+						className="flex cursor-pointer items-center gap-2 text-secondary transition-colors duration-fast ease-out hover:text-primary"
+					>
+						End <Kbd>esc</Kbd>
+					</button>
+				</div>
+			</motion.div>
+
+			{/* the slide, live, as the room sees it */}
+			<div className="absolute" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
+				<div ref={slideBox} data-deck-slide="" className="relative h-full w-full overflow-hidden rounded-md" />
+				{/* who has the keys: while they are the slide's, it wears the focus line */}
+				<div
+					aria-hidden="true"
+					className={cn(
+						"pointer-events-none absolute -inset-[5px] rounded-[10px] border-[1.5px] border-line-focus transition-[opacity,scale] duration-slow ease-out",
+						keys ? "scale-100 opacity-100" : "scale-[0.99] opacity-0",
+					)}
+				/>
+				<div
+					className="absolute inset-x-0 flex h-6 items-center justify-between gap-6 type-detail"
+					style={{ top: rect.h + 14 }}
+				>
+					<AnimatePresence mode="wait" initial={false}>
+						{live
+							? keys
+								? cue(
+										"slide",
+										<>
+											{nameOf(frame)} has the keys <Kbd>esc</Kbd>
+										</>,
+										"text-secondary",
+									)
+								: cue(
+										"talk",
+										<>
+											<Kbd>⇥</Kbd> keys to {nameOf(frame)}
+										</>,
+										"text-tertiary",
+									)
+							: null}
+					</AnimatePresence>
+					{broken === undefined ? null : (
+						<span data-deck-broken={frame} className="ml-auto min-w-0 truncate text-danger-strong">
+							{brokenSaid(broken)}
+						</span>
+					)}
+				</div>
+			</div>
+
+			{/* the right: what the next key plays (the room, while the slide has the keys), then this beat's notes */}
+			<motion.div
+				className="absolute bottom-0"
+				style={{ top: side.top, left: side.x, width: side.w }}
+				{...arrive(0.18)}
+			>
+				<div className="flex h-5 items-center gap-2 text-secondary type-detail">
+					<span>{keys ? "room" : "next"}</span>
+					<span data-deck-next="" className="truncate text-tertiary">
+						{keys
+							? "what they see"
+							: atEnd
+								? "the end"
+								: after.beat > 0 && afterBeat !== undefined
+									? `${nameOf(afterFrame)} · ${afterBeat}`
+									: nameOf(afterFrame)}
+					</span>
+				</div>
+				<div className="relative mt-2 overflow-hidden rounded-md" style={{ width: side.w, height: nextH }}>
+					<div ref={nextBox} className="absolute inset-0" />
+					{/* never touched: what it shows is only a look ahead */}
+					<div className="absolute inset-0 z-10" />
+					{keys ? (
+						<SoftDot at={pointer} shown={roomLive && !black && frozen === null} box={{ w: side.w, h: nextH }} />
+					) : null}
+					<AnimatePresence initial={false}>
+						{atEnd && !keys ? (
+							<motion.div
+								key="end"
+								className="absolute inset-0 z-10 flex items-center justify-center bg-surface-window text-tertiary type-detail"
+								initial={{ opacity: 0 }}
+								animate={{ opacity: 1 }}
+								exit={{ opacity: 0 }}
+								transition={{ duration: still ? 0 : 0.26, ease: EASE_OUT }}
+							>
+								end of the talk
+							</motion.div>
+						) : null}
+					</AnimatePresence>
+				</div>
+
+				<div className="mt-9 flex h-5 items-center gap-2 text-secondary type-detail">
+					<span>notes</span>
+					{beats.length > 1 ? (
+						<span className="text-tertiary tabular-nums">
+							{at.beat + 1} of {beats.length} · {beats[at.beat]}
+						</span>
+					) : null}
+				</div>
+				<div className="relative mt-3">
+					<AnimatePresence mode="popLayout" initial={false}>
+						<motion.p
+							key={`${at.slide}-${frame}-${at.beat}`}
+							data-deck-notes=""
+							className="text-lg leading-lg text-primary"
+							initial={{ opacity: 0, y: 10 }}
+							animate={{ opacity: 1, y: 0 }}
+							exit={{ opacity: 0, y: -10 }}
+							transition={{ duration: still ? 0 : 0.3, ease: SNAP }}
+						>
+							{note === "" ? <span className="text-tertiary">No notes for this beat.</span> : note}
+						</motion.p>
+					</AnimatePresence>
+				</div>
+			</motion.div>
+
+			{/* the foot: one bar per slide, a segment per beat */}
+			<motion.div className="absolute inset-x-10 bottom-14" {...arrive(0.24)}>
+				<TalkLine
+					at={at}
+					talk={talk}
+					deck={deck}
+					ready={ready}
+					onGo={(slide, beat) => stage.current?.main.command({ kind: "go", slide, beat })}
+				/>
+			</motion.div>
+
+			{help ? <KeyList onClose={() => setHelp(false)} /> : null}
+		</div>
+	);
+}
+
+/** What the presenter is told of a broken slide, beside it: why, and what the room kept. */
+function brokenSaid(slide: SlideReadiness): string {
+	const why = (slide.why ?? "").split("\n")[0]?.trim() || "it broke";
+	const kept =
+		slide.kept === "picture"
+			? " · the room keeps its last picture"
+			: slide.kept === "picture-without-webgl"
+				? " · the room keeps its last picture, but not what WebGL drew"
+				: " · the room keeps the slide it had";
+	return `${nameOf(slide.frame)} will not show: ${why}${kept}`;
+}
+
+const nameOf = (frame: string): string => frame.slice(frame.lastIndexOf("/") + 1);
+
+/** The talk as its names, each with a segment per beat: past in grey, here in the thread; one pressed goes there. */
+function TalkLine({
+	at,
+	talk,
+	deck,
+	ready,
+	onGo,
+}: {
+	at: At;
+	talk: readonly TalkSlide[];
+	deck: DeckRead | undefined;
+	ready: readonly SlideReadiness[];
+	onGo: (slide: number, beat: number) => void;
+}) {
+	return (
+		<div className="flex w-full gap-4">
+			{talk.map((slide, index) => {
+				const names = deck?.slides.find((one) => one.name === slide.frame)?.beats ?? [];
+				const beats = Array.from(
+					{ length: Math.max(1, slide.beats) },
+					(_, beat) => names[beat] ?? `beat ${beat + 1}`,
+				);
+				const here = index === at.slide;
+				const state = ready.find((one) => one.frame === slide.frame)?.status;
+				return (
+					<div key={slide.frame} className="flex min-w-0 flex-col gap-2" style={{ flex: beats.length + 1 }}>
+						<button
+							type="button"
+							title={`${nameOf(slide.frame)} · ${index + 1} ↵`}
+							onClick={() => onGo(index, 0)}
+							className={cn(
+								"flex min-w-0 cursor-pointer items-baseline gap-1.5 text-left transition-colors duration-base ease-out type-value",
+								here
+									? "text-primary"
+									: index < at.slide
+										? "text-secondary"
+										: "text-tertiary hover:text-secondary",
+							)}
+						>
+							<span className="truncate">{nameOf(slide.frame)}</span>
+							{state === "broken" ? (
+								<span data-deck-mark="broken" className="shrink-0 text-danger-strong type-detail">
+									broken
+								</span>
+							) : state === "loading" ? (
+								<span data-deck-mark="loading" className="shrink-0 text-tertiary type-detail">
+									loading
+								</span>
+							) : null}
+						</button>
+						<div className="flex gap-1">
+							{beats.map((name, beat) => {
+								const past = index < at.slide || (here && beat < at.beat);
+								const now = here && beat === at.beat;
+								return (
+									<button
+										// biome-ignore lint/suspicious/noArrayIndexKey: a slide's beats, in their fixed order
+										key={beat}
+										type="button"
+										aria-label={`${nameOf(slide.frame)}, ${name}`}
+										onClick={() => onGo(index, beat)}
+										className="group flex h-3 flex-1 cursor-pointer items-center"
+									>
+										<span
+											className={cn(
+												"h-[3px] w-full rounded-full transition-colors duration-base ease-out",
+												now
+													? "bg-accent"
+													: past
+														? "bg-secondary"
+														: "bg-line-strong group-hover:bg-tertiary",
+											)}
+										/>
+									</button>
+								);
+							})}
+						</div>
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
+/** The keys of presenting, as the presenter's ? lists them. */
+const PRESENTER_KEYS: readonly { group: string; rows: readonly { label: string; keys: readonly string[] }[] }[] = [
+	{
+		group: "move",
+		rows: [
+			{ label: "Next", keys: ["→", "space", "↵", "N"] },
+			{ label: "Back", keys: ["←", "P", "⌫"] },
+			{ label: "Next slide, its beats skipped", keys: ["⇧→"] },
+			{ label: "Previous slide", keys: ["⇧←"] },
+		],
+	},
+	{
+		group: "jump",
+		rows: [
+			{ label: "First slide", keys: ["home"] },
+			{ label: "Last slide", keys: ["end"] },
+			{ label: "Slide by number", keys: ["3", "↵"] },
+			{ label: "End the talk", keys: ["esc"] },
+		],
+	},
+	{
+		group: "room",
+		rows: [
+			{ label: "Black screen", keys: ["B", "."] },
+			{ label: "Freeze, then catch up", keys: ["F"] },
+		],
+	},
+	{
+		group: "live slide",
+		rows: [
+			{ label: "Give it the keys", keys: ["⇥"] },
+			{ label: "Take them back", keys: ["esc"] },
+			{ label: "Restart the slide", keys: ["R"] },
+		],
+	},
+];
+
+/** ? on the presenter's screen: the presentation's keys, in spool's own sheet; esc or ? puts it away. */
+function KeyList({ onClose }: { onClose: () => void }) {
+	return (
+		<>
+			<Scrim label="Close the key list" onMouseDown={onClose} />
+			<div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center px-8">
+				<Sheet
+					aria-label="Presenting keys"
+					title="Presenting keys"
+					hint="esc closes"
+					className="pointer-events-auto max-h-[calc(100%-128px)]"
+				>
+					<div className="columns-2 gap-x-12">
+						{PRESENTER_KEYS.map(({ group, rows }) => (
+							<section key={group} className="mb-5 break-inside-avoid">
+								<h3 className="mb-1.5 text-secondary type-label">{group}</h3>
+								{rows.map((row) => (
+									<div key={row.label} className="flex h-7 items-center justify-between gap-4">
+										<span className="truncate text-primary type-control">{row.label}</span>
+										<span className="flex shrink-0 items-center gap-1.5">
+											{row.keys.map((face) => (
+												<Kbd key={face}>{face}</Kbd>
+											))}
+										</span>
+									</div>
+								))}
+							</section>
+						))}
+					</div>
+				</Sheet>
+			</div>
+		</>
+	);
+}
+
+/** The presenter's pointer as the room sees it, over the room's view in the right-hand column: one soft dot. */
+function SoftDot({ at, shown, box }: { at: StagePointer | null; shown: boolean; box: Size }) {
+	const size = Math.max(10, box.w / 60);
+	const on = shown && at !== null;
+	return (
+		<motion.span
+			aria-hidden="true"
+			className="pointer-events-none absolute top-0 left-0 z-10 rounded-full bg-primary/55"
+			style={{ width: size, height: size, filter: `blur(${size / 8}px)` }}
+			initial={false}
+			animate={{
+				x: (at?.x ?? 0.5) * box.w - size / 2,
+				y: (at?.y ?? 0.5) * box.h - size / 2,
+				opacity: on ? 1 : 0,
+				scale: on ? 1 : 0.6,
+			}}
+			transition={{
+				x: { type: "spring", stiffness: 900, damping: 60, mass: 0.4 },
+				y: { type: "spring", stiffness: 900, damping: 60, mass: 0.4 },
+				opacity: { duration: 0.18, ease: EASE_OUT },
+				scale: { duration: 0.18, ease: EASE_OUT },
+			}}
+		/>
+	);
+}
+
+/** mm:ss since the talk began, ticking. */
+function useTalkClock(startedAt: number): string {
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		const id = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(id);
+	}, []);
+	const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+	return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/** The window's inner size, kept current. */
+export function useWindowSize(): Size {
+	const [size, setSize] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+	useEffect(() => {
+		const resized = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+		window.addEventListener("resize", resized);
+		return () => window.removeEventListener("resize", resized);
+	}, []);
+	return size;
+}

@@ -35,6 +35,21 @@ export function tellFrameChange(frame: string): void {
 	window.dispatchEvent(new CustomEvent(DECK_FRAME, { detail: pageParent(frame) }));
 }
 
+/** The window event every change the daemon publishes is passed on as, for a talk playing in this window. */
+const DECK_STAGE = "spool-deck-stage";
+
+/** The daemon published a change: a talk playing here reads it with `stageChange`, and takes a new build if it must. */
+export function tellStageChange(change: unknown): void {
+	window.dispatchEvent(new CustomEvent(DECK_STAGE, { detail: change }));
+}
+
+/** Hear every change `tellStageChange` passes on. Returns the unsubscribe. */
+export function onStageChange(heard: (change: unknown) => void): () => void {
+	const listener = (event: Event) => heard((event as CustomEvent<unknown>).detail);
+	window.addEventListener(DECK_STAGE, listener);
+	return () => window.removeEventListener(DECK_STAGE, listener);
+}
+
 /** One undo entry: a deck change's answer, run back with `undo` and forward with `redo`. */
 export interface DeckEntry {
 	readonly kind: "deck";
