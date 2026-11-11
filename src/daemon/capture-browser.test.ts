@@ -179,6 +179,7 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
  */
 async function serveWebglCapture(
 	positioning: "inline" | "class" | "offscreen",
+	authored?: { css: string; bootJs: string; iframeStyle: string },
 ): Promise<{ controlOrigin: string; url: string; close(): Promise<void> }> {
 	let frameDocument = "";
 	let controlDocument = "";
@@ -234,18 +235,25 @@ async function serveWebglCapture(
 		frame: "capture",
 		projectCapability: "capture-test-webgl",
 		controlOrigin,
-		css: `.shader, #shader { ${canvasStyle} }`,
+		css: authored?.css ?? `.shader, #shader { ${canvasStyle} }`,
 		importMap: { imports: {} },
 		// No preserveDrawingBuffer here — the shim is what's expected to add it
 		// (#174). Left to the spec, the drawing buffer clears once the browser is
 		// done compositing it, so an unpatched self-capture reads this back black.
-		bootJs: `
+		bootJs:
+			authored?.bootJs ??
+			`
 			document.getElementById("root").innerHTML = '<canvas width="800" height="600" ${canvasAttribute}></canvas>';
 			const gl = document.querySelector("canvas").getContext("webgl");
 			${positioning === "offscreen" ? `requestAnimationFrame(() => { ${clear} });` : clear}
 		`,
 	});
-	const away = positioning === "offscreen" ? ' style="position: absolute; left: -5000px"' : "";
+	const away =
+		authored !== undefined
+			? ` style="${authored.iframeStyle}"`
+			: positioning === "offscreen"
+				? ' style="position: absolute; left: -5000px"'
+				: "";
 	controlDocument = `<!doctype html><html><body>
 <iframe id="frame" width="800" height="600"${away} sandbox="allow-scripts" src="${renderOrigin}/frame"></iframe>
 </body></html>`;
@@ -935,6 +943,36 @@ it.each(["inline", "class", "offscreen"] as const)(
 		expect(exportImage.assetSrc.slice(0, 3)).toEqual([255, 255, 255]);
 	},
 );
+
+// a slide's words rising in as it boots, as the deck starter's do: in a frame held out of view a headed Chrome never
+// moves the animation's clock, so the settle waits in vain and a talk's PDF got the words at their first, invisible
+// keyframe. A clock still at its start stands in for that here: the export copies an entrance at its end.
+it("copies an entrance still under way at its end", { timeout: 30_000 }, async () => {
+	const served = await serveWebglCapture("offscreen", {
+		css: "@keyframes rise { from { opacity: 0 } } #fade { position: absolute; inset: 0; background: #ff0000; animation: rise 60s both; }",
+		bootJs: `document.getElementById("root").innerHTML = '<div id="fade"></div>';`,
+		iframeStyle: "visibility: hidden",
+	});
+	onTestFinished(() => served.close());
+	const captureOrigin = new URL(served.controlOrigin);
+	captureOrigin.hostname = CAPTURE_HOST;
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+	await page.goto(served.url);
+	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
+	if (authored === undefined) throw new Error("authored frame did not load");
+	await authored.locator("#fade").waitFor({ state: "attached" });
+
+	const exported = await requestCapture(page, captureOrigin.origin, 0);
+	expect(exported.resultReplies).toBe(1);
+	const exportImage = await readImage(exported.image.url, page);
+	expect(exportImage.center.slice(0, 3)).toEqual([255, 0, 0]);
+	// and the frame's own animation goes on from where it was
+	expect(await authored.locator("#fade").evaluate((element) => element.getAnimations()[0]?.currentTime)).toBeLessThan(
+		30_000,
+	);
+});
 
 it("draws a still's text in the faces it carries on the first raster", { timeout: 30_000 }, async () => {
 	const served = await serveCapture();

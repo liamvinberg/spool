@@ -22,7 +22,7 @@ import { listProjectFrames, type ProjectedFrame } from "./projection";
 import { type FetchModule, isWebImport, RemoteImportError, remoteModules } from "./remote-imports";
 import { readCoverImage } from "./thumbs";
 import { REACT_SPECIFIERS, vendorReactJs, vendorSpoolJs, vendorSpoolJsxJs } from "./vendor";
-import { WEBFONT_PATH, type Webfonts } from "./webfonts";
+import { remoteImports, WEBFONT_PATH, type Webfonts } from "./webfonts";
 
 /**
  * A frame exported as one HTML file (spool#239): what Play from here would
@@ -157,13 +157,16 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 		}
 		const scenario = readScenario(root, "default");
 		const state = scenario.kind === "ok" ? ((JSON.parse(scenario.json) as { state?: object }).state ?? {}) : {};
+		const imported =
+			options.offline === true ? await importedFaces(deps.webfonts, [module, ...styles.values()]) : undefined;
+		const fonts = [bundle.fonts, imported].filter((css) => css !== undefined).join("\n");
 		return {
 			kind: "ok",
 			value: {
 				js,
 				styles,
 				styleOf: Object.fromEntries(bundle.styles),
-				fonts: bundle.fonts === undefined ? undefined : await inline(bundle.fonts),
+				fonts: fonts === "" ? undefined : await inline(fonts),
 				transitions: bundle.transitions,
 				importMap: exportImportMap(bundle.importMap, await vendorReactJs(), options.offline === true),
 				state,
@@ -355,6 +358,19 @@ async function oneModule(bundle: PlayerBundle, offline?: FetchModule | null): Pr
 	const js = result.outputFiles[0]?.text;
 	if (js === undefined) throw new Error("the export compiled to no module");
 	return js;
+}
+
+/**
+ * The faces a frame's own stylesheet `@import`s from the web, as a deck's slides import theirs: resolved as fonts.css
+ * is, for a file that opens offline. Unresolved, there is nothing to add: the frames still name the import themselves.
+ */
+async function importedFaces(webfonts: Webfonts, texts: readonly string[]): Promise<string | undefined> {
+	// a URL a module escaped inside its string is not one to ask for
+	const urls = [...new Set(texts.flatMap(remoteImports))].filter((url) => !url.includes("\\"));
+	if (urls.length === 0) return undefined;
+	const sheet = urls.map((url) => `@import url("${url}");`).join("\n");
+	const resolved = await webfonts.resolve(sheet);
+	return resolved === sheet ? undefined : resolved;
 }
 
 const ASSET_URL = new RegExp(`/asset/([0-9a-f]{64})(\\.(?:${ASSET_KINDS}))`, "gi");
