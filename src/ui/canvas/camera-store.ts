@@ -32,11 +32,11 @@ export interface CameraStore {
 	/** Put the camera somewhere, ending any flight. Null is a field with nothing framed yet. */
 	set(next: Camera | null): void;
 	/**
-	 * Fly to a camera on the bake-off's cubic ease-out (#9). The flight is drawn
-	 * by the same frame that draws everything else, so it is never a frame
-	 * behind its own furniture.
+	 * Fly to a camera on the bake-off's cubic ease-out (#9), or on `ease` when a
+	 * flight has a curve of its own. The flight is drawn by the same frame that
+	 * draws everything else, so it is never a frame behind its own furniture.
 	 */
-	fly(to: Camera, ms?: number): void;
+	fly(to: Camera, ms?: number, ease?: Ease): void;
 	/** End a flight where it stands. */
 	stop(): void;
 	/** Where the camera is headed: a flight's end, else where it is. */
@@ -51,6 +51,12 @@ export interface CameraStore {
 	 */
 	subscribe(listener: (camera: Camera | null, moving: boolean) => void): () => void;
 }
+
+/** How far along a flight is, 0 to 1, for how much of its time has gone, 0 to 1. */
+export type Ease = (t: number) => number;
+
+/** The bake-off's cubic ease-out (#9): what every flight rides unless it names its own. */
+const easeOut: Ease = (t) => 1 - (1 - t) ** 3;
 
 /** The flight every move that takes you somewhere makes, unless it says otherwise. */
 export const FLIGHT_MS = 220;
@@ -69,7 +75,7 @@ export function createCameraStore(): CameraStore {
 	let camera: Camera | null = null;
 	let drawn: Camera | null = null;
 	let rested: Camera | null = null;
-	let flight: { from: Camera; to: Camera; t0: number; ms: number } | null = null;
+	let flight: { from: Camera; to: Camera; t0: number; ms: number; ease: Ease } | null = null;
 	// a flag rather than the handle: a test's requestAnimationFrame may run the
 	// callback before it returns, and a handle compared to zero would then claim
 	// a frame was still owed forever
@@ -83,7 +89,7 @@ export function createCameraStore(): CameraStore {
 			// the frame's own clock, against when the flight was asked for: a frame
 			// that began before the ask lands on the start rather than ahead of it
 			const p = clamp((t - flight.t0) / flight.ms, 0, 1);
-			const e = 1 - (1 - p) ** 3;
+			const e = p < 1 ? flight.ease(p) : 1;
 			const { from, to } = flight;
 			camera = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, k: from.k + (to.k - from.k) * e };
 			if (p < 1) schedule();
@@ -120,9 +126,9 @@ export function createCameraStore(): CameraStore {
 			camera = next;
 			schedule();
 		},
-		fly(to, ms = FLIGHT_MS) {
+		fly(to, ms = FLIGHT_MS, ease = easeOut) {
 			if (camera === null) return;
-			flight = { from: camera, to, t0: performance.now(), ms };
+			flight = { from: camera, to, t0: performance.now(), ms, ease };
 			schedule();
 		},
 		stop() {

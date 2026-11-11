@@ -97,7 +97,7 @@ describe("the camera store", () => {
 		expect(drawn.map((camera) => camera?.x)).toEqual([1, 2]);
 	});
 
-	it("flies on the cubic ease-out, drawing each frame of the flight", () => {
+	it("flies on the cubic ease-out, or a curve of its own, drawing each frame of the flight", () => {
 		const store = createCameraStore();
 		const drawn = listen(store);
 		store.set({ x: 0, y: 0, k: 1 });
@@ -113,6 +113,13 @@ describe("the camera store", () => {
 
 		// landed: the flight asks for no more frames
 		expect(frames).toHaveLength(0);
+
+		// a flight with a curve of its own rides it, and lands exactly where it was aimed
+		store.fly({ x: 0, y: 0, k: 1 }, 200, (t) => t * t);
+		frame(clock + 100);
+		expect(store.get()).toEqual({ x: 75, y: 0, k: 1.75 });
+		frame(clock + 100);
+		expect(store.get()).toEqual({ x: 0, y: 0, k: 1 });
 	});
 
 	it("starts a flight from its start when the frame drawing it began before it was asked for", () => {
