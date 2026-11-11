@@ -10,7 +10,7 @@ const slide = (words: string) => `export default function Slide() {
 `;
 
 /**
- * spool#265's canvas flow, one walk: New presentation, a loose frame into the talk, a trade, one taken out, from the
+ * spool#265's canvas flow, one walk: New presentation, a loose frame into the talk, slides taken out, from the
  * canvas and from the Pages rail alike, each one undo, and a note written from Properties. On a deck page the canvas's
  * own snapping stands down and a frame let go sends the deck's change; a row let go in the rail sends the same one.
  * Then into a slide, the talk played there on its own keys, and out again: by esc, by a row pressed in the rail, and
@@ -37,11 +37,12 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 		}
 	};
 	const slides = () => (JSON.parse(read("deck.json") ?? "{}") as { slides?: string[] }).slides;
-	// the camera the new page opens on, so its slides are where the drags below aim
+	// the camera the new page opens on, so the first three slides and the cells under them are where the drags below
+	// aim, between the panes and clear of the sides where a carried slide scrolls the band
 	writeDesignFile(
 		project.root,
 		".spool/state.json",
-		JSON.stringify({ pageCameras: { presentation: { x: 60, y: 200, k: 0.25 } } }),
+		JSON.stringify({ pageCameras: { presentation: { x: -10, y: 200, k: 0.16 } } }),
 	);
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -80,7 +81,9 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 		await page.mouse.move(start.x, start.y);
 		await page.mouse.down();
 		await page.mouse.move(end.x, end.y, { steps: 12 });
-		await page.locator("[data-deck-landing]").waitFor();
+		// lifted, and the gap where it will land opened by the next drawn frame
+		await page.locator("[data-frame-lift]").waitFor();
+		await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
 		const answered = page.waitForResponse((response) => response.url().endsWith("/deck"));
 		await page.mouse.up();
 		await meanwhile?.();
@@ -117,16 +120,19 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 		return line;
 	};
 
-	// the loose frame, onto the middle of the second slide: they trade, and the place's notes stay with the place
+	// the loose frame, onto the middle of the second slide: it goes in at the gap, and nothing trades
 	await drag({ x: 640, y: 1360 + 360 }, { x: 1440 + 640, y: 360 });
+	await expect.poll(slides).toEqual(["title", "x", "statement", "live", "number", "close"]);
+	await page.locator('[data-slot-of="presentation/x"][data-slot-number="2"]').waitFor();
+	// the slide it pushed along, dragged down into the cell it came from: it leaves the talk with its notes
+	await drag({ x: 2 * 1440 + 640, y: 360 }, { x: 640, y: 1360 + 360 });
 	await expect.poll(slides).toEqual(["title", "x", "live", "number", "close"]);
-	expect(read("x", "notes.md")).toBe(said);
-	await page.locator('[data-frame-label="presentation/x"] [data-slide-number="2"]').waitFor();
+	expect(read("statement", "notes.md")).toBe(said);
 	// a slide's size is the talk's: no resize handles on it
 	expect(await page.locator("[data-handle]").count()).toBe(0);
 
 	// the first slide, dragged down off the band into the empty cell beside statement: it leaves the talk. Undone
-	// while its answer is still on the way, the undo waits for it and takes that drop, never the trade before it
+	// while its answer is still on the way, the undo waits for it and takes that drop, never the one before it
 	let answer = () => {};
 	const held = new Promise<void>((done) => {
 		answer = done;
@@ -274,7 +280,13 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	// zoomed out until the slides are too small for their verbs, the selected slide's label still names it
 	await page.setViewportSize({ width: 480, height: 900 });
 	await page.keyboard.press("Shift+1");
-	const named = page.locator('[data-frame-label="presentation/close"][data-away] [data-slide-number] + span');
+	// a deck page fitted never draws a slide under 120 px wide (spool#299), so on out by hand
+	const away = page.locator('[data-frame-label="presentation/close"][data-away]');
+	for (let step = 0; step < 12 && (await away.count()) === 0; step++) {
+		await page.keyboard.press("Minus");
+		await page.waitForTimeout(300);
+	}
+	const named = away.getByText("close", { exact: true });
 	await expect.poll(() => named.evaluate((name) => name.getBoundingClientRect().width)).toBeGreaterThan(8);
 
 	// back to a full window, an ordinary New page opens the page it makes, as New presentation does (spool#278)

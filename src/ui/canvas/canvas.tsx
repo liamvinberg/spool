@@ -14,6 +14,7 @@ import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { OutsideView } from "../../daemon/outside";
 import type { BrokenFrame as BrokenFrameRecord } from "../../daemon/thumbs";
+import type { Size } from "../../deck/deck-file";
 import { pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
@@ -64,7 +65,7 @@ import {
 } from "../api";
 import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
 import { type DeckInside, DeckKeyList, DeckStage, useDeckInside } from "../deck/deck-inside";
-import { DeckLayer, useDeckPage } from "../deck/deck-page";
+import { DeckLayer, DeckNumbers, useDeckPage } from "../deck/deck-page";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
@@ -103,6 +104,7 @@ import {
 	boundsOf,
 	centerOn,
 	entryCamera,
+	fitBand,
 	fitCamera,
 	intersects,
 	K_STEP,
@@ -1302,8 +1304,10 @@ function CanvasField({
 		return () => clearTimeout(timeout);
 	}, [notice]);
 
-	/** a deck page's frames where its glide has them, over a read that lands before the daemon wrote them (spool#283) */
+	/** a deck page's frames where its springs settled them, over a read that lands before the daemon wrote them (spool#283) */
 	const deckKeep = useRef(<F extends ProjectedFrame>(read: readonly F[]): F[] => [...read]);
+	/** the deck on the page in front, which a fit lays out on one line (spool#299) */
+	const deckBand = useRef<{ talk: Size; slides: readonly string[] } | undefined>(undefined);
 	const refetchFrames = useCallback(async () => {
 		const ticket = frameReads.ask();
 		const projection = await fetchProjection(project);
@@ -1589,18 +1593,25 @@ function CanvasField({
 		[frameLife, store],
 	);
 
-	// no stored camera: fit the field once both viewport and field exist
-	useLayoutEffect(() => {
-		if (framed || !loaded) return;
-		const viewport = viewportRef.current;
-		if (viewport === null) return;
-		const boxes = fieldBoxes();
-		placeCamera(
-			boxes.length === 0
-				? { x: 0, y: 0, k: 1 }
-				: fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight),
-		);
-	}, [framed, loaded, fieldBoxes, placeCamera]);
+	/**
+	 * The camera that fits the page in front: a deck page's band on one line, opening at its start or on the slide
+	 * chosen (spool#299), and any other page's whole field.
+	 */
+	const pageFit = useCallback(
+		(boxes: Box[], vw: number, vh: number): Camera => {
+			const bounds = boundsOf(boxes);
+			const band = deckBand.current;
+			if (band === undefined) return fitCamera(bounds, vw, vh);
+			const state = store.get();
+			const one = state.selected.length === 1 ? state.selected[0] : undefined;
+			const chosen =
+				one === undefined || !band.slides.includes(one)
+					? undefined
+					: visibleFramesOf(state).find((frame) => frame.name === one);
+			return fitBand({ talk: band.talk, slides: band.slides.length }, bounds, vw, vh, chosen);
+		},
+		[store],
+	);
 
 	/**
 	 * The camera a page switch lands on, held until the switch has rendered.
@@ -1694,8 +1705,8 @@ function CanvasField({
 		const viewport = viewportRef.current;
 		const boxes = fieldBoxes();
 		if (viewport === null || boxes.length === 0) return;
-		camera.fly(fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight));
-	}, [fieldBoxes, camera]);
+		camera.fly(pageFit(boxes, viewport.clientWidth, viewport.clientHeight));
+	}, [fieldBoxes, camera, pageFit]);
 
 	const resetZoom = useCallback(() => {
 		const cam = camera.get();
@@ -1933,6 +1944,8 @@ function CanvasField({
 		project,
 		page: activePage,
 		store,
+		camera,
+		viewport: () => viewSize.current,
 		record: (entry) => recordEntry(entry),
 		say: (message) => setNotice({ kind: "error", message }),
 	});
@@ -1955,6 +1968,21 @@ function CanvasField({
 		present: presentKey,
 	});
 	deckIn.current = deckInside;
+	deckBand.current =
+		deckPage.read === undefined
+			? undefined
+			: { talk: deckPage.read.size, slides: deckPage.read.slides.map((slide) => slide.name) };
+
+	// no stored camera: fit the field once both viewport and field exist, and a deck page is known for one
+	useLayoutEffect(() => {
+		if (framed || !loaded || !deckPage.known) return;
+		const viewport = viewportRef.current;
+		if (viewport === null) return;
+		const boxes = fieldBoxes();
+		placeCamera(
+			boxes.length === 0 ? { x: 0, y: 0, k: 1 } : pageFit(boxes, viewport.clientWidth, viewport.clientHeight),
+		);
+	}, [framed, loaded, deckPage.known, fieldBoxes, placeCamera, pageFit]);
 	// what the Pages rail and Properties show of a deck: its rows, its notes, New presentation
 	const deckKit = useMemo(
 		() =>
@@ -2946,7 +2974,7 @@ function CanvasField({
 		const frame = navigatorFrames.find((candidate) => candidate.name === name);
 		if (frame === undefined) return;
 		// inside a slide of a deck, a row pressed comes out of it first, as a press on the canvas does (spool#265)
-		deckInside.leave();
+		const left = deckInside.leave();
 		const targetPage = pageOf(frame);
 		const changedPage = targetPage !== store.get().activePage;
 		if (changedPage) {
@@ -2968,6 +2996,20 @@ function CanvasField({
 			setSelected((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name]));
 		} else {
 			setSelected([name]);
+			// a slide chosen on a long talk's band, off the view's side, comes into view (spool#299); coming out of a
+			// slide flies back to where it went in from instead
+			const viewport = viewportRef.current;
+			const cam = camera.get();
+			if (
+				!left &&
+				!changedPage &&
+				deckBand.current?.slides.includes(name) === true &&
+				viewport !== null &&
+				cam !== null
+			) {
+				const next = revealCamera(cam, frame, viewport.clientWidth, viewport.clientHeight);
+				if (next !== cam) camera.fly({ ...next, y: cam.y });
+			}
 		}
 	};
 
@@ -4650,10 +4692,10 @@ function CanvasField({
 		if (active.kind === "move") {
 			// off the field and over a folder, the drag is a move to another page (spool#224)
 			carryTo.current = carrier.over({ kind: "frame", names: active.names }, event.clientX, event.clientY);
+			// on a deck page the deck's hand stands, and no guides
+			if (deckPage.hold(active.origins, p, toWorld(active.start, cam))) return;
 			const rawX = (p.x - active.start.x) / cam.k;
 			const rawY = (p.y - active.start.y) / cam.k;
-			// on a deck page the deck's snapping stands, and no guides
-			if (deckPage.hold(active.origins, { x: rawX, y: rawY }, toWorld(active.start, cam), cam.k)) return;
 			const movingBoxes: Box[] = [];
 			for (const frame of visibleFramesOf(store.get())) {
 				const origin = active.origins.get(frame.name);
@@ -6040,6 +6082,7 @@ function CanvasField({
 							camera={camera}
 							frames={pictureFrames}
 							claims={pictureClaims}
+							motion={deckPage.motion}
 							lifecycle={frameLife}
 							documents={visibleFrames}
 						/>
@@ -6053,17 +6096,26 @@ function CanvasField({
 											const isEntered = entered === frame.name;
 											// a picture with a still is the picture layer's to draw; a shell
 											// is for a document, or for a frame with nothing to draw but its
-											// placeholder
+											// placeholder; a frame lifted in the hand is a shell too, over the
+											// others with its shadow under it (spool#299)
+											const lifted = deckPage.view.carried.has(frame.name);
 											if (
 												state === "picture" &&
 												!isEntered &&
+												!lifted &&
 												frame.cover !== undefined &&
 												externalLink?.frame !== frame.name
 											) {
 												return null;
 											}
 											return (
-												<FrameSlot name={frame.name} frame={frame} claims={pictureClaims}>
+												<FrameSlot
+													name={frame.name}
+													frame={frame}
+													claims={pictureClaims}
+													motion={deckPage.motion}
+													lift={lifted ? camera : undefined}
+												>
 													<ShellClip name={frame.name} camera={camera} near={near} frame={frame}>
 														<FrameShell
 															project={project}
@@ -6119,6 +6171,7 @@ function CanvasField({
 											near={near}
 											act={fixLabel}
 											onAct={fixBroken}
+											frameMotion={deckPage.motion}
 										/>
 									),
 								)}
@@ -6152,6 +6205,8 @@ function CanvasField({
 											unseen={unseen.get(frame.name)}
 											broken={frame.broken !== undefined}
 											number={deckPage.numberOf(frame.name)}
+											numberAside={deckPage.numberAside(frame.name)}
+											motion={deckPage.motion}
 											onPlay={deckPage.playOf(frame.name, playFrame)}
 											playTitle={deckPage.playTitleOf(frame.name)}
 											live={
@@ -6176,6 +6231,8 @@ function CanvasField({
 										/>
 									);
 								})}
+								{/* a slide's number belongs to its slot, and stands there (spool#299) */}
+								<DeckNumbers deck={deckPage} camera={camera} store={store} inside={deckInside.slide} />
 							</LabelField>
 						)}
 						{framed && (
@@ -6226,6 +6283,7 @@ function CanvasField({
 								}
 								// a deck page has no resize handles: a slide's size is the talk's
 								editable={effectiveTool === "select" && !deckPage.on}
+								motion={deckPage.motion}
 								picked={picked}
 								/*
 								 * A chip and the box it names are one object, so the cursor on one marks the

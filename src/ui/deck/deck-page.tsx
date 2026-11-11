@@ -1,40 +1,83 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { readingOrder } from "../../deck/changes";
 import type { Size } from "../../deck/deck-file";
-import { type Box, type Deck, placesOf } from "../../deck/layout";
+import { type Deck, placesOf } from "../../deck/layout";
 import type { DeckRead } from "../../deck/wire";
+import { toWorld } from "../canvas/camera";
 import type { CameraStore } from "../canvas/camera-store";
 import { useCameraFollow } from "../canvas/camera-store";
 import { type CanvasStore, useCanvasState } from "../canvas/canvas-store";
+import type { FrameMotion } from "../canvas/frame-motion";
 import { cn } from "../cn";
 import { changeDeck, type DeckEntry, type DeckReads, useDeckRead, useDeckReads, walkDeck } from "./deck-api";
-import { type Aim, aimOf, BAND_ROOM, deckOfRead, folderOf, nameOf, SLACK } from "./deck-drag";
-import { createFrameTween, easing, HOLD_MS, type Point, useDeckMotion } from "./deck-motion";
+import {
+	type Aim,
+	aimOf,
+	BAND_ROOM,
+	bandReach,
+	deckOfRead,
+	edgePan,
+	folderOf,
+	type Lean,
+	leanAt,
+	leanOf,
+	nameOf,
+} from "./deck-drag";
+import { createFrameSprings, type FrameSprings, type Point } from "./deck-motion";
 import { presentDeck, presentKeyFrom } from "./present";
 
 /**
  * The deck page on the canvas (spool#265, the team canvas's `app/spool-deck`): what the canvas asks of a page that
- * is a deck. On one the canvas's own snapping, guides and resize handles stand down, and the deck's stand instead:
- * a held frame follows the pointer, the frames around it make room as letting go would leave them, one outline shows
- * the slot or cell it lands in, and letting go sends the one deck change that does it. The window previews; the
- * daemon decides and writes the places, which arrive as the same numbers.
+ * is a deck. On one the canvas's own snapping, guides and resize handles stand down, and the deck's stand instead,
+ * the Dock's way (spool#299): the frame taken lifts into the hand and follows it, the band closes over the hole it
+ * left and opens one gap where letting go would put it, and letting go lands it there and sends the one deck change
+ * that does it. Nothing says what will happen: the gap is the whole message. The window previews; the daemon decides
+ * and writes the places, which arrive as the same numbers.
  *
- * `useDeckPage` is the whole of it for the canvas, `DeckLayer` the band and the outline it draws under the frames.
+ * Everything that moves with the hand moves outside React (`createFrameSprings`): the hand and the springs run each
+ * animation frame and draw the frames where they have them. React hears only when where letting go would land changes,
+ * a handful of times a drag, for the slides' numbers.
+ *
+ * `useDeckPage` is the whole of it for the canvas; `DeckLayer` draws the band under the frames, `DeckNumbers` the
+ * slides' numbers at their slots, and `DeckLift` the shadow under a frame in the hand.
  */
 
 /** A frame's name label over it, in screen pixels: the band reaches over it. */
 const LABEL = 28;
 /** What a slide's play says it does. */
 const PRESENT_TITLE = "Present from here ⌘↵";
+/** After the band last scrolled, the frames keep making room on the quicker spring this long, in ms. */
+const RUSHING = 250;
+/** The hand's speed is read over its last moves this long, in ms; a hand still for longer than `STOPPED` has none. */
+const SAMPLED = 90;
+const STOPPED = 80;
+/** The fastest a frame let go carries on, in screen pixels a second: never a wild fling. */
+const FLING = 4000;
+
+/** A slide's number where it stands: at its slot, in the talk as it is shown. */
+export interface SlotNumber {
+	/** the slide at the slot, by path */
+	readonly name: string;
+	readonly number: number;
+	/** the top left of the slide at the slot, on the page */
+	readonly at: Point;
+}
 
 export interface DeckPage {
 	/** The page in front is a deck, and the deck's rules hold on it. */
 	readonly on: boolean;
+	/** Whether the project's decks have been read once, or there are none to read: until then no page is known for one. */
+	readonly known: boolean;
 	/** The page's deck as last read, while it is one. */
 	readonly read: DeckRead | undefined;
 	/** The project's deck reads, for whatever else shows a deck (the Pages rail, Properties). */
 	readonly reads: DeckReads | null;
-	/** The number a slide's label carries before its name, from 1; none for a loose frame, or one held. */
+	/** Where the deck's frames are drawn while they move: what draws a frame draws it there. */
+	readonly motion: FrameMotion;
+	/** The number a slide carries before its name, from 1, in the talk as shown; none for a loose frame. */
 	numberOf(name: string): number | undefined;
+	/** Whether a slide's number stands at its slot rather than in its label: every slide's but one carried. */
+	numberAside(name: string): boolean;
 	/**
 	 * What a frame's play does: a slide's presents from it, any other frame's is `play`, and a frame held has none.
 	 * The functions handed back are the same ones for the page's life, so a label is not drawn again for them.
@@ -43,18 +86,18 @@ export interface DeckPage {
 	/** What a frame's play says it does, where that is not playing it. */
 	playTitleOf(name: string): string | undefined;
 	/**
-	 * Frames held on the page moved: `origins` where each stood as the drag began, `by` how far the pointer has gone
-	 * since in page pixels, `start` where it was pressed, `zoom` the camera's. False when the deck has nothing to say
-	 * about them (the page is no deck), and the canvas moves them its own way.
+	 * Frames held on the page moved: `origins` where each stood as the drag began, `pointer` where the hand is in the
+	 * view, `start` where it was pressed on the page. False when the deck has nothing to say about them (the page is
+	 * no deck), and the canvas moves them its own way.
 	 */
-	hold(origins: ReadonlyMap<string, Point>, by: Point, start: Point, zoom: number): boolean;
-	/** Let go: sends the change the drop makes. False when no deck drag was going on. */
+	hold(origins: ReadonlyMap<string, Point>, pointer: Point, start: Point): boolean;
+	/** Let go: lands what is held and sends the change the drop makes. False when no deck drag was going on. */
 	drop(): boolean;
 	/** The drag ended without a drop (escaped, or carried off to another page): everything back to its place. */
 	cancel(): void;
 	/**
-	 * Frames as a read of the disk has them, with the deck's own where it is moving them or has moved them and the
-	 * daemon has not written them yet: a read never shows a frame back where it was before it goes on.
+	 * Frames as a read of the disk has them, with the deck's own where it has settled them and the daemon has not
+	 * written them yet: a read never shows a frame back where it was before it goes on.
 	 */
 	keep<F extends { name: string; x: number; y: number; w: number; h: number }>(read: readonly F[]): F[];
 	/** Run a deck entry of the undo stack back or forward. False when the daemon refused it as stale. */
@@ -66,28 +109,59 @@ export interface DeckPage {
 	 * key is not the deck's (the page is no deck, or what is held is no one slide), and the canvas's own key stands.
 	 */
 	presentKey(first: boolean): boolean;
-	/** What `DeckLayer` draws: the talk's size, where a held frame lands, and whether that is in the talk. */
-	/** `sending`: a drop's change is out, and its undo entry not yet in. */
+	/**
+	 * What the layers draw: the talk's size; whether what is held is over the band, which lifts it; `sending`, a
+	 * drop's change is out and its undo entry not yet in; the slides' numbers at their slots; and the frames carried,
+	 * in the hand or landing, which carry their own.
+	 */
 	readonly view: {
 		readonly talk: Size;
-		readonly landing: Box | null;
 		readonly lifted: boolean;
 		readonly sending: boolean;
+		readonly numbers: readonly SlotNumber[];
+		readonly carried: ReadonlySet<string>;
 	};
 }
 
+/** A drag on the deck page, from the press to letting go. */
 interface Holding {
+	readonly page: string;
+	/** the deck as the drag began, which every aim is decided against */
 	readonly base: Deck;
+	/** what is held, by folder, in the order it is read on the page */
 	readonly frames: readonly string[];
+	/** the frame under the hand, by folder, and by path */
 	readonly grabbed: string;
+	readonly grabbedName: string;
+	readonly origins: ReadonlyMap<string, Point>;
+	/** the point the hand has the grabbed frame by, from its top left, on the page */
+	readonly grab: Point;
+	/** where the hand is in the view */
+	pointer: Point;
+	samples: { t: number; x: number; y: number }[];
+	lean: Lean | null;
 	aim: Aim | null;
 	key: string;
+	/** when the band last scrolled under the hand */
+	scrolled: number;
 }
+
+/** What React draws of a drag: the deck shown, the frames carried, and whether the band holds what is held. */
+interface Shown {
+	readonly deck: Deck | null;
+	readonly carried: ReadonlySet<string>;
+	readonly band: boolean;
+}
+
+const NOTHING: Shown = { deck: null, carried: new Set(), band: false };
+const NO_READS = () => () => {};
 
 export function useDeckPage({
 	project,
 	page,
 	store,
+	camera,
+	viewport,
 	record,
 	say,
 }: {
@@ -95,24 +169,31 @@ export function useDeckPage({
 	/** the page in front */
 	page: string;
 	store: CanvasStore;
+	camera: CameraStore;
+	/** the view's size in CSS pixels, as last measured */
+	viewport: () => { width: number; height: number };
 	/** record one undo entry */
 	record: (entry: DeckEntry) => void;
 	/** say why a change was refused */
 	say: (message: string) => void;
 }): DeckPage {
-	const hands = useRef({ record, say });
-	hands.current = { record, say };
+	const hands = useRef({ record, say, viewport });
+	hands.current = { record, say, viewport };
 	const reads = useDeckReads(project);
 	const read = useDeckRead(reads, page);
 	const on = read !== undefined;
+	const known = useSyncExternalStore(reads?.subscribe ?? NO_READS, () => reads === null || reads.get() !== null);
 	const live = useRef({ read, page, on, project });
 	live.current = { read, page, on, project };
-	const tween = useMemo(() => createFrameTween(store), [store]);
-	useEffect(() => () => tween.stop(), [tween]);
+	const springs = useMemo<FrameSprings>(() => createFrameSprings(store, () => camera.get()?.k ?? 1), [store, camera]);
+	useEffect(() => () => springs.stop(), [springs]);
+	// another page in front: nothing of this one is drawn anywhere it moved to
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the page changing is what stops them
+	useLayoutEffect(() => springs.stop(), [springs, page]);
 	const holding = useRef<Holding | null>(null);
-	const [aim, setAim] = useState<{ aim: Aim | null; held: ReadonlySet<string> } | null>(null);
+	const [shown, setShown] = useState<Shown>(NOTHING);
 	// the talk as a drop left it, until the daemon's answer says so too
-	const [pending, setPending] = useState<readonly string[] | null>(null);
+	const [pending, setPending] = useState<Deck | null>(null);
 
 	/** The deck a read describes, sized as the canvas has its frames. */
 	const deckOf = useCallback(
@@ -125,42 +206,98 @@ export function useDeckPage({
 		},
 		[store],
 	);
-	/**
-	 * Every frame of a deck to its place, gliding; `except` stays where the hand has it. A preview's places are held
-	 * for as long as it shows; a change's until the daemon has written them.
-	 */
-	const settle = useCallback(
-		(deck: Deck, on: string, except: ReadonlySet<string> = new Set(), preview = false) => {
-			const goals = new Map<string, Point>();
-			for (const [folder, box] of placesOf(deck)) {
-				const name = nameOf(on, folder);
-				if (!except.has(name)) goals.set(name, { x: box.x, y: box.y });
-			}
-			tween.to(goals, preview ? Number.POSITIVE_INFINITY : HOLD_MS);
-		},
-		[tween],
-	);
+	/** Every frame of a deck at its place, by path, but those named in `except`. */
+	const placesBy = useCallback((deck: Deck, on: string, except: ReadonlySet<string> = new Set()) => {
+		const goals = new Map<string, Point>();
+		for (const [folder, box] of placesOf(deck)) {
+			const name = nameOf(on, folder);
+			if (!except.has(name)) goals.set(name, { x: box.x, y: box.y });
+		}
+		return goals;
+	}, []);
 
-	const line = aim?.aim?.deck.line ?? pending;
+	const readDeck = useMemo(() => (read === undefined ? null : deckOf(read)), [read, deckOf]);
+	const deck = shown.deck ?? pending ?? readDeck;
 	const numbers = useMemo(() => {
-		if (read === undefined) return new Map<string, number>();
-		const folders = line ?? read.slides.map((slide) => folderOf(page, slide.name));
-		return new Map(folders.map((folder, index) => [nameOf(page, folder), index + 1]));
-	}, [read, line, page]);
-	const numberOf = useCallback(
-		(name: string) => (aim?.held.has(name) === true ? undefined : numbers.get(name)),
-		[numbers, aim],
-	);
+		if (deck === null) return [];
+		const places = placesOf(deck);
+		return deck.line.map((folder, index) => {
+			const box = places.get(folder);
+			return { name: nameOf(page, folder), number: index + 1, at: { x: box?.x ?? 0, y: box?.y ?? 0 } };
+		});
+	}, [deck, page]);
+	const numberBy = useMemo(() => new Map(numbers.map((one) => [one.name, one.number])), [numbers]);
+	const numberOf = useCallback((name: string) => numberBy.get(name), [numberBy]);
+	const numberAside = useCallback((name: string) => !shown.carried.has(name), [shown.carried]);
 	const present = useCallback((name: string) => presentDeck({ project, page, slide: name }), [project, page]);
 	const playOf = useCallback(
 		(name: string, play: (name: string) => void) =>
-			aim?.held.has(name) === true ? undefined : numbers.has(name) ? present : play,
-		[numbers, aim, present],
+			shown.carried.has(name) ? undefined : numberBy.has(name) ? present : play,
+		[numberBy, shown.carried, present],
 	);
-	const playTitleOf = useCallback((name: string) => (numbers.has(name) ? PRESENT_TITLE : undefined), [numbers]);
+	const playTitleOf = useCallback((name: string) => (numberBy.has(name) ? PRESENT_TITLE : undefined), [numberBy]);
+
+	/** Each animation frame of a drag: where the held frames are, and what letting go would do. */
+	const steer = useCallback(
+		(held: Holding) => {
+			const at = camera.get();
+			if (at === null) return;
+			const hand = toWorld(held.pointer, at);
+			const top = { x: hand.x - held.grab.x, y: hand.y - held.grab.y };
+			const from = held.origins.get(held.grabbedName) ?? top;
+			const placed = new Map<string, Point>();
+			for (const [name, origin] of held.origins)
+				placed.set(name, { x: origin.x + top.x - from.x, y: origin.y + top.y - from.y });
+			springs.hold(placed, hand);
+			const size = held.base.sizes[held.grabbed] ?? held.base.talk;
+			const middle = top.x + size.w / 2;
+			// the way the hand goes is measured on the page: the band scrolling under a still hand moves it too
+			held.lean = held.lean === null ? leanAt(middle) : leanOf(held.lean, middle, at.k);
+			const next = aimOf(
+				held.base,
+				{ frames: held.frames, grabbed: held.grabbed, at: top, dir: held.lean.dir },
+				at.k,
+				held.aim,
+			);
+			const key = next === null ? "" : JSON.stringify(next.rule);
+			if (key === held.key && held.aim !== null) return;
+			held.aim = next;
+			held.key = key;
+			const names = new Set(held.origins.keys());
+			const preview = next?.deck ?? held.base;
+			springs.place(
+				placesBy(preview, held.page, names),
+				performance.now() - held.scrolled < RUSHING ? "rush" : "room",
+			);
+			setShown({ deck: preview, carried: names, band: next?.gap != null });
+		},
+		[camera, springs, placesBy],
+	);
+
+	/** After each animation frame of a drag: held near the view's side, the band scrolls towards that end. */
+	const scroll = useCallback(
+		(held: Holding, dt: number) => {
+			const at = camera.get();
+			if (at === null) return;
+			const { width } = hands.current.viewport();
+			const shownDeck = held.aim?.deck ?? held.base;
+			const x = edgePan({
+				pointer: held.pointer.x,
+				width,
+				camera: at,
+				talk: held.base.talk,
+				reach: bandReach(held.base.talk, shownDeck.line.length),
+				dt,
+			});
+			if (x === at.x) return;
+			camera.set({ ...at, x });
+			held.scrolled = performance.now();
+		},
+		[camera],
+	);
 
 	const hold = useCallback(
-		(origins: ReadonlyMap<string, Point>, by: Point, start: Point, zoom: number) => {
+		(origins: ReadonlyMap<string, Point>, pointer: Point, start: Point) => {
 			const { read: deck, page: on } = live.current;
 			if (deck === undefined) return false;
 			let held = holding.current;
@@ -170,75 +307,106 @@ export function useDeckPage({
 				const names = [...origins.keys()].filter((name) => known.has(folderOf(on, name)));
 				if (names.length === 0) return false;
 				// the frame under the press is the one whose middle decides
-				const grabbed =
+				const grabbedName =
 					names.find((name) => {
 						const at = origins.get(name) as Point;
 						const size = base.sizes[folderOf(on, name)] ?? base.talk;
 						return start.x >= at.x && start.x <= at.x + size.w && start.y >= at.y && start.y <= at.y + size.h;
 					}) ?? (names[0] as string);
-				held = { base, frames: names.map((name) => folderOf(on, name)), grabbed, aim: null, key: "" };
+				const from = origins.get(grabbedName) as Point;
+				const kept = new Map(names.map((name) => [name, origins.get(name) as Point]));
+				held = {
+					page: on,
+					base,
+					frames: readingOrder(
+						base,
+						names.map((name) => folderOf(on, name)),
+					),
+					grabbed: folderOf(on, grabbedName),
+					grabbedName,
+					origins: kept,
+					grab: { x: start.x - from.x, y: start.y - from.y },
+					pointer,
+					samples: [],
+					lean: null,
+					aim: null,
+					key: "",
+					scrolled: Number.NEGATIVE_INFINITY,
+				};
 				holding.current = held;
+				const one = held;
+				springs.steer({ frame: () => steer(one), after: (dt) => scroll(one, dt) });
 			}
-			// what is held follows the pointer, with nothing to snap to
-			store.set((state) => ({
-				frames: state.frames.map((frame) => {
-					const origin = origins.get(frame.name);
-					return origin === undefined ? frame : { ...frame, x: origin.x + by.x, y: origin.y + by.y };
-				}),
-			}));
-			const from = origins.get(held.grabbed) as Point;
-			const next = aimOf(
-				held.base,
-				{ frames: held.frames, grabbed: folderOf(on, held.grabbed), at: { x: from.x + by.x, y: from.y + by.y } },
-				held.aim === null ? undefined : { rule: held.aim.rule, slack: SLACK / zoom },
-			);
-			const key = next === null ? "" : JSON.stringify(next.rule);
-			if (key !== held.key || held.aim === null) {
-				held.aim = next;
-				held.key = key;
-				const names = new Set(origins.keys());
-				setAim({ aim: next, held: names });
-				settle(next?.deck ?? held.base, on, names, true);
-			}
+			held.pointer = pointer;
+			const t = performance.now();
+			held.samples.push({ t, x: pointer.x, y: pointer.y });
+			while (held.samples.length > 2 && t - (held.samples[0]?.t ?? t) > SAMPLED) held.samples.shift();
 			return true;
 		},
-		[deckOf, settle, store],
+		[deckOf, springs, steer, scroll],
+	);
+
+	/** The hand's speed as it let go, in page pixels a second: none once it had stopped. */
+	const velocity = useCallback(
+		(held: Holding): Point => {
+			const a = held.samples[0];
+			const b = held.samples.at(-1);
+			const k = camera.get()?.k ?? 1;
+			if (a === undefined || b === undefined || b.t - a.t < 8 || performance.now() - b.t > STOPPED)
+				return { x: 0, y: 0 };
+			const clamp = (n: number) => Math.max(-FLING, Math.min(FLING, n));
+			return {
+				x: clamp(((b.x - a.x) / (b.t - a.t)) * 1000) / k,
+				y: clamp(((b.y - a.y) / (b.t - a.t)) * 1000) / k,
+			};
+		},
+		[camera],
+	);
+
+	/** What is held lands on `deck`'s places, and every other frame goes to its own. */
+	const land = useCallback(
+		(held: Holding, deck: Deck) => {
+			springs.steer(null);
+			const names = new Set(held.origins.keys());
+			setShown({ deck: null, carried: names, band: false });
+			springs.settle(placesBy(deck, held.page), velocity(held), () =>
+				setShown((now) => (now.deck === null ? NOTHING : now)),
+			);
+		},
+		[springs, placesBy, velocity],
 	);
 
 	const cancel = useCallback(() => {
 		const held = holding.current;
 		holding.current = null;
-		setAim(null);
-		if (held !== null) settle(held.base, live.current.page);
-	}, [settle]);
+		if (held !== null) land(held, held.base);
+	}, [land]);
 
 	const drop = useCallback(() => {
 		const held = holding.current;
 		if (held === null) return false;
 		holding.current = null;
-		setAim(null);
-		const on = live.current.page;
 		const aimed = held.aim;
-		if (aimed === null || aimed.same) {
-			settle(held.base, on);
+		const deckReads = reads;
+		if (aimed === null || aimed.same || deckReads === null) {
+			land(held, held.base);
 			return true;
 		}
-		const deckReads = reads;
-		if (deckReads === null) return true;
-		setPending(aimed.deck.line);
-		settle(aimed.deck, on);
+		setPending(aimed.deck);
+		land(held, aimed.deck);
+		const on = held.page;
 		void changeDeck(project, deckReads, { ...aimed.rule, page: on }).then((sent) => {
 			setPending(null);
 			if (sent.kind === "refused") {
 				hands.current.say(sent.message);
 				const now = deckReads.deckOf(on);
-				settle(now === undefined ? held.base : deckOf(now), on);
+				springs.settle(placesBy(now === undefined ? held.base : deckOf(now), on));
 				return;
 			}
 			if (sent.entry !== undefined) hands.current.record(sent.entry);
 		});
 		return true;
-	}, [deckOf, project, reads, settle]);
+	}, [deckOf, project, reads, land, springs, placesBy]);
 
 	const walk = useCallback(
 		async (entry: DeckEntry, way: "undo" | "redo") => {
@@ -249,16 +417,17 @@ export function useDeckPage({
 			const deck = sent.answer.deck;
 			if (deck === null || deck.page !== live.current.page) return true;
 			// a talk of another size takes its frames to other sizes, which only the daemon's read of them has
-			if (was === undefined || was.w !== deck.size.w || was.h !== deck.size.h) tween.stop();
-			else settle(deckOf(deck), deck.page);
+			if (was === undefined || was.w !== deck.size.w || was.h !== deck.size.h) springs.stop();
+			else springs.settle(placesBy(deckOf(deck), deck.page));
 			return true;
 		},
-		[deckOf, project, reads, settle, tween],
+		[deckOf, project, reads, springs, placesBy],
 	);
 
 	const keep = useCallback(
-		<F extends { name: string; x: number; y: number; w: number; h: number }>(read: readonly F[]) => tween.keep(read),
-		[tween],
+		<F extends { name: string; x: number; y: number; w: number; h: number }>(read: readonly F[]) =>
+			springs.keep(read),
+		[springs],
 	);
 	const owns = useCallback(() => live.current.on, []);
 	const presentKey = useCallback(
@@ -275,20 +444,42 @@ export function useDeckPage({
 		[store],
 	);
 	const talk = read?.size;
-	const landing = aim?.aim?.landing ?? null;
-	const lifted = aim?.aim?.band === true;
 	const sending = pending !== null;
 	const view = useMemo(
-		() => ({ talk: talk ?? { w: 1280, h: 720 }, landing, lifted, sending }),
-		[talk, landing, lifted, sending],
+		() => ({
+			talk: talk ?? { w: 1280, h: 720 },
+			lifted: shown.band,
+			sending,
+			numbers,
+			carried: shown.carried,
+		}),
+		[talk, shown, sending, numbers],
 	);
 
-	return { on, read, reads, numberOf, playOf, playTitleOf, hold, drop, cancel, keep, walk, owns, presentKey, view };
+	return {
+		on,
+		known,
+		read,
+		reads,
+		motion: springs,
+		numberOf,
+		numberAside,
+		playOf,
+		playTitleOf,
+		hold,
+		drop,
+		cancel,
+		keep,
+		walk,
+		owns,
+		presentKey,
+		view,
+	};
 }
 
 /**
- * Under the frames of a deck page: the band behind the talk, and while a frame is held, the outline where it lands.
- * Nothing on any other page. The band goes while a frame is entered or a slide gone into (`inside`).
+ * Under the frames of a deck page: the band behind the talk. Nothing on any other page. The band goes while a frame
+ * is entered or a slide gone into (`inside`).
  */
 export function DeckLayer({
 	deck,
@@ -304,16 +495,13 @@ export function DeckLayer({
 	const entered = useCanvasState(store, (state) => state.entered);
 	if (!deck.on) return null;
 	return (
-		<>
-			<Band
-				camera={camera}
-				talk={deck.view.talk}
-				lifted={deck.view.lifted}
-				sending={deck.view.sending}
-				away={entered !== null || inside}
-			/>
-			<Landing camera={camera} landing={deck.view.landing} />
-		</>
+		<Band
+			camera={camera}
+			talk={deck.view.talk}
+			lifted={deck.view.lifted}
+			sending={deck.view.sending}
+			away={entered !== null || inside}
+		/>
 	);
 }
 
@@ -369,64 +557,93 @@ function Band({
 	);
 }
 
-/** Where the held frame will land: one quiet outline, gliding from slot to slot and cell to cell. */
-function Landing({ camera, landing }: { camera: CameraStore; landing: Box | null }) {
-	const outline = useRef<HTMLDivElement | null>(null);
-	/** the box drawn now, in page pixels; it stays while the outline fades, and none once it has */
-	const at = useRef<Box | null>(null);
-	const frame = useRef(0);
-	const { glide, snap } = useDeckMotion();
-	const draw = useCallback(() => {
-		const el = outline.current;
-		const cam = camera.get();
-		const box = at.current;
-		if (el === null || cam === null || box === null) return;
-		el.style.transform = `translate(${box.x * cam.k + cam.x}px, ${box.y * cam.k + cam.y}px)`;
-		el.style.width = `${box.w * cam.k}px`;
-		el.style.height = `${box.h * cam.k}px`;
-	}, [camera]);
+/**
+ * The slides' numbers, in the labels' field (spool#299): a number belongs to its slot, so a slide that moves along
+ * the talk slides out from under one number and in under the next, and a slide carried in the hand or landing carries
+ * its own in its label while the number at its slot stands aside. They change hands where they stand, at once; while
+ * the gap moves, a slot's number fades in or out.
+ */
+export function DeckNumbers({
+	deck,
+	camera,
+	store,
+	inside,
+}: {
+	deck: DeckPage;
+	camera: CameraStore;
+	store: CanvasStore;
+	/** the slide gone into, whose chip carries its number */
+	inside: string | null;
+}) {
+	const selected = useCanvasState(store, (state) => state.selected);
+	const entered = useCanvasState(store, (state) => state.entered);
+	const { carried, numbers } = deck.view;
+	// lifted and set down, the number changes hands where it stands, at once
+	const was = useRef<ReadonlySet<string>>(carried);
+	const handing = carried.size === 0 || was.current.size === 0 ? new Set([...carried, ...was.current]) : new Set();
 	useEffect(() => {
-		if (landing === null) {
-			// faded out, the next drag's outline starts where it lands rather than gliding from this one
-			const timer = setTimeout(() => {
-				at.current = null;
-			}, glide);
-			return () => clearTimeout(timer);
-		}
-		const from = at.current;
-		if (from === null) {
-			at.current = landing;
-			draw();
-			return;
-		}
-		const start = performance.now();
-		const ease = easing(snap);
-		const step = (now: number) => {
-			const t = glide <= 0 ? 1 : Math.min(1, Math.max(0, (now - start) / glide));
-			const k = ease(t);
-			const mix = (a: number, b: number) => a + (b - a) * k;
-			at.current = {
-				x: mix(from.x, landing.x),
-				y: mix(from.y, landing.y),
-				w: mix(from.w, landing.w),
-				h: mix(from.h, landing.h),
-			};
-			draw();
-			frame.current = t < 1 ? requestAnimationFrame(step) : 0;
-		};
-		frame.current = requestAnimationFrame(step);
-		return () => cancelAnimationFrame(frame.current);
-	}, [landing, draw, glide, snap]);
-	useCameraFollow(camera, draw, [draw]);
+		was.current = carried;
+	}, [carried]);
+	if (!deck.on) return null;
 	return (
-		<div
-			ref={outline}
-			data-deck-landing={landing === null ? undefined : ""}
-			aria-hidden="true"
-			className={cn(
-				"pointer-events-none absolute top-0 left-0 outline-1 outline-accent outline-solid transition-opacity duration-base ease-out",
-				landing === null ? "opacity-0" : "opacity-70",
-			)}
-		/>
+		<>
+			{numbers.map((slot, index) => (
+				<SlotMark
+					// a number belongs to its slot, whichever slide stands there
+					// biome-ignore lint/suspicious/noArrayIndexKey: the slot is the number's identity
+					key={index}
+					slot={slot}
+					camera={camera}
+					selected={selected.includes(slot.name)}
+					aside={carried.has(slot.name) || entered === slot.name || inside === slot.name}
+					instant={handing.has(slot.name)}
+				/>
+			))}
+		</>
+	);
+}
+
+function SlotMark({
+	slot,
+	camera,
+	selected,
+	aside,
+	instant,
+}: {
+	slot: SlotNumber;
+	camera: CameraStore;
+	selected: boolean;
+	aside: boolean;
+	instant: boolean;
+}) {
+	const place = useRef<HTMLDivElement | null>(null);
+	useCameraFollow(
+		camera,
+		(at) => {
+			if (place.current !== null)
+				place.current.style.transform = `translate(${slot.at.x * at.k}px, ${slot.at.y * at.k}px)`;
+		},
+		[slot.at.x, slot.at.y],
+	);
+	// the label's own row, so the number stands exactly where the label keeps its room
+	return (
+		<div ref={place} aria-hidden="true" className="pointer-events-none absolute top-0 left-0 h-0">
+			<div className="absolute bottom-full left-0 flex items-center gap-1.5 whitespace-nowrap pb-2.5">
+				<span
+					data-slot-number={slot.number}
+					data-slot-of={slot.name}
+					data-aside={aside ? "" : undefined}
+					className={cn(
+						"shrink-0 tabular-nums type-value",
+						instant ? "transition-colors" : "transition-[color,opacity]",
+						"duration-base ease-out",
+						selected ? "text-accent-strong" : "text-tertiary",
+						aside ? "opacity-0" : "opacity-100",
+					)}
+				>
+					{slot.number}
+				</span>
+			</div>
+		</div>
 	);
 }

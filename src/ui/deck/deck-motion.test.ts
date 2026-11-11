@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ProjectedFrame } from "../api";
 import { createCanvasStore } from "../canvas/canvas-store";
-import { createFrameTween, deckMotion, HOLD_MS } from "./deck-motion";
+import { createFrameSprings, type DeckMotion, deckMotion, HOLD_MS, LIFTED } from "./deck-motion";
+import { tune } from "./spring";
 
 /** The roles the theme gives a page, before stillness takes the scale to zero. */
 const THEME =
 	readFileSync(join(import.meta.dirname, "..", "theme.css"), "utf8").split("@media (prefers-reduced-motion")[0] ?? "";
 
-it("moves the deck on the theme's roles, its prototype's timings kept as approved", () => {
+it("moves the deck on the theme's roles, its prototype's timings and springs kept as approved", () => {
 	const page = document.body.appendChild(document.createElement("div"));
 	for (const [, name = "", value = ""] of THEME.matchAll(/^\s*(--[a-z-]+):\s*([^;]+);/gm))
 		page.style.setProperty(name, value);
@@ -20,8 +21,10 @@ it("moves the deck on the theme's roles, its prototype's timings kept as approve
 		base: 180,
 		slow: 260,
 		slower: 400,
-		settle: 440,
-		glide: 220,
+		room: tune(0.3, 0),
+		rush: tune(0.16, 0),
+		land: tune(0.36, 0.12),
+		lift: tune(0.24, 0),
 		fly: 600,
 		leaveWait: 120,
 		leave: 660,
@@ -33,13 +36,9 @@ it("moves the deck on the theme's roles, its prototype's timings kept as approve
 	});
 });
 
-describe("frames gliding to a deck's places", () => {
-	/** a page with the deck's settle timing on a straight line, drawn frames run by hand */
-	const setup = () => {
-		const root = document.documentElement;
-		root.style.setProperty("--motion-deck-settle", "400ms");
-		root.style.setProperty("--ease-snap", "cubic-bezier(0, 0, 1, 1)");
-		onTestFinished(() => root.removeAttribute("style"));
+describe("a deck page's frames on springs", () => {
+	/** two frames on a page, drawn frames run by hand at 60 a second, on the deck's springs */
+	const setup = (still = false) => {
 		let queued: FrameRequestCallback[] = [];
 		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => queued.push(callback));
 		vi.stubGlobal("cancelAnimationFrame", () => {
@@ -51,73 +50,133 @@ describe("frames gliding to a deck's places", () => {
 		let time = 0;
 		const store = createCanvasStore();
 		store.set({ frames: [frame("p", 0, 0), frame("q", 0, 1000)] });
-		const tween = createFrameTween(
+		const timing = {
+			room: tune(0.3),
+			rush: tune(0.16),
+			land: tune(0.36, 0.12),
+			lift: tune(0.24),
+		} as DeckMotion;
+		const springs = createFrameSprings(
 			store,
-			() => false,
+			() => 1,
+			() => still,
 			() => time,
+			() => timing,
 		);
+		let told = 0;
+		springs.listen(() => {
+			told += 1;
+		});
+		/** run drawn frames until `to` ms */
 		const run = (to: number) => {
-			time = to;
-			const now = queued;
-			queued = [];
-			for (const callback of now) callback(to);
+			while (time < to) {
+				time = Math.min(to, time + 1000 / 60);
+				const now = queued;
+				queued = [];
+				for (const callback of now) callback(time);
+			}
 		};
 		const at = (name: string) => store.get().frames.find((one) => one.name === name);
-		return { store, tween, run, at, setTime: (to: number) => (time = to) };
+		return { store, springs, run, at, told: () => told };
 	};
 	const frame = (name: string, x: number, y: number, w = 1280) =>
 		({ name, x, y, w, h: 720 }) as unknown as ProjectedFrame;
 
-	it("holds a frame where its glide has it over any read until a read has it at its goal", () => {
-		const { tween, run, at } = setup();
-		tween.to(new Map([["p", { x: 1000, y: 0 }]]));
-		run(200);
-		expect(at("p")?.x).toBe(500);
-		// the daemon's places, or the disk before it wrote them, landing mid-flight: the glide stands
-		expect(tween.keep([frame("p", 1000, 0)])[0]?.x).toBe(500);
-		expect(tween.keep([frame("p", 0, 0)])[0]?.x).toBe(500);
+	it("makes room from where a frame is drawn, and turns it round mid-flight at the speed it has", () => {
+		const { springs, run, at } = setup();
+		springs.steer({ frame: () => {}, after: () => {} });
+		springs.place(new Map([["p", { x: 1000, y: 0 }]]), "room");
+		run(100);
+		const out = springs.drawn("p")?.x ?? 0;
+		expect(out).toBeGreaterThan(100);
+		expect(out).toBeLessThan(900);
+		// a preview is drawn, never stood in
+		expect(at("p")?.x).toBe(0);
+		springs.place(new Map([["p", { x: 0, y: 0 }]]), "room");
+		const track: number[] = [];
+		for (let t = 100; t < 1000; t += 1000 / 60) {
+			run(t);
+			track.push(springs.drawn("p")?.x ?? Number.NaN);
+		}
+		// it carried on a little the way it was going, never jumping, and came back to rest
+		expect(Math.abs((track[0] ?? 0) - out)).toBeLessThan(60);
+		expect(Math.max(...track)).toBeGreaterThan(out);
+		expect(track.at(-1)).toBe(0);
+	});
+
+	it("lifts a frame in the hand, lands it at the hand's speed over the rest, and then draws it where it stands", () => {
+		const { springs, run, at } = setup();
+		const landed = vi.fn();
+		springs.steer({ frame: () => {}, after: () => {} });
+		springs.hold(new Map([["p", { x: 200, y: 50 }]]), { x: 300, y: 100 });
 		run(400);
+		expect(springs.drawn("p")).toEqual({
+			x: 200,
+			y: 50,
+			scale: LIFTED,
+			origin: { x: 100, y: 50 },
+			lift: 1,
+			top: true,
+		});
+		springs.steer(null);
+		springs.settle(
+			new Map([
+				["p", { x: 1440, y: 0 }],
+				["q", { x: 0, y: 1000 }],
+			]),
+			{ x: 3000, y: 0 },
+			landed,
+		);
+		// the store has it at its place at once, and it is drawn from where the hand left it, over the rest
+		expect(at("p")?.x).toBe(1440);
+		expect(springs.drawn("p")?.x).toBe(200);
+		run(416);
+		expect(springs.drawn("p")?.top).toBe(true);
+		const track: number[] = [];
+		for (let t = 416; t < 2000; t += 1000 / 60) {
+			run(t);
+			track.push(springs.drawn("p")?.x ?? 1440);
+		}
+		// past its place by a little bounce, once, and then at rest there: drawn where the store has it
+		expect(Math.max(...track)).toBeGreaterThan(1440);
+		expect(Math.max(...track)).toBeLessThan(1440 + 200);
+		expect(springs.drawn("p")).toBeUndefined();
+		expect(landed).toHaveBeenCalledOnce();
+	});
+
+	it("holds a frame settled over any read until a read has it at its place", () => {
+		const { springs, run, at } = setup();
+		springs.settle(new Map([["p", { x: 1000, y: 0 }]]));
+		run(100);
+		// the disk before the daemon wrote the place, landing mid-flight: the place stands
+		expect(springs.keep([frame("p", 0, 0)])[0]?.x).toBe(1000);
+		run(2000);
 		expect(at("p")?.x).toBe(1000);
-		// landed, a read from before the write still cannot take it back
-		expect(tween.keep([frame("p", 0, 0)])[0]?.x).toBe(1000);
+		expect(springs.keep([frame("p", 0, 0)])[0]?.x).toBe(1000);
 		// once a read agrees the frame is the reads' again
-		expect(tween.keep([frame("p", 1000, 0)])[0]?.x).toBe(1000);
-		expect(tween.keep([frame("p", 0, 0)])[0]?.x).toBe(0);
+		expect(springs.keep([frame("p", 1000, 0)])[0]?.x).toBe(1000);
+		expect(springs.keep([frame("p", 0, 0)])[0]?.x).toBe(0);
 	});
 
 	it("lets go of a frame a read has at another size, and of one held longer than a write takes", () => {
-		const { tween, run, at, setTime } = setup();
-		tween.to(new Map([["p", { x: 1000, y: 0 }]]));
-		run(200);
-		expect(tween.keep([frame("p", 0, 0, 1920)])[0]?.x).toBe(0);
-		run(300);
-		expect(at("p")?.x).toBe(500);
-		tween.to(new Map([["q", { x: 1000, y: 1000 }]]));
-		run(800);
-		setTime(800 + HOLD_MS + 1);
-		expect(tween.keep([frame("q", 0, 1000)])[0]?.x).toBe(0);
+		const { springs, run } = setup();
+		springs.settle(new Map([["p", { x: 1000, y: 0 }]]));
+		expect(springs.keep([frame("p", 0, 0, 1920)])[0]?.x).toBe(0);
+		springs.settle(new Map([["q", { x: 1000, y: 1000 }]]));
+		run(HOLD_MS + 1);
+		expect(springs.keep([frame("q", 0, 1000)])[0]?.x).toBe(0);
 	});
 
-	it("keeps a glide whose goal stands, and turns one whose goal moved from where it is", () => {
-		const { tween, run, at } = setup();
-		tween.to(
-			new Map([
-				["p", { x: 1000, y: 0 }],
-				["q", { x: 1000, y: 1000 }],
-			]),
-		);
-		run(200);
-		tween.to(
-			new Map([
-				["p", { x: 1000, y: 0 }],
-				["q", { x: 0, y: 1000 }],
-			]),
-		);
-		run(400);
-		// p landed on its first timing; q set off back from halfway
-		expect(at("p")?.x).toBe(1000);
-		expect(at("q")?.x).toBe(250);
-		run(600);
-		expect(at("q")?.x).toBe(0);
+	it("sets every frame where it goes at once under reduced motion", () => {
+		const { springs, at } = setup(true);
+		springs.steer({ frame: () => {}, after: () => {} });
+		springs.hold(new Map([["p", { x: 200, y: 50 }]]), { x: 300, y: 100 });
+		expect(springs.drawn("p")?.scale).toBe(LIFTED);
+		springs.place(new Map([["q", { x: 500, y: 1000 }]]), "room");
+		expect(springs.drawn("q")?.x).toBe(500);
+		springs.steer(null);
+		springs.settle(new Map([["p", { x: 1440, y: 0 }]]));
+		expect(springs.drawn("p")).toMatchObject({ x: 1440, scale: 1, lift: 0 });
+		expect(at("p")?.x).toBe(1440);
 	});
 });
