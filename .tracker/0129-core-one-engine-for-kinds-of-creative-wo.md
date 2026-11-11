@@ -3,7 +3,7 @@
 - State: open
 - Labels: ready-for-human
 - Created: 2026-10-18T17:43:56.645Z
-- Updated: 2026-10-22T07:18:55.042Z
+- Updated: 2026-11-10T08:20:58.675Z
 
 ## Why
 
@@ -105,3 +105,7 @@ Liam is parking this to grill with a newer model later. Pick up from here.
 **Liam's leaning after round 1 (not settled):** a rewrite designed foundation-first, with spool itself built on its own SDK (built-in panes and modes are mods), presentations as the first official mod and other creative kinds as later official mods. Open: does that still feel like a canvas (recommendation: yes, as Figma Slides shows), and what the primitives are.
 
 **Still to grill:** rewrite vs carve (his leaning vs the recommendation), the name (mod, kit, mode), how a page picks its mode, where notes live, what a mode is given, the presenter's second window, following on Spool Cloud, export, how agents learn to write a mode, the order of overnight runs.
+
+### agent, 2026-11-10T08:20:58.675Z
+
+Carried on in the wayfinder map #251 ("Wayfinder map: rebuilding spool as a core with extensions, the deck first"), charted in agent-hub task 557. The map's Notes hold what is settled; the deck's look is its child ticket #255.
