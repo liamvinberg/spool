@@ -398,3 +398,31 @@ it("with two displays in a browser, the caret's Full screen opens the room's win
 	await view.mouse.click(W / 2, H / 2);
 	await expect.poll(async () => near(pixelsOf(await view.screenshot(), [{ x: 160, y: 360 }])[0], TWO, 10)).toBe(true);
 });
+
+it("waits on its card while the window grows to cover the screen, and sets off once it has", {
+	timeout: 120_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir, experiments: { deck: true } });
+	writeTalk(project.root);
+	writeDesignFile(
+		project.root,
+		".spool/state.json",
+		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.08 } } }),
+	);
+	const screen = { width: W + 160, height: H + 90 };
+	const context = await browser.newContext({ viewport: { width: W, height: H }, screen });
+	await fullScreenAsABrowserGivesIt(context);
+	const view = await context.newPage();
+	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
+
+	// a window changing size draws nothing: a slide that set off under it would show up half way there
+	await view.keyboard.press("ControlOrMeta+Shift+Enter");
+	await expect.poll(() => phaseOf(view)).toBe("waiting");
+	await view.waitForTimeout(400);
+	expect(await phaseOf(view)).toBe("waiting");
+	await view.setViewportSize(screen);
+	await expect.poll(() => phaseOf(view)).toMatch(/^(in|on)$/);
+});

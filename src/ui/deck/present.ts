@@ -29,6 +29,8 @@ export interface PresentAsk extends PresentFrom {
 	 * full screen, never both: with the room's window opened, the slides fill the page, and a click makes it full screen.
 	 */
 	readonly fillAsked: boolean;
+	/** whether the window is on its way to cover the screen, as the press asked */
+	readonly filling: Promise<boolean>;
 	/** the room's window, when the browser let it open and handed it over */
 	readonly room: Window | null;
 }
@@ -50,8 +52,8 @@ export function presentDeck(from: PresentFrom, how: PresentHow = "present"): voi
 	const talk = mintTalk();
 	const room = plan.room ? openRoom(from, talk) : null;
 	const fillAsked = plan.way === "slides" && (!plan.room || desktopWindow() !== undefined);
-	if (fillAsked) fillScreen(true);
-	asked = { ...from, talk, pressed: Date.now(), way: plan.way, roomAsked: plan.room, room, fillAsked };
+	const filling = fillAsked ? fillScreen(true) : Promise.resolve(false);
+	asked = { ...from, talk, pressed: Date.now(), way: plan.way, roomAsked: plan.room, room, fillAsked, filling };
 	if (plan.remember !== undefined) void writeSetting("present.way", plan.remember);
 	tell();
 }
@@ -78,27 +80,29 @@ function rememberedWay(): PresentWay {
 /**
  * Spool's window made full screen for the slides, or let go of again. The Mac app covers the display at once, with no
  * Space of its own to slide to; a browser takes the page full screen, which only a press may ask, and hands Esc to the
- * page while the talk lasts, so Esc can step back from a live slide and Notes before it ends the talk.
+ * page while the talk lasts, so Esc can step back from a live slide and Notes before it ends the talk. Says whether
+ * the window is on its way to cover the screen.
  */
-export function fillScreen(on: boolean): void {
+export function fillScreen(on: boolean): Promise<boolean> {
 	const app = desktopWindow();
-	if (app?.presentFullScreen !== undefined) {
-		void app.presentFullScreen(on).catch(() => {});
-		return;
-	}
-	if (typeof document === "undefined") return;
+	if (app?.presentFullScreen !== undefined) return app.presentFullScreen(on).catch(() => false);
+	if (typeof document === "undefined") return Promise.resolve(false);
 	const keyboard = (navigator as Navigator & { keyboard?: { lock?(keys: string[]): Promise<void>; unlock?(): void } })
 		.keyboard;
 	if (on) {
-		if (document.fullscreenElement !== null || document.documentElement.requestFullscreen === undefined) return;
-		void document.documentElement
-			.requestFullscreen({ navigationUI: "hide" })
-			.then(() => keyboard?.lock?.(["Escape"]))
-			.catch(() => {});
-		return;
+		if (document.fullscreenElement !== null || document.documentElement.requestFullscreen === undefined)
+			return Promise.resolve(false);
+		return document.documentElement.requestFullscreen({ navigationUI: "hide" }).then(
+			() => {
+				void keyboard?.lock?.(["Escape"])?.catch(() => {});
+				return true;
+			},
+			() => false,
+		);
 	}
 	keyboard?.unlock?.();
 	if (document.fullscreenElement !== null) void document.exitFullscreen().catch(() => {});
+	return Promise.resolve(false);
 }
 
 /** The room's address: the deck page's plain play address, as the room of `talk`. */

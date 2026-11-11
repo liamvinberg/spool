@@ -67,6 +67,8 @@ type Phase =
 
 /** How long a readied stage waits for Present before it is let go. */
 const WARM_MS = 30_000;
+/** The longest the slide waits on its card for the window to cover the screen, when it says it will. */
+const FILL_MS = 1200;
 
 export interface PresentSlidesProps {
 	/**
@@ -147,6 +149,11 @@ export function PresentSlides({
 	/** the frame the talk starts on, and the frame the stage shows at its first beat, if it does */
 	const wanted = useRef<string | null>(null);
 	const drawn = useRef<string | null>(null);
+	/**
+	 * the window is on its way to cover the screen: the slide waits on its card until it has, as a window changing size
+	 * draws nothing, and a slide that set off under it would show up half way there
+	 */
+	const filling = useRef(false);
 	/** the live slide is on in the flying layer, for the rest of the talk */
 	const liveOn = useRef(false);
 	/** the picture the slide flies as, decoded */
@@ -248,7 +255,7 @@ export function PresentSlides({
 
 	/** the slide sets off, as the live slide when the stage has drawn it, else as its picture, else not yet */
 	const launch = useCallback(() => {
-		if (phaseRef.current !== "waiting") return;
+		if (phaseRef.current !== "waiting" || filling.current) return;
 		const start = wanted.current;
 		if (start !== null && drawn.current === start) showLive("now");
 		else if (!pictured.current) return;
@@ -452,6 +459,18 @@ export function PresentSlides({
 		setHelp(false);
 		setUnfilled(!ask.fillAsked);
 		setPhase("waiting");
+		filling.current = ask.fillAsked && !coversScreen();
+		if (filling.current) {
+			const filled = () => {
+				if (trip.current !== n || !filling.current) return;
+				filling.current = false;
+				launching.current();
+			};
+			void ask.filling.then((on) => {
+				if (!on) filled();
+			});
+			setTimeout(filled, FILL_MS);
+		}
 		// a stage readied on the slide has drawn it already, and it sets off as that
 		if (drawn.current === ask.slide) {
 			launch();
@@ -499,6 +518,10 @@ export function PresentSlides({
 				const card = wanted.current === null ? null : hands.current.cardOf(wanted.current);
 				flight.current.set(card === null ? landing() : onCard(card));
 				draw();
+				if (filling.current && coversScreen()) {
+					filling.current = false;
+					launching.current();
+				}
 			} else if (at === "in") aim(landing(), landed(n));
 			else if (at === "on") aim(landing());
 			else if (at === "home") {
@@ -756,6 +779,11 @@ function cut(stage: StageHost | null, frame: string): void {
 }
 
 /** Where the window's page stands on the screen: the window's place, and below whatever bar the browser draws. */
+/** The window covers its screen: full screen, in the Mac app or a browser. */
+function coversScreen(): boolean {
+	return window.innerWidth >= window.screen.width && window.innerHeight >= window.screen.height;
+}
+
 function viewportOrigin(): { x: number; y: number } {
 	if (typeof window === "undefined") return { x: 0, y: 0 };
 	return { x: window.screenX, y: window.screenY + Math.max(0, window.outerHeight - window.innerHeight) };
