@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { TALK_NAME } from "../../deck/present-wire";
-import { presentDeck, presentDone, presentKeyFrom } from "./present";
+import { presentDeck, presentDone, presentKeyFrom, roomWindowAt } from "./present";
+import { presenterLayout } from "./presenter-layout";
 
 afterEach(() => {
 	presentDone();
@@ -40,4 +41,23 @@ it("presents from the slide held on ⌘↵ and from the first on ⇧⌘↵, and 
 	expect(presentKeyFrom(talk, held(["talk/sense"], 1), false)).toBeUndefined();
 	// a talk with no slides presents nothing
 	expect(presentKeyFrom([], held([]), true)).toBeUndefined();
+});
+
+it("opens the room's window beside spool's when there is room, and otherwise over the presenter's own slide alone", () => {
+	const screen = { x: 0, y: 25, w: 1512, h: 957 };
+	// spool's window on the left of the screen: the room beside it, centred on it, as wide as the room there allows
+	expect(roomWindowAt({ x: 0, y: 25, w: 900, h: 957 }, screen)).toEqual({ x: 900, y: 332, w: 612, h: 344 });
+	expect(roomWindowAt({ x: 552, y: 100, w: 960, h: 700 }, screen)).toEqual({ x: 0, y: 295, w: 552, h: 311 });
+
+	// spool's window filling the screen: the room lies over the slide, which shows what the room shows already, and
+	// leaves the head, what comes next, the notes and the bar in sight
+	for (const view of [screen, { x: 0, y: 25, w: 1280, h: 775 }, { x: 0, y: 25, w: 2560, h: 1415 }]) {
+		const room = roomWindowAt(view, screen);
+		const slide = presenterLayout(view, { w: 16, h: 9 }).slide;
+		expect(room.x).toBeGreaterThanOrEqual(view.x + slide.x);
+		expect(room.y).toBeGreaterThanOrEqual(view.y + slide.y);
+		expect(room.x + room.w).toBeLessThanOrEqual(view.x + slide.x + slide.w + 1);
+		expect(room.y + room.h).toBeLessThanOrEqual(view.y + slide.y + slide.h + 1);
+		expect(room.w / room.h).toBeCloseTo(16 / 9, 1);
+	}
 });
