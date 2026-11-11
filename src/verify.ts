@@ -34,6 +34,8 @@ export interface BootDeps {
 	/** CSS px to scroll the document down after it commits, before it settles or seeks. */
 	scroll?: number;
 	scenario?: string;
+	/** A slide's beat to shoot it at rather than its last, by its name or its number from 1 (the deck experiment). */
+	beat?: string;
 	/** How long the daemon may say nothing at all before the CLI stops waiting; a seam for tests. */
 	quietMs?: number;
 }
@@ -306,6 +308,7 @@ async function bootFrame(deps: BootDeps, { w, h }: FrameSize): Promise<Boot> {
 				...(deps.at === undefined ? {} : { at: deps.at }),
 				...(deps.scroll === undefined ? {} : { scroll: deps.scroll }),
 				...(deps.scenario === undefined ? {} : { scenario: deps.scenario }),
+				...(deps.beat === undefined ? {} : { beat: deps.beat }),
 			}),
 			signal: stopped.signal,
 		});

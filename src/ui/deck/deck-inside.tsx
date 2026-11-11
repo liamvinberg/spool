@@ -13,6 +13,7 @@ import { type CanvasStore, useCanvasState } from "../canvas/canvas-store";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { deckMotion, easing } from "./deck-motion";
 import { insideBox, insideCamera, outCamera } from "./inside-camera";
+import { KeyList } from "./key-list";
 import { usePresentAsk } from "./present";
 import { talkSource } from "./talk-source";
 
@@ -22,13 +23,15 @@ import { talkSource } from "./talk-source";
  * sees, with the same keys. Under the stage the camera keeps to the slide showing, so the selection, the Pages rail
  * and Properties follow the talk. Esc, or a press anywhere else on the canvas, flies back out: to the camera it came
  * from while the talk is still on the slide gone into, else at that zoom and height across the slide it ended on,
- * which is left selected.
+ * which is left selected. Presented from inside a slide, the talk's end lands the camera by the same rules. There is no
+ * room in place, so the room's keys are nobody's there, and ? lists the rest.
  *
  * The talk's stage is built in the background as the deck page opens, unseen over the canvas, and rests on the slide
  * selected, so going in is instant. Going in never blinks: the canvas's own picture of the slide (its last beat)
  * stays until the camera has landed and the stage has drawn the same beat over it.
  *
- * `useDeckInside` is the whole of it for the canvas, `DeckStage` the stage it draws over the slide.
+ * `useDeckInside` is the whole of it for the canvas, `DeckStage` the stage it draws over the slide, `DeckKeyList` the
+ * keys ? lists over the canvas.
  */
 
 export interface DeckInside {
@@ -42,6 +45,14 @@ export interface DeckInside {
 	leave(): boolean;
 	/** A slide is gone into, read when called: the talk has the keys, and a press on the canvas comes out. */
 	on(): boolean;
+	/**
+	 * A talk presented from inside a slide ended on `frame`: the camera lands as Esc would have landed it. False when the
+	 * talk was not presented from inside a slide of this page, and the canvas brings the slide into view its own way.
+	 */
+	ended(frame: string): boolean;
+	/** ? was pressed inside: the keys are listed over the canvas until esc or ? again. */
+	readonly help: boolean;
+	closeHelp(): void;
 	/** What `DeckStage` draws. */
 	readonly view: InsideView;
 }
@@ -109,6 +120,11 @@ export function useDeckInside({
 	const shown = useRef<StageShown | null>(null);
 	/** the camera before going in, and the slide gone into */
 	const before = useRef<{ camera: Camera; from: string } | null>(null);
+	/** the same, kept while a talk presented from inside a slide plays, for its end to land where Esc would have */
+	const presentedFrom = useRef<{ camera: Camera; from: string } | null>(null);
+	const [help, setHelp] = useState(false);
+	const helpOpen = useRef(help);
+	helpOpen.current = help;
 	/** the camera has landed on the slide gone into */
 	const flown = useRef(false);
 	const trip = useRef(0);
@@ -156,6 +172,7 @@ export function useDeckInside({
 		const slot = slotOf(going.slide);
 		const to = view === null || slot === null ? was.camera : outCamera(was, { slide: going.slide, slot }, view.w);
 		before.current = null;
+		setHelp(false);
 		hands.current.select(going.slide);
 		giveBackKeys();
 		const { fly, snap } = deckMotion();
@@ -208,6 +225,7 @@ export function useDeckInside({
 			address: source.address,
 			mode: "own",
 			room: false,
+			alone: true,
 			on: {
 				session: (session) => ears.current.heard(session),
 				shown: (picture) => {
@@ -216,7 +234,11 @@ export function useDeckInside({
 				},
 				talk: () => setSaid((count) => count + 1),
 				command: (command) => {
-					if (command.kind === "escape") ears.current.leave();
+					// the key list open over the canvas takes esc and ? to close it, and nothing acts through it
+					if (helpOpen.current) {
+						if (command.kind === "escape" || command.kind === "help") setHelp(false);
+					} else if (command.kind === "escape") ears.current.leave();
+					else if (command.kind === "help") setHelp(true);
 				},
 			},
 		});
@@ -229,6 +251,7 @@ export function useDeckInside({
 			shown.current = null;
 			trip.current++;
 			setInside(null);
+			setHelp(false);
 		};
 	}, [element, playable, project, page]);
 
@@ -292,9 +315,38 @@ export function useDeckInside({
 	useEffect(() => {
 		if (!presenting || now.current === null) return;
 		trip.current++;
+		// where Esc would have flown back to, for the talk's end
+		presentedFrom.current = before.current;
 		before.current = null;
 		setInside(null);
+		setHelp(false);
 	}, [presenting]);
+
+	const ended = useCallback(
+		(frame: string) => {
+			const was = presentedFrom.current;
+			presentedFrom.current = null;
+			const view = viewSize();
+			const slot = slotOf(frame);
+			if (was === null || slot === null) return false;
+			const to = view === null ? was.camera : outCamera(was, { slide: frame, slot }, view.w);
+			const { fly, snap } = deckMotion();
+			if (stillness() || fly <= 0) camera.set(to);
+			else camera.fly(to, fly, easing(snap));
+			return true;
+		},
+		[camera, slotOf, viewSize],
+	);
+
+	// the key list takes the keyboard from wherever it was (a slide's own document), and gives it back as it closes
+	useEffect(() => {
+		if (!help) return;
+		const before = document.activeElement;
+		hands.current.viewport()?.focus({ preventScroll: true });
+		return () => {
+			if (before instanceof HTMLElement && before.isConnected) before.focus({ preventScroll: true });
+		};
+	}, [help]);
 
 	// the talk's keys, ahead of the canvas's: Space is the next beat here, never the Hand
 	useEffect(
@@ -304,6 +356,12 @@ export function useDeckInside({
 				active: () => now.current !== null && now.current.phase !== "out",
 				handlers: {},
 				read: (event) => {
+					// the key list open: esc and ? close it, and no other key reaches the talk or the canvas
+					if (helpOpen.current) {
+						if (event.key === "Escape" || event.key === "?") setHelp(false);
+						event.preventDefault();
+						return true;
+					}
 					// ⌘↵ presents from the slide the talk is on, as the label offers, and ⇧⌘↵ from the first
 					const taken =
 						host.current?.key(event) === true ||
@@ -325,7 +383,27 @@ export function useDeckInside({
 		talk,
 		hold,
 	};
-	return { slide, chip, enter, leave, on, view };
+	const closeHelp = useCallback(() => setHelp(false), []);
+	return { slide, chip, enter, leave, on, ended, help, closeHelp, view };
+}
+
+/** The keys ? lists inside a slide, over the canvas: a press on it only ever closes it, never comes out of the slide. */
+export function DeckKeyList({ inside }: { inside: DeckInside }) {
+	if (!inside.help) return null;
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: it only keeps the canvas from hearing presses on the list
+		<div
+			className="absolute inset-0 z-30"
+			onPointerDown={(event) => event.stopPropagation()}
+			onDoubleClick={(event) => event.stopPropagation()}
+			onContextMenu={(event) => {
+				event.preventDefault();
+				event.stopPropagation();
+			}}
+		>
+			<KeyList place={{ at: "inside" }} onClose={inside.closeHelp} />
+		</div>
+	);
 }
 
 /**

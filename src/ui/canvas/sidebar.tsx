@@ -326,8 +326,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 	 * can follow the frames rather than lose them.
 	 */
 	onFramesRenamed?: (carry: (name: string) => string) => void;
-	/** A folder operation landed; the projection is behind until it is read again. */
-	onRefresh: () => void;
+	/** A folder operation landed; the projection is behind until it is read again, which the promise says is done. */
+	onRefresh: () => Promise<void>;
 	/** A verb the canvas's one undo stack should hold; the rail records, the canvas keeps. */
 	onRecord?: (entry: HistoryEntry) => void;
 	/** The slot the rail puts its runner in, so the canvas can walk an entry back. */
@@ -1070,13 +1070,14 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 			setRenaming(null);
 			setExpanded((was) => new Set([...was, path]));
 			setCursor(`page:${path}`);
-			onSwitchPage(path);
 			// the frames it was made for follow it in, and the two halves are one entry
 			// because one press has to take both of them back. A page made for nothing
 			// was nowhere a moment ago, so its only inverse is the staged delete (#230)
 			if (gathering.length > 0) moveFramesInto(gathering, path, 0, true);
 			else onRecord?.({ kind: "mint", staged: { frames: [], page: path } });
-			onRefresh();
+			// the new page opens once the canvas knows it, since a page it does not know sends it home (spool#278)
+			await onRefresh();
+			onSwitchPage(path);
 			return;
 		}
 		const row = now.current.rows.find((each) => rowKey(each) === at.key);

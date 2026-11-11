@@ -25,7 +25,7 @@ import {
 } from "./knob-protocol";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
 import { createHandsLog } from "./record-hands";
-import { slideCalls } from "./slide-beats";
+import { setSlideBeat, slideCalls } from "./slide-beats";
 import type { KnobRead, SpoolUi } from "./spool-public";
 import { parseWalkDecision } from "./walk-protocol";
 
@@ -735,10 +735,13 @@ function reportWalk(from: string, to: string): void {
 	}
 }
 
-/** Sibling frame document, same project, same scenario query. */
+/** Sibling frame document, same project, same scenario query; a beat asked of this slide is this slide's alone. */
 function frameUrl(target: string): string {
 	const path = window.location.pathname.replace(/[^/]+$/, encodeURIComponent(target));
-	return `${path}${window.location.search}`;
+	const query = new URLSearchParams(window.location.search);
+	query.delete("beat");
+	const search = query.toString();
+	return search === "" ? path : `${path}?${search}`;
 }
 
 /**
@@ -2124,6 +2127,20 @@ function useSpoolState(): SpoolState {
 
 /** A slide's beats and live (spool#265): a call outside the stage belongs to the frame the document shows. */
 const slides = slideCalls({ frame: () => (play === undefined ? doc.frame : mountedFrame) });
+// `spool shot --beat` asks for a slide at a beat of its own rather than its last, by its index in the query
+if (play === undefined) {
+	const asked = queryBeat();
+	if (asked !== undefined) setSlideBeat(doc.frame, asked);
+}
+
+function queryBeat(): number | undefined {
+	try {
+		const value = new URL(window.location.href).searchParams.get("beat");
+		return value !== null && /^\d+$/.test(value) ? Number(value) : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 export const ui: SpoolUi = Object.freeze({
 	state,

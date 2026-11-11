@@ -343,6 +343,7 @@ interface VerifyOptions {
 	at?: number[];
 	scroll?: number;
 	scenario?: string;
+	beat?: string;
 }
 
 function parseViewport(value: string): { width: number; height: number } {
@@ -520,6 +521,10 @@ program
 	.option("--at <milliseconds>", "shoot at these times after the first commit, one or 0,1500,4000", parseMilliseconds)
 	.option("--scroll <px>", "scroll the document down this far before shooting", parseScroll)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
+	.option(
+		"--beat <beat>",
+		"shoot a slide at this beat, by its name or its number from 1, not its last (deck experiment)",
+	)
 	.action(async (frames: string[], options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
 		const names = framesNamed(root, frames);

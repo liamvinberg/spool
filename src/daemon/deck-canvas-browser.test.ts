@@ -13,7 +13,8 @@ const slide = (words: string) => `export default function Slide() {
  * spool#265's canvas flow, one walk: New presentation, a loose frame into the talk, a trade, one taken out, from the
  * canvas and from the Pages rail alike, each one undo, and a note written from Properties. On a deck page the canvas's
  * own snapping stands down and a frame let go sends the deck's change; a row let go in the rail sends the same one.
- * Then into a slide, the talk played there on its own keys, and out again by esc.
+ * Then into a slide, the talk played there on its own keys, and out again: by esc, by a row pressed in the rail, and
+ * by the end of a talk presented from there. Last, an ordinary New page opens its page too.
  */
 it("walks a talk from New presentation through the canvas, the Pages rail and Properties, each change one undo", {
 	timeout: 240_000,
@@ -211,9 +212,51 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	await page.keyboard.press("Escape");
 	await expect.poll(camera).toEqual(out);
 
+	// inside, ? lists the keys over the canvas with no room's among them, and esc puts the list away, still inside
+	await page.mouse.dblclick(back.x, back.y);
+	await page.locator('[data-deck-stage="presentation/number"][data-deck-stage-shown]').waitFor();
+	await page.keyboard.press("?");
+	const keyList = page.getByRole("dialog", { name: "Presenting keys" });
+	await keyList.waitFor();
+	expect(await keyList.getByRole("heading", { level: 3 }).allTextContents()).toEqual(["move", "jump", "live slide"]);
+	await page.keyboard.press("Escape");
+	await keyList.waitFor({ state: "detached" });
+	// there is no room to black: B does nothing, and the next key moves the talk on
+	await page.keyboard.press("b");
+	await page.keyboard.press("ArrowRight");
+	await page.locator('[data-deck-stage="presentation/close"][data-deck-stage-shown]').waitFor();
+	// a row pressed in Pages comes out of the slide first, then is selected
+	await page.getByRole("button", { name: "x frame" }).click();
+	await page.locator("[data-deck-stage-shown]").waitFor({ state: "detached" });
+	await expect.poll(() => page.getByRole("button", { name: "x frame" }).getAttribute("aria-pressed")).toBe("true");
+	await expect.poll(async () => (await camera())?.k).toBe(out?.k);
+
+	// presented from inside a slide and ended on it, the canvas comes back to the camera from before going in
+	const outside = await camera();
+	const from = await pagePointOf(page, { x: 3 * 1440 + 640, y: 360 });
+	await page.mouse.dblclick(from.x, from.y);
+	await page.locator('[data-deck-stage="presentation/close"][data-deck-stage-shown]').waitFor();
+	const opened = page.context().waitForEvent("page");
+	await page.keyboard.press("ControlOrMeta+Enter");
+	const room = await opened;
+	await page.locator("[data-deck-presenter]").waitFor();
+	const closed = room.waitForEvent("close");
+	await page.keyboard.press("Escape");
+	await closed;
+	await page.locator("[data-deck-presenter]").waitFor({ state: "detached" });
+	await expect.poll(camera).toEqual(outside);
+	expect(await page.getByRole("button", { name: "close frame" }).getAttribute("aria-pressed")).toBe("true");
+
 	// zoomed out until the slides are too small for their verbs, the selected slide's label still names it
 	await page.setViewportSize({ width: 480, height: 900 });
 	await page.keyboard.press("Shift+1");
-	const named = page.locator('[data-frame-label="presentation/number"][data-away] [data-slide-number] + span');
+	const named = page.locator('[data-frame-label="presentation/close"][data-away] [data-slide-number] + span');
 	await expect.poll(() => named.evaluate((name) => name.getBoundingClientRect().width)).toBeGreaterThan(8);
+
+	// back to a full window, an ordinary New page opens the page it makes, as New presentation does (spool#278)
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.getByRole("button", { name: "New page", exact: true }).click();
+	await page.keyboard.type("aside");
+	await page.keyboard.press("Enter");
+	await page.locator('[data-path-page="aside"][data-path-kind="here"]').waitFor();
 });

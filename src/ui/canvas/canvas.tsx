@@ -63,7 +63,7 @@ import {
 	writeKnob,
 } from "../api";
 import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
-import { type DeckInside, DeckStage, useDeckInside } from "../deck/deck-inside";
+import { type DeckInside, DeckKeyList, DeckStage, useDeckInside } from "../deck/deck-inside";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
@@ -2942,6 +2942,8 @@ function CanvasField({
 	const selectFrameRow = (name: string, modifiers: SelectModifiers, span?: FrameSpan) => {
 		const frame = navigatorFrames.find((candidate) => candidate.name === name);
 		if (frame === undefined) return;
+		// inside a slide of a deck, a row pressed comes out of it first, as a press on the canvas does (spool#265)
+		deckInside.leave();
 		const targetPage = pageOf(frame);
 		const changedPage = targetPage !== store.get().activePage;
 		if (changedPage) {
@@ -5755,7 +5757,7 @@ function CanvasField({
 	const onFlyToFrame = useStableCallback(flyToFrame);
 	const onTrashPage = useStableCallback((page: string, names: string[]) => stageEntry({ frames: names, page }));
 	const onCopyFramePath = useStableCallback((name: string) => copySourcePath(frameSourcePath(name)));
-	const onRefreshFrames = useStableCallback(() => void refetchFrames());
+	const onRefreshFrames = useStableCallback(() => refetchFrames());
 	const commentsPane: PaneDef = {
 		id: "comments",
 		title: "Comments",
@@ -6199,6 +6201,7 @@ function CanvasField({
 						)}
 						{framed && deckPage.on && <DeckStage inside={deckInside} camera={camera} view={viewChanges} />}
 					</div>
+					{framed && deckPage.on && <DeckKeyList inside={deckInside} />}
 
 					{framed && (
 						<>
@@ -6585,6 +6588,8 @@ function CanvasField({
 					holdChain(null);
 					setSelected([frame]);
 					frameAnchor.current = frame;
+					// presented from inside a slide, the camera comes back as esc would have brought it
+					if (deckInside.ended(frame)) return;
 					const box = store.get().frames.find((one) => one.name === frame);
 					const viewport = viewportRef.current;
 					const cam = camera.get();

@@ -5,8 +5,10 @@ import type { StageShown } from "../../deck/stage-wire";
 import { testBrowser } from "../../test-browser";
 import { builtUi, serveProject, writeDesignFile } from "../../test-helpers";
 import {
+	blackedOut,
 	explainFrame,
 	HARD_TALK,
+	onGround,
 	pixelsOf,
 	readScreen,
 	recordScreen,
@@ -212,26 +214,19 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	const kept = explainFrame(pixelsOf(await audience.screenshot(), SCREEN_POINTS), slideLooks());
 	expect(kept === undefined ? undefined : kept.mix < 0.5 ? kept.from : kept.to).toBe("tall");
 
-	// every frame the room's window composited was a slide whole or two dissolving, black only while it opened again:
-	// nothing of spool's, ever
+	// every frame the room's window composited was a slide whole or two dissolving, the bare ground only while it opened
+	// again: nothing of spool's, ever
 	const frames = await screen.stop();
-	const black = (png: Buffer) =>
-		pixelsOf(png, SCREEN_POINTS).every((colour) => colour.every((channel) => channel <= 2));
-	const gone = reloaded + frames.slice(reloaded).findIndex(black);
+	const gone = reloaded + frames.slice(reloaded).findIndex((png) => onGround(pixelsOf(png, SCREEN_POINTS)));
 	expect(gone).toBeGreaterThanOrEqual(reloaded);
 	expect(readScreen(frames.slice(0, gone)).length).toBeGreaterThan(0);
 	expect(readScreen(frames.slice(gone)).length).toBeGreaterThan(0);
 
-	// B blacks the room's screen, and the next key brings it back and does nothing else
+	// B blacks the room's screen, pure black where the ground is not, and the next key brings it back and does nothing
+	// else
 	await view.keyboard.press("b");
 	await expect.poll(async () => (await presenter(view))?.black).toBe(true);
-	await expect
-		.poll(async () =>
-			pixelsOf(await audience.screenshot(), SCREEN_POINTS)
-				.flat()
-				.every((channel) => channel <= 2),
-		)
-		.toBe(true);
+	await expect.poll(async () => blackedOut(pixelsOf(await audience.screenshot(), SCREEN_POINTS))).toBe(true);
 	await view.keyboard.press("ArrowRight");
 	await expect.poll(async () => (await presenter(view))?.black).toBe(false);
 	expect(await together(view, audience)).toEqual({ slide: 6, beat: 0 });

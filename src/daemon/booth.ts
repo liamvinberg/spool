@@ -383,6 +383,8 @@ interface ShotRequest {
 	/** CSS px to scroll the document down once it commits, ahead of the settle or the first seek. */
 	scroll?: number | undefined;
 	scenario?: string | undefined;
+	/** A slide's beat, from 0, to shoot it at rather than its last (spool#277). */
+	beat?: number | undefined;
 	/**
 	 * An element to find once the frame settles, by a CSS selector or a `path:line` element pointer
 	 * (`spool comments add --element`): the result says where it is and what the selection calls it.
@@ -530,10 +532,13 @@ const paceSource = `(warmMs, windowMs, enough) => new Promise((done) => {
 	requestAnimationFrame(tick);
 })`;
 
-/** A frame's document on the render origin, top level, as the canvas's iframe loads it. */
-function frameUrl(origin: string, project: string, frame: string, scenario?: string): string {
-	const query = scenario === undefined ? "" : `?scenario=${encodeURIComponent(scenario)}`;
-	return `${origin}/p/${encodeURIComponent(project)}/frames/${encodeURIComponent(frame)}${query}`;
+/** A frame's document on the render origin, top level, as the canvas's iframe loads it; a slide at a beat of its own. */
+function frameUrl(origin: string, project: string, frame: string, scenario?: string, beat?: number): string {
+	const query = new URLSearchParams({
+		...(scenario === undefined ? {} : { scenario }),
+		...(beat === undefined ? {} : { beat: String(beat) }),
+	}).toString();
+	return `${origin}/p/${encodeURIComponent(project)}/frames/${encodeURIComponent(frame)}${query === "" ? "" : `?${query}`}`;
 }
 
 /** The one line a failed picture or shot is explained by. */
@@ -1129,7 +1134,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		tab.page.on("console", onConsole);
 		let watch: Disposable | undefined;
 		try {
-			const url = frameUrl(origin, request.project, request.frame, request.scenario);
+			const url = frameUrl(origin, request.project, request.frame, request.scenario, request.beat);
 			const ms = timing.shotMs + Math.max(0, ...(request.at ?? []));
 			const shot = (async () => {
 				watch = await shotOnly(tab);

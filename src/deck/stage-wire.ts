@@ -80,6 +80,8 @@ export type HostMessage =
 			readonly spool: "stage-open";
 			readonly mode: StageMode;
 			readonly room: boolean;
+			/** no room watches the talk: it plays in place, where B, the period and F are nobody's keys */
+			readonly alone?: true;
 			readonly session?: StageSession;
 			readonly frame?: string;
 	  }
@@ -199,6 +201,7 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 			spool: "stage-open",
 			mode: value.mode,
 			room: value.room,
+			...(value.alone === true ? { alone: true } : {}),
 			...(session === undefined ? {} : { session }),
 			...(typeof value.frame === "string" ? { frame: value.frame } : {}),
 		};

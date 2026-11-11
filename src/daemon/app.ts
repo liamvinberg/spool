@@ -63,6 +63,7 @@ import { commentRoutes, teamPeople } from "./comment-routes";
 import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
 import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
+import { frameBeatAsked } from "./deck/disk";
 import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
 import { deckRoutes } from "./deck/routes";
 import { createStagePlay, ROOM_QUERY } from "./deck/stage-play";
@@ -338,6 +339,8 @@ const bootRequest = z.strictObject({
 	at: z.array(z.number().int().nonnegative().max(SHOT_AT_MAX_MS)).min(1).max(SHOT_AT_MAX_COUNT).optional(),
 	scroll: z.number().int().nonnegative().optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
+	/** a slide's beat to shoot it at rather than its last, by its name or its number from 1 (spool#277) */
+	beat: z.string().min(1).max(200).optional(),
 });
 
 const at = z
@@ -1767,7 +1770,7 @@ export function createDaemonApp({
 				const parsed = bootRequest.safeParse(value);
 				return parsed.success
 					? parsed.data
-					: c.text('a boot is { "width", "height", "at"?: [ms, …], "scroll"?: px, "scenario"? }', 400);
+					: c.text('a boot is { "width", "height", "at"?: [ms, …], "scroll"?: px, "scenario"?, "beat"? }', 400);
 			}),
 			(c) => {
 				// shot and logs (#25): one boot of the served document in the photo
@@ -1779,7 +1782,20 @@ export function createDaemonApp({
 				const project = resolveProject(c, name);
 				if ("response" in project) return project.response;
 				const frame = c.req.param("frame");
-				const { width, height, at, scroll, scenario } = c.req.valid("json");
+				const { width, height, at, scroll, scenario, beat: asked } = c.req.valid("json");
+				// a slide at a beat of its own (spool#277): the deck experiment's, read from the slide's source
+				let slideBeat: number | undefined;
+				if (asked !== undefined) {
+					if (!deckOn()) {
+						return c.text(
+							"A slide's beats are the deck experiment's, which is off here: `spool experiments on deck`",
+							409,
+						);
+					}
+					const found = frameBeatAsked(project.root, frame, asked);
+					if (typeof found === "object") return c.text(found.message, 400);
+					slideBeat = found;
+				}
 				c.header("content-type", "application/x-ndjson; charset=utf-8");
 				c.header("cache-control", "no-store");
 				return stream(c, async (out) => {
@@ -1801,6 +1817,7 @@ export function createDaemonApp({
 									at: at === undefined ? undefined : [...new Set(at)].sort((a, b) => a - b),
 									scroll,
 									scenario,
+									beat: slideBeat,
 								},
 								(line) => void write({ narrate: line }).catch(() => {}),
 							);
@@ -1829,6 +1846,7 @@ export function createDaemonApp({
 								scheme: shot.scheme,
 								tiles: plan.tiles,
 								...(scroll === undefined ? {} : { scroll }),
+								...(slideBeat === undefined ? {} : { beat: slideBeat }),
 								shots: shot.shots,
 								entries,
 							});

@@ -9,7 +9,7 @@ import { STAGE_CSS, stageOf } from "./stage-play";
 /**
  * A deck's talk as one HTML file (spool#275): the stage of its play address, composing the talk's slides and nothing
  * else, packed the way a frame's file is (spool#239) so it opens from disk with nothing behind it. It plays like the
- * room's screen, on black and fitted to the window, opening on the first slide's first beat over that slide's still.
+ * room's screen, on the ground and fitted to the window, opening on the first slide's first beat over that slide's still.
  * The one thing of spool's it ever draws is a quiet line under the first slide, gone at the first key. A slide that
  * does not compile refuses the file, named.
  */
@@ -72,7 +72,7 @@ export const TALK_HINT = "→ next · F full screen";
 /**
  * The file's own rules over the stage's. Until the stage fits the body to the talk, the body is the window, so the
  * still shows fitted the same way before and after. The still goes the moment a slide is on screen. The hint sits
- * in the black under the talk when the window leaves room there, and low over it when not.
+ * in the ground under the talk when the window leaves room there, and low over it when not.
  */
 const fileCss = (size: { w: number; h: number }) => `
 body { position: fixed; inset: 0; margin: 0; }
