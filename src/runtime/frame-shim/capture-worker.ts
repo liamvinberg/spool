@@ -159,7 +159,7 @@ function encode(canvas: HTMLCanvasElement, type: string): string {
 /**
  * The faces a still carries, loaded in this page before it is drawn (spool#275). An svg image loads its own
  * @font-face sources only once it is decoded and laid out, so the first draw of text that needs a face not yet
- * loaded in this renderer shows nothing there, every face being font-display:block: a slide's paragraph whose
+ * loaded in this renderer shows nothing there, every face being held invisible until it loads: a slide's paragraph whose
  * last word reached a second subset went missing from its PDF page. Loaded here first, the same data URLs are
  * ready when the image asks for them.
  */
