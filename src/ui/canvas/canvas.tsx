@@ -65,7 +65,7 @@ import {
 import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
 import { type DeckInside, DeckKeyList, DeckStage, useDeckInside } from "../deck/deck-inside";
 import { DeckLayer, useDeckPage } from "../deck/deck-page";
-import { presentAgain, presentTakes, warmPresent } from "../deck/present";
+import { presentAgain, presentCold, presentTakes, warmPresent } from "../deck/present";
 import { PresentControl } from "../deck/present-controls";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
@@ -385,6 +385,8 @@ const NUDGE_FLUSH_MS = 400;
 const SELECTION_PUT_MS = 150;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
+/** A slide of a deck page held this long is readied for Present: ⌘ then ↵ comes too quickly to boot one (spool#298). */
+const PRESENT_SETTLE_MS = 500;
 /** How long C is held before letting go of it hands back the tool it took over from, rather than keeping Comment. */
 const COMMENT_HOLD_MS = 300;
 /** How long a pin's frame has to say what is under the pin, while its composer is open. */
@@ -1941,14 +1943,24 @@ function CanvasField({
 	deckKeep.current = deckPage.keep;
 	const deckOwns = deckPage.owns;
 	const presentKey = deckPage.presentKey;
-	// ⌘ held over a slide of a deck page: ⌘↵ is likely next, so the slide it would play is readied now (spool#298)
+	// one slide of a deck page held a moment, or held with ⌘ down: Present is likely next, so the slide it would play is
+	// readied now, out of sight, and let go when the hold moves off the slides (spool#298)
 	const presentFromHeld = deckPage.presentFrom;
+	const heldSlide = deckPage.on && selected.length === 1 ? selected[0] : undefined;
 	useEffect(() => {
-		if (!accelDown || !deckPage.on || presentTakes() !== "slides") return;
-		const [only, ...more] = store.get().selected;
+		if (heldSlide === undefined || presentTakes() !== "slides") return;
 		const from = presentFromHeld();
-		if (from !== undefined && more.length === 0 && only === from.slide) warmPresent(from);
-	}, [accelDown, deckPage.on, presentFromHeld, store]);
+		if (from?.slide !== heldSlide) return;
+		if (accelDown) {
+			warmPresent(from);
+			return;
+		}
+		const timer = setTimeout(() => warmPresent(from), PRESENT_SETTLE_MS);
+		return () => clearTimeout(timer);
+	}, [accelDown, heldSlide, presentFromHeld]);
+	useEffect(() => {
+		if (heldSlide === undefined) presentCold();
+	}, [heldSlide]);
 	const deckInside = useDeckInside({
 		project,
 		page: activePage,

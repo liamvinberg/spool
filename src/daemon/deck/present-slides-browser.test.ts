@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Page } from "playwright-core";
+import type { BrowserContext, Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { testBrowser } from "../../test-browser";
 import { builtUi, serveProject, writeDesignFile } from "../../test-helpers";
@@ -21,7 +21,10 @@ const THREE: Rgb = [233, 196, 106];
 const W = 1280;
 const H = 720;
 
-/** A small talk: a first slide that boots slowly, for its picture comes slowly, a plain one, and a live one. */
+/**
+ * A small talk: a first slide that boots slowly, for its picture comes slowly, one of two beats, which has no picture
+ * to fly as but the live slide, and a live one.
+ */
 function writeTalk(root: string): void {
 	const json = (value: unknown) => `${JSON.stringify(value, null, "\t")}\n`;
 	const hex = (colour: Rgb) => `#${colour.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
@@ -48,7 +51,10 @@ export default function Slide() {
 	slide(
 		"two",
 		1,
-		`export default function Slide() {
+		`import { ui } from "spool";
+
+export default function Slide() {
+	ui.beats(["said", "shown"]);
 	return <div style={{ position: "absolute", inset: 0, background: "${hex(TWO)}" }} />;
 }
 `,
@@ -162,29 +168,18 @@ const LOOKS: Record<string, readonly Rgb[]> = {
 /** Whether each document in the window hides the pointer, as the stage's host asks of it. */
 const cursors = (view: Page) =>
 	Promise.all(
-		view.frames().map((frame) =>
-			frame.evaluate(() => document.documentElement.dataset.spoolStageCursor ?? "shown").catch(() => "gone"),
-		),
+		view
+			.frames()
+			.map((frame) =>
+				frame.evaluate(() => document.documentElement.dataset.spoolStageCursor ?? "shown").catch(() => "gone"),
+			),
 	);
 
-const phaseOf = (view: Page) =>
-	view.evaluate(() => document.querySelector("[data-present-slides]")?.getAttribute("data-present-slides") ?? null);
-
-it("presents on one display: the slide grows from its card into a full screen, turns round mid-flight either way, steps, and flies home, with no blank frame, no picture swapped back and no jump", {
-	timeout: 240_000,
-}, async () => {
-	const browser = await testBrowser();
-	const uiDir = await builtUi();
-	const project = await serveProject({ uiDir, experiments: { deck: true } });
-	writeTalk(project.root);
-	writeDesignFile(
-		project.root,
-		".spool/state.json",
-		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.08 } } }),
-	);
-	const context = await browser.newContext({ viewport: { width: W, height: H } });
-	// full screen as a browser gives it, without a headless browser's own idea of the screen's size: asked for in the
-	// press and left at the end, each said to the page as the browser says it
+/**
+ * Full screen as a browser gives it, without a headless browser's own idea of the screen's size: asked for only in a
+ * press the page has not spent on anything else, and left, each said to the page as the browser says it.
+ */
+async function fullScreenAsABrowserGivesIt(context: BrowserContext): Promise<void> {
 	await context.addInitScript(() => {
 		let full: Element | null = null;
 		const asked: string[] = [];
@@ -205,6 +200,29 @@ it("presents on one display: the slide grows from its card into a full screen, t
 			return Promise.resolve();
 		};
 	});
+}
+
+/** What the page asked of full screen, in order: "on" and "off". */
+const fullScreenAsked = (view: Page) =>
+	view.evaluate(() => (window as unknown as { __fullScreen: string[] }).__fullScreen);
+
+const phaseOf = (view: Page) =>
+	view.evaluate(() => document.querySelector("[data-present-slides]")?.getAttribute("data-present-slides") ?? null);
+
+it("presents on one display: the slide grows from its card into a full screen, turns round mid-flight either way, steps, and flies home, with no blank frame, no picture swapped back and no jump", {
+	timeout: 240_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir, experiments: { deck: true } });
+	writeTalk(project.root);
+	writeDesignFile(
+		project.root,
+		".spool/state.json",
+		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.08 } } }),
+	);
+	const context = await browser.newContext({ viewport: { width: W, height: H } });
+	await fullScreenAsABrowserGivesIt(context);
 	// the first slide's picture comes to the window's stage only when the test lets it: the slide boots slowly there,
 	// while the canvas has its own picture of it
 	let release = () => {};
@@ -245,9 +263,11 @@ it("presents on one display: the slide grows from its card into a full screen, t
 		)
 		.toBe("1");
 	await view.waitForTimeout(300);
-	// → steps to the next slide, and the next
+	// → steps to the next slide, through its beats, and the next
 	await view.keyboard.press("ArrowRight");
 	await view.waitForTimeout(500);
+	await view.keyboard.press("ArrowRight");
+	await view.waitForTimeout(300);
 	await view.keyboard.press("ArrowRight");
 	// on a live slide the pointer is the slide's: nothing lies over it to take a click, and it hides with the bar
 	await expect.poll(() => view.locator("[data-present-clear]").count()).toBe(0);
@@ -269,12 +289,7 @@ it("presents on one display: the slide grows from its card into a full screen, t
 	const twos = frames.map((png) => boxOf(png, TWO));
 
 	// the window asked for full screen in each press, and left it at each end
-	expect(await view.evaluate(() => (window as unknown as { __fullScreen: string[] }).__fullScreen)).toEqual([
-		"on",
-		"off",
-		"on",
-		"off",
-	]);
+	expect(await fullScreenAsked(view)).toEqual(["on", "off", "on", "off"]);
 
 	// the way in, out and in again: from the frame it left its card until it filled the screen, every frame shows the
 	// first slide whole, never blank and never another picture of it, and it moved one way at a time, turning only
@@ -316,9 +331,24 @@ it("presents on one display: the slide grows from its card into a full screen, t
 		})
 		.toEqual(["talk/two"]);
 
-	// a browser leaving full screen by itself, as Esc does where the page cannot hold it, ends the talk
+	// the slide held a moment is readied out of sight, the stage drawn under Present; a press still reaches Present, and
+	// sets off at once from what the stage drew
+	const present = view.getByRole("button", { name: "Present", exact: true });
+	await expect
+		.poll(() =>
+			view.evaluate(
+				() => (document.querySelector('[data-present-slides="warm"] iframe') as HTMLElement | null)?.style.opacity,
+			),
+		)
+		.toBe("1");
+	await present.click({ timeout: 5_000 });
+	await expect.poll(() => phaseOf(view)).toBe("on");
+	// a talk after the first turns round on its way home as the first did
+	await view.keyboard.press("Escape");
+	await expect.poll(() => phaseOf(view)).toBe("home");
 	await view.keyboard.press("ControlOrMeta+Enter");
 	await expect.poll(() => phaseOf(view)).toBe("on");
+	// a browser leaving full screen by itself, as Esc does where the page cannot hold it, ends the talk
 	await view.evaluate(() => document.exitFullscreen());
 	await view.locator("[data-present-slides]").waitFor({ state: "detached" });
 });

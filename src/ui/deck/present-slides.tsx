@@ -127,7 +127,7 @@ export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnde
 	const trip = useRef(0);
 	/** the talk under way, by its name */
 	const started = useRef<string | null>(null);
-	/** the frame the talk starts on, and the last frame the stage drew at its first beat */
+	/** the frame the talk starts on, and the frame the stage shows at its first beat, if it does */
 	const wanted = useRef<string | null>(null);
 	const drawn = useRef<string | null>(null);
 	/** the live slide is on in the flying layer, for the rest of the talk */
@@ -141,7 +141,7 @@ export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnde
 
 	// one spring for everything that flies, the theme's; under reduced motion nothing flies, and its duration is zero
 	const flight = useRef(
-		createFlight({ x: 0, y: 0, w: talk.w, r: 0 }, tune(timing.present.duration || 0.5, timing.present.bounce)),
+		createFlight({ x: 0, y: 0, w: talk.w, r: 0 }, tune(timing.present.duration, timing.present.bounce)),
 	);
 	const loop = useRef(0);
 	const draw = useCallback(() => {
@@ -374,7 +374,7 @@ export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnde
 					if (said !== null && frame !== undefined) said.say({ kind: "session", session: now, frame });
 				},
 				shown: (shown) => {
-					if (shown.at.beat === 0) drawn.current = shown.frame;
+					drawn.current = shown.at.beat === 0 ? shown.frame : null;
 					if (shown.frame !== wanted.current) return;
 					if (phaseRef.current === "waiting") launching.current();
 					else if (phaseRef.current === "in" || phaseRef.current === "on") showing.current("fade");
@@ -434,6 +434,11 @@ export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnde
 		setPinned(false);
 		setHelp(false);
 		setPhase("waiting");
+		// a stage readied on the slide has drawn it already, and it sets off as that
+		if (drawn.current === ask.slide) {
+			launch();
+			return;
+		}
 		const picture = hands.current.pictureOf(ask.slide);
 		if (picture === undefined) return;
 		const image = new Image();
@@ -653,11 +658,13 @@ export function PresentSlides({ ask, warm, deck, talk, cardOf, pictureOf, onEnde
 				className={cn("absolute inset-0 outline-none", talking && "pointer-events-auto")}
 				style={{ background: STAGE_GROUND, opacity: 0 }}
 			/>
-			{/* the slide: its picture while the live slide is not drawn yet, and the live slide */}
+			{/* the slide: its picture while the live slide is not drawn yet, and the live slide; out of the hand's way, its
+			    live document included, until it has landed */}
 			<div
 				ref={flyer}
 				data-present-flyer=""
 				aria-hidden={shown ? undefined : "true"}
+				inert={phase !== "on"}
 				className={cn(
 					"absolute top-0 left-0 origin-top-left overflow-hidden",
 					phase === "on" && "pointer-events-auto",
