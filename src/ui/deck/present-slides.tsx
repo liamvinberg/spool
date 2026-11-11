@@ -271,7 +271,10 @@ export function PresentSlides({
 		aim(landing(), landed(n));
 	}, [aim, fade, landing, landed, setPhase, showLive, setPlace]);
 
+	// the window lets go of the screen once the slide is home, as it covered the screen before the slide set off: a
+	// window changing size draws nothing, so nothing flies while it does
 	const done = useCallback(() => {
+		fillScreen(false);
 		cancelAnimationFrame(loop.current);
 		loop.current = 0;
 		started.current = null;
@@ -320,7 +323,6 @@ export function PresentSlides({
 		const was = phaseRef.current;
 		if (was !== "waiting" && was !== "in" && was !== "on") return;
 		const n = ++trip.current;
-		fillScreen(false);
 		const frame = currentFrame();
 		setPhase("home");
 		setPinned(false);
@@ -329,6 +331,7 @@ export function PresentSlides({
 		void fade(ground.current, 0, hands.current.timing.groundOut);
 		if (was === "waiting" || frame === null) {
 			// nothing flew: the screen empties, and the canvas is where it was
+			fillScreen(false);
 			if (frame !== null) hands.current.onEnded(frame);
 			setPlace(null);
 			void fade(flyer.current, 0, hands.current.timing.groundOut).then(() => {

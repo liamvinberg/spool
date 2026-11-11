@@ -252,6 +252,8 @@ it("presents on one display: the slide grows from its card into a full screen, t
 	await view.waitForTimeout(120);
 	await view.keyboard.press("Escape");
 	await expect.poll(() => phaseOf(view)).toBe("home");
+	// the window keeps the screen while the slide flies home: it lets go only once the slide is there
+	expect(await fullScreenAsked(view)).toEqual(["on"]);
 	await view.waitForTimeout(160);
 	await view.keyboard.press("ControlOrMeta+Enter");
 	await expect.poll(() => phaseOf(view)).toBe("on");
@@ -288,8 +290,9 @@ it("presents on one display: the slide grows from its card into a full screen, t
 	const ones = frames.map((png) => boxOf(png, ONE));
 	const twos = frames.map((png) => boxOf(png, TWO));
 
-	// the window asked for full screen in each press, and left it at each end
-	expect(await fullScreenAsked(view)).toEqual(["on", "off", "on", "off"]);
+	// the window asked for full screen in the press, kept it while the slide turned round on its way home, and left it
+	// once the slide was home
+	expect(await fullScreenAsked(view)).toEqual(["on", "off"]);
 
 	// the way in, out and in again: from the frame it left its card until it filled the screen, every frame shows the
 	// first slide whole, never blank and never another picture of it, and it moved one way at a time, turning only
