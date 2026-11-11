@@ -572,6 +572,8 @@ export function bootStage(runtime: StageRuntime): void {
 		const slide = slides[copy.index];
 		const before = runtime.state.read();
 		const update = async () => {
+			// it threw out of sight on its new beat while the dissolve waited for a frame: the room keeps what it has
+			if (copy.broken || copies.get(copy.key) !== copy) return;
 			setSlideBeat(copy.key, at.beat);
 			revealed = { key: copy.key, from };
 			show(copy.key);

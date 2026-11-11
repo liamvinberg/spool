@@ -13,6 +13,7 @@ interface Slide {
 	frame: string;
 	screen: ComponentType;
 	live?: boolean;
+	beats?: number;
 }
 
 interface Stage {
@@ -39,6 +40,8 @@ function useTalkState(): StageState {
 		() => stateNow,
 	);
 }
+/** `ui.beats` as a slide calls it, from the stage's own module */
+let useBeats: (names: readonly [string, ...string[]]) => { name: string } = () => ({ name: "" });
 const writeState = (next: StageState) => {
 	stateNow = next;
 	for (const listener of [...stateHeard]) listener();
@@ -67,11 +70,20 @@ async function stage(
 		deck: {
 			page: "talk",
 			size: { w: 160, h: 90 },
-			slides: slides.map(({ frame, live }) => ({ frame, beats: 1, live: live === true, w: 160, h: 90 })),
+			slides: slides.map(({ frame, live, beats }) => ({
+				frame,
+				beats: beats ?? 1,
+				live: live === true,
+				w: 160,
+				h: 90,
+			})),
 		},
 	};
 	document.body.innerHTML = '<div id="root"></div>';
 	const { bootStage } = await import("./stage");
+	// a slide outside the stage's scopes would be no frame; every slide here is inside one
+	const outside = { frame: () => "", report: () => {} };
+	useBeats = (await import("../slide-beats")).slideCalls(outside).beats;
 	bootStage({
 		load: async (frame) => {
 			const screen = slides.find((slide) => slide.frame === frame)?.screen;
@@ -114,6 +126,7 @@ const statusOf = (on: Stage, frame: string) => on.slides().find((slide) => slide
 afterEach(() => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
+	Reflect.deleteProperty(document, "startViewTransition");
 });
 
 it("holds the room's picture off a slide whose stylesheet or picture will not come, names it, and tries again", async () => {
@@ -269,4 +282,33 @@ it("keeps every slide it readied ready, so a jump far across the talk is on at o
 	on.send({ spool: "stage-command", command: { kind: "last" } });
 	await vi.waitFor(() => expect(on.shown().at(-1)?.at.slide).toBe(5));
 	expect(on.shown().at(-1)).toMatchObject({ ready: true, held: false });
+});
+
+it("keeps the room's picture when the slide it dissolves to throws on its new beat before the dissolve begins", async () => {
+	// a dissolve's change is made a frame after it is asked for, as a browser's view transition makes it
+	Object.defineProperty(document, "startViewTransition", {
+		configurable: true,
+		value: (update: () => Promise<void>) => {
+			const changed = new Promise((resolve) => setTimeout(resolve, 20)).then(update);
+			return { updateCallbackDone: changed, ready: changed, finished: changed, skipTransition() {} };
+		},
+	});
+	function ThrowsOnBoom() {
+		if (useBeats(["fine", "boom"]).name === "boom") throw new Error("this slide throws on its second beat");
+		return createElement("p", null, "c");
+	}
+	const on = await stage(
+		[
+			{ frame: "talk/a", screen: plain("a") },
+			{ frame: "talk/b", screen: plain("b") },
+			{ frame: "talk/c", screen: ThrowsOnBoom, beats: 2 },
+		],
+		{ mode: "own", room: true },
+	);
+	await vi.waitFor(() => expect(on.slides().map((slide) => slide.status)).toEqual(["ready", "ready", "ready"]));
+
+	on.send({ spool: "stage-command", command: { kind: "go", slide: 2, beat: 1 } });
+	await vi.waitFor(() => expect(on.shown().at(-1)).toMatchObject({ at: { slide: 2, beat: 1 }, held: true }));
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	expect(on.onScreen()).toBe("talk/a");
 });
