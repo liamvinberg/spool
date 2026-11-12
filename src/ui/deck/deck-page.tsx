@@ -3,7 +3,7 @@ import { readingOrder } from "../../deck/changes";
 import type { Size } from "../../deck/deck-file";
 import { type Deck, placesOf } from "../../deck/layout";
 import type { DeckRead } from "../../deck/wire";
-import { toWorld } from "../canvas/camera";
+import { type Box, nudgeCamera, toWorld } from "../canvas/camera";
 import type { CameraStore } from "../canvas/camera-store";
 import { useCameraFollow } from "../canvas/camera-store";
 import { type CanvasStore, useCanvasState } from "../canvas/canvas-store";
@@ -19,11 +19,11 @@ import {
 	edgePan,
 	folderOf,
 	type Lean,
-	leanAt,
 	leanOf,
 	nameOf,
+	takeHold,
 } from "./deck-drag";
-import { createFrameSprings, type FrameSprings, type Point } from "./deck-motion";
+import { createFrameSprings, deckMotion, easing, type FrameSprings, type Point } from "./deck-motion";
 import { presentDeck, presentKeyFrom } from "./present";
 
 /**
@@ -53,6 +53,18 @@ const SAMPLED = 90;
 const STOPPED = 80;
 /** The fastest a frame let go carries on, in screen pixels a second: never a wild fling. */
 const FLING = 4000;
+/** How far inside the view's edge a frame chosen off it comes, in screen pixels. */
+const REVEAL = 48;
+
+/** A frame chosen in Pages or by the arrows on a deck page comes just inside the view's edge, if it is not in already. */
+export function revealOnDeck(camera: CameraStore, box: Box, vw: number, vh: number): void {
+	const at = camera.get();
+	if (at === null) return;
+	const next = nudgeCamera(at, box, vw, vh, REVEAL);
+	if (next === at) return;
+	const { reveal, snap } = deckMotion();
+	camera.fly(next, reveal, easing(snap));
+}
 
 /** A slide's number where it stands: at its slot, in the talk as it is shown. */
 export interface SlotNumber {
@@ -139,7 +151,7 @@ interface Holding {
 	/** where the hand is in the view */
 	pointer: Point;
 	samples: { t: number; x: number; y: number }[];
-	lean: Lean | null;
+	lean: Lean;
 	aim: Aim | null;
 	key: string;
 	/** when the band last scrolled under the hand */
@@ -183,8 +195,19 @@ export function useDeckPage({
 	const read = useDeckRead(reads, page);
 	const on = read !== undefined;
 	const known = useSyncExternalStore(reads?.subscribe ?? NO_READS, () => reads === null || reads.get() !== null);
-	const live = useRef({ read, page, on, project });
-	live.current = { read, page, on, project };
+	const live = useRef<{
+		read: DeckRead | undefined;
+		page: string;
+		on: boolean;
+		project: string;
+		pending: Deck | null;
+	}>({
+		read,
+		page,
+		on,
+		project,
+		pending: null,
+	});
 	const springs = useMemo<FrameSprings>(() => createFrameSprings(store, () => camera.get()?.k ?? 1), [store, camera]);
 	useEffect(() => () => springs.stop(), [springs]);
 	// another page in front: nothing of this one is drawn anywhere it moved to
@@ -194,6 +217,7 @@ export function useDeckPage({
 	const [shown, setShown] = useState<Shown>(NOTHING);
 	// the talk as a drop left it, until the daemon's answer says so too
 	const [pending, setPending] = useState<Deck | null>(null);
+	live.current = { read, page, on, project, pending };
 
 	/** The deck a read describes, sized as the canvas has its frames. */
 	const deckOf = useCallback(
@@ -252,7 +276,7 @@ export function useDeckPage({
 			const size = held.base.sizes[held.grabbed] ?? held.base.talk;
 			const middle = top.x + size.w / 2;
 			// the way the hand goes is measured on the page: the band scrolling under a still hand moves it too
-			held.lean = held.lean === null ? leanAt(middle) : leanOf(held.lean, middle, at.k);
+			held.lean = leanOf(held.lean, middle, at.k);
 			const next = aimOf(
 				held.base,
 				{ frames: held.frames, grabbed: held.grabbed, at: top, dir: held.lean.dir },
@@ -298,37 +322,28 @@ export function useDeckPage({
 
 	const hold = useCallback(
 		(origins: ReadonlyMap<string, Point>, pointer: Point, start: Point) => {
-			const { read: deck, page: on } = live.current;
+			const { read: deck, page: on, pending: sent } = live.current;
 			if (deck === undefined) return false;
 			let held = holding.current;
 			if (held === null) {
-				const base = deckOf(deck);
-				const known = new Set([...base.line, ...base.loose.map((spot) => spot.folder)]);
-				const names = [...origins.keys()].filter((name) => known.has(folderOf(on, name)));
-				if (names.length === 0) return false;
-				// the frame under the press is the one whose middle decides
-				const grabbedName =
-					names.find((name) => {
-						const at = origins.get(name) as Point;
-						const size = base.sizes[folderOf(on, name)] ?? base.talk;
-						return start.x >= at.x && start.x <= at.x + size.w && start.y >= at.y && start.y <= at.y + size.h;
-					}) ?? (names[0] as string);
-				const from = origins.get(grabbedName) as Point;
-				const kept = new Map(names.map((name) => [name, origins.get(name) as Point]));
+				// the talk as shown: a drop's own until the daemon's answer says so too
+				const base = sent ?? deckOf(deck);
+				const taken = takeHold(base, on, origins, springs.drawn, start);
+				if (taken === null) return false;
 				held = {
 					page: on,
 					base,
 					frames: readingOrder(
 						base,
-						names.map((name) => folderOf(on, name)),
+						[...taken.origins.keys()].map((name) => folderOf(on, name)),
 					),
-					grabbed: folderOf(on, grabbedName),
-					grabbedName,
-					origins: kept,
-					grab: { x: start.x - from.x, y: start.y - from.y },
+					grabbed: folderOf(on, taken.grabbed),
+					grabbedName: taken.grabbed,
+					origins: taken.origins,
+					grab: taken.grab,
 					pointer,
 					samples: [],
-					lean: null,
+					lean: taken.lean,
 					aim: null,
 					key: "",
 					scrolled: Number.NEGATIVE_INFINITY,

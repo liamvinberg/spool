@@ -2,6 +2,7 @@ import { applyRule, type DeckRule, readingOrder } from "../../deck/changes";
 import type { Size } from "../../deck/deck-file";
 import { type Cell, cellBox, cellNear, colStride, type Deck, GAP } from "../../deck/layout";
 import type { DeckRead } from "../../deck/wire";
+import type { Point } from "../canvas/camera";
 
 /**
  * Where a frame held over a deck page would land (spool#299, the prototype's `drag.ts` on the team canvas), the
@@ -79,6 +80,47 @@ export function leanOf(lean: Lean, x: number, zoom: number): Lean {
 	if ((x - lean.far) * lean.dir > 0) return { dir: lean.dir, far: x };
 	if ((lean.far - x) * lean.dir > turn) return { dir: lean.dir === 1 ? -1 : 1, far: x };
 	return lean;
+}
+
+/** A drag as it begins, as the deck takes it. */
+export interface Taken {
+	/** what is held, by path, each where it is drawn as the drag begins: a frame still moving is caught where it is */
+	readonly origins: ReadonlyMap<string, Point>;
+	/** the frame under the press, by path, whose middle decides */
+	readonly grabbed: string;
+	/** the point the hand has it by, from its top left, on the page */
+	readonly grab: Point;
+	/** the way the hand goes, measured from the grabbed frame's middle as it was pressed */
+	readonly lean: Lean;
+}
+
+/**
+ * A drag begun on page `page` of `deck`: the frames held where the canvas has them (`origins`) or, while they move,
+ * where they are `drawn`, the hand pressed at `start` on the page. Null when none of them is the deck's.
+ */
+export function takeHold(
+	deck: Deck,
+	page: string,
+	origins: ReadonlyMap<string, Point>,
+	drawn: (name: string) => Point | undefined,
+	start: Point,
+): Taken | null {
+	const known = new Set([...deck.line, ...deck.loose.map((spot) => spot.folder)]);
+	const held = new Map<string, Point>();
+	for (const [name, at] of origins) if (known.has(folderOf(page, name))) held.set(name, drawn(name) ?? at);
+	const sizeOf = (name: string) => deck.sizes[folderOf(page, name)] ?? deck.talk;
+	const under = ([name, at]: [string, Point]) => {
+		const size = sizeOf(name);
+		return start.x >= at.x && start.x <= at.x + size.w && start.y >= at.y && start.y <= at.y + size.h;
+	};
+	const [grabbed, from] = [...held].find(under) ?? [...held][0] ?? [];
+	if (grabbed === undefined || from === undefined) return null;
+	return {
+		origins: held,
+		grabbed,
+		grab: { x: start.x - from.x, y: start.y - from.y },
+		lean: leanAt(from.x + sizeOf(grabbed).w / 2),
+	};
 }
 
 /** What is held: the frames by folder, the one under the pointer, where that one's top left stands, and its lean. */

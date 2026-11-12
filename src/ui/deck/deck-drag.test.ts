@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { Deck } from "../../deck/layout";
-import { type Aim, aimOf, bandReach, deckOfRead, edgePan, gapOf, type Hold, leanAt, leanOf } from "./deck-drag";
+import {
+	type Aim,
+	aimOf,
+	bandReach,
+	deckOfRead,
+	edgePan,
+	gapOf,
+	type Hold,
+	leanAt,
+	leanOf,
+	takeHold,
+} from "./deck-drag";
 
 // slides at x = 0, 1440, 2880, 4320 (1280 wide, one slot is 1440); the band runs down to y = 720 + 160; loose cells
 // from y = 1360
@@ -43,6 +54,37 @@ function carry(frames: string[], from: number, to: number): { at: number; gap: n
 	}
 	return opened;
 }
+
+describe("a drag as it begins", () => {
+	it("catches a frame where it is drawn, mid-flight, by the point pressed on it", () => {
+		// b still landing on its slot at 1440, drawn at 1258; a pressed and resting
+		const drawn = new Map([["talk/b", { x: 1258, y: 4 }]]);
+		const taken = takeHold(
+			deck,
+			"talk",
+			new Map([
+				["talk/a", { x: 0, y: 0 }],
+				["talk/b", { x: SLOT, y: 0 }],
+			]),
+			(name) => drawn.get(name),
+			{ x: 1258 + 100, y: 54 },
+		);
+		expect(taken?.grabbed).toBe("talk/b");
+		expect(taken?.origins.get("talk/b")).toEqual({ x: 1258, y: 4 });
+		expect(taken?.origins.get("talk/a")).toEqual({ x: 0, y: 0 });
+		expect(taken?.grab).toEqual({ x: 100, y: 50 });
+	});
+
+	it("opens the next gap on a first move of a quarter slot: the way the hand goes counts from the press", () => {
+		const taken = takeHold(deck, "talk", new Map([["talk/b", { x: SLOT, y: 0 }]]), () => undefined, {
+			x: SLOT + 640,
+			y: 360,
+		});
+		const middle = SLOT + 640 + SLOT / 4;
+		const lean = leanOf(taken?.lean ?? leanAt(middle), middle, ZOOM);
+		expect(gapOf(deck, hold(["b"], middle, 360, lean.dir), middle, ZOOM, 1)).toBe(2);
+	});
+});
 
 describe("a slide carried along the band", () => {
 	it("opens the next gap once its middle, read 0.3 of a slot ahead, is past half a slot: a quarter of the neighbour covered", () => {
