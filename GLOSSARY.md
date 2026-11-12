@@ -190,6 +190,8 @@ _Avoid_: held, blocked, read-only
 
 **Beat**: One step of a slide, named in its literal `ui.beats([...])` list. A slide that names none has one; wherever nothing steps it, it reads as its last. _Avoid_: build, step, fragment
 
+**Opening still**: A slide's second **still**, beside its cover: the slide on the beat its talk opens on, made by the **photo booth** big enough to fill a 4K screen. Present flies the slide in as it, decoded ahead, whatever is on the slide, and the live slide takes over once it has landed. A slide whose opening still is not made yet flies in as before. _Avoid_: big cover, preview
+
 **Notes (of a slide)**: The `notes.md` beside a slide's `frame.tsx`, one paragraph per beat. They are the frame's, and go where it goes. A frame never imports its notes. _Avoid_: speaker notes file, comments
 
 **Room**: The window the audience sees while a deck is presented: the slide alone, with no controls and no cursor. _Avoid_: audience view, projector window
