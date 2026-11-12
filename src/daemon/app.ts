@@ -523,6 +523,12 @@ export function createDaemonApp({
 		subscribe: (root, changed) => hub.subscribe(root, changed),
 	});
 	const playerCompiler = createPlayerCompiler(version, webfonts);
+	/**
+	 * A talk's stage, composed of its slides alone (spool#316): the stage plays no other frame, and a whole large
+	 * project took seconds to compose while the talk waited on its picture. Kept apart from the project's player, so
+	 * neither composition retires the other.
+	 */
+	const stageCompiler = createPlayerCompiler(version, webfonts);
 
 	/**
 	 * Where a session opens, and what it is composed of. Both play doors climb
@@ -677,11 +683,7 @@ export function createDaemonApp({
 	const stagePlay = createStagePlay({
 		on: () => deckOn(),
 		resolve: (c, name) => resolveProject(c, name),
-		compile: (root, frames, start) => playerCompiler.getPlayable(root, frames, start),
-		played: (root) => {
-			playedRoots.add(root);
-			keepPlayerWarm(root);
-		},
+		compile: (root, frames, start) => stageCompiler.getPlayable(root, frames, start),
 		projectCapability: (root) => projectCapability(root),
 		issue: (project, key) => issuePlayerHandoff(project, key, "default"),
 		consume: (token, project, key) => consumePlayerHandoff(token, project, key, "default"),
@@ -2097,7 +2099,7 @@ export function createDaemonApp({
 				// as long as a tab served with it might walk to it. A partial player's
 				// stylesheets (SPOOL-165) answer once their frame's is built.
 				const name = c.req.path.slice(c.req.path.indexOf("/-/") + 3);
-				const chunk = await playerCompiler.getChunk(root, name);
+				const chunk = (await playerCompiler.getChunk(root, name)) ?? (await stageCompiler.getChunk(root, name));
 				if (chunk === undefined) return c.text("not found", 404);
 				c.header("access-control-allow-origin", "*");
 				c.header("cache-control", "public, max-age=31536000, immutable");
@@ -2844,7 +2846,7 @@ export function createDaemonApp({
 		close: async () => {
 			for (const stop of playerWarmers.values()) stop();
 			playerWarmers.clear();
-			const compiled = playerCompiler.close();
+			const compiled = Promise.all([playerCompiler.close(), stageCompiler.close()]);
 			machineStateWatch.stop();
 			history.close();
 			deckSwitch();
