@@ -44,10 +44,10 @@ import { limitWebgl, releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn }
  * entered slide on the canvas alike. One slide shows at the talk's size, on the ground; the slides around it are rendered
  * out of sight beside it, their fonts loaded and images decoded in this document, so a step to one of them is the
  * same-document swap a walk is, committed in the next frame, its shared `view-transition-name`s carried and the rest
- * dissolved. The slide the next key plays is put on ahead, out of sight, once the screen is quiet: its effects run then
- * and never again, its WebGL contexts made and its shaders compiled, its first frame drawn, and then it rests, drawing
- * nothing, its animations held at their start and its media paused until the key (spool#320). It stays mounted, as does
- * the one behind, while their contexts fit the stage's share. A step to a slide that is not ready holds the picture on
+ * dissolved. The slides the next key and the back key play are put on ahead, out of sight, once the screen is quiet:
+ * their effects run then and not again on the key, their WebGL contexts made and their shaders compiled, their first
+ * frame drawn, and then they rest, drawing nothing and running no frames, their animations held at their start and
+ * their media paused until the key (spool#320), while their contexts fit the stage's share. A step to a slide that is not ready holds the picture on
  * screen until it is. A slide that will not compile, load or mount is never swapped in; one that throws on screen leaves a still copy of its last picture. Nothing
  * of spool's own error drawing is ever drawn here.
  *
@@ -387,11 +387,11 @@ export function bootStage(runtime: StageRuntime): void {
 	const held = (copy: Copy | undefined) => (copy?.box === undefined ? 0 : webglIn(copy.box));
 
 	/**
-	 * Which copies are awake. The one on screen and the one wanted, whatever they hold; the slide the next key plays,
-	 * put on ahead once the screen is quiet, and the one behind, while their WebGL contexts fit the stage's share. A
-	 * slide's cost is learned the first time it is awake, so one that does not fit is put on ahead once at most. Any
-	 * other copy is put back to sleep: rendered afresh when it holds contexts, so it gives them back, and hidden
-	 * otherwise, its effects undone.
+	 * Which copies are awake. The one on screen and the one wanted, whatever they hold; the slides the next key and the
+	 * back key play, put on ahead once the screen is quiet, the next first, while their WebGL contexts fit the stage's
+	 * share. A slide's cost is learned the first time it is awake, and one refused a context out of sight is put on
+	 * ahead no more. Any other copy is put back to sleep: rendered afresh when it holds contexts, so it gives them back,
+	 * and hidden otherwise, its effects undone.
 	 */
 	function arrange(): void {
 		const at = picture();
@@ -411,7 +411,7 @@ export function bootStage(runtime: StageRuntime): void {
 			const slide = slides[copy.index];
 			const cost = copy.awake ? held(copy) : slide?.crowded ? Number.POSITIVE_INFINITY : (slide?.webgl ?? 0);
 			if (cost > 0 && cost > left) continue;
-			if (!copy.awake && (copy !== ahead || !quiet() || !ready(copy))) continue;
+			if (!copy.awake && (!quiet() || !ready(copy))) continue;
 			left -= cost;
 			kept.add(copy);
 		}
