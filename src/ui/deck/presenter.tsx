@@ -4,7 +4,7 @@ import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
 import type { KeyCommand } from "../../deck/stage-keys";
 import { type At, nextAt, roomPicture, type StageSession, type TalkSlide } from "../../deck/stage-session";
-import type { SlideReadiness, StagePointer } from "../../deck/stage-wire";
+import { PRESENTED_WEBGL, type SlideReadiness, type StagePointer, tooHeavyAhead } from "../../deck/stage-wire";
 import type { DeckRead } from "../../deck/wire";
 import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
 import { cn } from "../cn";
@@ -213,6 +213,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			mode: "own",
 			room: false,
 			rest: true,
+			webgl: PRESENTED_WEBGL.slide,
 			frame: ask.slide,
 			on: {
 				talk: setTalk,
@@ -253,7 +254,14 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			},
 		});
 		// what the next key plays, never touched: what its slides write is the talk's echo, not the talk's
-		const next = mountStage(after, { address, mode: "follow", room: true, rest: true, frame: ask.slide });
+		const next = mountStage(after, {
+			address,
+			mode: "follow",
+			room: true,
+			rest: true,
+			webgl: PRESENTED_WEBGL.next,
+			frame: ask.slide,
+		});
 		stage.current = { main: host, next, say };
 
 		let gone: ReturnType<typeof setTimeout> | undefined;
@@ -655,6 +663,7 @@ function TalkLine({
 }) {
 	// a click here moves the talk and leaves the focus, and the keys, where they were
 	const keepFocus = (event: MouseEvent) => event.preventDefault();
+	const heavy = tooHeavyAhead(ready, PRESENTED_WEBGL.room);
 	return (
 		<div className="flex w-full gap-4">
 			{talk.map((slide, index) => {
@@ -665,6 +674,7 @@ function TalkLine({
 				);
 				const here = index === at.slide;
 				const state = ready.find((one) => one.frame === slide.frame)?.status;
+				const contexts = heavy.get(slide.frame);
 				return (
 					<div key={slide.frame} className="flex min-w-0 flex-col gap-2" style={{ flex: beats.length + 1 }}>
 						<button
@@ -686,6 +696,13 @@ function TalkLine({
 								<span className="shrink-0 text-danger-strong type-detail">broken</span>
 							) : state === "loading" ? (
 								<span className="shrink-0 text-tertiary type-detail">loading</span>
+							) : contexts !== undefined ? (
+								<span
+									className="shrink-0 text-tertiary type-detail"
+									title={`Draws with ${contexts} WebGL contexts, too many beside the slide before for the room to ready it ahead: it starts drawing as it goes on, and can lag`}
+								>
+									heavy
+								</span>
 							) : null}
 						</button>
 						<div className="flex gap-1">
