@@ -48,6 +48,7 @@ import { followedLink } from "./daemon/team-sync";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { whatsNewServing } from "./daemon/whats-new-routes";
+import { REHEARSE } from "./deck/rehearsal";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
@@ -66,6 +67,8 @@ import {
 	tellHooksChanged,
 } from "./outside/cli";
 import { isFramePath, isSafeName } from "./page-path";
+import { copyRehearsal, parseSlides, rehearseTalk, type SlidesAsked, talkNamed } from "./rehearse-command";
+import { reportOf } from "./rehearse-report";
 import { forgetProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "./runtime/record-protocol";
@@ -605,6 +608,27 @@ program
 			process.stderr.write(`spool: ${failures.join(", ")}\n`);
 			process.exitCode = 1;
 		}
+	});
+
+program
+	.command(REHEARSE)
+	.description(
+		"play a talk in the stage from its first beat to its last and back, and say what broke, moved wrong or lagged, with a sheet of every beat and move to look at (deck experiment)",
+	)
+	.argument("<talk>", "a deck's page, its path under design/frames, or one slide of it", (value: string) =>
+		parseFrame(talkNamed(value)),
+	)
+	.option("--slides <n or n-m>", "rehearse these slides of the talk alone, by number from 1", parseSlides)
+	.option("--out <folder>", "copy the sheet and every picture here too")
+	.action(async (talk: string, options: { slides?: SlidesAsked; out?: string }) => {
+		const { root, name, daemonUrl, controlToken } = await verbContext();
+		const outcome = await rehearseTalk({ daemonUrl, controlToken, name, narrate }, talk, options.slides);
+		const folder =
+			options.out === undefined ? outcome.folder : copyRehearsal(root, outcome.folder, options.out, process.cwd());
+		const report = reportOf(outcome, folder);
+		if (report.stderr.length > 0) process.stderr.write(`${report.stderr.join("\n")}\n`);
+		process.stdout.write(`${report.stdout.join("\n")}\n`);
+		if (!report.ok) process.exitCode = 1;
 	});
 
 program
