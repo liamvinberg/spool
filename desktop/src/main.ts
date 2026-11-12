@@ -36,6 +36,8 @@ import {
 	daemonIdentity,
 	keepSpare,
 	loadFailedForGood,
+	POPUP_SIZE_WAIT_MS,
+	popupPlaySize,
 	type SpareFacts,
 	type SpareSurroundings,
 	shouldMakeSpare,
@@ -1072,18 +1074,27 @@ const UNKNOWN_AUTHORED = { w: 1440, h: 900 };
 
 /**
  * A play the canvas asked for by opening its URL, as a page that predates the
- * canvas bridge's `play` does: the frame's size is the daemon's to say, so it
- * is asked for first. Every canvas this app's daemon serves hands the size over
- * with the press instead, and nothing stands between that press and the window.
+ * canvas bridge's `play` does (an older daemon's canvas, or a remote's): the
+ * frame's size is the daemon's to say, so it is asked for, but only for a
+ * moment (`popupPlaySize`). Every canvas this app's daemon serves hands the
+ * size over with the press instead, and nothing stands between that press and
+ * the window.
  */
 async function openPlayFromPopup(url: string, request: PlayRequest): Promise<void> {
 	const pressedAt = wallClock();
-	const authored =
+	const answer =
 		daemonControlToken === undefined
 			? undefined
-			: await daemon.frameGeometry(new URL(url).origin, daemonControlToken, request.project, request.frame);
-	if (authored === undefined) log("play", "no geometry", request.project, request.frame ?? "(first)");
-	showPlayWindow(url, request, authored ?? UNKNOWN_AUTHORED, pressedAt);
+			: await daemon.frameGeometry(
+					new URL(url).origin,
+					daemonControlToken,
+					request.project,
+					request.frame,
+					POPUP_SIZE_WAIT_MS,
+				);
+	const size = popupPlaySize(answer, wallClock() - pressedAt, UNKNOWN_AUTHORED);
+	if (size === UNKNOWN_AUTHORED) log("play", "no geometry", request.project, request.frame ?? "(first)");
+	showPlayWindow(url, request, size, pressedAt);
 }
 
 /**

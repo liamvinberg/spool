@@ -118,8 +118,9 @@ project). Each mark is milliseconds after the press; `-` is one the play never
 reached.
 
 A canvas older than the bridge's `play` opens the play URL as a popup, and the
-app then asks `/api/p/:project/frames` for the size, which is behind the control
-token: this is the one place the app reads the token out of `daemon.json`. It
+app then asks `/api/p/:project/frames` for the size, for 150 ms at most before
+it shows the window at a default size. That route is behind the control token:
+this is the one place the app reads the token out of `daemon.json`. It
 is never logged and never leaves the process except as that request's header.
 
 `SPOOL_DIR` and `SPOOL_PORT` are read the way the CLI reads them, which is what

@@ -4,6 +4,8 @@ import {
 	daemonIdentity,
 	keepSpare,
 	loadFailedForGood,
+	POPUP_SIZE_WAIT_MS,
+	popupPlaySize,
 	type SpareFacts,
 	type SpareSurroundings,
 	shouldMakeSpare,
@@ -75,4 +77,14 @@ test("no spare is made where none could be adopted, and none again from a daemon
 	assert.equal(shouldMakeSpare(undefined, { ...CANVAS, refusedBy: DAEMON }), false);
 	// a newer daemon on the same address is asked again
 	assert.equal(shouldMakeSpare(undefined, { ...CANVAS, refusedBy: daemonIdentity(ORIGIN, 4000) }), true);
+});
+
+test("a play from an older canvas waits for its size a moment at most, then opens at the unknown size", () => {
+	const unknown = { w: 1440, h: 900 };
+	const phone = { w: 390, h: 844 };
+	assert.deepEqual(popupPlaySize(phone, 40, unknown), phone);
+	assert.deepEqual(popupPlaySize(phone, POPUP_SIZE_WAIT_MS, unknown), phone);
+	// an answer after the cap is too late to move a window already on screen
+	assert.deepEqual(popupPlaySize(phone, POPUP_SIZE_WAIT_MS + 1, unknown), unknown);
+	assert.deepEqual(popupPlaySize(undefined, 20, unknown), unknown);
 });

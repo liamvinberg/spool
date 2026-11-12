@@ -99,6 +99,24 @@ export function loadFailedForGood(code: number, isMainFrame: boolean): boolean {
 	return isMainFrame && code !== -3;
 }
 
+/** How long a play from a canvas older than the bridge's `play` waits for the daemon to say its frame's size. */
+export const POPUP_SIZE_WAIT_MS = 150;
+
+/**
+ * The size a play from an older canvas opens at, which hands over no size: the
+ * daemon's answer when it came within {@link POPUP_SIZE_WAIT_MS} of the press,
+ * else `unknown`, where the window shows at once and stays, whenever the
+ * answer comes. Every canvas of this app's daemon hands the size over with the
+ * press and asks nothing before the show.
+ */
+export function popupPlaySize(
+	answer: { w: number; h: number } | undefined,
+	answeredAfterMs: number,
+	unknown: { w: number; h: number },
+): { w: number; h: number } {
+	return answer !== undefined && answeredAfterMs <= POPUP_SIZE_WAIT_MS ? answer : unknown;
+}
+
 /** The spare's page on a daemon. */
 export function spareUrl(origin: string): string {
 	return `${origin}/player-assets/spare`;
