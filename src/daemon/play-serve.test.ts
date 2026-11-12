@@ -658,6 +658,9 @@ describe("the chrome's font", () => {
 		const spare = await app.fetch("/player-assets/spare");
 		expect(spare.status).toBe(200);
 		expect(spare.headers.get("cache-control")).toBe("no-store");
+		expect(spare.headers.get("content-security-policy")).toBe(
+			"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+		);
 		const doc = await spare.text();
 		expect(doc).toContain('class="spool-top is-desk"');
 		// it waits for a play nobody has pressed yet, so it holds nothing minted for one

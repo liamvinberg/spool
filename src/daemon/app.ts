@@ -2231,6 +2231,9 @@ export function createDaemonApp({
 		// handoff, nothing named for a frame.
 		.get("/player-assets/spare", (c) => {
 			protectControlDocument(c);
+			// what keeps it empty is the policy, not the template: inline styles and
+			// nothing else (the strip draws no text, so no font is ever asked for)
+			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
 			c.header("connection", "close");
 			return c.html(playSpareDocument());
 		})
