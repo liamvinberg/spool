@@ -512,6 +512,15 @@ describe("daemon authority matrix", () => {
 		const html = await stage.text();
 		expect(html).not.toContain(CONTROL_TOKEN);
 		expect((await room(`${at.pathname}${at.search}`)).status).toBe(403);
+		// a pass is good on the host it was given for alone: the presenter's stage cannot be played on the room's host
+		const presenters = await control(`/api/p/${name}/deck-stage`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ page: "talk" }),
+		});
+		const elsewhere = new URL(((await presenters.json()) as { address: string }).address);
+		expect(elsewhere.origin).toBe(`http://${RENDER_HOST}`);
+		expect((await room(`${elsewhere.pathname}${elsewhere.search}`)).status).toBe(403);
 
 		// what it loads: its composition, the runtime, and its own project's data by the capability minted into it
 		const entry = html.match(/<script type="module">import "(\/play\/[^"]+)";<\/script>/)?.[1];

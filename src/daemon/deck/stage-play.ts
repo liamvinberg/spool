@@ -44,7 +44,8 @@ export interface StageAddress {
 	readonly talk: StageConfig;
 }
 
-const passKey = (page: string) => `deck:${page}`;
+/** A stage pass is good on the host it was given for alone. */
+const passKey = (page: string, room: boolean) => `deck:${room ? "room:" : ""}${page}`;
 
 /** The `room` of a play address: the talk whose room's window it is, presented from spool's own window. */
 export const ROOM_QUERY = z.string().regex(TALK_NAME, { message: "not a talk" });
@@ -77,7 +78,7 @@ export function createStagePlay(deps: StagePlayDeps) {
 	function address(project: string, root: string, page: string, room = false): StageAddress | { message: string } {
 		const stage = stageOf(root, page);
 		if ("message" in stage) return stage;
-		const token = deps.issue(project, passKey(page));
+		const token = deps.issue(project, passKey(page, room));
 		const query = new URLSearchParams({ deck: page, shell: "1", handoff: token });
 		return {
 			address: `${room ? deps.roomOrigin() : deps.renderOrigin()}/play/${encodeURIComponent(project)}?${query}`,
@@ -97,6 +98,8 @@ export function createStagePlay(deps: StagePlayDeps) {
 			handoff?: string;
 			room?: string;
 			control: boolean;
+			/** asked on the room's host */
+			onRoom: boolean;
 		},
 	): Promise<Response> {
 		if (!deps.on()) return c.text("Not Found", 404);
@@ -114,7 +117,7 @@ export function createStagePlay(deps: StagePlayDeps) {
 			);
 		}
 		const embedded = query.shell === "1";
-		if (embedded && !deps.consume(query.handoff, query.project, passKey(query.deck))) {
+		if (embedded && !deps.consume(query.handoff, query.project, passKey(query.deck, query.onRoom))) {
 			return c.html(refusedDocument("this stage's pass was used or has expired"), 403);
 		}
 		if (!embedded && query.handoff !== undefined) return c.text("a stage pass requires shell=1", 400);

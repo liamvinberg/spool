@@ -2077,6 +2077,7 @@ export function createDaemonApp({
 						project: name,
 						deck,
 						control: controlRequest,
+						onRoom: hostClass(c.req.url) === "room",
 						...(frame === undefined ? {} : { frame }),
 						...(room === undefined ? {} : { room }),
 						...(shell === undefined ? {} : { shell }),
