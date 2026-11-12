@@ -227,7 +227,7 @@ it("waits for a picture a slide's effect reaches for before it goes on, and read
 	expect(on.shown().at(-1)?.ready).toBe(true);
 });
 
-it("stops a slide that throws from a handler where it stands, its last picture kept, and the talk moves on", async () => {
+it("stops a slide that throws from a handler where it stands, its last picture kept, and the talk moves on, but plays on through the browser's notices", async () => {
 	function Ticking() {
 		const [count, setCount] = useState(0);
 		useEffect(() => {
@@ -244,6 +244,14 @@ it("stops a slide that throws from a handler where it stands, its last picture k
 		{ mode: "own", room: true },
 	);
 	await vi.waitFor(() => expect(Number(document.querySelector(".count")?.textContent)).toBeGreaterThan(2));
+
+	// what a ResizeObserver could not deliver in one frame comes in the next: nothing threw
+	window.dispatchEvent(
+		new ErrorEvent("error", { message: "ResizeObserver loop completed with undelivered notifications." }),
+	);
+	const ticked = Number(document.querySelector(".count")?.textContent);
+	await vi.waitFor(() => expect(Number(document.querySelector(".count")?.textContent)).toBeGreaterThan(ticked + 2));
+	expect(statusOf(on, "talk/a")?.status).toBe("ready");
 
 	window.dispatchEvent(new ErrorEvent("error", { error: new Error("a handler threw") }));
 	await vi.waitFor(() =>

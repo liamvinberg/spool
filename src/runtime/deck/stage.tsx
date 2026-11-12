@@ -100,6 +100,8 @@ let sendToHost: ((message: StageMessage) => void) | undefined;
 let hostListener: ((data: unknown) => void) | undefined;
 const heldFromHost: unknown[] = [];
 let windowError: ((error: unknown) => void) | undefined;
+/** Chrome's and Firefox's notice, and Chrome's older one, sent as an error event with no error */
+const RESIZE_NOTICE = /^ResizeObserver loop (completed with undelivered notifications|limit exceeded)/;
 
 /**
  * Before any slide's module runs: the private port to the host, made and handed over once with its methods bound, so
@@ -123,7 +125,11 @@ if (deck !== undefined) {
 		start();
 		window.parent.postMessage({ spool: "stage-connect" }, "*", [channel.port2]);
 	}
-	addEventListener("error", (event) => windowError?.(event.error ?? event.message));
+	addEventListener("error", (event) => {
+		// the browser's word that a ResizeObserver will hear the rest of a change next frame: nothing threw
+		if (event.error == null && RESIZE_NOTICE.test(event.message)) return;
+		windowError?.(event.error ?? event.message);
+	});
 	addEventListener("unhandledrejection", (event) => windowError?.(event.reason));
 }
 
