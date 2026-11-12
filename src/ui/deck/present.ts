@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from "react";
 import type { Box } from "../../deck/layout";
 import { mintTalk } from "../../deck/present-wire";
+import type { StagePointer } from "../../deck/stage-wire";
 import { desktopWindow } from "../desktop-window";
 import { experimentOn } from "../experiments";
-import { settingNow, writeSetting } from "../settings";
+import { settingNow, useSetting, writeSetting } from "../settings";
 import { type PresentHow, type PresentWay, presentPlan, wayPresentTakes } from "./present-way";
 import { presenterLayout } from "./presenter-layout";
 
@@ -170,6 +171,21 @@ export function roomWindowAt(view: Box, screen: Box): Box {
 	};
 }
 
+/** How the room's menu names the display the room is not on, until a swap has put the room there and said its name. */
+export const OTHER_SCREEN = "other screen";
+
+/**
+ * The two displays as the room's menu lists them, in a fixed order (spool#315): the Mac app names only the display the
+ * room is on, so the other reads `other screen` until a swap has named it too. `seen` is every name the room has been
+ * on this talk, in the order it was first there. Null while there is no second display, or the room is a window.
+ */
+export function roomScreens(seen: readonly string[], room: string | null, swaps: boolean): readonly string[] | null {
+	if (room === null || !swaps) return null;
+	const other = [...seen].reverse().find((name) => name !== room) ?? OTHER_SCREEN;
+	const order = (name: string) => (seen.includes(name) ? seen.indexOf(name) : seen.length);
+	return [room, other].sort((a, b) => order(a) - order(b));
+}
+
 /** What `window.open` is asked for: a popup the room's size, where `roomWindowAt` puts it when the window says where it is. */
 function roomFeatures(): string {
 	const size = `popup,width=${ROOM_WINDOW.w},height=${ROOM_WINDOW.h}`;
@@ -269,6 +285,38 @@ export function presentKeyFrom(
 	return held.frames.length === 1 && only !== undefined && slides.includes(only) ? only : undefined;
 }
 
+/**
+ * Show pointer (spool#315): whether the room sees the presenter's pointer as a soft dot over a live slide. The
+ * presenter's habit rather than the talk's, so it is remembered on this machine, on until turned off, and a flip holds
+ * at once, before the daemon reads it back.
+ */
+export function pointerShown(): boolean {
+	return pointerFlipped ?? settingNow("present.pointer") !== false;
+}
+
+/** `pointerShown`, kept current. */
+export function usePointerShown(): boolean {
+	const remembered = useSetting("present.pointer");
+	const flipped = useSyncExternalStore(subscribe, () => pointerFlipped);
+	return flipped ?? remembered !== false;
+}
+
+/** Show pointer turned on or off, here at once and on this machine from now on. */
+export function showPointer(on: boolean): void {
+	pointerFlipped = on;
+	void writeSetting("present.pointer", on);
+	tell();
+}
+
+/**
+ * What the room is told of the presenter's pointer: where it is, or nowhere while Show pointer is off. The switch is
+ * on the sender's side, so the room keeps no state of it and a room from an older build behaves the same.
+ */
+export function pointerForRoom(at: StagePointer | null, shown: boolean): StagePointer | null {
+	return shown ? at : null;
+}
+
+let pointerFlipped: boolean | null = null;
 let asked: PresentAsk | null = null;
 let warm: PresentFrom | null = null;
 let turnBack: (() => boolean) | null = null;

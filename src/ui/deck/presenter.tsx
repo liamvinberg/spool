@@ -14,8 +14,17 @@ import { Button } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
 import { type DeckMotion, useDeckMotion } from "./deck-motion";
 import { KeyList } from "./key-list";
-import { openRoom, type PresentAsk } from "./present";
+import {
+	openRoom,
+	type PresentAsk,
+	pointerForRoom,
+	pointerShown,
+	roomScreens,
+	showPointer,
+	usePointerShown,
+} from "./present";
 import { presenterLayout } from "./presenter-layout";
+import { RoomMenu } from "./room-menu";
 import { talkSource } from "./talk-source";
 import "./presenter.css";
 
@@ -23,7 +32,8 @@ import "./presenter.css";
  * The presenter view (spool#265, the team canvas's `app/spool-deck--presenter`): spool's own window while a talk is
  * presented, and the one authority over where the talk is. The clock, the room's screen with its cues, the slide live
  * as the room sees it, what the next key plays, the beat's name, count and notes, and at the foot the talk as one bar
- * per slide with a segment per beat, each a way there.
+ * per slide with a segment per beat, each a way there. The room's name opens the room's menu (spool#315): Show pointer,
+ * which L flips too, and the screen the room is on.
  *
  * It holds the stage that owns the talk's session and publishes each session whole to the room's window over the
  * talk's broadcast channel, answering the room as it opens or opens again; what the room's keys and clicks ask for it
@@ -37,6 +47,8 @@ import "./presenter.css";
 const ROOM_GONE_MS = 1500;
 /** How long a room's window has to say it opened before the browser is taken to have kept it closed. */
 const ROOM_PATIENCE_MS = 10_000;
+/** How long L's cue says what it did. */
+const POINTER_SAID_MS = 1800;
 
 export interface PresenterProps {
 	readonly ask: PresentAsk;
@@ -72,9 +84,17 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 	const [pointer, setPointer] = useState<StagePointer | null>(null);
 	/** in the Mac app, the screen the room is on and whether X can trade it; a browser never says */
 	const [screenOf, setScreenOf] = useState<RoomReport | null>(null);
+	/** every display the room has been on this talk, in the order it was first there: how the menu names both */
+	const [seen, setSeen] = useState<readonly string[]>([]);
+	const [menu, setMenu] = useState(false);
+	const pointerOn = usePointerShown();
+	/** L pressed with the menu away: what it did, said for a moment */
+	const [said, setSaid] = useState<{ readonly on: boolean } | null>(null);
 	const clock = useTalkClock(ask.pressed);
-	const hands = useRef({ onPicture, onEnd, onRefused, help });
-	hands.current = { onPicture, onEnd, onRefused, help };
+	const hands = useRef({ onPicture, onEnd, onRefused, help, menu });
+	hands.current = { onPicture, onEnd, onRefused, help, menu };
+	/** where the pointer is over the live slide, whatever the room is told */
+	const pointedAt = useRef<StagePointer | null>(null);
 	const roomWindow = useRef(ask.room);
 	const stage = useRef<{ main: StageHost; next: StageHost; say: (message: TalkMessage) => void } | null>(null);
 
@@ -111,14 +131,24 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 				if (command.kind === "escape" || command.kind === "help") setHelp(false);
 				return;
 			}
-			if (command.kind === "escape") end();
+			// esc with the room's menu open puts it away, and the talk goes on
+			if (command.kind === "escape" && hands.current.menu) setMenu(false);
+			else if (command.kind === "escape") end();
 			else if (command.kind === "help") setHelp(true);
 			else if (command.kind === "swap") app?.swapRoom?.(ask.talk);
-			else if (command.kind !== "blur") host.command(command);
+			else if (command.kind === "show-pointer") {
+				const on = !pointerShown();
+				showPointer(on);
+				// with the menu open its switch says it
+				if (!hands.current.menu) setSaid({ on });
+			} else if (command.kind !== "blur") host.command(command);
 		};
 		// the Mac app places the room and says where: by the display's own name
 		const heard = (report: RoomReport | null) => {
-			if (report === null || report.talk === ask.talk) setScreenOf(report);
+			if (report !== null && report.talk !== ask.talk) return;
+			setScreenOf(report);
+			const on = report?.screen ?? null;
+			if (on !== null) setSeen((before) => (before.includes(on) ? before : [...before, on]));
 		};
 		const stopScreens = app?.onRoom?.(heard);
 		const placed = () => void app?.roomReport?.(ask.talk).then(heard, () => {});
@@ -148,8 +178,9 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 				},
 				command: carry,
 				pointer: (at) => {
+					pointedAt.current = at;
 					setPointer(at);
-					say({ kind: "pointer", at });
+					say({ kind: "pointer", at: pointerForRoom(at, pointerShown()) });
 				},
 				refused: (why) => {
 					if (!pictured) hands.current.onRefused(why);
@@ -205,6 +236,18 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		};
 	}, [ask]);
 
+	// Show pointer flipped: the room is told at once, nowhere while it is off, so a dot already drawn goes
+	useEffect(() => {
+		stage.current?.say({ kind: "pointer", at: pointerForRoom(pointedAt.current, pointerOn) });
+	}, [pointerOn]);
+
+	// L's cue goes after a moment
+	useEffect(() => {
+		if (said === null) return;
+		const timer = setTimeout(() => setSaid(null), POINTER_SAID_MS);
+		return () => clearTimeout(timer);
+	}, [said]);
+
 	// the keyboard is the talk's while the view is up: nothing behind it hears a key, and spool's own keys rest
 	useEffect(() => {
 		view.current?.focus({ preventScroll: true });
@@ -213,6 +256,12 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			if (hands.current.help) {
 				if (event.key === "Escape" || event.key === "?" || event.key === "Tab") event.preventDefault();
 				if (event.key === "Escape" || event.key === "?") setHelp(false);
+				return;
+			}
+			// esc puts the room's menu away before it would end the talk or take the keys back
+			if (hands.current.menu && event.key === "Escape") {
+				event.preventDefault();
+				setMenu(false);
 				return;
 			}
 			if (stage.current?.main.key(event) === true) event.preventDefault();
@@ -291,6 +340,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		roomWindow.current = openRoom(ask, ask.talk);
 		setRoom("opening");
 	};
+	const showRoom = () => (app?.showRoom !== undefined ? app.showRoom(ask.talk) : roomWindow.current?.focus());
 
 	return (
 		<div
@@ -335,29 +385,33 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 												</>,
 												"text-secondary type-detail",
 											)
-										: null}
+										: said !== null
+											? cue(
+													said.on ? "pointer-on" : "pointer-off",
+													<>
+														{said.on ? "The room sees your pointer" : "The room doesn't see your pointer"}{" "}
+														<Kbd>L</Kbd>
+													</>,
+													"text-secondary type-detail",
+												)
+											: null}
 					</AnimatePresence>
-					<Button
-						variant="ghost"
-						className="gap-0 text-tertiary type-value"
-						onClick={() =>
-							room === "closed"
-								? reopen()
-								: app?.showRoom !== undefined
-									? app.showRoom(ask.talk)
-									: roomWindow.current?.focus()
-						}
-						title={
-							room === "closed"
-								? "Open the room's window again"
-								: `The room's screen${swaps ? " · X swaps screens" : ""} · B blacks it · F freezes it`
-						}
+					<RoomMenu
+						room={roomName}
+						screens={roomScreens(seen, screenOf?.screen ?? null, swaps)}
+						closed={room === "closed"}
+						onReopen={reopen}
+						onSwap={() => app?.swapRoom?.(ask.talk)}
+						onShow={showRoom}
+						pointer={pointerOn}
+						onPointer={showPointer}
+						open={menu}
+						onOpen={setMenu}
 					>
-						room ·&nbsp;
 						<AnimatePresence mode="wait" initial={false}>
 							{room === "closed" ? cue("again", "open it again") : cue(`on ${roomName}`, roomName)}
 						</AnimatePresence>
-					</Button>
+					</RoomMenu>
 					<Button
 						variant="ghost"
 						// its words, not its wash, end where the column below does
@@ -437,7 +491,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					{keys ? (
 						<SoftDot
 							at={pointer}
-							shown={roomLive && !black && frozen === null}
+							shown={roomLive && !black && frozen === null && pointerOn}
 							box={{ w: side.w, h: nextH }}
 							timing={timing}
 						/>

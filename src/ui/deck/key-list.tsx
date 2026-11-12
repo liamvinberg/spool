@@ -13,13 +13,15 @@ interface KeyGroup {
  */
 export type KeyListPlace =
 	| { readonly at: "presenter"; readonly swaps: boolean }
-	| { readonly at: "filling" }
+	/** `room`: a room on another display is shown the presenter's pointer */
+	| { readonly at: "filling"; readonly room: boolean }
 	| { readonly at: "inside" };
 
 /**
  * The keys of a talk as ? lists them (spool#265). In the presenter view, the room's own keys, with X when the Mac app
  * has a second screen for the room to trade with spool's window. With the slides filling the screen (spool#298) that
- * screen is the room's, which B blacks, with nothing apart to freeze or swap. In place on the canvas there is no room,
+ * screen is the room's, which B blacks, with nothing apart to freeze or swap. Show pointer is L wherever a room on
+ * another screen is sent the presenter's pointer (spool#315). In place on the canvas there is no room,
  * so no room's keys, and Esc comes out of the slide rather than ending a talk.
  */
 export function keyGroups(place: KeyListPlace): readonly KeyGroup[] {
@@ -29,6 +31,9 @@ export function keyGroups(place: KeyListPlace): readonly KeyGroup[] {
 			{ label: "Black screen", keys: ["B", "."] },
 			...(place.at === "presenter" ? [{ label: "Freeze, then catch up", keys: ["F"] }] : []),
 			...(place.at === "presenter" && place.swaps ? [{ label: "Swap screens", keys: ["X"] }] : []),
+			...(place.at === "presenter" || (place.at === "filling" && place.room)
+				? [{ label: "Show pointer", keys: ["L"] }]
+				: []),
 		],
 	};
 	return [

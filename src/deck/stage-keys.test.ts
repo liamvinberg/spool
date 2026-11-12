@@ -50,6 +50,9 @@ describe("the keys of a talk", () => {
 		}
 		expect(command("r")).toEqual({ kind: "restart" });
 		expect(command("X")).toEqual({ kind: "swap" });
+		expect(command("l")).toEqual({ kind: "show-pointer" });
+		expect(command("L", { filling: true })).toEqual({ kind: "show-pointer" });
+		expect(readKey(press("l"), { ...at, alone: true }, "")).toEqual({ digits: "", taken: false });
 		expect(command("?", {}, { shift: true })).toEqual({ kind: "help" });
 		expect(command("Escape")).toEqual({ kind: "escape" });
 		expect(readKey(press("q"), at, "")).toEqual({ digits: "", taken: false });
@@ -97,7 +100,7 @@ describe("the keys of a talk", () => {
 		expect(command("Tab", { live: true }, { shift: true })).toBeUndefined();
 		expect(command("Tab")).toBeUndefined();
 		const held = { live: true, keys: true };
-		for (const key of ["ArrowRight", "ArrowLeft", " ", "Enter", "b", "1", "Tab"]) {
+		for (const key of ["ArrowRight", "ArrowLeft", " ", "Enter", "b", "l", "1", "Tab"]) {
 			expect(readKey(press(key), { ...at, ...held }, "").taken, key).toBe(false);
 		}
 		expect(command("Escape", held)).toEqual({ kind: "keys", on: false });

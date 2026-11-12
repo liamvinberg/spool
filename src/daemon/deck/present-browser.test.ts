@@ -196,6 +196,32 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	await view.keyboard.press("Escape");
 	await keyList.waitFor({ state: "detached" });
 	expect(await together(view, audience)).toEqual({ slide: 4, beat: 0 });
+	// the pointer over the live slide is a soft dot in the room; L, pressed in the slide, takes it away there and says
+	// so, and the room's menu brings it back, its esc leaving the talk on
+	const dot = audience.locator("[data-spool-room-dot]");
+	const over = async (x: number) => {
+		const box = await view.locator("[data-deck-slide]").boundingBox();
+		if (box === null) throw new Error("no slide");
+		await view.mouse.move(box.x + box.width * x, box.y + box.height / 2, { steps: 4 });
+	};
+	await over(0.4);
+	await expect.poll(() => dot.evaluate((el) => (el as HTMLElement).style.opacity)).toBe("1");
+	await view.keyboard.press("l");
+	await view.getByText("The room doesn't see your pointer").waitFor();
+	await expect.poll(() => dot.evaluate((el) => (el as HTMLElement).style.opacity)).toBe("0");
+	await over(0.6);
+	await view.waitForTimeout(300);
+	expect(await dot.evaluate((el) => (el as HTMLElement).style.opacity)).toBe("0");
+	await view.getByRole("button", { name: /window/ }).click();
+	const pointerSwitch = view.getByRole("switch", { name: "Show pointer" });
+	expect(await pointerSwitch.isChecked()).toBe(false);
+	await view.locator("[data-room-pointer]").click();
+	await expect.poll(() => pointerSwitch.isChecked()).toBe(true);
+	await view.keyboard.press("Escape");
+	await expect.poll(() => view.getByRole("dialog", { name: "The room" }).count()).toBe(0);
+	await over(0.5);
+	await expect.poll(() => dot.evaluate((el) => (el as HTMLElement).style.opacity)).toBe("1");
+	expect(await together(view, audience)).toEqual({ slide: 4, beat: 0 });
 	// ⇥ hands it the keys, and esc takes them back without ending the talk
 	await view.keyboard.press("Tab");
 	await expect.poll(async () => (await presenter(view))?.keys).toBe(true);
@@ -301,7 +327,7 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	await view.keyboard.press("ControlOrMeta+Shift+Enter");
 	const left = await last;
 	await view.locator("[data-deck-presenter]").waitFor();
-	await view.getByText("Studio Display", { exact: true }).waitFor();
+	await view.getByRole("button", { name: /Studio Display/ }).waitFor();
 	await expect
 		.poll(() => left.evaluate(() => (window as unknown as { roomDrawn: boolean[] }).roomDrawn))
 		.toEqual([true]);
@@ -309,6 +335,10 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	const swapped = () =>
 		view.evaluate(() => (window as unknown as { spoolCanvasWindow: { swaps: string[] } }).spoolCanvasWindow.swaps);
 	await expect.poll(swapped).toHaveLength(1);
+	// the room's menu lists both screens, the other by name only once the room has been there, and a press swaps as X
+	await view.getByRole("button", { name: /Studio Display/ }).click();
+	await view.getByRole("menuitemradio", { name: "other screen" }).click();
+	await expect.poll(swapped).toHaveLength(2);
 	await view.evaluate(() => {
 		const app = (
 			window as unknown as {

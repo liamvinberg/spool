@@ -16,6 +16,8 @@ import type { StageCommand } from "./stage-session";
  *                             slides filling this screen, which is the room, B and the period black it, F is nobody's)
  *   R                         this slide from its start
  *   X                         the room's screen is the other screen (with the slides filling this one, nobody's)
+ *   L                         Show pointer (spool#315): whether the room sees the presenter's pointer as a soft dot
+ *                             (with no room, nobody's; the host with no room on another screen does nothing with it)
  *   ?                         these keys
  *   ⇥                         the whole keyboard to a live slide; Esc takes it back
  *   Esc                       otherwise up one step: out of the slide, or the talk ends
@@ -31,10 +33,19 @@ export type HostCommand =
 	| { readonly kind: "escape" }
 	| { readonly kind: "swap" }
 	| { readonly kind: "help" }
+	/** Show pointer flipped: the room sees the presenter's pointer as a soft dot, or no longer does */
+	| { readonly kind: "show-pointer" }
 	/** the focused text field lets go of the keys */
 	| { readonly kind: "blur" };
 
 export type KeyCommand = StageCommand | HostCommand;
+
+/** A command the host carries out, whichever document the key was pressed in: the stage passes it up. */
+export function forHost(command: KeyCommand): command is Exclude<HostCommand, { kind: "blur" }> {
+	return (
+		command.kind === "escape" || command.kind === "swap" || command.kind === "help" || command.kind === "show-pointer"
+	);
+}
 
 /** A key as it was pressed. */
 export interface PressedKey {
@@ -129,6 +140,9 @@ function commandOf(pressed: PressedKey, place: KeyPlace): KeyCommand | undefined
 		case "x":
 		case "X":
 			return place.filling ? undefined : { kind: "swap" };
+		case "l":
+		case "L":
+			return place.alone ? undefined : { kind: "show-pointer" };
 		case "?":
 			return { kind: "help" };
 		default:

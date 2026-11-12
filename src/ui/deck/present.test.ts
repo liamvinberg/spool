@@ -1,6 +1,16 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { TALK_NAME } from "../../deck/present-wire";
-import { fillScreen, presentDeck, presentDone, presentKeyFrom, roomWindowAt } from "./present";
+import {
+	fillScreen,
+	pointerForRoom,
+	pointerShown,
+	presentDeck,
+	presentDone,
+	presentKeyFrom,
+	roomScreens,
+	roomWindowAt,
+	showPointer,
+} from "./present";
 import { presenterLayout } from "./presenter-layout";
 
 afterEach(() => {
@@ -97,4 +107,30 @@ it("has the Mac app's window full screen once the page has the screen's size, wh
 	page.innerHeight = 982;
 	await frame();
 	expect(full).toBe(true);
+});
+
+it("shows the room the pointer until Show pointer is turned off, and then tells it nowhere", () => {
+	const at = { x: 0.25, y: 0.5 };
+	expect(pointerShown()).toBe(true);
+	expect(pointerForRoom(at, pointerShown())).toEqual(at);
+	showPointer(false);
+	expect(pointerShown()).toBe(false);
+	expect(pointerForRoom(at, pointerShown())).toBeNull();
+	showPointer(true);
+	expect(pointerForRoom(at, pointerShown())).toEqual(at);
+});
+
+it("lists the room's two screens in a fixed order, the other named once a swap has shown it", () => {
+	expect(roomScreens(["Studio Display"], "Studio Display", true)).toEqual(["Studio Display", "other screen"]);
+	expect(roomScreens(["Studio Display", "MacBook Pro"], "MacBook Pro", true)).toEqual([
+		"Studio Display",
+		"MacBook Pro",
+	]);
+	expect(roomScreens(["Studio Display", "MacBook Pro"], "Studio Display", true)).toEqual([
+		"Studio Display",
+		"MacBook Pro",
+	]);
+	// the room a window, or one display: no list
+	expect(roomScreens(["Studio Display"], null, true)).toBeNull();
+	expect(roomScreens([], "Studio Display", false)).toBeNull();
 });

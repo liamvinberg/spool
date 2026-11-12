@@ -10,7 +10,7 @@ import {
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { fitIn } from "../../deck/stage-fit";
-import { DIGITS_FORGET_MS, type KeyCommand, pressedKey, readKey, typingIn } from "../../deck/stage-keys";
+import { DIGITS_FORGET_MS, forHost, type KeyCommand, pressedKey, readKey, typingIn } from "../../deck/stage-keys";
 import {
 	type At,
 	clampAt,
@@ -88,7 +88,7 @@ function fileKey(next: KeyCommand): boolean {
 		if (document.fullscreenElement !== null) void document.exitFullscreen().catch(() => {});
 		return true;
 	}
-	return next.kind === "swap" || next.kind === "help";
+	return next.kind === "swap" || next.kind === "help" || next.kind === "show-pointer";
 }
 
 let sendToHost: ((message: StageMessage) => void) | undefined;
@@ -792,8 +792,7 @@ export function bootStage(runtime: StageRuntime): void {
 			return;
 		}
 		if (inFile && fileKey(next)) return;
-		const forHost = next.kind === "escape" || next.kind === "swap" || next.kind === "help";
-		if (forHost || mode === "follow") {
+		if (forHost(next) || mode === "follow") {
 			post({ spool: "stage-command", command: next });
 			return;
 		}

@@ -13,7 +13,17 @@ import { cn } from "../cn";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { useDeckMotion } from "./deck-motion";
 import { KeyList } from "./key-list";
-import { fillScreen, onPresentAgain, type PresentAsk, type PresentFrom, presentCold, presentDone } from "./present";
+import {
+	fillScreen,
+	onPresentAgain,
+	type PresentAsk,
+	type PresentFrom,
+	pointerForRoom,
+	pointerShown,
+	presentCold,
+	presentDone,
+	showPointer,
+} from "./present";
 import { notesHead, PresentBar } from "./present-controls";
 import { createFlight, type Pose, tune } from "./present-flight";
 import { createHand } from "./present-hand";
@@ -586,7 +596,14 @@ export function PresentSlides({
 			if (hands.current.pinned) setPinned(false);
 			else end();
 		} else if (command.kind === "help") setHelp(true);
-		else if (command.kind !== "swap" && command.kind !== "blur" && phaseRef.current === "on")
+		else if (command.kind === "show-pointer") {
+			// a room on the other display is shown the pointer; with none, there is nobody to show it
+			const said = room.current;
+			if (said === null) return;
+			const on = !pointerShown();
+			showPointer(on);
+			said.say({ kind: "pointer", at: pointerForRoom(pointedAt.current, on) });
+		} else if (command.kind !== "swap" && command.kind !== "blur" && phaseRef.current === "on")
 			host.current?.command(command);
 	};
 
@@ -628,10 +645,12 @@ export function PresentSlides({
 	// the hand: a move wakes the bar, a rest lets it go, and the pointer goes with it
 	const slideBox = useRef(landing());
 	const pointed = useRef<(at: StagePointer | null) => void>(() => {});
+	const pointedAt = useRef<StagePointer | null>(null);
 	const hand = useRef<ReturnType<typeof createHand> | null>(null);
 	pointed.current = (at) => {
-		// the room's soft dot follows the hand over a live slide, as it follows the presenter view's
-		room.current?.say({ kind: "pointer", at });
+		// the room's soft dot follows the hand over a live slide, as it follows the presenter view's, while it is shown
+		pointedAt.current = at;
+		room.current?.say({ kind: "pointer", at: pointerForRoom(at, pointerShown()) });
 		if (at === null) return;
 		const box = slideBox.current;
 		hand.current?.move({ x: box.x + at.x * box.w, y: box.y + (at.y * box.w * talk.h) / talk.w });
@@ -780,7 +799,7 @@ export function PresentSlides({
 			) : null}
 			{help ? (
 				<div className="pointer-events-auto absolute inset-0">
-					<KeyList place={{ at: "filling" }} onClose={() => setHelp(false)} />
+					<KeyList place={{ at: "filling", room: ask?.roomAsked === true }} onClose={() => setHelp(false)} />
 				</div>
 			) : null}
 		</div>,
