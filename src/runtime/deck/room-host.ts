@@ -74,6 +74,7 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 			shown: () => {
 				sayDrawn();
 				dot.draw();
+				say({ kind: "shown", revision: host.session()?.revision ?? -1 });
 			},
 			command: (command) => {
 				if (roomPasses(command)) say({ kind: "command", command });

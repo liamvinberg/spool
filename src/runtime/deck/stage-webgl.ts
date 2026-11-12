@@ -49,10 +49,10 @@ export function webglOf(canvas: HTMLCanvasElement): WebGLRenderingContext | WebG
 	return contexts.get(canvas);
 }
 
-/** How many WebGL contexts the canvases in `box` hold. */
+/** How many live WebGL contexts the canvases in `box` hold. */
 export function webglIn(box: Element): number {
 	let count = 0;
-	for (const canvas of box.querySelectorAll("canvas")) if (contexts.has(canvas)) count++;
+	for (const canvas of box.querySelectorAll("canvas")) if (contexts.get(canvas)?.isContextLost() === false) count++;
 	return count;
 }
 
