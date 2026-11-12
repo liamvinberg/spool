@@ -31,12 +31,16 @@ afterEach(() => {
 const settled = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 /** A following room's stage, and its documents as they open, one per build. */
-async function room(on: StageHostEvents = {}) {
+async function room(on: StageHostEvents = {}, webgl?: number) {
 	const container = document.createElement("div");
 	document.body.append(container);
 	let builds = 0;
 	const host = mountStage(container, {
-		address: async () => ({ address: `about:blank#build-${++builds}`, size: { w: 1280, h: 720 } }),
+		address: async () => ({
+			address: `about:blank#build-${++builds}`,
+			size: { w: 1280, h: 720 },
+			...(webgl === undefined ? {} : { webgl }),
+		}),
 		mode: "follow",
 		room: true,
 		on,
@@ -151,4 +155,37 @@ it("takes a new build that readied while a slide wrote ui.state once it shows th
 	await next.say({ spool: "stage-applied", revision: 2 });
 	expect([seen(first), seen(next)]).toEqual(["gone", "on"]);
 	expect(slides).toEqual(report);
+});
+
+it("splits the WebGL share its address gives among the builds it holds at once, and gives it whole to the one left", async () => {
+	const { host, opened } = await room({}, 15);
+	const share = (doc: FakeDocument) =>
+		doc.heard
+			.flatMap((said) => (said.spool === "stage-webgl" || said.spool === "stage-open" ? [said.webgl] : []))
+			.at(-1);
+	host.apply(at(1, 1));
+	const first = await opened();
+	await first.say(shown(1, false));
+	await vi.waitFor(() => expect(share(first)).toBe(15));
+
+	// a save: the build on screen lets go of what it readied, and the new one readies beside it on what is left
+	host.reload();
+	const broken = await opened();
+	await vi.waitFor(() => expect([share(first), share(broken)]).toEqual([7, 7]));
+	// the new build cannot show the slide: the old picture is kept over it, and still holds its contexts
+	await broken.say(shown(1, true));
+	expect([seen(first), seen(broken)]).toEqual(["kept", "on"]);
+	await vi.waitFor(() => expect([share(first), share(broken)]).toEqual([7, 7]));
+	host.reload();
+	const again = await opened();
+	await vi.waitFor(() => expect([share(first), share(broken), share(again)]).toEqual([5, 5, 5]));
+	await again.say(shown(1, true));
+	expect([seen(first), seen(broken), seen(again)]).toEqual(["kept", "gone", "on"]);
+	await vi.waitFor(() => expect([share(first), share(again)]).toEqual([7, 7]));
+
+	// the talk moves on to a slide the new build shows: it is the only build left, and readies on the whole share
+	host.apply(at(0, 2));
+	await again.say(shown(0, false));
+	expect([seen(first), seen(broken), seen(again)]).toEqual(["gone", "gone", "on"]);
+	await vi.waitFor(() => expect(share(again)).toBe(15));
 });

@@ -112,6 +112,8 @@ interface StageDocument {
 	shown: boolean;
 	/** the WebGL contexts it may hold where its address put it, apart from the host's share */
 	webgl?: number;
+	/** the WebGL contexts it was last told it may hold */
+	told?: number;
 	timer?: ReturnType<typeof setTimeout>;
 	stop(): void;
 }
@@ -206,6 +208,8 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			port.onmessage = (incomingEvent) => heard(doc, incomingEvent.data);
 			doc.post = (message) => port.postMessage(message);
 			doc.opened = session;
+			const share = shareOf(doc);
+			if (share !== undefined) doc.told = share;
 			// the slide the talk is on, by frame, so a talk changed since finds it again
 			const frameOf = session === undefined ? options.frame : current?.talk[session.at.slide]?.frame;
 			doc.post({
@@ -215,7 +219,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				...(options.alone === true ? { alone: true } : {}),
 				...(options.filling === true ? { filling: true } : {}),
 				...(options.rest === true ? { rest: true } : {}),
-				...((doc.webgl ?? webgl) === undefined ? {} : { webgl: doc.webgl ?? webgl }),
+				...(share === undefined ? {} : { webgl: share }),
 				...(session === undefined ? {} : { session }),
 				...(frameOf === undefined ? {} : { frame: frameOf }),
 			});
@@ -235,7 +239,29 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			incoming?.stop();
 			incoming = doc;
 		}
+		reshare();
 		holder.append(frame);
+	}
+
+	/**
+	 * The WebGL contexts a document may hold: its share of the process, split evenly among the builds the host holds at
+	 * once, as they all play in it (spool#320).
+	 */
+	function shareOf(doc: StageDocument): number | undefined {
+		const whole = doc.webgl ?? webgl;
+		if (whole === undefined) return undefined;
+		const builds = [current, incoming, veil].filter((one) => one !== undefined).length;
+		return Math.floor(whole / Math.max(1, builds));
+	}
+
+	/** Tells each connected document its share whenever a build comes or goes: one going down lets go first. */
+	function reshare(): void {
+		for (const doc of [current, incoming, veil]) {
+			const share = doc === undefined ? undefined : shareOf(doc);
+			if (doc?.post === undefined || share === undefined || share === doc.told) continue;
+			doc.told = share;
+			doc.post({ spool: "stage-webgl", webgl: share });
+		}
 	}
 
 	/** A document that will not play: a new build is dropped and the one showing stays; the first one says so. */
@@ -243,6 +269,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		if (doc === incoming) {
 			incoming = undefined;
 			doc.stop();
+			reshare();
 		}
 		on.refused?.(why);
 	}
@@ -281,6 +308,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 					if (veil !== undefined && !message.shown.held) {
 						veil.stop();
 						veil = undefined;
+						reshare();
 					}
 					on.shown?.(message.shown);
 				} else if (doc === incoming) {
@@ -344,6 +372,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			// the old document never showed the room anything over the picture already kept, which stays
 			old?.stop();
 		}
+		reshare();
 		// keys pressed in the stage go on reaching the build that now plays the talk
 		if (focused) doc.frame.focus();
 		on.talk?.(doc.talk);
@@ -417,8 +446,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		share(contexts) {
 			if (contexts === webgl) return;
 			webgl = contexts;
-			for (const doc of [current, incoming])
-				if (doc?.webgl === undefined) doc?.post?.({ spool: "stage-webgl", webgl: contexts });
+			reshare();
 		},
 		session: () => session,
 		talk: () => current?.talk ?? [],
