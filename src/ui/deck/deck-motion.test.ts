@@ -26,6 +26,7 @@ it("moves the deck on the theme's roles, its prototype's timings and springs kep
 		land: tune(0.36, 0.12),
 		lift: tune(0.24, 0),
 		fly: 600,
+		reveal: 500,
 		leaveWait: 120,
 		leave: 660,
 		return: 560,

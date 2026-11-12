@@ -65,7 +65,7 @@ import {
 } from "../api";
 import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
 import { type DeckInside, DeckKeyList, DeckStage, useDeckInside } from "../deck/deck-inside";
-import { DeckLayer, DeckNumbers, useDeckPage } from "../deck/deck-page";
+import { DeckLayer, DeckNumbers, revealOnDeck, useDeckPage } from "../deck/deck-page";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
@@ -2996,20 +2996,11 @@ function CanvasField({
 			setSelected((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name]));
 		} else {
 			setSelected([name]);
-			// a slide chosen on a long talk's band, off the view's side, comes into view (spool#299); coming out of a
-			// slide flies back to where it went in from instead
+			// a frame chosen off the view on a deck page, a slide down a long talk's band, comes into view
+			// (spool#299); coming out of a slide flies back to where it went in from instead
 			const viewport = viewportRef.current;
-			const cam = camera.get();
-			if (
-				!left &&
-				!changedPage &&
-				deckBand.current?.slides.includes(name) === true &&
-				viewport !== null &&
-				cam !== null
-			) {
-				const next = revealCamera(cam, frame, viewport.clientWidth, viewport.clientHeight);
-				if (next !== cam) camera.fly({ ...next, y: cam.y });
-			}
+			if (!left && !changedPage && deckOwns() && viewport !== null)
+				revealOnDeck(camera, frame, viewport.clientWidth, viewport.clientHeight);
 		}
 	};
 
@@ -5135,7 +5126,8 @@ function CanvasField({
 			setPicked([]);
 			const viewport = viewportRef.current;
 			const cam = camera.get();
-			if (viewport !== null && cam !== null) {
+			if (viewport !== null && deckOwns()) revealOnDeck(camera, target, viewport.clientWidth, viewport.clientHeight);
+			else if (viewport !== null && cam !== null) {
 				const next = revealCamera(cam, target, viewport.clientWidth, viewport.clientHeight);
 				if (next !== cam) camera.fly(next);
 			}
@@ -5505,6 +5497,7 @@ function CanvasField({
 		stepPages,
 		showCommentAim,
 		presentKey,
+		deckOwns,
 		camera,
 		store,
 	]);

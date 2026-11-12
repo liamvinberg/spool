@@ -163,6 +163,18 @@ export function revealCamera(camera: Camera, box: Box, vw: number, vh: number, m
 }
 
 /**
+ * The least pan that brings `box` `margin` screen pixels inside the view's edges at the zoom it has, an axis at a time:
+ * a frame chosen off the view on a deck page (spool#299), in Pages or by the arrows. The camera itself when it is in.
+ */
+export function nudgeCamera(camera: Camera, box: Box, vw: number, vh: number, margin: number): Camera {
+	const along = (at: number, size: number, view: number) =>
+		at < margin ? margin - at : at + size > view - margin ? view - margin - (at + size) : 0;
+	const dx = along(camera.x + box.x * camera.k, box.w * camera.k, vw);
+	const dy = along(camera.y + box.y * camera.k, box.h * camera.k, vh);
+	return dx === 0 && dy === 0 ? camera : { k: camera.k, x: camera.x + dx, y: camera.y + dy };
+}
+
+/**
  * The camera that makes a frame live without ever taking you further away.
  *
  * Below a fit, zoom in to fit. At or above it, center at the current zoom while

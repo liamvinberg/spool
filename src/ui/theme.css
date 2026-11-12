@@ -941,6 +941,8 @@
 	--motion-deck-lift: 240ms 0;
 	/* the camera going into a slide and back out */
 	--motion-deck-fly: 600ms;
+	/* the camera bringing a frame chosen in Pages or by the arrows just inside the view */
+	--motion-deck-reveal: 500ms;
 	/* Present: the slide waits for the chrome to start going, then travels to the presenter view. End: it travels
 	 * home, and the chrome follows after a wait */
 	--motion-deck-leave-wait: 120ms;

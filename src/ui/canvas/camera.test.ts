@@ -5,6 +5,7 @@ import {
 	fitBand,
 	fitCamera,
 	moveCamera,
+	nudgeCamera,
 	revealCamera,
 	SMALL_PAGE_FLOOR,
 	zoomAt,
@@ -196,5 +197,18 @@ describe("a deck page fitted (spool#299)", () => {
 		expect(left).toBeGreaterThan(0);
 		expect(left + talk.w * k).toBeLessThan(1440);
 		expect(fitBand({ talk, slides: 100 }, field(100), 1440, 900, { x: 1440, y: 0, ...talk }).x).toBe(36);
+	});
+
+	it("brings a slide chosen off the view just inside its edge, moving no further than that and no other way", () => {
+		const camera = { x: 36, y: 200, k: 0.1 };
+		const tenth: Box = { x: 9 * 1440, y: 0, ...talk };
+		const nudged = nudgeCamera(camera, tenth, 1200, 800, 48);
+		expect(nudged.x + (tenth.x + tenth.w) * 0.1).toBe(1200 - 48);
+		expect(nudged.y).toBe(200);
+		expect(nudgeCamera(camera, { x: 1440, y: 0, ...talk }, 1200, 800, 48)).toBe(camera);
+		// panned off below the band: it comes back down to the view's top
+		const above = nudgeCamera({ ...camera, y: -500 }, { x: 1440, y: 0, ...talk }, 1200, 800, 48);
+		expect(above.y).toBe(48);
+		expect(above.x).toBe(36);
 	});
 });

@@ -277,6 +277,26 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	await expect.poll(camera).toEqual(outside);
 	expect(await page.getByRole("button", { name: "close frame" }).getAttribute("aria-pressed")).toBe("true");
 
+	// zoomed in on close until the talk's first slide is off the canvas's left: chosen in Pages, it comes into view
+	const sides = await page.locator("[data-canvas-camera]").evaluate((element) => {
+		const box = element.parentElement?.getBoundingClientRect();
+		return { left: box?.left ?? 0, right: box?.right ?? 0 };
+	});
+	const first = async () => [await pagePointOf(page, { x: 0, y: 0 }), await pagePointOf(page, { x: 1280, y: 720 })];
+	for (let step = 0; step < 6 && ((await first())[1]?.x ?? 0) > sides.left; step++) {
+		await page.keyboard.press("Equal");
+		await page.waitForTimeout(300);
+	}
+	expect((await first())[1]?.x ?? 0).toBeLessThan(sides.left);
+	await page.getByRole("button", { name: "x frame" }).click();
+	await expect
+		.poll(async () => {
+			const [left, right] = await first();
+			return (left?.x ?? 0) >= sides.left && (right?.x ?? 0) <= sides.right;
+		})
+		.toBe(true);
+	await page.getByRole("button", { name: "close frame" }).click();
+
 	// zoomed out until the slides are too small for their verbs, the selected slide's label still names it
 	await page.setViewportSize({ width: 480, height: 900 });
 	await page.keyboard.press("Shift+1");

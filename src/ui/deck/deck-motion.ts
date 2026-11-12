@@ -28,6 +28,8 @@ export interface DeckMotion {
 	readonly lift: Tune;
 	/** the camera going into a slide and back out, on the snap curve */
 	readonly fly: number;
+	/** the camera bringing a frame chosen in Pages or by the arrows just inside the view, on the snap curve */
+	readonly reveal: number;
 	/** Present: how long the slide waits for the chrome to start going, and then takes to reach the presenter view */
 	readonly leaveWait: number;
 	readonly leave: number;
@@ -74,6 +76,7 @@ export function deckMotion(root: Element = document.documentElement): DeckMotion
 		land: spring("--motion-deck-land"),
 		lift: spring("--motion-deck-lift"),
 		fly: ms("--motion-deck-fly"),
+		reveal: ms("--motion-deck-reveal"),
 		leaveWait: ms("--motion-deck-leave-wait"),
 		leave: ms("--motion-deck-leave"),
 		return: ms("--motion-deck-return"),
