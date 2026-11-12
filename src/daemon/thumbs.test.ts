@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir } from "../test-helpers";
 import {
 	carryCover,
+	clearCaptureError,
 	coverSize,
 	imageSize,
 	phrasesOf,
@@ -12,6 +13,7 @@ import {
 	readCoverAwaited,
 	readCoverImage,
 	scanBrokenFrames,
+	scanBrokenFramesSync,
 	scanCoverSchemes,
 	scanCovers,
 	scanPaces,
@@ -27,6 +29,8 @@ const JPEG = Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3]);
 const OTHER_JPEG = Buffer.from([0xff, 0xd8, 0xff, 9, 9, 9]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]);
 const project = () => makeProject(makeTempDir()).root;
+/** The release that recorded a failure, as this daemon's own. */
+const SPOOL = "0.56.0";
 const storeDir = (root: string) => join(root, "design", ".spool", "thumbs", "home");
 
 describe("writing a cover", () => {
@@ -111,11 +115,11 @@ describe("writing a cover", () => {
 describe("recording a capture failure (#173)", () => {
 	it("round-trips a reason and when it happened", () => {
 		const root = project();
-		expect(readCaptureError(root, "home")).toBeUndefined();
+		expect(readCaptureError(root, "home", SPOOL)).toBeUndefined();
 
-		writeCaptureError(root, "home", "capture canvases too large", "capture");
+		writeCaptureError(root, "home", "capture canvases too large", "capture", SPOOL);
 
-		const recorded = readCaptureError(root, "home");
+		const recorded = readCaptureError(root, "home", SPOOL);
 		expect(recorded?.error).toBe("capture canvases too large");
 		expect(recorded?.kind).toBe("capture");
 		expect(recorded?.at).toEqual(expect.any(String));
@@ -124,47 +128,87 @@ describe("recording a capture failure (#173)", () => {
 
 	it("reads malformed or absent records as no recorded error", () => {
 		const root = project();
-		expect(readCaptureError(root, "home")).toBeUndefined();
+		expect(readCaptureError(root, "home", SPOOL)).toBeUndefined();
 
 		mkdirSync(storeDir(root), { recursive: true });
-		writeFileSync(join(storeDir(root), "error.json"), "{ not json");
-		expect(readCaptureError(root, "home")).toBeUndefined();
+		const record = join(storeDir(root), `error.${SPOOL}.json`);
+		writeFileSync(record, "{ not json");
+		expect(readCaptureError(root, "home", SPOOL)).toBeUndefined();
 
-		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify({ error: "missing the at field" }));
-		expect(readCaptureError(root, "home")).toBeUndefined();
+		writeFileSync(record, JSON.stringify({ error: "missing the at field" }));
+		expect(readCaptureError(root, "home", SPOOL)).toBeUndefined();
 
-		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify([]));
-		expect(readCaptureError(root, "home")).toBeUndefined();
+		writeFileSync(record, JSON.stringify([]));
+		expect(readCaptureError(root, "home", SPOOL)).toBeUndefined();
 
-		// one from before failures had a kind can not say whose it was
-		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify({ error: "x", at: "2026-10-03T00:00:00Z" }));
-		expect(readCaptureError(root, "home")).toBeUndefined();
+		// one without a kind can not say whose fault it was
+		writeFileSync(record, JSON.stringify({ error: "x", at: "2026-10-03T00:00:00Z" }));
+		expect(readCaptureError(root, "home", SPOOL)).toBeUndefined();
 	});
 
 	it("calls a frame broken only when the failure is its own", async () => {
 		const root = project();
-		writeCaptureError(root, "home", "No matching export", "compile");
-		writeCaptureError(root, "cart", "threw on boot: boom", "boot");
-		writeCaptureError(root, "big", "too large for a cover", "capture");
+		writeCaptureError(root, "home", "No matching export", "compile", SPOOL);
+		writeCaptureError(root, "cart", "threw on boot: boom", "boot", SPOOL);
+		writeCaptureError(root, "big", "too large for a cover", "capture", SPOOL);
 
-		const broken = await scanBrokenFrames(root);
+		const broken = await scanBrokenFrames(root, SPOOL);
 		expect([...broken.keys()].sort()).toEqual(["cart", "home"]);
 		expect(broken.get("home")).toMatchObject({ error: "No matching export", kind: "compile" });
 	});
 
-	it("clears a recorded error the moment a landed cover retires every other file", () => {
+	it("counts only what this spool recorded, as another release on the same folder may fail what it runs (spool#321)", async () => {
 		const root = project();
-		writeCaptureError(root, "home", "capture reply timed out", "capture");
-		expect(readCaptureError(root, "home")).toBeDefined();
+		// an older spool's booth on the same design/, whose runtime has no ui.beats
+		writeCaptureError(root, "slide", "threw on boot: TypeError: ui.beats is not a function", "boot", "0.54.0");
+		// and one from before records said whose they were
+		mkdirSync(join(root, "design", ".spool", "thumbs", "old"), { recursive: true });
+		writeFileSync(
+			join(root, "design", ".spool", "thumbs", "old", "error.json"),
+			JSON.stringify({
+				error: "threw on boot: TypeError: ui.beats is not a function",
+				at: "2026-11-12T00:00:00Z",
+				kind: "boot",
+			}),
+		);
+		writeCaptureError(root, "home", "threw on boot: boom", "boot", SPOOL);
+		// a frame both fail keeps each one's verdict, whichever booth came last
+		writeCaptureError(root, "both", "threw on boot: mine", "boot", SPOOL);
+		writeCaptureError(root, "both", "threw on boot: theirs", "boot", "0.54.0");
+
+		expect([...(await scanBrokenFrames(root, SPOOL)).keys()].sort()).toEqual(["both", "home"]);
+		expect([...scanBrokenFramesSync(root, SPOOL).keys()].sort()).toEqual(["both", "home"]);
+		expect(readCaptureError(root, "both", SPOOL)?.error).toBe("threw on boot: mine");
+		expect(readCaptureError(root, "slide", SPOOL)).toBeUndefined();
+		expect(readCaptureError(root, "slide", "0.54.0")?.error).toBe(
+			"threw on boot: TypeError: ui.beats is not a function",
+		);
+	});
+
+	it("clears a spool's recorded error once its own cover lands, and leaves another spool's standing", () => {
+		const root = project();
+		writeCaptureError(root, "home", "capture reply timed out", "capture", SPOOL);
+		writeCaptureError(root, "home", "threw on boot: TypeError: ui.beats is not a function", "boot", "0.54.0");
 
 		writeCover(root, "home", JPEG);
+		clearCaptureError(root, "home", SPOOL);
 
-		expect(readCaptureError(root, "home")).toBeUndefined();
+		expect(readCaptureError(root, "home", SPOOL)).toBeUndefined();
+		expect(readCaptureError(root, "home", "0.54.0")?.kind).toBe("boot");
+		expect(readCover(root, "home")).toEqual({ hash: expect.any(String) });
+	});
+
+	it("retires a failure from before failures named their spool with the cover it lost to", () => {
+		const root = project();
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify({ error: "x", at: "2026-10-03T00:00:00Z" }));
+		writeCover(root, "home", JPEG);
+		expect(readdirSync(storeDir(root)).filter((name) => name.startsWith("error"))).toEqual([]);
 	});
 
 	it("never confuses its own record with a cover", () => {
 		const root = project();
-		writeCaptureError(root, "home", "capture source too large", "capture");
+		writeCaptureError(root, "home", "capture source too large", "capture", SPOOL);
 
 		expect(readCover(root, "home")).toBeUndefined();
 		expect(scanCovers(root)).toEqual(new Map());
@@ -198,31 +242,34 @@ describe("the version of the frame a still is of", () => {
 		const root = project();
 		const home = writeCover(root, "home", JPEG, undefined, A);
 		const cart = writeCover(root, "cart", PNG);
-		expect(await scanStills(root)).toEqual(
+		expect(await scanStills(root, SPOOL)).toEqual(
 			new Map([
 				["home", { hash: home.hash, source: A, failed: false }],
 				["cart", { hash: cart.hash, source: undefined, failed: false }],
 			]),
 		);
 		writeCover(root, "home", OTHER_JPEG, undefined, B);
-		expect((await scanStills(root)).get("home")?.source).toBe(B);
+		expect((await scanStills(root, SPOOL)).get("home")?.source).toBe(B);
 		// a still taken without one is of a version nobody can say
 		writeCover(root, "home", JPEG);
-		expect((await scanStills(root)).get("home")?.source).toBeUndefined();
+		expect((await scanStills(root, SPOOL)).get("home")?.source).toBeUndefined();
 	});
 
 	it("is forgotten when the frame is renamed, since a version names its frame", async () => {
 		const root = project();
 		writeCover(root, "home", JPEG, undefined, A);
 		carryCover(root, "home", "start");
-		expect((await scanStills(root)).get("start")).toMatchObject({ source: undefined });
+		expect((await scanStills(root, SPOOL)).get("start")).toMatchObject({ source: undefined });
 	});
 
 	it("says when the booth failed on the frame since", async () => {
 		const root = project();
 		writeCover(root, "home", JPEG, undefined, A);
-		writeCaptureError(root, "home", "too slow", "capture");
-		expect((await scanStills(root)).get("home")).toMatchObject({ source: A, failed: true });
+		writeCaptureError(root, "home", "too slow", "capture", "0.54.0");
+		// another release's booth failing says nothing of this one's still (spool#321)
+		expect((await scanStills(root, SPOOL)).get("home")).toMatchObject({ source: A, failed: false });
+		writeCaptureError(root, "home", "too slow", "capture", SPOOL);
+		expect((await scanStills(root, SPOOL)).get("home")).toMatchObject({ source: A, failed: true });
 	});
 });
 
@@ -251,11 +298,11 @@ describe("covers taken before the booth", () => {
 		// a canvas photograph from before the booth: the image alone
 		mkdirSync(storeDir(root), { recursive: true });
 		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.jpg`), JPEG);
-		expect(await scanPreBoothCovers(root)).toEqual(["home"]);
+		expect(await scanPreBoothCovers(root, SPOOL)).toEqual(["home"]);
 
 		// the booth's own picture of it ends that
 		writeCover(root, "home", OTHER_JPEG);
-		expect(await scanPreBoothCovers(root)).toEqual([]);
+		expect(await scanPreBoothCovers(root, SPOOL)).toEqual([]);
 		expect(scanCovers(root).size).toBe(2);
 	});
 
@@ -263,18 +310,24 @@ describe("covers taken before the booth", () => {
 		const root = project();
 		mkdirSync(storeDir(root), { recursive: true });
 		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.jpg`), JPEG);
-		writeFileSync(
-			join(storeDir(root), "error.json"),
-			JSON.stringify({ error: "too slow", at: "2026-10-03T00:00:00Z", kind: "capture" }),
-		);
-		expect(await scanPreBoothCovers(root)).toEqual([]);
+		writeCaptureError(root, "home", "too slow", "capture", SPOOL);
+		expect(await scanPreBoothCovers(root, SPOOL)).toEqual([]);
 	});
 
-	it("include a frame whose failure was recorded without its kind, so it can be told again", async () => {
+	it("include a frame with a failure from before failures named their spool, so this one can say (spool#321)", async () => {
 		const root = project();
 		mkdirSync(storeDir(root), { recursive: true });
 		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify({ error: "x", at: "2026-10-03T00:00:00Z" }));
-		expect(await scanPreBoothCovers(root)).toEqual(["home"]);
+		writeCover(root, "slide", JPEG);
+		writeFileSync(
+			join(root, "design", ".spool", "thumbs", "slide", "error.json"),
+			JSON.stringify({
+				error: "threw on boot: TypeError: ui.beats is not a function",
+				at: "2026-11-12T00:00:00Z",
+				kind: "boot",
+			}),
+		);
+		expect((await scanPreBoothCovers(root, SPOOL)).sort()).toEqual(["home", "slide"]);
 	});
 });
 

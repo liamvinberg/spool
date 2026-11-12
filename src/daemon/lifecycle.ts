@@ -428,6 +428,8 @@ export interface EnsureResult {
 	pid: number;
 	started: boolean;
 	controlToken: string;
+	/** The release serving, which need not be the CLI's: a daemon outlives an update. */
+	version: string;
 }
 
 /** How long ensureDaemon still looks for a daemon after the one it spawned has exited. */
@@ -440,7 +442,13 @@ const EXITED_GRACE_MS = 3000;
 export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}): Promise<EnsureResult> {
 	const existing = await liveDaemon(spoolDir);
 	if (existing !== undefined) {
-		return { url: existing.url, pid: existing.state.pid, started: false, controlToken: existing.state.controlToken };
+		return {
+			url: existing.url,
+			pid: existing.state.pid,
+			started: false,
+			controlToken: existing.state.controlToken,
+			version: existing.state.version,
+		};
 	}
 
 	const command = options.command ?? defaultServeCommand();
@@ -474,7 +482,13 @@ export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}
 		return liveDaemon(spoolDir);
 	});
 	if (live !== undefined && live !== null)
-		return { url: live.url, pid: live.state.pid, started: true, controlToken: live.state.controlToken };
+		return {
+			url: live.url,
+			pid: live.state.pid,
+			started: true,
+			controlToken: live.state.controlToken,
+			version: live.state.version,
+		};
 	// the successor cannot bind a port a daemon nobody recorded still holds,
 	// and the log only shows it failing to bind — name the squatter instead
 	const orphan = await unrecordedDaemon(spoolDir, { ...process.env, ...options.env });

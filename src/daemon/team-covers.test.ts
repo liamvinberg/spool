@@ -53,6 +53,7 @@ function project(link?: string): string {
 
 function machine(cloud: Pick<ReturnType<typeof fakeCloud>, "fetch">, owed: [string, string, CoverOwed][] = []) {
 	return createTeamCovers({
+		spool: "0.0.0",
 		spoolDir: makeTempDir(),
 		request: () => ({ origin: ORIGIN, vault: { read: async () => "device" }, fetch: cloud.fetch }),
 		owe: (root, frame, why) => owed.push([root, frame, why]),
@@ -119,6 +120,7 @@ describe("a team project's covers", () => {
 			return Response.json({ error: "cover_stale" }, { status: 409 });
 		};
 		const mac = createTeamCovers({
+			spool: "0.0.0",
 			spoolDir: makeTempDir(),
 			request: () => ({ origin: ORIGIN, vault: { read: async () => "device" }, fetch }),
 			log: (line) => lines.push(line),
@@ -180,7 +182,7 @@ describe("a team project brought level with spool.page's covers", () => {
 		const root = withFrames("never", "unknown", "failed", "covered");
 		writeCover(root, "unknown", Buffer.from(JPEG));
 		writeCover(root, "failed", Buffer.from(JPEG));
-		writeCaptureError(root, "failed", "too slow", "capture");
+		writeCaptureError(root, "failed", "too slow", "capture", "0.0.0");
 		writeCover(root, "covered", Buffer.from(JPEG));
 		cloud.kept.set(A, { frame: "covered", bytes: JPEG });
 		const owed: [string, string, CoverOwed][] = [];

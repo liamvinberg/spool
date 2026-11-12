@@ -387,7 +387,13 @@ describe("ensureDaemon", () => {
 
 		const result = await ensureDaemon(spoolDir, { command: neverRun });
 
-		expect(result).toEqual({ url: daemon.url, pid: process.pid, started: false, controlToken: expect.any(String) });
+		expect(result).toEqual({
+			url: daemon.url,
+			pid: process.pid,
+			started: false,
+			controlToken: expect.any(String),
+			version: expect.any(String),
+		});
 	});
 
 	it("gives up soon after the daemon it started exits, well before its deadline", async () => {
@@ -476,7 +482,13 @@ describe("daemon lifecycle end to end", () => {
 		expect(first.pid).not.toBe(process.pid);
 
 		const second = await ensureDaemon(spoolDir, { command: ["/nonexistent-spool"], env });
-		expect(second).toEqual({ url: first.url, pid: first.pid, started: false, controlToken: first.controlToken });
+		expect(second).toEqual({
+			url: first.url,
+			pid: first.pid,
+			started: false,
+			controlToken: first.controlToken,
+			version: first.version,
+		});
 
 		const status = await statusDaemon(spoolDir);
 		expect(status.running).toBe(true);

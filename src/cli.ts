@@ -317,11 +317,15 @@ program
 	.action(async (paths: string[]) => {
 		// read-only: a project due its frame-name migration is told so, not migrated
 		const root = await offlineProject(checkStart(process.cwd(), paths), { migrate: false });
-		const output = await runCheck(root, process.cwd(), paths, experimentsOnHere(spoolDir));
 		// check needs no daemon, but a running one knows what of a team project didn't travel; what check names as an
 		// error itself isn't said twice
 		const daemon = readDaemonState(spoolDir);
-		// and a save of this copy's that was set aside fails the check, told whether a daemon runs or not: an agent
+		const output = await runCheck(root, process.cwd(), paths, {
+			// broken on the canvas this Mac's daemon draws, which may be older than this CLI
+			spool: daemon?.version ?? pkg.version,
+			on: experimentsOnHere(spoolDir),
+		});
+		// a save of this copy's that was set aside fails the check, told whether a daemon runs or not: an agent
 		// mustn't finish believing work landed that didn't
 		let setAside: ShownSetAside[] = [];
 		if (followedLink(root) !== undefined) {
@@ -535,13 +539,13 @@ async function verbContext(
 	 * doesn't. `later`: the verb tells what's untold itself once it has done its work (settling a set-aside save).
 	 */
 	untold: "tell" | "said" | "later" = "tell",
-): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
+): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string; daemonVersion: string }> {
 	await fetchFirst(process.cwd());
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
-	const { url, controlToken, pid } = await ensureDaemon(spoolDir);
+	const { url, controlToken, pid, version } = await ensureDaemon(spoolDir);
 	warnGoneSource(pid);
 	if (untold !== "later") await tellUntold(url, name, controlToken, untold === "said");
-	return { root, name, daemonUrl: url, controlToken };
+	return { root, name, daemonUrl: url, controlToken, daemonVersion: version };
 }
 
 /**
@@ -645,8 +649,18 @@ program
 	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
 	.action(async (frame: string, options: Pick<VerifyOptions, "scenario">) => {
-		const { root, name, daemonUrl, controlToken } = await verbContext();
-		const outcome = await logsFrame({ daemonUrl, controlToken, root, name, frame, narrate, ...options });
+		const { root, name, daemonUrl, controlToken, daemonVersion } = await verbContext();
+		const outcome = await logsFrame({
+			daemonUrl,
+			controlToken,
+			root,
+			name,
+			frame,
+			narrate,
+			// the failure on record is the booth's of the daemon that boots it, which may be older than this CLI
+			spool: daemonVersion,
+			...options,
+		});
 		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
 		if (outcome.kind === "broken") {
 			process.stderr.write(`${outcome.message}\n`);

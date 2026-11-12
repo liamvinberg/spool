@@ -16,6 +16,9 @@ import {
 import { markSeen } from "./seen";
 import { writeCaptureError, writeCover } from "./thumbs";
 
+/** The release reading, whose booth's failures mark a frame broken. */
+const SPOOL = "0.56.0";
+
 describe("frame birth", () => {
 	it("carries the folder's birth time so the finder can sort newest first", () => {
 		const root = makeTempDir();
@@ -55,8 +58,8 @@ describe("the projection read without blocking", () => {
 			);
 			writeCover(root, "home", Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]));
 			// the booth failed on home since: the old cover stays, and says why
-			writeCaptureError(root, "home", "threw on boot: boom", "boot");
-			writeCaptureError(root, "app/settings", "too large for a cover", "capture");
+			writeCaptureError(root, "home", "threw on boot: boom", "boot", SPOOL);
+			writeCaptureError(root, "app/settings", "too large for a cover", "capture", SPOOL);
 			return root;
 		};
 		const sync = project();
@@ -72,8 +75,8 @@ describe("the projection read without blocking", () => {
 		});
 
 		// the first read seeds the seen record and places the frames without a place
-		expect(strip(await listProjectFramesAwaited(awaited, { seen: true }))).toEqual(
-			strip(listProjectFrames(sync, { seen: true })),
+		expect(strip(await listProjectFramesAwaited(awaited, { seen: true, spool: SPOOL }))).toEqual(
+			strip(listProjectFrames(sync, { seen: true, spool: SPOOL })),
 		);
 		for (const root of [sync, awaited]) {
 			const dir = join(realDesignDir(root), "frames", "app", "deep", "inbox");
@@ -82,8 +85,8 @@ describe("the projection read without blocking", () => {
 			utimesSync(join(dir, "parts", "row.tsx"), later, later);
 			writeDesignFile(root, join("frames", "app", "fresh", "frame.tsx"), "export default () => null;\n");
 		}
-		const second = strip(await listProjectFramesAwaited(awaited, { seen: true }));
-		expect(second).toEqual(strip(listProjectFrames(sync, { seen: true })));
+		const second = strip(await listProjectFramesAwaited(awaited, { seen: true, spool: SPOOL }));
+		expect(second).toEqual(strip(listProjectFrames(sync, { seen: true, spool: SPOOL })));
 		expect(second.frames.find((frame) => frame.name === "app/deep/inbox")?.unseen).toBe("changed");
 		expect(second.frames.find((frame) => frame.name === "app/fresh")?.unseen).toBe("new");
 		expect(second.frames.find((frame) => frame.name === "app/linked")).toMatchObject({ x: 5000, w: 320 });

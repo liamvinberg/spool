@@ -156,7 +156,7 @@ export function createProjectShares(options: ProjectSharesOptions) {
 		shown.set(root, new Set(frames));
 		// a frame's cover goes up under the version it is of, so outsiders see it while that version is theirs: the
 		// still the booth stored of it, whenever it was taken, or a sitting owed for one
-		const stills = await scanStills(root).catch(() => new Map<string, StoredStill>());
+		const stills = await scanStills(root, options.version).catch(() => new Map<string, StoredStill>());
 		for (const frame of frames) {
 			const source = sources.get(frame);
 			if (source === undefined) continue;

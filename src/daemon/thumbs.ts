@@ -175,12 +175,15 @@ export function writeCover(
 	const hash = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
 	const name = `${hash}.${format.ext}`;
 	writeAtomic(join(dir, name), bytes);
-	// Every other file in the dir retires with the image it lost to, `error.json`
-	// (#173) included: a landed cover is proof the reason it recorded no longer
-	// applies, and nothing here treats that name specially.
+	// Every other file in the dir retires with the image it lost to, a failure
+	// from before failures named their spool (#173) included: the picture says
+	// the frame draws. A spool's own failure stays: a cover is anyone's, and
+	// another release's picture says nothing of whether this one runs the frame
+	// (spool#321), so only that spool's booth clears it (`clearCaptureError`).
 	// A pace is of the source, not of the picture, and an edit times it again.
 	for (const old of filesIn(dir)) {
-		if (old !== name && old !== PACE_NAME) rmSync(join(dir, old), { force: true });
+		if (old !== name && old !== PACE_NAME && spoolOfFailure(old) === undefined)
+			rmSync(join(dir, old), { force: true });
 	}
 	for (const legacyFormat of COVER_FORMATS) {
 		rmSync(join(coverStoreDir(root), `${frame}.${legacyFormat.ext}`), { force: true });
@@ -248,8 +251,8 @@ export interface StoredStill {
 	failed: boolean;
 }
 
-/** Every frame's stored still, read without holding the event loop. */
-export async function scanStills(root: string): Promise<Map<string, StoredStill>> {
+/** Every frame's stored still, read without holding the event loop; `failed` is `spool`'s booth's. */
+export async function scanStills(root: string, spool: string): Promise<Map<string, StoredStill>> {
 	const store = coverStoreDir(root);
 	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 	const scanned = await Promise.all(
@@ -268,7 +271,7 @@ export async function scanStills(root: string): Promise<Map<string, StoredStill>
 			const still: StoredStill = {
 				hash: cover.hash,
 				source: SOURCE_HASH.test(recorded) ? recorded : undefined,
-				failed: names.includes(CAPTURE_ERROR_NAME),
+				failed: names.includes(failureName(spool)),
 			};
 			return [frame, still] as const;
 		}),
@@ -284,10 +287,11 @@ export async function scanStills(root: string): Promise<Map<string, StoredStill>
 const BOOTH_NAME = "booth";
 
 /**
- * Every frame whose stored cover the booth did not make, and has not failed to
- * make again, and every frame whose failure was recorded without its kind.
+ * Every frame whose stored cover the booth did not make, and every frame with a
+ * failure from before failures named their spool, unless `spool`'s booth has
+ * failed on it since.
  */
-export async function scanPreBoothCovers(root: string): Promise<string[]> {
+export async function scanPreBoothCovers(root: string, spool: string): Promise<string[]> {
 	const store = coverStoreDir(root);
 	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 	const scanned = await Promise.all(
@@ -296,12 +300,15 @@ export async function scanPreBoothCovers(root: string): Promise<string[]> {
 			if (frame === undefined) return undefined;
 			const names = (await listed(join(store, folder))).filter((entry) => entry.isFile()).map((entry) => entry.name);
 			// a frame the booth failed on keeps its old cover and says why, and asking
-			// again on every start would only fail again, unless what it said is from
-			// before a failure said whose it was
-			if (names.includes(CAPTURE_ERROR_NAME)) {
-				const text = await readFile(join(store, folder, CAPTURE_ERROR_NAME), "utf8").catch(() => "");
+			// again on every start would only fail again
+			const own = failureName(spool);
+			if (names.includes(own)) {
+				const text = await readFile(join(store, folder, own), "utf8").catch(() => "");
 				return parseCaptureError(text) === undefined ? frame : undefined;
 			}
+			// one from before failures named their spool is another release's verdict,
+			// or one that can not say whose fault it was: this one gives its own
+			if (names.includes(UNNAMED_FAILURE)) return frame;
 			return coverAmong(names) !== undefined && !names.includes(BOOTH_NAME) ? frame : undefined;
 		}),
 	);
@@ -331,7 +338,32 @@ export async function scanCoverSchemes(root: string): Promise<Map<string, ColorS
 	return new Map(scanned.filter((entry) => entry !== undefined));
 }
 
-const CAPTURE_ERROR_NAME = "error.json";
+/**
+ * A failure as every spool wrote it before it said whose it was (spool#321),
+ * and as releases from before then still write it.
+ */
+const UNNAMED_FAILURE = "error.json";
+const FAILURE_NAME = /^error\.(.+)\.json$/u;
+
+/**
+ * Where a spool's booth records its failure, by the spool's version: every
+ * release registered on a folder reads the same cover store, and a release
+ * not restarted into its update fails slides a newer one runs (spool#321).
+ */
+function failureName(spool: string): string {
+	return `error.${encodeURIComponent(spool)}.json`;
+}
+
+/** The spool a file in a cover folder is the failure of, or nothing for any other file. */
+function spoolOfFailure(name: string): string | undefined {
+	const named = FAILURE_NAME.exec(name)?.[1];
+	if (named === undefined) return undefined;
+	try {
+		return decodeURIComponent(named);
+	} catch {
+		return undefined;
+	}
+}
 
 /** What a frame was doing while it was timed (spool#318): the booth's census, and the two the frame's world counts. */
 export interface FrameCensus extends Census {
@@ -436,8 +468,8 @@ export function scanPaces(root: string): Map<string, TimedPace> {
 	return paces;
 }
 
-function captureErrorFile(root: string, frame: string): string {
-	return join(coverDir(root, frame), CAPTURE_ERROR_NAME);
+function captureErrorFile(root: string, frame: string, spool: string): string {
+	return join(coverDir(root, frame), failureName(spool));
 }
 
 /**
@@ -465,20 +497,39 @@ export interface BrokenFrame {
 const CAPTURE_FAILURES: readonly CaptureFailure[] = ["compile", "boot", "capture"];
 
 /**
- * The reason the photo booth could not make a cover, beside the old one it
- * leaves standing (#173): a compile error, a throw on boot, a frame too large
- * or too slow to draw. `writeCover`'s own cleanup — every file in the frame's cover dir that is not
- * the new image gets removed — retires this the moment a later capture lands,
- * so a stale reason never outlives the picture that made it moot.
+ * The reason `spool`'s photo booth could not make a cover, beside the old one
+ * it leaves standing (#173): a compile error, a throw on boot, a frame too large
+ * or too slow to draw. It is that release's verdict alone: a cover is of the
+ * frame whatever release took it, but whether a frame runs is its runtime's
+ * (spool#321). The booth clears it the moment a later capture of its own lands
+ * (`clearCaptureError`), so a stale reason never outlives the picture that made
+ * it moot.
  */
-export function writeCaptureError(root: string, frame: string, error: string, kind: CaptureFailure): void {
-	writeAtomic(captureErrorFile(root, frame), `${JSON.stringify({ error, at: new Date().toISOString(), kind })}\n`);
+export function writeCaptureError(
+	root: string,
+	frame: string,
+	error: string,
+	kind: CaptureFailure,
+	spool: string,
+): void {
+	writeAtomic(
+		captureErrorFile(root, frame, spool),
+		`${JSON.stringify({ error, at: new Date().toISOString(), kind })}\n`,
+	);
 }
 
-/** Machine-written cache: anything malformed reads as no recorded error (mirrors readLogsCache in verify-record.ts). */
-export function readCaptureError(root: string, frame: string): CaptureError | undefined {
+/** `spool`'s booth drew the frame: its recorded failure, if any, no longer applies. */
+export function clearCaptureError(root: string, frame: string, spool: string): void {
+	rmSync(captureErrorFile(root, frame, spool), { force: true });
+}
+
+/**
+ * `spool`'s recorded failure. Machine-written cache: anything malformed reads as no recorded error (mirrors
+ * readLogsCache in verify-record.ts).
+ */
+export function readCaptureError(root: string, frame: string, spool: string): CaptureError | undefined {
 	try {
-		return parseCaptureError(readFileSync(captureErrorFile(root, frame), "utf8"));
+		return parseCaptureError(readFileSync(captureErrorFile(root, frame, spool), "utf8"));
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
@@ -487,9 +538,8 @@ export function readCaptureError(root: string, frame: string): CaptureError | un
 
 /**
  * One recorded failure, or nothing when the text is no such record. One written
- * before failures had a kind is nothing too: what it says can not be told apart
- * as the frame's or the booth's, and the booth sits such a frame again
- * (`scanPreBoothCovers`) to say which.
+ * without its kind is nothing too: what it says can not be told apart as the
+ * frame's or the booth's.
  */
 function parseCaptureError(text: string): CaptureError | undefined {
 	let parsed: unknown;
@@ -505,15 +555,16 @@ function parseCaptureError(text: string): CaptureError | undefined {
 	return known === undefined ? undefined : { error, at, kind: known };
 }
 
-/** Every frame whose last cover failed through its own fault. */
-export function scanBrokenFramesSync(root: string): Map<string, BrokenFrame> {
+/** Every frame whose last cover by `spool` failed through its own fault. */
+export function scanBrokenFramesSync(root: string, spool: string): Map<string, BrokenFrame> {
 	const broken = new Map<string, BrokenFrame>();
 	const store = coverStoreDir(root);
+	const own = failureName(spool);
 	for (const { frame, folder } of framesIn(store)) {
-		if (!filesIn(join(store, folder)).includes(CAPTURE_ERROR_NAME)) continue;
+		if (!filesIn(join(store, folder)).includes(own)) continue;
 		let text = "";
 		try {
-			text = readFileSync(join(store, folder, CAPTURE_ERROR_NAME), "utf8");
+			text = readFileSync(join(store, folder, own), "utf8");
 		} catch {}
 		const recorded = parseCaptureError(text);
 		if (recorded !== undefined && recorded.kind !== "capture")
@@ -523,16 +574,17 @@ export function scanBrokenFramesSync(root: string): Map<string, BrokenFrame> {
 }
 
 /** The same, read without holding the event loop. */
-export async function scanBrokenFrames(root: string): Promise<Map<string, BrokenFrame>> {
+export async function scanBrokenFrames(root: string, spool: string): Promise<Map<string, BrokenFrame>> {
 	const store = coverStoreDir(root);
+	const own = failureName(spool);
 	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 	const scanned = await Promise.all(
 		folders.map(async (folder) => {
 			const frame = segmentFrame(folder);
 			if (frame === undefined) return undefined;
 			const names = (await listed(join(store, folder))).filter((entry) => entry.isFile()).map((entry) => entry.name);
-			if (!names.includes(CAPTURE_ERROR_NAME)) return undefined;
-			const text = await readFile(join(store, folder, CAPTURE_ERROR_NAME), "utf8").catch(() => "");
+			if (!names.includes(own)) return undefined;
+			const text = await readFile(join(store, folder, own), "utf8").catch(() => "");
 			const recorded = parseCaptureError(text);
 			if (recorded === undefined || recorded.kind === "capture") return undefined;
 			return [frame, { error: recorded.error, at: recorded.at, kind: recorded.kind }] as const;
