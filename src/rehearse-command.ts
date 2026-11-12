@@ -1,5 +1,6 @@
 import { cpSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import type { SlidesAsked } from "./deck/rehearsal";
 import { SpoolError } from "./errors";
 import type { RehearseLine, RehearseOutcome } from "./rehearse-report";
 import { refusalOf } from "./verbs";
@@ -17,12 +18,6 @@ export interface RehearseDeps {
 	/** the project's name */
 	readonly name: string;
 	readonly narrate: (line: string) => void;
-}
-
-/** The slides of a talk asked for, by number from 1, both ends included. */
-export interface SlidesAsked {
-	readonly from: number;
-	readonly to: number;
 }
 
 /**

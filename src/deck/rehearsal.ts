@@ -202,6 +202,12 @@ export interface RehearsedSlide {
 	readonly live?: boolean;
 }
 
+/** The slides of a talk a rehearsal asks for, by number from 1, both ends included. */
+export interface SlidesAsked {
+	readonly from: number;
+	readonly to: number;
+}
+
 /** A whole rehearsal, as the driver hands it to the rules. */
 export interface Rehearsal {
 	readonly page: string;

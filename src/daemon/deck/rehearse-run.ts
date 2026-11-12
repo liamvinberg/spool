@@ -2,7 +2,7 @@ import { type Dirent, mkdirSync, readdirSync, renameSync, rmSync, statSync, writ
 import { availableParallelism, loadavg } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { BrowserContext, BrowserContextOptions } from "playwright-core";
-import type { Rehearsal } from "../../deck/rehearsal";
+import type { Rehearsal, SlidesAsked } from "../../deck/rehearsal";
 import type { RehearseOutcome } from "../../rehearse-report";
 import { realDesignDir } from "../design-path";
 import type { FramePace } from "../thumbs";
@@ -17,12 +17,6 @@ import { stageOf } from "./stage-play";
  * lends, what it found, and its pictures written where the CLI reads them: `design/.spool/rehearse/<page>/`, made new
  * on every rehearsal of the page, so nothing in it is from before the last.
  */
-
-/** The slides a rehearsal asks for, by number from 1, both ends included. */
-export interface SlidesAsked {
-	readonly from: number;
-	readonly to: number;
-}
 
 /** The talk a name rehearses, and which of its slides: a deck page whole or in part, or one slide of one. */
 export function talkOf(

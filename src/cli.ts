@@ -48,6 +48,7 @@ import { followedLink } from "./daemon/team-sync";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { whatsNewServing } from "./daemon/whats-new-routes";
+import type { SlidesAsked } from "./deck/rehearsal";
 import { REHEARSE } from "./deck/rehearsal";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
@@ -67,7 +68,7 @@ import {
 	tellHooksChanged,
 } from "./outside/cli";
 import { isFramePath, isSafeName } from "./page-path";
-import { copyRehearsal, parseSlides, rehearseTalk, type SlidesAsked, talkNamed } from "./rehearse-command";
+import { copyRehearsal, parseSlides, rehearseTalk, talkNamed } from "./rehearse-command";
 import { reportOf } from "./rehearse-report";
 import { forgetProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
