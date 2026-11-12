@@ -525,3 +525,90 @@ export function readScreen(
 	});
 	return read;
 }
+
+/** One frame of a window, as `watchPictures` reads it. */
+export interface PictureFrame {
+	readonly t: number;
+	/** the slide stands where it ends up: the slides fill the screen, or the presenter view is drawn around it */
+	readonly landed: boolean;
+	/** each picture of a slide one can see in it: how wide it is drawn, in device pixels, and how wide it was made */
+	readonly pictures: readonly { readonly drawn: number; readonly made: number }[];
+	/** the presenter view's own words, while it is open */
+	readonly presenter: string | null;
+}
+
+/**
+ * Every frame of every page of the context, from its first: the pictures of a slide standing in for it (a cover in the
+ * layer it flies in, or over the presenter view), and when the stage that draws the slide itself first said it showed
+ * one. The presenter view's next pane is not that stage, nor is a slide on the canvas.
+ */
+export async function watchPictures(context: BrowserContext): Promise<void> {
+	await context.addInitScript(() => {
+		const frames: unknown[] = [];
+		let drawn: number | null = null;
+		Object.defineProperty(window, "__pictures", { value: { frames, drawn: () => drawn } });
+		addEventListener(
+			"message",
+			(event) => {
+				if ((event.data as { spool?: unknown } | null)?.spool !== "stage-connect") return;
+				const frame = [...document.querySelectorAll("iframe")].find((one) => one.contentWindow === event.source);
+				if (frame === undefined || !frame.closest("[data-deck-slide], [data-present-live]")) return;
+				event.ports[0]?.addEventListener("message", (message) => {
+					if ((message.data as { spool?: unknown } | null)?.spool === "stage-shown") drawn ??= performance.now();
+				});
+			},
+			true,
+		);
+		const seen = (element: Element): number => {
+			let opacity = 1;
+			for (let at: Element | null = element; at !== null; at = at.parentElement) {
+				opacity *= Number(getComputedStyle(at).opacity);
+			}
+			return opacity;
+		};
+		const tick = () => {
+			const pictures: { drawn: number; made: number }[] = [];
+			for (const img of document.querySelectorAll<HTMLImageElement>(
+				"[data-present-flyer] img, [data-deck-travel] img",
+			)) {
+				// the live slide stands over the picture it flies with
+				const live = img.closest("[data-present-flyer]")?.querySelector("[data-present-live]");
+				const shows = seen(img) * (live ? 1 - seen(live) : 1);
+				if (shows < 0.01) continue;
+				pictures.push({ drawn: img.getBoundingClientRect().width * devicePixelRatio, made: img.naturalWidth });
+			}
+			const presenter = document.querySelector<HTMLElement>("[data-deck-presenter]");
+			frames.push({
+				t: performance.now(),
+				landed:
+					document.querySelector('[data-present-slides="on"]') !== null ||
+					(presenter !== null && presenter.style.opacity !== "0"),
+				pictures,
+				presenter: presenter?.textContent ?? null,
+			});
+			requestAnimationFrame(tick);
+		};
+		requestAnimationFrame(tick);
+	});
+}
+
+/** The frames `watchPictures` read in a page, and when its slide's own stage first showed one. */
+export const picturesOf = (page: Page) =>
+	page.evaluate(() => {
+		const read = (window as unknown as { __pictures: { frames: PictureFrame[]; drawn: () => number | null } })
+			.__pictures;
+		return { frames: read.frames, drawn: read.drawn() };
+	});
+
+/**
+ * The frames, once the slide has landed and a frame has passed since its stage drew it, where a picture smaller than
+ * it is drawn still stands for it: a thumbnail stretched over a slide that is there to be seen sharp (spool#316).
+ */
+export function stretched({ frames, drawn }: { frames: readonly PictureFrame[]; drawn: number | null }): number[] {
+	if (drawn === null) return [];
+	const next = frames.findIndex((frame) => frame.t > drawn);
+	if (next < 0) return [];
+	return frames.flatMap((frame, at) =>
+		at > next && frame.landed && frame.pictures.some((picture) => picture.made < picture.drawn - 1) ? [at] : [],
+	);
+}
