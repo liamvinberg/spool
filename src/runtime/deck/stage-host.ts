@@ -22,8 +22,11 @@ import {
  */
 
 export interface StageHostOptions {
-	/** a fresh address of the stage's document, asked for each time one is opened, and the talk's size */
-	address(): Promise<{ address: string; size: Size }>;
+	/**
+	 * a fresh address of the stage's document, asked for each time one is opened, and the talk's size; and the WebGL
+	 * contexts the document may hold where the address puts it, when that is not `webgl`'s share
+	 */
+	address(): Promise<{ address: string; size: Size; webgl?: number }>;
 	/** `own`: the stage keeps the session and the host sends it commands; `follow`: the host hands it each session */
 	mode: StageMode;
 	/** the stage draws the room's states, black and frozen */
@@ -78,6 +81,8 @@ export interface StageHost {
 	focus(): void;
 	/** the pointer hidden over the stage's documents, or shown again */
 	cursor(hidden: boolean): void;
+	/** the WebGL contexts its stage may hold from now, for a document whose address named none (spool#320) */
+	share(webgl: number): void;
 	/** the newest session the host knows */
 	session(): StageSession | undefined;
 	/** the talk, once the stage said it */
@@ -105,6 +110,10 @@ interface StageDocument {
 	/** each slide's readiness as it last said it, for the host to hear once it is the document on screen */
 	slides?: readonly SlideReadiness[];
 	shown: boolean;
+	/** the WebGL contexts it may hold where its address put it, apart from the host's share */
+	webgl?: number;
+	/** the WebGL contexts it was last told it may hold */
+	told?: number;
 	timer?: ReturnType<typeof setTimeout>;
 	stop(): void;
 }
@@ -122,6 +131,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 	let forget: ReturnType<typeof setTimeout> | undefined;
 	/** the pointer is hidden over the stage, as every document of it is told as it opens */
 	let cursorHidden = false;
+	let webgl = options.webgl;
 
 	const holder = document.createElement("div");
 	holder.dataset.spoolStage = "";
@@ -153,7 +163,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 
 	/** Opens a document of the stage behind whatever is showing, on the newest session. */
 	async function open(): Promise<void> {
-		let answer: { address: string; size: Size };
+		let answer: { address: string; size: Size; webgl?: number };
 		try {
 			answer = await options.address();
 		} catch (error) {
@@ -175,7 +185,14 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			opacity: "0",
 			pointerEvents: "none",
 		});
-		const doc: StageDocument = { frame, size: answer.size, talk: [], shown: false, stop: () => {} };
+		const doc: StageDocument = {
+			frame,
+			size: answer.size,
+			talk: [],
+			shown: false,
+			stop: () => {},
+			...(answer.webgl === undefined ? {} : { webgl: answer.webgl }),
+		};
 		const onWindowMessage = (event: MessageEvent) => {
 			if (event.source !== frame.contentWindow) return;
 			const data = event.data as { spool?: unknown; why?: unknown } | null;
@@ -191,6 +208,8 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			port.onmessage = (incomingEvent) => heard(doc, incomingEvent.data);
 			doc.post = (message) => port.postMessage(message);
 			doc.opened = session;
+			const share = shareOf(doc);
+			if (share !== undefined) doc.told = share;
 			// the slide the talk is on, by frame, so a talk changed since finds it again
 			const frameOf = session === undefined ? options.frame : current?.talk[session.at.slide]?.frame;
 			doc.post({
@@ -200,7 +219,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				...(options.alone === true ? { alone: true } : {}),
 				...(options.filling === true ? { filling: true } : {}),
 				...(options.rest === true ? { rest: true } : {}),
-				...(options.webgl === undefined ? {} : { webgl: options.webgl }),
+				...(share === undefined ? {} : { webgl: share }),
 				...(session === undefined ? {} : { session }),
 				...(frameOf === undefined ? {} : { frame: frameOf }),
 			});
@@ -220,7 +239,29 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			incoming?.stop();
 			incoming = doc;
 		}
+		reshare();
 		holder.append(frame);
+	}
+
+	/**
+	 * The WebGL contexts a document may hold: its share of the process, split evenly among the builds the host holds at
+	 * once, as they all play in it (spool#320).
+	 */
+	function shareOf(doc: StageDocument): number | undefined {
+		const whole = doc.webgl ?? webgl;
+		if (whole === undefined) return undefined;
+		const builds = [current, incoming, veil].filter((one) => one !== undefined).length;
+		return Math.floor(whole / Math.max(1, builds));
+	}
+
+	/** Tells each connected document its share whenever a build comes or goes: one going down lets go first. */
+	function reshare(): void {
+		for (const doc of [current, incoming, veil]) {
+			const share = doc === undefined ? undefined : shareOf(doc);
+			if (doc?.post === undefined || share === undefined || share === doc.told) continue;
+			doc.told = share;
+			doc.post({ spool: "stage-webgl", webgl: share });
+		}
 	}
 
 	/** A document that will not play: a new build is dropped and the one showing stays; the first one says so. */
@@ -228,6 +269,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		if (doc === incoming) {
 			incoming = undefined;
 			doc.stop();
+			reshare();
 		}
 		on.refused?.(why);
 	}
@@ -266,6 +308,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 					if (veil !== undefined && !message.shown.held) {
 						veil.stop();
 						veil = undefined;
+						reshare();
 					}
 					on.shown?.(message.shown);
 				} else if (doc === incoming) {
@@ -329,6 +372,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			// the old document never showed the room anything over the picture already kept, which stays
 			old?.stop();
 		}
+		reshare();
 		// keys pressed in the stage go on reaching the build that now plays the talk
 		if (focused) doc.frame.focus();
 		on.talk?.(doc.talk);
@@ -398,6 +442,11 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			if (hidden === cursorHidden) return;
 			cursorHidden = hidden;
 			for (const doc of [current, incoming]) doc?.post?.({ spool: "stage-cursor", hidden });
+		},
+		share(contexts) {
+			if (contexts === webgl) return;
+			webgl = contexts;
+			reshare();
 		},
 		session: () => session,
 		talk: () => current?.talk ?? [],

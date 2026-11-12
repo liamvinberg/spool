@@ -4,6 +4,7 @@ import { type At, roomPicture, type StageSession } from "../../deck/stage-sessio
 import type { StageShown } from "../../deck/stage-wire";
 import { testBrowser } from "../../test-browser";
 import { builtUi, serveProject, writeDesignFile } from "../../test-helpers";
+import { RENDER_HOST, ROOM_HOST } from "../security";
 import {
 	blackedOut,
 	explainFrame,
@@ -100,6 +101,13 @@ async function together(view: Page, audience: Page): Promise<At> {
 	return at;
 }
 
+/** The hosts a window's stage documents play on. */
+const stageHosts = (page: Page) =>
+	page
+		.frames()
+		.filter((frame) => frame !== page.mainFrame())
+		.map((frame) => new URL(frame.url()).hostname);
+
 /** A small seeded generator, so a walk that fails can be walked again. */
 function walker(seed: number) {
 	let state = seed >>> 0;
@@ -140,6 +148,8 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	await audience.setViewportSize({ width: 1280, height: 720 });
 	await view.locator("[data-deck-presenter]").waitFor();
 	expect(await together(view, audience)).toEqual({ slide: 0, beat: 0 });
+	// the room's stage plays on a host of its own, a site the browser gives a process of its own (spool#320)
+	expect(stageHosts(audience)).toEqual([ROOM_HOST]);
 	const screen = await recordScreen(audience);
 
 	// a long walk of the talk's own keys and the foot's segments, the room reloaded half way
@@ -446,6 +456,10 @@ it("opens the presenter view on its slide drawn sharp: the picture it travelled 
 	// a 2x screen, as the Mac's: the card's picture is far smaller than the presenter view draws the slide
 	const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 	await watchPictures(context);
+	// a browser where the room's host never answers: the room plays its stage on the render host, as it did before it
+	// had one (spool#320)
+	await tapStages(context);
+	await context.route(/^http:\/\/room-spool\.localhost/, (route) => route.abort());
 	const view = await context.newPage();
 	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
@@ -465,5 +479,7 @@ it("opens the presenter view on its slide drawn sharp: the picture it travelled 
 	const words = read.frames.flatMap((frame) => (frame.presenter === null ? [] : [frame.presenter]));
 	expect(words.length).toBeGreaterThan(0);
 	expect(words.filter((said) => said.includes("end of the talk"))).toEqual([]);
+	await expect.poll(async () => (await room(audience))?.at, { timeout: 30_000 }).toEqual({ slide: 0, beat: 0 });
+	expect(stageHosts(audience)).toEqual([RENDER_HOST]);
 	await audience.close();
 });

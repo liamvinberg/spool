@@ -4,7 +4,13 @@ import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
 import type { KeyCommand } from "../../deck/stage-keys";
 import { type At, nextAt, roomPicture, type StageSession, type TalkSlide } from "../../deck/stage-session";
-import { PRESENTED_WEBGL, type SlideReadiness, type StagePointer, tooHeavyAhead } from "../../deck/stage-wire";
+import {
+	PRESENTED_WEBGL,
+	PRESENTED_WEBGL_APART,
+	type SlideReadiness,
+	type StagePointer,
+	tooHeavyAhead,
+} from "../../deck/stage-wire";
 import type { DeckRead } from "../../deck/wire";
 import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
 import { cn } from "../cn";
@@ -96,6 +102,8 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		[said, deck],
 	);
 	const [ready, setReady] = useState<readonly SlideReadiness[]>([]);
+	/** the room's stage plays in a process of its own, as the room last said (spool#320) */
+	const [roomApart, setRoomApart] = useState(false);
 	const [room, setRoom] = useState<RoomState>("opening");
 	const [help, setHelp] = useState(false);
 	const [pointer, setPointer] = useState<StagePointer | null>(null);
@@ -278,6 +286,10 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 				clearTimeout(gone);
 				gone = setTimeout(() => setRoom("closed"), ROOM_GONE_MS);
 			} else if (message.kind === "shown") {
+				// the room's stage apart, this window's slide may hold what the next pane leaves of their process
+				const apart = message.apart === true;
+				setRoomApart(apart);
+				host.share((apart ? PRESENTED_WEBGL_APART : PRESENTED_WEBGL).slide);
 				if (owed?.room !== undefined && message.revision >= owed.room) {
 					owed.room = undefined;
 					paid();
@@ -624,6 +636,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					talk={talk}
 					deck={deck}
 					ready={ready}
+					roomWebgl={(roomApart ? PRESENTED_WEBGL_APART : PRESENTED_WEBGL).room}
 					onGo={(slide, beat) => stage.current?.main.command({ kind: "go", slide, beat })}
 				/>
 			</motion.div>
@@ -653,17 +666,20 @@ function TalkLine({
 	talk,
 	deck,
 	ready,
+	roomWebgl,
 	onGo,
 }: {
 	at: At;
 	talk: readonly TalkSlide[];
 	deck: DeckRead | undefined;
 	ready: readonly SlideReadiness[];
+	/** the WebGL contexts the room's stage may hold */
+	roomWebgl: number;
 	onGo: (slide: number, beat: number) => void;
 }) {
 	// a click here moves the talk and leaves the focus, and the keys, where they were
 	const keepFocus = (event: MouseEvent) => event.preventDefault();
-	const heavy = tooHeavyAhead(ready, PRESENTED_WEBGL.room);
+	const heavy = tooHeavyAhead(ready, roomWebgl);
 	return (
 		<div className="flex w-full gap-4">
 			{talk.map((slide, index) => {

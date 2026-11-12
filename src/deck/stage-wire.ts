@@ -75,6 +75,12 @@ export type StageMode = "own" | "follow";
 export const PRESENTED_WEBGL = { room: 6, slide: 2, next: 0 } as const;
 
 /**
+ * The same, once the room's stage plays in a process of its own, on the room's host: there it may hold fifteen, and
+ * the presenter's slide what the next pane's slide leaves of the sixteen in theirs.
+ */
+export const PRESENTED_WEBGL_APART = { room: 15, slide: 10, next: 0 } as const;
+
+/**
  * The slides a stage holding `share` WebGL contexts cannot ready ahead beside the one before them, by the contexts each
  * draws with: such a slide makes them, and compiles its shaders, as it goes on, as late as its own cost makes it.
  */
@@ -135,7 +141,9 @@ export type HostMessage =
 			readonly cut?: true;
 	  }
 	/** the pointer hidden over the stage's document, or shown again: the slides fill the screen and nobody's hand moves */
-	| { readonly spool: "stage-cursor"; readonly hidden: boolean };
+	| { readonly spool: "stage-cursor"; readonly hidden: boolean }
+	/** the WebGL contexts the stage may hold from now, its process shared otherwise than it was (spool#320) */
+	| { readonly spool: "stage-webgl"; readonly webgl: number };
 
 /** stage → host */
 export type StageMessage =
@@ -242,7 +250,7 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 			...(value.alone === true ? { alone: true } : {}),
 			...(value.filling === true ? { filling: true } : {}),
 			...(value.rest === true ? { rest: true } : {}),
-			...(typeof value.webgl === "number" && value.webgl >= 0 ? { webgl: value.webgl } : {}),
+			...(isCount(value.webgl) ? { webgl: value.webgl } : {}),
 			...(session === undefined ? {} : { session }),
 			...(typeof value.frame === "string" ? { frame: value.frame } : {}),
 		};
@@ -264,6 +272,8 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 	if (value.spool === "stage-cursor") {
 		return typeof value.hidden === "boolean" ? { spool: "stage-cursor", hidden: value.hidden } : undefined;
 	}
+	if (value.spool === "stage-webgl")
+		return isCount(value.webgl) ? { spool: "stage-webgl", webgl: value.webgl } : undefined;
 	return undefined;
 }
 

@@ -50,16 +50,12 @@ const NOT_PROPERTIES = new Set(["offset", "computedOffset", "easing", "composite
 
 const kebab = (name: string) => (name.startsWith("--") ? name : name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`));
 
-/**
- * What the document is doing, or with `scope` one element and what it holds: a slide of a talk's stage
- * (`rehearse-probes.ts`), whose document composes the slides around it too.
- */
-export function census(scope?: Element): Census {
+export function census(): Census {
 	// a transition is one animation per property, so what an element animates is gathered first
 	const byElement = new Map<Element, { properties: Set<string>; endless: boolean }[]>();
 	let animations: Animation[] = [];
 	try {
-		animations = scope === undefined ? document.getAnimations() : scope.getAnimations({ subtree: true });
+		animations = document.getAnimations();
 	} catch {}
 	for (const animation of animations) {
 		if (animation.playState !== "running") continue;
@@ -94,8 +90,7 @@ export function census(scope?: Element): Census {
 	}
 	const dpr = window.devicePixelRatio || 1;
 	const canvases: Drawn[] = [];
-	const within = scope ?? document;
-	for (const canvas of within.querySelectorAll("canvas")) {
+	for (const canvas of document.querySelectorAll("canvas")) {
 		const { width, height } = canvas.getBoundingClientRect();
 		canvases.push({
 			width: canvas.width,
@@ -105,7 +100,7 @@ export function census(scope?: Element): Census {
 		});
 	}
 	const oversized = new Map<string, Drawn & { count: number }>();
-	for (const image of within.querySelectorAll("img")) {
+	for (const image of document.images) {
 		const pixels = image.naturalWidth * image.naturalHeight;
 		if (pixels < OVERSIZED_LEAST) continue;
 		const { width, height } = image.getBoundingClientRect();
@@ -124,9 +119,9 @@ export function census(scope?: Element): Census {
 	}
 	const bigFirst = (a: Drawn, b: Drawn) => b.width * b.height - a.width * a.height;
 	let videos = 0;
-	for (const video of within.querySelectorAll("video")) if (!video.paused && !video.ended) videos++;
+	for (const video of document.querySelectorAll("video")) if (!video.paused && !video.ended) videos++;
 	return {
-		elements: within.getElementsByTagName("*").length,
+		elements: document.getElementsByTagName("*").length,
 		animations: [...groups.values()],
 		canvasCount: canvases.length,
 		canvases: canvases.sort(bigFirst).slice(0, KEPT),

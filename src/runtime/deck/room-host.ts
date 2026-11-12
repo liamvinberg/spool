@@ -2,7 +2,7 @@ import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
 import { fitIn, STAGE_GROUND } from "../../deck/stage-fit";
 import { roomPicture, type StageSession } from "../../deck/stage-session";
-import { PRESENTED_WEBGL, type StagePointer } from "../../deck/stage-wire";
+import { PRESENTED_WEBGL, PRESENTED_WEBGL_APART, type StagePointer } from "../../deck/stage-wire";
 import { stageDaemon } from "./stage-daemon";
 import { mountStage, type StageHost } from "./stage-host";
 
@@ -46,6 +46,12 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	const say = (message: TalkMessage) => channel.postMessage(message);
 	const daemon = stageDaemon(config);
 	let size: Size | undefined;
+	/**
+	 * The stage plays on the room's host, in a process of its own, once that host is seen to answer here, in a browser
+	 * that gives each site a process; elsewhere the stage plays on the render host beside the presenter's, as it always
+	 * did, and holds that share (spool#320).
+	 */
+	let apart: boolean | undefined = sitesApart() ? undefined : false;
 	/** the newest session the presenter published, and the slide the room's screen shows in it */
 	let newest: { session: StageSession; frame: string } | undefined;
 	let pointer: StagePointer | null = null;
@@ -61,13 +67,16 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 
 	const host = mountStage(root, {
 		async address() {
-			const answer = await daemon.address();
+			let answer = await daemon.address(apart !== false);
+			if (apart === undefined) {
+				apart = await answers(answer.address);
+				if (!apart) answer = await daemon.address(false);
+			}
 			size = answer.size;
-			return answer;
+			return { ...answer, webgl: (apart ? PRESENTED_WEBGL_APART : PRESENTED_WEBGL).room };
 		},
 		mode: "follow",
 		room: true,
-		webgl: PRESENTED_WEBGL.room,
 		...(config.frame === undefined ? {} : { frame: config.frame }),
 		on: {
 			// a new build took the screen: the newest session, which it may now be able to show
@@ -79,7 +88,7 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 				const session = host.session();
 				const at = session === undefined ? undefined : roomPicture(session).at;
 				if (session !== undefined && at?.slide === shown.at.slide && at.beat === shown.at.beat)
-					say({ kind: "shown", revision: session.revision });
+					say({ kind: "shown", revision: session.revision, ...(apart === true ? { apart } : {}) });
 			},
 			command: (command) => {
 				if (roomPasses(command)) say({ kind: "command", command });
@@ -176,6 +185,26 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 			say({ kind: "command", command: { kind: "next" } });
 	});
 	return host;
+}
+
+/** Whether this browser plays each site in a process of its own, as Chromium does, and so the Mac app. */
+function sitesApart(): boolean {
+	const brands = (navigator as Navigator & { userAgentData?: { brands?: { brand: string }[] } }).userAgentData?.brands;
+	return brands?.some(({ brand }) => brand === "Chromium") === true;
+}
+
+/** Whether a host of the daemon's answers in this browser at all, by the address of a document on it. */
+async function answers(address: string): Promise<boolean> {
+	try {
+		await fetch(new URL("/favicon.svg", address), {
+			mode: "no-cors",
+			cache: "no-store",
+			signal: AbortSignal.timeout(3000),
+		});
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /** The Mac app's word to the room's window: whether it is a window just now, rather than full screen. */

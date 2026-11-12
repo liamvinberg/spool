@@ -62,7 +62,7 @@ export interface BootDeps {
  */
 const BOOT_QUIET_MS = 30_000;
 
-export function controlHeaders(controlToken: string): HeadersInit {
+function controlHeaders(controlToken: string): HeadersInit {
 	return { "X-Spool-Control": controlToken };
 }
 
@@ -373,7 +373,7 @@ async function bootFrame(deps: BootDeps, { w, h }: FrameSize): Promise<Boot> {
 			const text = await res.text();
 			throw new SpoolError(text !== "" ? text : `the daemon could not boot "${deps.frame}"`);
 		}
-		for await (const line of jsonLines<BootLine>(res.body)) {
+		for await (const line of bootLines(res.body)) {
 			clearTimeout(quiet);
 			quiet = setTimeout(() => stopped.abort(), quietMs);
 			if ("beat" in line) continue;
@@ -393,8 +393,8 @@ async function bootFrame(deps: BootDeps, { w, h }: FrameSize): Promise<Boot> {
 	}
 }
 
-/** The daemon's answer as the lines it is written in, each one JSON: a boot's, a rehearsal's. */
-export async function* jsonLines<T>(body: ReadableStream<Uint8Array>): AsyncGenerator<T> {
+/** The daemon's answer as the lines it is written in, each one JSON. */
+async function* bootLines(body: ReadableStream<Uint8Array>): AsyncGenerator<BootLine> {
 	const decoder = new TextDecoder();
 	let buffer = "";
 	for await (const chunk of body) {
@@ -403,11 +403,11 @@ export async function* jsonLines<T>(body: ReadableStream<Uint8Array>): AsyncGene
 		while (newline !== -1) {
 			const line = buffer.slice(0, newline).trim();
 			buffer = buffer.slice(newline + 1);
-			if (line !== "") yield JSON.parse(line) as T;
+			if (line !== "") yield JSON.parse(line) as BootLine;
 			newline = buffer.indexOf("\n");
 		}
 	}
-	if (buffer.trim() !== "") yield JSON.parse(buffer) as T;
+	if (buffer.trim() !== "") yield JSON.parse(buffer) as BootLine;
 }
 
 interface FrameSize {

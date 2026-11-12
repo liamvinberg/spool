@@ -417,10 +417,12 @@ it("keeps every slide that draws with WebGL ready, only those nearest the one on
 const whereRan = (ran: string[], name: string, box: { readonly current: Element | null }) =>
 	ran.push(`${name} ${box.current?.closest("[data-spool-stage-shown]") ? "on screen" : "out of sight"}`);
 
-it("puts the slide the next key plays on out of sight before the key, its effects run once in all", async () => {
+it("puts the slide the next key plays on out of sight before the key, its effects run once in all, drawn no more as it goes on", async () => {
 	const ran: string[] = [];
+	const drawn = new Map<string, number>();
 	const counted = (name: string): ComponentType =>
 		function Counted() {
+			drawn.set(name, (drawn.get(name) ?? 0) + 1);
 			const box = useRef<HTMLParagraphElement>(null);
 			useEffect(() => {
 				whereRan(ran, name, box);
@@ -434,10 +436,13 @@ it("puts the slide the next key plays on out of sight before the key, its effect
 	await vi.waitFor(() => expect(ran).toEqual(["a on screen", "b out of sight"]));
 	// waiting, nothing in it takes the focus or a click
 	expect(document.querySelector('[data-spool-stage-slide="talk/b"]')?.hasAttribute("inert")).toBe(true);
+	const before = new Map(drawn);
 
 	on.send({ spool: "stage-command", command: { kind: "next" } });
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
 	await vi.waitFor(() => expect(ran).toContain("c out of sight"));
+	// the step only shows one slide and hides the other: neither is drawn again for it
+	expect([drawn.get("a"), drawn.get("b")]).toEqual([before.get("a"), before.get("b")]);
 	on.send({ spool: "stage-command", command: { kind: "back" } });
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
 	expect(ran).toEqual(["a on screen", "b out of sight", "c out of sight"]);

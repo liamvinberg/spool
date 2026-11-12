@@ -15,8 +15,11 @@ export interface StageDaemonConfig {
 }
 
 export interface StageDaemon {
-	/** a fresh address of the stage's document, and the talk's size, for `mountStage` */
-	address(): Promise<{ address: string; size: Size }>;
+	/**
+	 * a fresh address of the stage's document, and the talk's size, for `mountStage`; `room`: on the room's host, where
+	 * the browser plays it in a process of its own (spool#320)
+	 */
+	address(room?: boolean): Promise<{ address: string; size: Size }>;
 	/** a saved change to the talk taken by `host`, for as long as the page is open */
 	follow(host: StageHost): void;
 }
@@ -35,11 +38,11 @@ export function stageDaemon(config: StageDaemonConfig): StageDaemon {
 		return response.ok && JSON.stringify(await response.json()) !== playing;
 	};
 	return {
-		async address() {
+		async address(room = false) {
 			const response = await fetch(`${api}/deck-stage`, {
 				method: "POST",
 				headers: { ...headers, "content-type": "application/json" },
-				body: JSON.stringify({ page: config.page }),
+				body: JSON.stringify({ page: config.page, ...(room ? { room } : {}) }),
 			});
 			if (!response.ok) throw new Error((await response.text()) || "the talk could not be played");
 			const answer = (await response.json()) as { address: string; size: Size; talk: unknown };

@@ -30,6 +30,8 @@ export interface StagePlayDeps {
 	issue(project: string, key: string): string;
 	consume(token: string | undefined, project: string, key: string): boolean;
 	renderOrigin(): string;
+	/** the room's host's origin, as untrusted as the render origin, a site of its own (spool#320) */
+	roomOrigin(): string;
 	controlToken: string;
 	/** a document only spool's own window may hold */
 	protect(c: Context): void;
@@ -42,7 +44,8 @@ export interface StageAddress {
 	readonly talk: StageConfig;
 }
 
-const passKey = (page: string) => `deck:${page}`;
+/** A stage pass is good on the host it was given for alone. */
+const passKey = (page: string, room: boolean) => `deck:${room ? "room:" : ""}${page}`;
 
 /** The `room` of a play address: the talk whose room's window it is, presented from spool's own window. */
 export const ROOM_QUERY = z.string().regex(TALK_NAME, { message: "not a talk" });
@@ -68,14 +71,17 @@ export function stageOf(root: string, page: string): StageConfig | { message: st
 }
 
 export function createStagePlay(deps: StagePlayDeps) {
-	/** A fresh address of a deck's stage document, for a window of spool's to embed once. */
-	function address(project: string, root: string, page: string): StageAddress | { message: string } {
+	/**
+	 * A fresh address of a deck's stage document, for a window of spool's to embed once: on the room's host for the
+	 * room's window, where the browser plays it in a process of its own, its WebGL contexts its own (spool#320).
+	 */
+	function address(project: string, root: string, page: string, room = false): StageAddress | { message: string } {
 		const stage = stageOf(root, page);
 		if ("message" in stage) return stage;
-		const token = deps.issue(project, passKey(page));
+		const token = deps.issue(project, passKey(page, room));
 		const query = new URLSearchParams({ deck: page, shell: "1", handoff: token });
 		return {
-			address: `${deps.renderOrigin()}/play/${encodeURIComponent(project)}?${query}`,
+			address: `${room ? deps.roomOrigin() : deps.renderOrigin()}/play/${encodeURIComponent(project)}?${query}`,
 			size: stage.size,
 			talk: stage,
 		};
@@ -92,6 +98,8 @@ export function createStagePlay(deps: StagePlayDeps) {
 			handoff?: string;
 			room?: string;
 			control: boolean;
+			/** asked on the room's host */
+			onRoom: boolean;
 		},
 	): Promise<Response> {
 		if (!deps.on()) return c.text("Not Found", 404);
@@ -109,7 +117,7 @@ export function createStagePlay(deps: StagePlayDeps) {
 			);
 		}
 		const embedded = query.shell === "1";
-		if (embedded && !deps.consume(query.handoff, query.project, passKey(query.deck))) {
+		if (embedded && !deps.consume(query.handoff, query.project, passKey(query.deck, query.onRoom))) {
 			return c.html(refusedDocument("this stage's pass was used or has expired"), 403);
 		}
 		if (!embedded && query.handoff !== undefined) return c.text("a stage pass requires shell=1", 400);
@@ -172,20 +180,9 @@ html[data-spool-stage-cursor="hidden"], html[data-spool-stage-cursor="hidden"] *
 function stageDocument(config: PlayerConfig & { deck: StageConfig }, bundle: PlayerBundle): string {
 	const base = playerChunkBase(config.project);
 	const modules = new Set([bundle.entry]);
-	// each slide's own module names its slide: a rehearsal tells by it whose code said a line or asked for a file
-	const owners = new Map<string, string>();
-	for (const slide of config.deck.slides) {
-		const screens = bundle.screens.get(slide.frame) ?? [];
-		const own = screens[0];
-		if (own !== undefined && !owners.has(own)) owners.set(own, slide.frame);
-		for (const name of screens) modules.add(name);
-	}
+	for (const slide of config.deck.slides) for (const name of bundle.screens.get(slide.frame) ?? []) modules.add(name);
 	const preload = [...modules]
-		.map((name) => {
-			const owner = owners.get(name);
-			const named = owner === undefined ? "" : ` data-spool-frame="${escapeHtml(owner)}"`;
-			return `<link rel="modulepreload" href="${escapeHtml(base + name)}"${named}>`;
-		})
+		.map((name) => `<link rel="modulepreload" href="${escapeHtml(base + name)}">`)
 		.join("\n");
 	const fonts = bundle.fonts === undefined ? "" : `<style>${escapeInlineStyle(bundle.fonts)}</style>\n`;
 	return `<!doctype html>

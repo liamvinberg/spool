@@ -6,7 +6,7 @@ import { initProject } from "../init";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { createDaemonApp } from "./app";
 import { captureWorkerCsp } from "./document";
-import { CAPTURE_HOST, RENDER_HOST } from "./security";
+import { CAPTURE_HOST, RENDER_HOST, ROOM_HOST } from "./security";
 import { writeCover } from "./thumbs";
 
 const CONTROL_HOST = "localhost";
@@ -19,10 +19,19 @@ const FRAME_CSP = [
 	`img-src https: data: blob: http://${RENDER_HOST}`,
 ].join("; ");
 
-function makeSecurityHarness() {
+function makeSecurityHarness({ deck = false } = {}) {
 	const spoolDir = makeTempDir();
+	if (deck) writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experimental: { deck: true } }));
 	const project = makeProject(spoolDir);
 	writeFrame(project.root, "home", "export default function Home() { return <main>safe</main> }");
+	if (deck) {
+		writeDesignFile(
+			project.root,
+			"frames/talk/deck.json",
+			JSON.stringify({ version: 1, w: 1280, h: 720, slides: ["one"] }),
+		);
+		writeFrame(project.root, "talk/one", "export default function One() { return <p>one</p> }");
+	}
 	writeDesignFile(project.root, "shared/scenarios/default.json", JSON.stringify({ state: { owner: project.root } }));
 	const daemon = createDaemonApp({
 		spoolDir,
@@ -42,8 +51,9 @@ function makeSecurityHarness() {
 		});
 	const render = (path: string, init?: RequestInit) => request(RENDER_HOST, path, init);
 	const capture = (path: string, init?: RequestInit) => request(CAPTURE_HOST, path, init);
+	const room = (path: string, init?: RequestInit) => request(ROOM_HOST, path, init);
 
-	return { spoolDir, project, daemon, request, control, render, capture };
+	return { spoolDir, project, daemon, request, control, render, capture, room };
 }
 
 function shellConfigOf(document: string): {
@@ -82,12 +92,14 @@ describe("daemon authority matrix", () => {
 		expect(document).toContain(`window.__SPOOL_CAPTURE_ORIGIN__ = "http://capture-spool.localhost:7788"`);
 	});
 
-	it("accepts only the configured control, render, and capture hosts", async () => {
+	it("accepts only the configured control, render, room, and capture hosts", async () => {
 		const { request } = makeSecurityHarness();
 
 		expect((await request(CONTROL_HOST, "/api/health")).status).toBe(200);
 		expect((await request(RENDER_HOST, "/api/health")).status).toBe(404);
+		expect((await request(ROOM_HOST, "/api/health")).status).toBe(404);
 		expect((await request(CAPTURE_HOST, "/api/health")).status).toBe(404);
+		expect((await request("room-spool.localhost.attacker.example", "/favicon.svg")).status).toBe(421);
 		expect((await request("attacker.example", "/api/health")).status).toBe(421);
 		expect((await request("spool.localhost.attacker.example", "/")).status).toBe(421);
 	});
@@ -478,6 +490,64 @@ describe("daemon authority matrix", () => {
 		const newest = issued.at(-1) as URL;
 		expect((await render(`${oldest.pathname}${oldest.search}`)).status).toBe(403);
 		expect((await render(`${newest.pathname}${newest.search}`)).status).toBe(200);
+	});
+
+	// the room's screen's stage plays on a site of its own, so the browser gives it a process of its own (spool#320): it
+	// reaches what a stage on the render host reaches, a deck's stage document and what that loads, and nothing more
+	it("serves the room's host a deck's stage once, what the stage loads, and nothing else of the daemon's", async () => {
+		const { project, control, room, request } = makeSecurityHarness({ deck: true });
+		const name = encodeURIComponent(project.name);
+		const asked = await control(`/api/p/${name}/deck-stage`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ page: "talk", room: true }),
+		});
+		expect(asked.status).toBe(200);
+		const at = new URL(((await asked.json()) as { address: string }).address);
+		expect(at.origin).toBe(`http://${ROOM_HOST}`);
+
+		const stage = await room(`${at.pathname}${at.search}`);
+		expect(stage.status).toBe(200);
+		expect(stage.headers.get("content-security-policy")).toBe(FRAME_CSP.replaceAll(RENDER_HOST, ROOM_HOST));
+		const html = await stage.text();
+		expect(html).not.toContain(CONTROL_TOKEN);
+		expect((await room(`${at.pathname}${at.search}`)).status).toBe(403);
+		// a pass is good on the host it was given for alone: the presenter's stage cannot be played on the room's host
+		const presenters = await control(`/api/p/${name}/deck-stage`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ page: "talk" }),
+		});
+		const elsewhere = new URL(((await presenters.json()) as { address: string }).address);
+		expect(elsewhere.origin).toBe(`http://${RENDER_HOST}`);
+		expect((await room(`${elsewhere.pathname}${elsewhere.search}`)).status).toBe(403);
+
+		// what it loads: its composition, the runtime, and its own project's data by the capability minted into it
+		const entry = html.match(/<script type="module">import "(\/play\/[^"]+)";<\/script>/)?.[1];
+		expect((await room(entry ?? "/play/missing")).status).toBe(200);
+		expect((await room("/vendor/spool.js", { headers: { origin: "null" } })).status).toBe(200);
+		const capability = html.match(/\\"projectCapability\\":\\"([^"\\]+)\\"/)?.[1] ?? "";
+		const data = `/api/p/${name}/scenarios/default`;
+		expect((await room(data, { headers: { origin: "null", "x-spool-project": capability } })).status).toBe(200);
+		expect((await room(data, { headers: { origin: "null" } })).status).toBe(401);
+
+		// nothing else: no control API even with the token, no canvas, no frame, no ordinary player, no capture worker
+		for (const path of [
+			"/",
+			"/api/projects",
+			`/api/p/${name}/deck-stage?page=talk`,
+			`/p/${name}/frames/home`,
+			`/play/${name}`,
+			`/play/${name}?frame=home&shell=1`,
+			`/play/${name}?deck=talk`,
+			"/capture",
+			"/player-assets/react.js",
+		]) {
+			expect((await room(path)).status, path).toBe(404);
+		}
+		expect(
+			(await request(ROOM_HOST, "/api/projects", { headers: { "x-spool-control": CONTROL_TOKEN } })).status,
+		).toBe(404);
 	});
 
 	it("serves public runtime assets only from the render host", async () => {
