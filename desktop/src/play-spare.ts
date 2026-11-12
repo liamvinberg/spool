@@ -88,6 +88,17 @@ export function shouldMakeSpare(spare: SpareFacts | undefined, now: SpareSurroun
 	);
 }
 
+/**
+ * Whether a window's failed load leaves it with nothing to show: its own page
+ * failed, not a frame inside it, and not a load another navigation replaced
+ * (Chromium's -3), as recording's reopen does. A play window that fails so
+ * will never reveal its frame, so it holds the next spare back no longer; a
+ * play that is only slow holds it back however long it takes.
+ */
+export function loadFailedForGood(code: number, isMainFrame: boolean): boolean {
+	return isMainFrame && code !== -3;
+}
+
 /** The spare's page on a daemon. */
 export function spareUrl(origin: string): string {
 	return `${origin}/player-assets/spare`;

@@ -35,6 +35,7 @@ import { userPath } from "./path";
 import {
 	daemonIdentity,
 	keepSpare,
+	loadFailedForGood,
 	type SpareFacts,
 	type SpareSurroundings,
 	shouldMakeSpare,
@@ -1145,6 +1146,10 @@ function showPlayWindow(url: string, request: PlayRequest, size: { w: number; h:
 		played.delete(id);
 		revealed(id);
 	});
+	window_.webContents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
+		if (loadFailedForGood(code, isMainFrame)) revealed(id);
+	});
+	window_.webContents.on("render-process-gone", () => revealed(id));
 	awaitReveal(id);
 
 	log(
@@ -1204,14 +1209,12 @@ let daemonOn: string | undefined;
 let daemonOrigin: string | undefined;
 /** A daemon that answered the spare's page with an error, and is not asked again. */
 let spareRefusedBy: string | undefined;
-/** Play windows whose frame is not revealed yet, each with how long it is waited on. */
-const awaitingReveal = new Map<number, NodeJS.Timeout>();
+/** Play windows whose frame is not revealed yet: each holds the next spare back until it is, or it can no longer be. */
+const awaitingReveal = new Set<number>();
 let makingSpare: NodeJS.Timeout | undefined;
 
 /** A beat after the last play revealed its frame, so a new spare never shares its dissolve. */
 const SPARE_AFTER_MS = 1_000;
-/** A play whose frame never shows (a compile error, say) holds the next spare back this long at most. */
-const REVEAL_PATIENCE_MS = 10_000;
 
 function spareSurroundings(): SpareSurroundings {
 	return {
@@ -1266,7 +1269,7 @@ function makeSpare(): void {
 		log("play", "spare ready", origin);
 	});
 	made.webContents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
-		if (spare === facts && isMainFrame && code !== ABORTED) dropSpare("its page did not load");
+		if (spare === facts && loadFailedForGood(code, isMainFrame)) dropSpare("its page did not load");
 	});
 	made.webContents.on("render-process-gone", () => {
 		if (spare === facts) dropSpare("its page is gone");
@@ -1294,21 +1297,16 @@ function dropSpare(why: string): void {
 	if (!dropped.window.isDestroyed()) dropped.window.destroy();
 }
 
-/** A play window is bringing its frame up: the next spare waits until it has. */
+/** A play window is bringing its frame up: the next spare waits until it has, however long that takes. */
 function awaitReveal(id: number): void {
 	clearTimeout(makingSpare);
 	makingSpare = undefined;
-	awaitingReveal.set(
-		id,
-		setTimeout(() => revealed(id), REVEAL_PATIENCE_MS),
-	);
+	awaitingReveal.add(id);
 }
 
+/** The play revealed its frame, or never will: it closed, or its page failed for good. */
 function revealed(id: number): void {
-	const waiting = awaitingReveal.get(id);
-	if (waiting === undefined) return;
-	clearTimeout(waiting);
-	awaitingReveal.delete(id);
+	if (!awaitingReveal.delete(id)) return;
 	tendSpare();
 }
 

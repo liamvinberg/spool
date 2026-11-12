@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	daemonIdentity,
 	keepSpare,
+	loadFailedForGood,
 	type SpareFacts,
 	type SpareSurroundings,
 	shouldMakeSpare,
@@ -57,6 +58,13 @@ test("the next spare is made with a canvas open and no play still bringing its f
 	assert.equal(shouldMakeSpare(READY, CANVAS), false);
 	// refilling never competes with a play
 	assert.equal(shouldMakeSpare(undefined, { ...CANVAS, awaitingReveal: 1 }), false);
+});
+
+test("a play stops holding the next spare back only when its own page fails for good", () => {
+	assert.equal(loadFailedForGood(-105, true), true);
+	// a frame inside it, or a load another navigation replaced, leaves it on its way
+	assert.equal(loadFailedForGood(-105, false), false);
+	assert.equal(loadFailedForGood(-3, true), false);
 });
 
 test("no spare is made where none could be adopted, and none again from a daemon that refused its page", () => {
