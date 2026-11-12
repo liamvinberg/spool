@@ -1,6 +1,6 @@
 import { type DependencyList, useCallback, useLayoutEffect, useRef } from "react";
 import type { Camera } from "../api";
-import { clamp } from "./camera";
+import { type CameraPath, clamp } from "./camera";
 
 /**
  * The camera, kept outside React (#81).
@@ -37,6 +37,11 @@ export interface CameraStore {
 	 * draws everything else, so it is never a frame behind its own furniture.
 	 */
 	fly(to: Camera, ms?: number, ease?: Ease): void;
+	/**
+	 * Fly along a path that zooms out and back in (`cameraPath`), taking longer
+	 * the longer it is, up to `LONGEST_FLIGHT_MS`.
+	 */
+	flyAlong(path: CameraPath, ease?: Ease): void;
 	/** End a flight where it stands. */
 	stop(): void;
 	/** Where the camera is headed: a flight's end, else where it is. */
@@ -61,6 +66,10 @@ const easeOut: Ease = (t) => 1 - (1 - t) ** 3;
 /** The flight every move that takes you somewhere makes, unless it says otherwise. */
 export const FLIGHT_MS = 220;
 
+/** A path's flight: FLIGHT_MS, and this much more for each unit of its length, up to the longest. */
+const PATH_MS_PER_UNIT = 80;
+export const LONGEST_FLIGHT_MS = 460;
+
 /**
  * How long a drawn camera has to be left alone to be at rest.
  *
@@ -75,7 +84,8 @@ export function createCameraStore(): CameraStore {
 	let camera: Camera | null = null;
 	let drawn: Camera | null = null;
 	let rested: Camera | null = null;
-	let flight: { from: Camera; to: Camera; t0: number; ms: number; ease: Ease } | null = null;
+	let flight: { from: Camera; to: Camera; t0: number; ms: number; ease: Ease; at?: (t: number) => Camera } | null =
+		null;
 	// a flag rather than the handle: a test's requestAnimationFrame may run the
 	// callback before it returns, and a handle compared to zero would then claim
 	// a frame was still owed forever
@@ -90,8 +100,17 @@ export function createCameraStore(): CameraStore {
 			// that began before the ask lands on the start rather than ahead of it
 			const p = clamp((t - flight.t0) / flight.ms, 0, 1);
 			const e = p < 1 ? flight.ease(p) : 1;
-			const { from, to } = flight;
-			camera = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, k: from.k + (to.k - from.k) * e };
+			const { from, to, at } = flight;
+			camera =
+				p >= 1
+					? to
+					: at !== undefined
+						? at(e)
+						: {
+								x: from.x + (to.x - from.x) * e,
+								y: from.y + (to.y - from.y) * e,
+								k: from.k + (to.k - from.k) * e,
+							};
 			if (p < 1) schedule();
 			else flight = null;
 		}
@@ -135,6 +154,12 @@ export function createCameraStore(): CameraStore {
 		fly(to, ms = FLIGHT_MS, ease = easeOut) {
 			if (camera === null) return;
 			flight = { from: camera, to, t0: performance.now(), ms, ease };
+			schedule();
+		},
+		flyAlong(path, ease = easeOut) {
+			if (camera === null) return;
+			const ms = clamp(FLIGHT_MS + path.length * PATH_MS_PER_UNIT, FLIGHT_MS, LONGEST_FLIGHT_MS);
+			flight = { from: camera, to: path.to, t0: performance.now(), ms, ease, at: path.at };
 			schedule();
 		},
 		stop() {

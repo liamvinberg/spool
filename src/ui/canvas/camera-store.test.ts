@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Camera } from "../api";
-import { type CameraStore, createCameraStore, FLIGHT_MS, REST_MS } from "./camera-store";
+import { cameraPath } from "./camera";
+import { type CameraStore, createCameraStore, FLIGHT_MS, LONGEST_FLIGHT_MS, REST_MS } from "./camera-store";
 
 /**
  * The camera outside React (#81): one value that moves at once, one frame that
@@ -120,6 +121,23 @@ describe("the camera store", () => {
 		expect(store.get()).toEqual({ x: 75, y: 0, k: 1.75 });
 		frame(clock + 100);
 		expect(store.get()).toEqual({ x: 0, y: 0, k: 1 });
+	});
+
+	it("flies a path along its own way, longer for a longer path but never past the longest flight", () => {
+		const store = createCameraStore();
+		const from = { x: -40000, y: 0, k: 1 };
+		const to = { x: 0, y: 0, k: 1 };
+		store.set(from);
+		frame();
+
+		const path = cameraPath(from, to, 1200, 800);
+		store.flyAlong(path);
+		frame(clock + FLIGHT_MS);
+		// a flight this far is still going where a plain one would have landed, and is out on the path's way
+		expect(store.get()?.k).toBeLessThan(1);
+		frame(clock + LONGEST_FLIGHT_MS);
+		expect(store.get()).toBe(to);
+		expect(frames).toHaveLength(0);
 	});
 
 	it("starts a flight from its start when the frame drawing it began before it was asked for", () => {
