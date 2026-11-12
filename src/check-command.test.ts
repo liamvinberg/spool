@@ -237,14 +237,14 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 			"  animates height on 120 elements: these re-lay the page out every frame; move and size with transform",
 		].join("\n");
 
-		expect(await runCheck(root, root, ["design/frames/talk"], () => true)).toEqual({
+		expect(await runCheck(root, root, ["design/frames/talk"], { spool: SPOOL, on: () => true })).toEqual({
 			stderr: [note],
 			stdout: ["checked 3 frames (4 source files), 0 errors; 1 of the 3 slides in talk timed slow"],
 			ok: true,
 		});
 		// the slide named on its own says the same, and the shared component it draws, fixed, dates the timing
 		at("shared/bars.tsx", 3000);
-		expect((await runCheck(root, root, ["talk/chart"], () => true)).stderr).toEqual([
+		expect((await runCheck(root, root, ["talk/chart"], { spool: SPOOL, on: () => true })).stderr).toEqual([
 			note.replace("150 ms).", "150 ms). Timed before its latest edit."),
 		]);
 	});

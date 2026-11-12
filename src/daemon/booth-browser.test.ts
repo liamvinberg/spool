@@ -10,7 +10,7 @@ import { initProject } from "../init";
 import { removeProject } from "../remove";
 import { makeTempDir, serveProject, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
 import type { BoothSeams } from "./booth";
-import { imageSize, SLOW_PER_SECOND } from "./thumbs";
+import { imageSize, readCaptureError, SLOW_PER_SECOND } from "./thumbs";
 
 /**
  * The photo booth against a really-served daemon and the pinned headless shell
@@ -55,8 +55,7 @@ async function served(booth: BoothSeams = {}) {
 		return { type: res.headers.get("content-type"), bytes: new Uint8Array(await res.arrayBuffer()) };
 	};
 	const captureError = (frame: string) => {
-		const file = join(project.root, "design", ".spool", "thumbs", encodeURIComponent(frame), "error.json");
-		return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as { error: string }).error : undefined;
+		return readCaptureError(project.root, frame, "0.0.0-test")?.error;
 	};
 	const scheme = (frame: string) => {
 		const file = join(project.root, "design", ".spool", "thumbs", encodeURIComponent(frame), "scheme");
@@ -649,7 +648,10 @@ it("times a talk's slides beat by beat, and check names the slow ones with why",
 		[2, "detail"],
 	]);
 
-	const checked = await runCheck(project.root, project.root, ["design/frames/talk"], () => true);
+	const checked = await runCheck(project.root, project.root, ["design/frames/talk"], {
+		spool: "0.0.0-test",
+		on: () => true,
+	});
 	const noteOf = (slide: string) =>
 		checked.stderr.find((note) => note.startsWith(`design/frames/talk/${slide}/frame.tsx`)) ?? "";
 	expect(checked.stderr.join("\n")).not.toContain("talk/clean");
