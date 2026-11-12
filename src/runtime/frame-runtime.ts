@@ -82,6 +82,8 @@ export interface PlayerConfig {
 	 * disk with no daemon behind it, so the scenario rides in it.
 	 */
 	exported?: { state: Record<string, unknown> };
+	/** The scenario's seed, served with the document (spool#303): nothing is fetched before the first screen. */
+	seed?: { state: Record<string, unknown> };
 	/** A deck's talk, played on its stage (spool#265): the document holds the talk's slides and nothing else. */
 	deck?: StageConfig;
 }
@@ -675,7 +677,7 @@ async function start(): Promise<void> {
 		// the player seeds fresh every load: the URL names the scenario, and
 		// reload is just restart spelled by the browser
 		scenarioName = play.scenario;
-		const scenario = play.exported ?? (await loadScenario(scenarioName));
+		const scenario = play.exported ?? play.seed ?? (await loadScenario(scenarioName));
 		seedState(scenario.state);
 		return;
 	}

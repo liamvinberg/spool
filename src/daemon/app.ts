@@ -2066,12 +2066,14 @@ export function createDaemonApp({
 				const compiled = await playerCompiler.getPlayable(project.root, projection.frames, start);
 				if (compiled.kind === "error") return c.html(playerLoadErrorDocument(compiled.message), 500);
 				keepPlayerWarm(project.root);
+				const seed = scenarioSeed(project.root, playScenario);
 				const config = {
 					project: name,
 					projectCapability: projectCapability(project.root),
 					start,
 					scenario: playScenario,
 					frames,
+					...(seed === undefined ? {} : { seed }),
 					...(shell === "1" ? { shell: true as const } : {}),
 					...(shell !== "1" && recording === "1" ? { recording: true as const } : {}),
 				};
@@ -2651,6 +2653,14 @@ export function createDaemonApp({
 		const doctype = html.match(/<!doctype[^>]*>/i);
 		const at = doctype === null || doctype.index === undefined ? 0 : doctype.index + doctype[0].length;
 		return `${html.slice(0, at)}<html ${attributes}>${html.slice(at)}`;
+	}
+
+	/** A scenario's seed as a played document carries it, or undefined when the scenario does not read. */
+	function scenarioSeed(root: string, name: string): { state: Record<string, unknown> } | undefined {
+		const scenario = readScenario(root, name);
+		if (scenario.kind !== "ok") return undefined;
+		const { state } = JSON.parse(scenario.json) as { state?: Record<string, unknown> };
+		return { state: state ?? {} };
 	}
 
 	/** The spare play window's page: the shell's dark and its 30px strip, drawn by the shell's own rules. */

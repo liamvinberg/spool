@@ -48,6 +48,12 @@ export interface PlayerConfig {
 	frames: Record<string, { w: number; h: number }>;
 	/** The control-origin shell mounts this composed document in a native iframe. */
 	shell?: true;
+	/**
+	 * The scenario's seed, read when the document was served (spool#303), so the
+	 * first screen waits on no fetch of its own. Absent when the scenario does not
+	 * read: the runtime then asks for it, and says why it failed.
+	 */
+	seed?: { state: Record<string, unknown> };
 }
 
 export type PlayerCompile =
