@@ -113,7 +113,10 @@ export function projectCssParts(css: string): { head: string; layered: string } 
  * rest as it was: the head a browser fetches before any rule, past the
  * comments and `@charset` and `@layer` statements Tailwind opens a sheet with.
  * A sheet composed of two can put both heads first this way, and a theme's
- * hosted imports stand where fonts.css's would.
+ * hosted imports stand where fonts.css's would. An `@import` further down at
+ * the top level, which a browser drops, is lifted too: Tailwind puts a theme's
+ * `@import url(…)` written after `@import "tailwindcss"` past every rule it
+ * makes (spool#323).
  */
 export function hoistCssImports(css: string): { imports: string; rest: string } {
 	let imports = "";
@@ -135,7 +138,44 @@ export function hoistCssImports(css: string): { imports: string; rest: string } 
 		else rest += css.slice(at, end);
 		at = end;
 	}
-	return { imports, rest: rest + css.slice(at) };
+	const late = lateImports(css, at);
+	let tail = "";
+	for (const { start, end } of late) {
+		imports += `${css.slice(start, end)}\n`;
+		tail += css.slice(at, start);
+		at = end;
+	}
+	return { imports, rest: rest + tail + css.slice(at) };
+}
+
+/** The top-level `@import` statements from `from` on, outside every block, string and comment. */
+function lateImports(css: string, from: number): Array<{ start: number; end: number }> {
+	const found: Array<{ start: number; end: number }> = [];
+	let depth = 0;
+	let quote: string | null = null;
+	for (let i = from; i < css.length; i += 1) {
+		const char = css[i];
+		if (quote !== null) {
+			if (char === "\\") i += 1;
+			else if (char === quote) quote = null;
+		} else if (char === '"' || char === "'") {
+			quote = char;
+		} else if (char === "/" && css[i + 1] === "*") {
+			const close = css.indexOf("*/", i + 2);
+			if (close === -1) break;
+			i = close + 1;
+		} else if (char === "{") {
+			depth += 1;
+		} else if (char === "}") {
+			depth = Math.max(0, depth - 1);
+		} else if (depth === 0 && char === "@" && /^@import\b/i.test(css.slice(i, i + 8))) {
+			const end = statementEnd(css, i);
+			if (end === -1) break;
+			found.push({ start: i, end });
+			i = end - 1;
+		}
+	}
+	return found;
 }
 
 /** Where a top-level at-statement ends: the first `;` outside a string, a comment or brackets. */
