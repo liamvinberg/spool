@@ -137,7 +137,7 @@ it("takes a new build that readied while a slide wrote ui.state once it shows th
 	host.reload();
 	const next = await opened();
 	const report: SlideReadiness[] = [
-		ready[0] as SlideReadiness,
+		{ ...(ready[0] as SlideReadiness), webgl: 5 },
 		{ frame: "talk/words", status: "broken", why: "boom", when: "compile" },
 	];
 	await next.say({ spool: "stage-slides", slides: report });

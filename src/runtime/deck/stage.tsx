@@ -36,15 +36,18 @@ import {
 import { SlideScope, setSlideBeat } from "../slide-beats";
 import { type KeptPicture, keepPicture } from "./stage-keep";
 import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
-import { releaseWebgl, WEBGL_KEPT, watchWebgl, webglIn } from "./stage-webgl";
+import { releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn } from "./stage-webgl";
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
  * entered slide on the canvas alike. One slide shows at the talk's size, on the ground; the slides around it are rendered
  * out of sight beside it, their fonts loaded and images decoded in this document, so a step to one of them is the
  * same-document swap a walk is, committed in the next frame, its shared `view-transition-name`s carried and the rest
- * dissolved. A step to a slide that is not ready holds the picture on screen until it is. A slide that will not
- * compile, load or mount is never swapped in; one that throws on screen leaves a still copy of its last picture. Nothing
+ * dissolved. The slide the next key plays is put on ahead, out of sight, once the screen is quiet: its effects run then
+ * and never again, its WebGL contexts made and its shaders compiled, its first frame drawn, and then it rests, drawing
+ * nothing, its animations held at their start and its media paused until the key (spool#320). It stays mounted, as does
+ * the one behind, while their contexts fit the stage's share. A step to a slide that is not ready holds the picture on
+ * screen until it is. A slide that will not compile, load or mount is never swapped in; one that throws on screen leaves a still copy of its last picture. Nothing
  * of spool's own error drawing is ever drawn here.
  *
  * The document is its host's: whatever embeds it (the room's window, the presenter view, the canvas) speaks to it over
@@ -57,8 +60,8 @@ export interface StageRuntime {
 	load(frame: string): Promise<{ component: ComponentType } | { broken: string; when: "compile" | "load" }>;
 	/** its stylesheet fetched and in the document, switched off */
 	loadStyle(frame: string): Promise<void>;
-	/** its stylesheet the one switched on */
-	activateStyle(frame: string): void;
+	/** its stylesheet the one switched on, with `also`'s beside it */
+	activateStyle(frame: string, also?: string): void;
 	/** the element holding its stylesheet, once loaded */
 	styleOf(frame: string): HTMLStyleElement | undefined;
 	/** `ui.state`: read whole, replaced whole, and heard on every write */
@@ -160,6 +163,10 @@ interface SlideHeld {
 	learned: string[];
 	/** its fonts and pictures, held for the whole talk so the browser keeps them */
 	warmed?: Warmed;
+	/** the most WebGL contexts a rendering of it has held: what putting it on ahead costs */
+	webgl?: number;
+	/** the browser took its contexts while it was awake out of sight: the process is full, and it is put on ahead no more */
+	crowded?: true;
 }
 
 /** One rendering of a slide: a take of it, out of sight or on screen. */
@@ -176,8 +183,14 @@ interface Copy {
 	broken: boolean;
 	/** its files would not come: kept as it is until it is rendered afresh to try them again */
 	failed: boolean;
+	/** it drew more since its warming began, which warms it again once done */
+	stale?: boolean;
+	/** the browser took a WebGL context of it out of sight: it would come back blank, and goes */
+	blank?: true;
 	/** what it threw from a handler or a timer while on screen, for its boundary to stop it with */
 	thrown?: { error: unknown };
+	/** its effects have run, put on ahead or shown: it stays mounted, so they never run again, until it is let go */
+	awake: boolean;
 }
 
 /**
@@ -218,6 +231,8 @@ export function bootStage(runtime: StageRuntime): void {
 	/** the slides fill the host's screen, which is the room's: F is nobody's key */
 	let filling = false;
 	let opened = !embedded;
+	/** the WebGL contexts this document may hold: its share of what the browser keeps alive in its process */
+	let webglShare = WEBGL_SHARE;
 	let session: StageSession = openSession(talk, { slide: startAt, beat: 0 }, runtime.state.read());
 	const copies = new Map<string, Copy>();
 	let shown: string | null = null;
@@ -247,7 +262,17 @@ export function bootStage(runtime: StageRuntime): void {
 		const key = keyOf(index, take);
 		let copy = copies.get(key);
 		if (copy === undefined) {
-			copy = { key, mount: ++mounts, index, take, warm: false, warming: false, broken: false, failed: false };
+			copy = {
+				key,
+				mount: ++mounts,
+				index,
+				take,
+				warm: false,
+				warming: false,
+				broken: false,
+				failed: false,
+				awake: false,
+			};
 			copies.set(key, copy);
 		}
 		return copy;
@@ -258,7 +283,8 @@ export function bootStage(runtime: StageRuntime): void {
 
 	/** A copy that can go on screen in the next frame: rendered, its styles in, its fonts and pictures warmed. */
 	const ready = (copy: Copy | undefined): boolean => {
-		if (copy === undefined || copy.broken || copy.failed || copy.box === undefined || !copy.warm) return false;
+		if (copy === undefined || copy.broken || copy.failed || copy.blank || copy.box === undefined || !copy.warm)
+			return false;
 		const slide = slides[copy.index];
 		return slide?.module === "in" && styled(slide);
 	};
@@ -356,30 +382,132 @@ export function bootStage(runtime: StageRuntime): void {
 		return out;
 	}
 
-	/** The WebGL contexts a copy's canvases hold: one rendered out of sight and never shown holds none. */
+	/** The WebGL contexts a copy's canvases hold: one asleep holds none. */
 	const held = (copy: Copy | undefined) => (copy?.box === undefined ? 0 : webglIn(copy.box));
 
 	/**
-	 * The copies out of sight that hold WebGL contexts past this document's share are rendered afresh, holding none,
-	 * so the browser never takes one and every slide stays ready. The one on screen, the one wanted and the one a swap
-	 * just took off keep theirs whatever they cost, then the rest nearest first while what they hold fits.
+	 * Which copies are awake. The one on screen and the one wanted, whatever they hold; the slide the next key plays,
+	 * put on ahead once the screen is quiet, and the one behind, while their WebGL contexts fit the stage's share. A
+	 * slide's cost is learned the first time it is awake, so one that does not fit is put on ahead once at most. Any
+	 * other copy is put back to sleep: rendered afresh when it holds contexts, so it gives them back, and hidden
+	 * otherwise, its effects undone.
 	 */
-	function keepWebglShare(): void {
+	function arrange(): void {
 		const at = picture();
 		const target = at.at.slide;
+		const copyAt = (index: number) => copies.get(keyOf(index, takeOf(index, at.takes)));
 		const on = shown === null ? undefined : copies.get(shown);
-		const wanted = copies.get(keyOf(target, takeOf(target, at.takes)));
-		let left = WEBGL_KEPT - held(on) - (wanted === on ? 0 : held(wanted));
-		for (const index of order(target)) {
-			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
-			if (copy === undefined || copy === on || copy === wanted || copy.key === revealed?.from) continue;
-			const cost = held(copy);
-			if (cost <= left) left -= cost;
-			else {
-				copies.delete(copy.key);
-				copyFor(copy.index, copy.take);
-			}
+		const wanted = copyAt(target);
+		for (const copy of copies.values()) {
+			const slide = slides[copy.index];
+			if (copy.awake && slide !== undefined) slide.webgl = Math.max(slide.webgl ?? 0, held(copy));
 		}
+		let left = webglShare - held(on) - (wanted === on ? 0 : held(wanted));
+		const ahead = copyAt(target + 1);
+		const kept = new Set<Copy>();
+		for (const copy of [ahead, copyAt(target - 1)]) {
+			if (copy === undefined || copy === on || copy === wanted) continue;
+			const slide = slides[copy.index];
+			const cost = copy.awake ? held(copy) : slide?.crowded ? Number.POSITIVE_INFINITY : (slide?.webgl ?? 0);
+			if (cost > 0 && cost > left) continue;
+			if (!copy.awake && (copy !== ahead || !quiet() || !ready(copy))) continue;
+			left -= cost;
+			kept.add(copy);
+		}
+		for (const copy of [...copies.values()]) {
+			if (copy === on || copy.key === revealed?.from) continue;
+			// the slide wanted next stays as it is, unless it broke going on: what it drew then is never laid out again
+			if (copy === wanted && !copy.broken) continue;
+			if (kept.has(copy)) wake(copy);
+			else if (copy.awake || held(copy) > 0) sleep(copy);
+		}
+	}
+
+	/** Nothing is changing on screen: no step waits, no swap or dissolve is under way. */
+	const quiet = () => pending === undefined && !swapping && !dissolving;
+
+	/** The copy being put on ahead, once the frame the screen is painting has been. */
+	let waking: Copy | undefined;
+	/** Its effects are running out of sight: what they write to `ui.state` is a mirror's, not the talk's. */
+	let wakingNow = false;
+
+	/**
+	 * A copy put on out of sight: its effects run, its contexts are made and its first frame drawn, then it rests. After
+	 * the frame being painted, never inside it, and only while the screen is still quiet.
+	 */
+	function wake(copy: Copy): void {
+		if (copy.awake || waking !== undefined) return;
+		waking = copy;
+		requestAnimationFrame(() =>
+			setTimeout(() => {
+				waking = undefined;
+				if (
+					copies.get(copy.key) !== copy ||
+					copy.awake ||
+					copy.key === shown ||
+					!quiet() ||
+					!ready(copy) ||
+					copy.box?.isConnected !== true
+				) {
+					settle();
+					return;
+				}
+				// laid out in its own styles and faces as its effects run, beside the slide on screen's, and those alone again
+				// before the browser paints: what it measures as it mounts is what it will look like on screen
+				const frame = talk[copy.index]?.frame;
+				const onFrame = shown === null ? undefined : talk[copies.get(shown)?.index ?? -1]?.frame;
+				const fontsOf = (index: number | undefined) =>
+					index === undefined ? [] : (slides[index]?.warmed?.fonts ?? []);
+				const onFonts = fontsOf(shown === null ? undefined : copies.get(shown)?.index);
+				if (frame !== undefined) runtime.activateStyle(frame, onFrame);
+				wear([...onFonts, ...fontsOf(copy.index)]);
+				if (copy.box !== undefined) restWebgl(copy.box, false);
+				wakingNow = true;
+				try {
+					flushSync(() => {
+						copy.awake = true;
+						redraw();
+					});
+				} finally {
+					wakingNow = false;
+					if (onFrame !== undefined) runtime.activateStyle(onFrame);
+					wear(onFonts);
+				}
+				if (copy.box !== undefined) holdStill(copy.box);
+				// what its effects asked React to draw, drawn: then the pictures they reached for are readied with it
+				void nextTask().then(() => {
+					const slide = slides[copy.index];
+					const coming = copy.box === undefined || copies.get(copy.key) !== copy ? [] : stillComing(copy.box);
+					if (slide === undefined || coming.length === 0) return;
+					for (const url of coming) if (!slide.learned.includes(url)) slide.learned.push(url);
+					if (copy.key === shown) return;
+					if (copy.warming) copy.stale = true;
+					else copy.warm = false;
+					settle();
+				});
+				// its first frame drawn, it draws nothing more until it goes on
+				requestAnimationFrame(() =>
+					requestAnimationFrame(() => {
+						if (copies.get(copy.key) === copy && copy.key !== shown && copy.box !== undefined)
+							restWebgl(copy.box, true);
+					}),
+				);
+				settle();
+			}),
+		);
+	}
+
+	/** An awake copy let go: rendered afresh when it holds contexts, so it gives them back, hidden otherwise. */
+	function sleep(copy: Copy): void {
+		// a broken copy is never shown, so never rendered afresh: it would only throw again
+		if (held(copy) > 0 && !copy.broken) {
+			copies.delete(copy.key);
+			copyFor(copy.index, copy.take);
+			return;
+		}
+		copy.awake = false;
+		// its effects undone: what they started is gone, and nothing is held for it
+		if (copy.box !== undefined) heldStill.delete(copy.box);
 	}
 
 	function renderedCopy(rendered: Copy, box: HTMLElement): void {
@@ -404,6 +532,11 @@ export function bootStage(runtime: StageRuntime): void {
 			copy.warming = false;
 			// let go meanwhile: what it was waiting for says nothing of the slide
 			if (copies.get(copy.key) !== copy) return;
+			if (copy.stale === true) {
+				copy.stale = false;
+				settle();
+				return;
+			}
 			if (warmed.failed.length > 0) {
 				copy.failed = true;
 				slide.unloaded = `${warmed.failed.join(", ")} would not load`;
@@ -451,17 +584,21 @@ export function bootStage(runtime: StageRuntime): void {
 
 	// a context the browser took from a slide out of sight anyway would come back blank: that rendering goes, to be
 	// rendered afresh before it is shown
+	function lost(box: Element | null): void {
+		for (const copy of copies.values()) {
+			if (copy.box !== box || copy.key === shown) continue;
+			// taken while awake, the process is full: it is put on ahead no more
+			const slide = slides[copy.index];
+			if (copy.awake && slide !== undefined) slide.crowded = true;
+			// never shown again; the slide a swap just took off stays while the one it put on can still be undone
+			copy.blank = true;
+			settle();
+			return;
+		}
+	}
 	addEventListener(
 		"webglcontextlost",
-		(event) => {
-			const box = event.target instanceof Element ? event.target.closest("[data-spool-stage-slide]") : null;
-			for (const copy of copies.values()) {
-				if (copy.box !== box || copy.key === shown || copy.key === revealed?.from) continue;
-				copies.delete(copy.key);
-				settle();
-				return;
-			}
-		},
+		(event) => lost(event.target instanceof Element ? event.target.closest("[data-spool-stage-slide]") : null),
 		true,
 	);
 
@@ -496,6 +633,8 @@ export function bootStage(runtime: StageRuntime): void {
 	}
 
 	let swapping = false;
+	/** a dissolve is playing: nothing is put on ahead until it has */
+	let dissolving = false;
 	let settling = false;
 	/** The copy a swap just put on screen, and the one it took off, while a throw as it mounts can still undo it. */
 	let revealed: { key: string; from: string | null } | undefined;
@@ -506,21 +645,24 @@ export function bootStage(runtime: StageRuntime): void {
 		settling = true;
 		try {
 			fetchAhead();
-			keepWebglShare();
 			const want = picture();
 			const target = want.at.slide;
 			const keep = new Set(wantedCopies().map((copy) => copy.key));
 			if (shown !== null) keep.add(shown);
 			// the slide a swap just took off stays while the one it put on can still be undone
 			if (revealed?.from != null) keep.add(revealed.from);
-			for (const key of copies.keys()) if (!keep.has(key)) copies.delete(key);
+			for (const [key, copy] of copies) {
+				if (!keep.has(key) || (copy.blank && key !== shown && key !== revealed?.from)) copies.delete(key);
+			}
+			arrange();
 			for (const copy of copies.values()) {
 				warm(copy);
 				if (copy.key === shown) continue;
 				setSlideBeat(copy.key, copy.index === target ? want.at.beat : restingBeat(copy.index, target));
 			}
 			const wanted = copies.get(keyOf(target, takeOf(target, want.takes)));
-			if (wanted !== undefined && wanted.key === shown) {
+			// a swap putting it on says so itself, once it knows the slide stays
+			if (wanted !== undefined && wanted.key === shown && !swapping) {
 				setSlideBeat(wanted.key, want.at.beat);
 				done(want.at, false, wanted);
 			} else if (
@@ -597,14 +739,28 @@ export function bootStage(runtime: StageRuntime): void {
 
 	function show(key: string | null): void {
 		const copy = key === null ? undefined : copies.get(key);
+		const was = shown === null ? undefined : copies.get(shown);
 		const frame = copy === undefined ? undefined : talk[copy.index]?.frame;
 		// its styles and faces first, so what the slide measures as it mounts is what it will look like
 		if (frame !== undefined) runtime.activateStyle(frame);
 		wear(copy === undefined ? [] : (slides[copy.index]?.warmed?.fonts ?? []));
+		if (copy?.box !== undefined) restWebgl(copy.box, false);
 		flushSync(() => {
 			shown = key;
+			if (copy !== undefined) copy.awake = true;
 			redraw();
 		});
+		// the one put on plays what was held for it; the one taken off draws no more, and is held still as it would wait
+		// to go on again once the frame showing the change has been
+		if (copy?.box !== undefined) letGo(copy.box);
+		if (was === undefined || was === copy) return;
+		if (was.box !== undefined) restWebgl(was.box, true);
+		requestAnimationFrame(() =>
+			setTimeout(() => {
+				if (was.box !== undefined && was.awake && was.key !== shown && copies.get(was.key) === was)
+					holdStill(was.box);
+			}),
+		);
 	}
 
 	/**
@@ -673,7 +829,13 @@ export function bootStage(runtime: StageRuntime): void {
 			// an engine of the first View Transitions, which takes the change alone
 			transition = document.startViewTransition(update);
 		}
+		dissolving = true;
+		const calm = () => {
+			dissolving = false;
+			settle();
+		};
 		transition.updateCallbackDone.then(after, after);
+		transition.finished.then(calm, calm);
 	}
 
 	/** What a slide wrote to `ui.state` as it mounted, undone once it goes off before anyone saw it. */
@@ -727,12 +889,13 @@ export function bootStage(runtime: StageRuntime): void {
 	}
 
 	// what a slide writes to `ui.state` is the talk's when this stage owns the session. One that follows is a mirror
-	// (the room, the slide the next key plays), and so is a room holding its picture: what a slide writes there on its
-	// own is put back before it is drawn, all but a key the talk has never had, which is the slide's own default.
+	// (the room, the slide the next key plays), and so is a room holding its picture, and a slide put on ahead as its
+	// effects run: what a slide writes there on its own is put back before it is drawn, all but a key the talk has
+	// never had, which is the slide's own default.
 	runtime.state.subscribe(() => {
 		if (!opened || seeding) return;
 		const state = runtime.state.read();
-		if (mode === "follow" || (room && session.frozen !== null)) {
+		if (mode === "follow" || (room && session.frozen !== null) || wakingNow) {
 			const talkState = { ...state, ...picture().state };
 			if (JSON.stringify(talkState) !== JSON.stringify(state)) seed(talkState);
 			return;
@@ -748,6 +911,7 @@ export function bootStage(runtime: StageRuntime): void {
 			room = message.room;
 			alone = message.alone === true;
 			filling = message.filling === true;
+			if (message.webgl !== undefined) webglShare = message.webgl;
 			opened = true;
 			let next = message.session;
 			if (next !== undefined && message.frame !== undefined && talk[next.at.slide]?.frame !== message.frame) {
@@ -875,9 +1039,10 @@ export function bootStage(runtime: StageRuntime): void {
 				return { frame, status: "broken", why, when, ...(kept === undefined ? {} : { kept }) };
 			}
 			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
-			if (ready(copy)) return { frame, status: "ready" };
+			const cost = slide.webgl === undefined || slide.webgl === 0 ? {} : { webgl: slide.webgl };
+			if (ready(copy)) return { frame, status: "ready", ...cost };
 			if (slide.unloaded !== undefined) return { frame, status: "broken", why: slide.unloaded, when: "load" };
-			return { frame, status: "loading" };
+			return { frame, status: "loading", ...cost };
 		});
 		const text = JSON.stringify(report);
 		if (text === said) return;
@@ -907,6 +1072,7 @@ export function bootStage(runtime: StageRuntime): void {
 							slide={slide.config}
 							screen={slide.component}
 							visible={copy.key === shown}
+							awake={copy.awake}
 							size={size}
 						/>
 					);
@@ -921,12 +1087,15 @@ export function bootStage(runtime: StageRuntime): void {
 		slide,
 		screen: Screen,
 		visible,
+		awake,
 		size,
 	}: {
 		copy: Copy;
 		slide: StageSlideConfig;
 		screen: ComponentType;
 		visible: boolean;
+		/** mounted out of sight, its effects run, unseen and taking nothing */
+		awake: boolean;
 		size: { w: number; h: number };
 	}) {
 		const box = useRef<HTMLDivElement>(null);
@@ -940,8 +1109,15 @@ export function bootStage(runtime: StageRuntime): void {
 			check();
 			const observer = new MutationObserver(check);
 			observer.observe(element, { childList: true });
+			// media it plays while it waits out of sight is paused as it starts, to play as it goes on
+			const played = (event: Event) => {
+				if (event.target instanceof HTMLMediaElement && element.hasAttribute("data-spool-stage-waiting"))
+					holdMedia(element, event.target);
+			};
+			element.addEventListener("play", played, true);
 			return () => {
 				observer.disconnect();
+				element.removeEventListener("play", played, true);
 				// a rendering let go gives its WebGL contexts back for another slide to draw with
 				releaseWebgl(element);
 			};
@@ -954,6 +1130,8 @@ export function bootStage(runtime: StageRuntime): void {
 				className="spool-stage-slide"
 				data-spool-stage-slide={slide.frame}
 				data-spool-stage-shown={visible ? "" : undefined}
+				data-spool-stage-waiting={awake && !visible ? "" : undefined}
+				inert={!visible}
 				style={{
 					width: slide.w,
 					height: slide.h,
@@ -961,7 +1139,7 @@ export function bootStage(runtime: StageRuntime): void {
 				}}
 			>
 				<SlideScope.Provider value={copy.key}>
-					<Activity mode={visible ? "visible" : "hidden"}>
+					<Activity mode={visible || awake ? "visible" : "hidden"}>
 						<SlideBoundary
 							box={box}
 							thrown={copy.thrown}
@@ -1022,6 +1200,48 @@ function atRest(box: HTMLElement): void {
 	for (const animation of box.getAnimations({ subtree: true })) {
 		const end = animation.effect?.getComputedTiming().endTime;
 		if (typeof end === "number" && Number.isFinite(end)) animation.finish();
+	}
+}
+
+/** The animations and media the stage held in each slide out of sight, by its box, to play as it goes on. */
+const heldStill = new WeakMap<Element, Set<Animation | HTMLMediaElement>>();
+
+/**
+ * A slide waiting out of sight is still: its CSS and Web Animations held at their start, so its entrances play as it
+ * goes on, and its video and sound paused. Media a slide plays while it waits is paused as it starts.
+ */
+function holdStill(box: HTMLElement): void {
+	for (const element of [box, ...box.querySelectorAll("*")]) {
+		for (const animation of element.getAnimations?.() ?? []) {
+			if (animation.playState !== "running") continue;
+			animation.pause();
+			animation.currentTime = 0;
+			hold(box, animation);
+		}
+	}
+	for (const media of box.querySelectorAll<HTMLMediaElement>("video, audio")) holdMedia(box, media);
+}
+
+function hold(box: Element, still: Animation | HTMLMediaElement): void {
+	const held = heldStill.get(box) ?? new Set();
+	held.add(still);
+	heldStill.set(box, held);
+}
+
+function holdMedia(box: Element, media: HTMLMediaElement): void {
+	if (media.paused) return;
+	media.pause();
+	hold(box, media);
+}
+
+/** A slide going on plays what was held for it. */
+function letGo(box: HTMLElement): void {
+	const held = heldStill.get(box);
+	if (held === undefined) return;
+	heldStill.delete(box);
+	for (const still of held) {
+		if (still instanceof HTMLMediaElement) void still.play().catch(() => {});
+		else still.play();
 	}
 }
 
