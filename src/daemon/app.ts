@@ -2224,6 +2224,16 @@ export function createDaemonApp({
 			c.header("content-type", file.type);
 			return c.body(new Uint8Array(file.bytes));
 		})
+		// The Mac app's warm play window waits on this (spool#301): the play
+		// window's dark and its bar's strip, on the origin a play loads on, so a
+		// press shows a window already drawn and walks it on to the play URL. A
+		// page with nothing in it to run, hold or reach: no script, no token, no
+		// handoff, nothing named for a frame.
+		.get("/play-spare", (c) => {
+			protectControlDocument(c);
+			c.header("connection", "close");
+			return c.html(playSpareDocument());
+		})
 		.get("/player-assets/react.js", async (c) => {
 			const etag = `"react-${reactVersion}"`;
 			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
@@ -2638,6 +2648,23 @@ export function createDaemonApp({
 		const doctype = html.match(/<!doctype[^>]*>/i);
 		const at = doctype === null || doctype.index === undefined ? 0 : doctype.index + doctype[0].length;
 		return `${html.slice(0, at)}<html ${attributes}>${html.slice(at)}`;
+	}
+
+	/** The spare play window's page: the shell's dark and its 30px strip, drawn by the shell's own rules. */
+	function playSpareDocument(): string {
+		return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spool</title>
+<style>${escapeInlineStyle(playerChromeCss("/player-assets/fonts/"))}</style>
+<style>html, body { height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; }</style>
+</head>
+<body>
+<div class="spool-top is-desk" style="height: 30px"></div>
+</body>
+</html>
+`;
 	}
 
 	function protectControlDocument(c: Context): void {
