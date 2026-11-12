@@ -351,7 +351,7 @@ export async function serveHardTalkFiles(
 }
 
 /** A large PNG of bands in two colours, slow to decode. */
-function stripes(w: number, h: number, a: number[], b: number[]): Buffer {
+export function stripes(w: number, h: number, a: number[], b: number[]): Buffer {
 	const rows = Buffer.alloc((w * 3 + 1) * h);
 	for (let y = 0; y < h; y++) {
 		const row = y * (w * 3 + 1);
@@ -412,7 +412,7 @@ export function pixelsOf(png: Buffer, points: readonly { x: number; y: number }[
 	}
 	const raw = inflateSync(Buffer.concat(data));
 	const stride = w * channels;
-	const last = Math.max(...points.map((point) => point.y));
+	const last = points.reduce((most, point) => Math.max(most, point.y), 0);
 	let previous = Buffer.alloc(stride);
 	const rows = new Map<number, Buffer>();
 	for (let y = 0; y <= last; y++) {
@@ -488,18 +488,19 @@ export function explainFrame(
 /** Every frame the browser composites for the page, from now until `stop`. */
 export async function recordScreen(page: Page) {
 	const cdp = await page.context().newCDPSession(page);
-	const frames: Buffer[] = [];
+	const frames: { png: Buffer; at: number }[] = [];
 	cdp.on("Page.screencastFrame", (frame) => {
-		frames.push(Buffer.from(frame.data, "base64"));
+		frames.push({ png: Buffer.from(frame.data, "base64"), at: frame.metadata.timestamp ?? frames.length });
 		void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
 	});
 	await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1 });
 	return {
 		/** how many frames are in so far, to read a stretch of them later */
 		mark: () => frames.length,
+		/** the frames in the order they were composited, which is not always the order they come in */
 		async stop() {
 			await cdp.send("Page.stopScreencast");
-			return frames;
+			return frames.sort((a, b) => a.at - b.at).map((frame) => frame.png);
 		},
 	};
 }

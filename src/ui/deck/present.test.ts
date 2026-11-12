@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { TALK_NAME } from "../../deck/present-wire";
-import { presentDeck, presentDone, presentKeyFrom, roomWindowAt } from "./present";
+import { fillScreen, presentDeck, presentDone, presentKeyFrom, roomWindowAt } from "./present";
 import { presenterLayout } from "./presenter-layout";
 
 afterEach(() => {
@@ -12,12 +12,17 @@ it("opens nothing with the experiment off, and on, the room's window as the room
 	const open = vi.fn(() => null);
 	const from = { project: "kaffe", page: "talk", slide: "talk/sense" };
 	vi.stubGlobal("window", { open, __SPOOL_EXPERIMENTS__: [] });
-	presentDeck(from);
+	presentDeck(from, "other");
 	expect(open).not.toHaveBeenCalled();
 
 	vi.stubGlobal("window", { open, __SPOOL_EXPERIMENTS__: ["deck"] });
+	// one display: the slides fill the screen, with no room
 	presentDeck(from);
-	presentDeck({ ...from, slide: "talk/title" });
+	expect(open).not.toHaveBeenCalled();
+	presentDone();
+	// the other way, the presenter view: its room opens
+	presentDeck(from, "other");
+	presentDeck({ ...from, slide: "talk/title" }, "other");
 	expect(open).toHaveBeenCalledTimes(1);
 	const [address] = open.mock.calls[0] as unknown as [string];
 	const url = new URL(address, "http://spool");
@@ -60,4 +65,36 @@ it("opens the room's window beside spool's when there is room, and otherwise ove
 		expect(room.y + room.h).toBeLessThanOrEqual(view.y + slide.y + slide.h + 1);
 		expect(room.w / room.h).toBeCloseTo(16 / 9, 1);
 	}
+});
+
+it("has the Mac app's window full screen once the page has the screen's size, which the slide waits for before it flies", async () => {
+	const frames: Array<() => void> = [];
+	const page = {
+		innerWidth: 1440,
+		innerHeight: 877,
+		screen: { width: 1512, height: 982 },
+		spoolCanvasWindow: { onCommand() {}, setCanvasActive() {}, presentFullScreen: async () => true },
+	};
+	vi.stubGlobal("window", page);
+	vi.stubGlobal("requestAnimationFrame", (frame: () => void) => frames.push(frame));
+	let full = false;
+	void fillScreen(true).then(() => {
+		full = true;
+	});
+	const frame = async () => {
+		await new Promise((done) => setTimeout(done));
+		for (const one of frames.splice(0)) one();
+		await new Promise((done) => setTimeout(done));
+	};
+
+	// the window changing size draws a frame at a size on the way
+	await frame();
+	page.innerWidth = 1442;
+	page.innerHeight = 879;
+	await frame();
+	expect(full).toBe(false);
+	page.innerWidth = 1512;
+	page.innerHeight = 982;
+	await frame();
+	expect(full).toBe(true);
 });

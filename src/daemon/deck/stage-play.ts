@@ -148,6 +148,7 @@ export const STAGE_CSS = `html { background: ${STAGE_GROUND}; }
 .spool-stage-slide[data-spool-stage-shown] { z-index: 1; }
 .spool-stage-kept { display: contents; }
 .spool-stage-black { position: absolute; inset: 0; z-index: 2; background: #000; }
+html[data-spool-stage-cursor="hidden"], html[data-spool-stage-cursor="hidden"] * { cursor: none !important; }
 ::view-transition-group(*) { animation-duration: 900ms; animation-timing-function: cubic-bezier(0.65, 0, 0.2, 1); }
 ::view-transition-old(root) { animation: none; }
 ::view-transition-new(root) { animation: 500ms cubic-bezier(0.22, 0.61, 0.36, 1) both spool-stage-in; mix-blend-mode: normal; }

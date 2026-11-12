@@ -9,7 +9,8 @@ import { cn } from "../cn";
 import { changeDeck, type DeckEntry, type DeckReads, useDeckRead, useDeckReads, walkDeck } from "./deck-api";
 import { type Aim, aimOf, BAND_ROOM, deckOfRead, folderOf, nameOf, SLACK } from "./deck-drag";
 import { createFrameTween, easing, HOLD_MS, type Point, useDeckMotion } from "./deck-motion";
-import { presentDeck, presentKeyFrom } from "./present";
+import { type PresentFrom, presentDeck, presentKeyFrom } from "./present";
+import type { PresentHow } from "./present-way";
 
 /**
  * The deck page on the canvas (spool#265, the team canvas's `app/spool-deck`): what the canvas asks of a page that
@@ -62,10 +63,13 @@ export interface DeckPage {
 	/** Whether the page in front is a deck, read when called: for handlers made before the deck was read. */
 	owns(): boolean;
 	/**
-	 * ⌘↵ (`first` false) or ⇧⌘↵ (`first` true) on the page: presents from the slide held, or the first. False when the
-	 * key is not the deck's (the page is no deck, or what is held is no one slide), and the canvas's own key stands.
+	 * ⌘↵ (`first` false) or ⇧⌘↵ (`first` true) on the page, and ⌥⌘↵ (`how` "other"): presents from the slide held, or
+	 * the first. False when the key is not the deck's (the page is no deck, or what is held is no one slide), and the
+	 * canvas's own key stands.
 	 */
-	presentKey(first: boolean): boolean;
+	presentKey(first: boolean, how?: PresentHow): boolean;
+	/** Where Present on the canvas plays from: the slide held, else the first; undefined on a page that is no deck. */
+	presentFrom(): PresentFrom | undefined;
 	/** What `DeckLayer` draws: the talk's size, where a held frame lands, and whether that is in the talk. */
 	/** `sending`: a drop's change is out, and its undo entry not yet in. */
 	readonly view: {
@@ -262,18 +266,27 @@ export function useDeckPage({
 	);
 	const owns = useCallback(() => live.current.on, []);
 	const presentKey = useCallback(
-		(first: boolean) => {
+		(first: boolean, how: PresentHow = "present") => {
 			const { read: deck, page: on, project: of } = live.current;
 			if (deck === undefined) return false;
 			const state = store.get();
 			const slides = deck.slides.map((slide) => slide.name);
 			const slide = presentKeyFrom(slides, { frames: state.selected, elements: state.picked.length }, first);
 			if (slide === undefined) return false;
-			presentDeck({ project: of, page: on, slide });
+			presentDeck({ project: of, page: on, slide }, how);
 			return true;
 		},
 		[store],
 	);
+	const presentFrom = useCallback((): PresentFrom | undefined => {
+		const { read: deck, page: on, project: of } = live.current;
+		if (deck === undefined) return undefined;
+		const state = store.get();
+		const slides = deck.slides.map((slide) => slide.name);
+		const slide =
+			presentKeyFrom(slides, { frames: state.selected, elements: state.picked.length }, false) ?? slides[0];
+		return slide === undefined ? undefined : { project: of, page: on, slide };
+	}, [store]);
 	const talk = read?.size;
 	const landing = aim?.aim?.landing ?? null;
 	const lifted = aim?.aim?.band === true;
@@ -283,7 +296,23 @@ export function useDeckPage({
 		[talk, landing, lifted, sending],
 	);
 
-	return { on, read, reads, numberOf, playOf, playTitleOf, hold, drop, cancel, keep, walk, owns, presentKey, view };
+	return {
+		on,
+		read,
+		reads,
+		numberOf,
+		playOf,
+		playTitleOf,
+		hold,
+		drop,
+		cancel,
+		keep,
+		walk,
+		owns,
+		presentKey,
+		presentFrom,
+		view,
+	};
 }
 
 /**

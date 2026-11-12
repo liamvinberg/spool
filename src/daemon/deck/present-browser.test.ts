@@ -112,9 +112,11 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
 
-	// ⇧⌘↵ presents from the first slide: spool's window becomes the presenter view, and the room opens beside it
+	// the caret's Presenter view presents from the first slide, nothing being held: spool's window becomes the presenter
+	// view, and the room opens beside it; on one display it is the way Present takes from now on
 	const opened = context.waitForEvent("page");
-	await view.keyboard.press("ControlOrMeta+Shift+Enter");
+	await view.getByRole("button", { name: "Ways to present" }).click();
+	await view.getByRole("menuitemradio", { name: /Presenter view/ }).click();
 	const audience = await opened;
 	await audience.setViewportSize({ width: 1280, height: 720 });
 	await view.locator("[data-deck-presenter]").waitFor();
@@ -274,6 +276,7 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 		(window as unknown as { spoolCanvasWindow: unknown }).spoolCanvasWindow = app;
 	});
 	await expect.poll(() => view.evaluate(() => document.documentElement.hasAttribute("data-deck-moving"))).toBe(false);
+	// ⇧⌘↵ presents from the first slide the way remembered
 	const last = context.waitForEvent("page");
 	await view.keyboard.press("ControlOrMeta+Shift+Enter");
 	const left = await last;

@@ -101,6 +101,7 @@ const arriving = (event: KeyboardEvent) => ({
 	black: false,
 	frozen: false,
 	alone: true,
+	filling: false,
 });
 
 /** A frame's own name, the last part of its path. */

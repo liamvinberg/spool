@@ -269,14 +269,15 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	const from = await pagePointOf(page, { x: 3 * 1440 + 640, y: 360 });
 	await page.mouse.dblclick(from.x, from.y);
 	await page.locator('[data-deck-stage="presentation/close"][data-deck-stage-shown]').waitFor();
-	const opened = page.context().waitForEvent("page");
+	// on one display the slides fill the screen, and end with Esc
+	const presenting = () =>
+		page.evaluate(
+			() => document.querySelector("[data-present-slides]")?.getAttribute("data-present-slides") ?? "warm",
+		);
 	await page.keyboard.press("ControlOrMeta+Enter");
-	const room = await opened;
-	await page.locator("[data-deck-presenter]").waitFor();
-	const closed = room.waitForEvent("close");
+	await expect.poll(presenting).toBe("on");
 	await page.keyboard.press("Escape");
-	await closed;
-	await page.locator("[data-deck-presenter]").waitFor({ state: "detached" });
+	await expect.poll(presenting).toBe("warm");
 	await expect.poll(camera).toEqual(outside);
 	expect(await page.getByRole("button", { name: "close frame" }).getAttribute("aria-pressed")).toBe("true");
 

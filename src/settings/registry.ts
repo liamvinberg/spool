@@ -232,6 +232,15 @@ export const SETTINGS = {
 		label: "Setup done",
 		says: "The first run's setup was finished or skipped on this machine. Help's Run setup again opens it.",
 	},
+	// how a deck's Present plays on one display (spool#298): the way taken last, full screen the first time
+	"present.way": {
+		scope: "machine",
+		group: "remembered",
+		shape: { kind: "choice", choices: ["slides", "presenter"] },
+		fallback: "slides",
+		label: "Present plays",
+		says: "On one display, the slides full screen or the presenter view: the way chosen last from Present's menu.",
+	},
 	...themeEntries,
 	...experimentEntries,
 } as const satisfies Record<string, SettingEntry>;

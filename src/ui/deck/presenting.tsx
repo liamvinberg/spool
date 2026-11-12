@@ -1,13 +1,15 @@
 import { motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Size } from "../../deck/deck-file";
 import { coverUrl } from "../api";
+import { shellRadiusOnScreen } from "../canvas/camera";
 import type { CameraStore } from "../canvas/camera-store";
 import type { CanvasStore } from "../canvas/canvas-store";
 import { type DeckReads, useDeckRead } from "./deck-api";
 import { type DeckMotion, useDeckMotion } from "./deck-motion";
-import { presentDone, usePresentAsk } from "./present";
+import { presentDone, usePresentAsk, usePresentWarm } from "./present";
+import { type Card, PresentSlides } from "./present-slides";
 import { Presenter, useWindowSize } from "./presenter";
 import { presenterLayout } from "./presenter-layout";
 
@@ -49,13 +51,73 @@ export interface PresentingProps {
 	say(message: string): void;
 }
 
-export function Presenting({ project, store, camera, reads, viewport, onEnded, say }: PresentingProps) {
+/** Presenting either way (spool#298): the presenter view here, or the slides filling the screen. */
+export function Presenting(props: PresentingProps) {
+	return (
+		<>
+			<PresenterMoments {...props} />
+			<SlidesMoments {...props} />
+		</>
+	);
+}
+
+/** Where a frame's card stands on the window, and its corner there, while it stands in view of the canvas. */
+function cardOn(store: CanvasStore, camera: CameraStore, field: DOMRect | undefined, frame: string): Card | null {
+	const box = store.get().frames.find((one) => one.name === frame);
+	const at = camera.get();
+	if (box === undefined || at === null || field === undefined) return null;
+	const rect = {
+		x: field.left + at.x + box.x * at.k,
+		y: field.top + at.y + box.y * at.k,
+		w: box.w * at.k,
+		h: box.h * at.k,
+	};
+	const seen =
+		rect.x + rect.w > field.left && rect.y + rect.h > field.top && rect.x < field.right && rect.y < field.bottom;
+	return seen ? { rect, r: shellRadiusOnScreen(at.k) } : null;
+}
+
+/** The slides filling the screen, readied while the hand is on its way to Present and played once it is pressed. */
+function SlidesMoments({ project, store, camera, reads, viewport, onEnded, say }: PresentingProps) {
+	const ask = usePresentAsk();
+	const warm = usePresentWarm();
+	const mine = ask !== null && ask.project === project && ask.way === "slides" ? ask : null;
+	// the room's window is kept out of the props: React reading it to compare would be refused by its other origin
+	const shown = useMemo(() => {
+		if (mine === null) return null;
+		const { room: _room, ...rest } = mine;
+		return rest;
+	}, [mine]);
+	const readied = ask === null && warm !== null && warm.project === project ? warm : null;
+	const deck = useDeckRead(reads, (mine ?? readied)?.page ?? "");
+	const talk: Size = deck?.size ?? { w: 1280, h: 720 };
+	return (
+		<PresentSlides
+			ask={shown}
+			warm={readied}
+			deck={deck}
+			talk={talk}
+			cardOf={(frame) => cardOn(store, camera, viewport()?.getBoundingClientRect(), frame)}
+			pictureOf={(frame) => {
+				// the canvas draws a slide at its last beat: its picture is the talk's start only for a slide of one
+				const beats = deck?.slides.find((one) => one.name === frame)?.beats.length ?? 1;
+				const cover = store.get().frames.find((one) => one.name === frame)?.cover;
+				return beats > 1 || cover === undefined ? undefined : coverUrl(project, frame, cover.hash);
+			}}
+			onEnded={onEnded}
+			say={say}
+			closeRoom={() => mine?.room?.close()}
+		/>
+	);
+}
+
+function PresenterMoments({ project, store, camera, reads, viewport, onEnded, say }: PresentingProps) {
 	const still = useReducedMotion() === true;
 	const timing = useDeckMotion();
 	/** with no slide on screen to travel from, the chrome falls away as its transitions take it before the view is drawn */
 	const fall = timing.slower;
 	const ask = usePresentAsk();
-	const mine = ask !== null && ask.project === project ? ask : null;
+	const mine = ask !== null && ask.project === project && ask.way === "presenter" ? ask : null;
 	const deck = useDeckRead(reads, mine?.page ?? "");
 	const window_ = useWindowSize();
 	const [moment, setMoment] = useState<Moment | null>(null);
@@ -64,21 +126,8 @@ export function Presenting({ project, store, camera, reads, viewport, onEnded, s
 	hands.current = { onEnded, say };
 	const talk: Size = deck?.size ?? { w: 1280, h: 720 };
 	/** where a frame stands on the window, while it stands in view */
-	const cardOf = (frame: string): Rect | null => {
-		const box = store.get().frames.find((one) => one.name === frame);
-		const at = camera.get();
-		const field = viewport()?.getBoundingClientRect();
-		if (box === undefined || at === null || field === undefined) return null;
-		const card = {
-			x: field.left + at.x + box.x * at.k,
-			y: field.top + at.y + box.y * at.k,
-			w: box.w * at.k,
-			h: box.h * at.k,
-		};
-		const seen =
-			card.x + card.w > field.left && card.y + card.h > field.top && card.x < field.right && card.y < field.bottom;
-		return seen ? card : null;
-	};
+	const cardOf = (frame: string): Rect | null =>
+		cardOn(store, camera, viewport()?.getBoundingClientRect(), frame)?.rect ?? null;
 	const where = useRef(cardOf);
 	where.current = cardOf;
 	const big = toRect(presenterLayout(window_, talk).slide);

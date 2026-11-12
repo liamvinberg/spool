@@ -90,6 +90,9 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 	roomReport: (talk: string): Promise<RoomReport | null> => ipcRenderer.invoke("spool:room-report", talk),
 	swapRoom: (talk: string) => ipcRenderer.send("spool:room-swap", talk),
 	showRoom: (talk: string) => ipcRenderer.send("spool:room-show", talk),
+	// a talk's slides filling this screen (spool#298): how many displays there are, and the window over its display
+	displays: (): number => ipcRenderer.sendSync("spool:displays") as number,
+	presentFullScreen: (on: boolean): Promise<boolean> => ipcRenderer.invoke("spool:present-full-screen", on),
 	// the first run's small window, and its growing into spool's (spool#250)
 	setupWindow: (size: "grow" | { w: number; h: number }): Promise<boolean> =>
 		ipcRenderer.invoke("spool:setup-window", size),
