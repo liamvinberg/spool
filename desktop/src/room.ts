@@ -52,6 +52,10 @@ interface Room {
 }
 
 const ROOM_WINDOWED = "spool:room-windowed";
+/** the room's page has drawn its slide: its window may show */
+const ROOM_DRAWN = "spool:room-drawn";
+/** The longest a room's window is held hidden for its slide to be drawn. */
+const ROOM_DRAWN_MS = 3_000;
 
 export function installRooms(host: RoomsHost): Rooms {
 	const rooms = new Map<string, Room>();
@@ -151,13 +155,17 @@ export function installRooms(host: RoomsHost): Rooms {
 		};
 		rooms.set(talk, room);
 		host.guard(window);
+		const page = window.webContents;
 		window.on("closed", () => {
 			if (rooms.get(talk) === room) rooms.delete(talk);
+			drawing.delete(page);
 		});
-		// a room that never paints still gets its window: late, not lost
-		const showing = setTimeout(() => reveal(), 1_000);
+		// hidden until its slide is drawn, so it opens on the slide and never on the black it loads in (spool#306); a
+		// room that never says so still gets its window: late, not lost
+		const showing = setTimeout(() => reveal(), ROOM_DRAWN_MS);
 		const reveal = () => {
 			clearTimeout(showing);
+			drawing.delete(page);
 			if (window.isDestroyed() || window.isVisible()) return;
 			// shown without the keys: they stay with the presenter view
 			window.showInactive();
@@ -168,12 +176,17 @@ export function installRooms(host: RoomsHost): Rooms {
 				});
 			}
 		};
-		window.once("ready-to-show", reveal);
+		drawing.set(page, reveal);
 		host.log("room", talk.slice(0, 6), where.kind === "screen" ? `screen ${where.display.label}` : "window");
 		report(room);
 		void window.loadURL(url);
 	};
 
+	/** the rooms waiting to be shown till their slide is drawn, by their page */
+	const drawing = new Map<Electron.WebContents, () => void>();
+	ipcMain.on(ROOM_DRAWN, (event) => {
+		if (event.senderFrame === event.sender.mainFrame) drawing.get(event.sender)?.();
+	});
 	ipcMain.on(ROOM_WINDOWED, (event) => {
 		const room = [...rooms.values()].find((one) => one.window.webContents === event.sender);
 		event.returnValue = room === undefined ? true : room.screen === undefined;

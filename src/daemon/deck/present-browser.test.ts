@@ -258,7 +258,21 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 		.toEqual(["talk/mount-throws"]);
 
 	// in the Mac app the presenter view names the room's display as the app reports it, X asks the app to swap, and a
-	// display unplugged under the room is said (the app's half is desktop/src/room-window.test.ts)
+	// display unplugged under the room is said (the app's half is desktop/src/room-window.test.ts); the room's window,
+	// which the app holds hidden till then, is told once that its slide is drawn
+	// (a popup keeps the window of the blank page it opens on, so the script cannot ask its address)
+	await context.addInitScript(() => {
+		if (window !== window.top) return;
+		const drawn: boolean[] = [];
+		Object.assign(window, {
+			roomDrawn: drawn,
+			spoolRoomWindow: {
+				windowed: true,
+				onWindowed: () => () => {},
+				drawn: () => drawn.push(document.querySelector('[data-spool-stage] iframe[style*="opacity: 1"]') !== null),
+			},
+		});
+	});
 	await view.evaluate(() => {
 		type Report = { talk: string; screen: string | null; swaps: boolean; unplugged?: string };
 		const app = {
@@ -282,6 +296,9 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	const left = await last;
 	await view.locator("[data-deck-presenter]").waitFor();
 	await view.getByText("Studio Display", { exact: true }).waitFor();
+	await expect
+		.poll(() => left.evaluate(() => (window as unknown as { roomDrawn: boolean[] }).roomDrawn))
+		.toEqual([true]);
 	await view.keyboard.press("x");
 	const swapped = () =>
 		view.evaluate(() => (window as unknown as { spoolCanvasWindow: { swaps: string[] } }).spoolCanvasWindow.swaps);

@@ -41,6 +41,15 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	/** the newest session the presenter published, and the slide the room's screen shows in it */
 	let newest: { session: StageSession; frame: string } | undefined;
 	let pointer: StagePointer | null = null;
+	const app = roomWindow();
+	/** The Mac app holds the room's window hidden till its slide is drawn, so it never opens black (spool#306). */
+	let drawn = false;
+	const sayDrawn = () => {
+		if (drawn) return;
+		drawn = true;
+		// the frame that reveals the slide is painted by the second frame from now
+		requestAnimationFrame(() => requestAnimationFrame(() => app?.drawn?.()));
+	};
 
 	const host = mountStage(root, {
 		async address() {
@@ -54,11 +63,18 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 		on: {
 			// a new build took the screen: the newest session, which it may now be able to show
 			talk: () => show(),
-			shown: () => dot.draw(),
+			shown: () => {
+				sayDrawn();
+				dot.draw();
+			},
 			command: (command) => {
 				if (roomPasses(command)) say({ kind: "command", command });
 			},
-			refused: (why) => console.error(`spool: ${why}`),
+			refused: (why) => {
+				// what there is to show, the ground, is shown rather than held back
+				sayDrawn();
+				console.error(`spool: ${why}`);
+			},
 		},
 	});
 	daemon.follow(host);
@@ -89,7 +105,6 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	});
 	root.append(shield);
 	new ResizeObserver(() => dot.draw()).observe(root);
-	const app = roomWindow();
 	if (app !== undefined) dragStrip(root, app);
 
 	channel.addEventListener("message", (event) => {
@@ -144,6 +159,8 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 interface RoomWindow {
 	windowed: boolean;
 	onWindowed(listener: (windowed: boolean) => void): () => void;
+	/** the slide is drawn: the window may show; absent in an app from before it waited */
+	drawn?(): void;
 }
 
 function roomWindow(): RoomWindow | undefined {
