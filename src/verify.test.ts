@@ -742,14 +742,15 @@ export default function Clockless() {
 	});
 
 	it("seeks a frame that runs slower than its own time for as long as it keeps answering", {
-		timeout: 120_000,
+		timeout: 180_000,
 	}, async () => {
 		if (!(await browserAvailable())) return;
 
 		// each of the frame's animation frames holds its main thread 150 ms of real
 		// time, as a heavy scene does on a busy machine: 1000 ms of its own time take
-		// over 9 s to seek, past the 5 s a step may take and the 1 s asked for
+		// over 9 s to seek, though no step of it comes near the 5 s a step may take
 		const { root, deps } = await serveVerifyProject(undefined, { shotMs: 5000 });
+		const viewport = { width: 160, height: 60 };
 		writeFrame(
 			root,
 			"heavy",
@@ -769,8 +770,14 @@ export default function Heavy() {
 }
 `,
 		);
-		const shot = await shotFrame(deps("heavy", { viewport: { width: 160, height: 60 }, at: [1000] }));
-		expect(shot).toMatchObject({ kind: "shot", files: [{ at: 1000 }] });
+		// and two at once, as agents on one daemon ask, each slower again for sharing the machine
+		writeFrame(root, "heavier", readFileSync(join(root, "design", "frames", "heavy", "frame.tsx"), "utf8"));
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames({ ...deps(""), viewport, at: [1000] }, ["heavy", "heavier"])) shots.push(shot);
+		expect(shots).toMatchObject([
+			{ frame: "heavy", outcome: { kind: "shot", files: [{ at: 1000 }] } },
+			{ frame: "heavier", outcome: { kind: "shot", files: [{ at: 1000 }] } },
+		]);
 	});
 
 	it("settles the way a cover does, or runs the frame's timers as far as --at says", {
