@@ -6458,9 +6458,12 @@ function CanvasField({
 							</OutsideLines>
 						</AgentTrail>
 					)}
-					{/* who else is here stands after the path; with no path drawn, where it would start */}
-					{presenceFaces !== null && !(loaded && !projectEmpty) && (
-						<div className="absolute top-3 left-3 z-20">{presenceFaces}</div>
+					{/* who else is here, and what of this copy was set aside, stand after the path; with no path drawn, where it would start */}
+					{(presenceFaces !== null || setAside !== null) && !(loaded && !projectEmpty) && (
+						<div className="absolute top-3 left-3 z-20 flex items-center">
+							{presenceFaces}
+							{setAside}
+						</div>
 					)}
 
 					{menu !== null && (
@@ -6557,7 +6560,6 @@ function CanvasField({
 
 					<NoticeStack>
 						{syncState}
-						{setAside}
 						{pendingTrash !== null && (
 							<TrashToast
 								// a new entry is a new undo window, so its drain starts again
@@ -6631,7 +6633,14 @@ function CanvasField({
 								if (pageWithin(page, activePage) || page === ROOT_PAGE) goUpTo(page);
 								else goInsidePage(page);
 							}}
-							after={presenceFaces}
+							after={
+								presenceFaces === null && setAside === null ? null : (
+									<>
+										{presenceFaces}
+										{setAside}
+									</>
+								)
+							}
 							tail={<FindDoor hidden={finding} onOpen={() => setFinding(true)} />}
 						/>
 					)}
