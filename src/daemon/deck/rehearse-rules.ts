@@ -409,8 +409,15 @@ export function layoutMoved(
 		const then = was.get(element.id);
 		return then !== undefined && still(then) && still(element) ? [{ then, now: element }] : [];
 	});
+	// a box moved when both its edges on one axis did: one that kept an edge only grew or shrank from it, as words
+	// set bolder do, and one with no size draws nothing to see move
+	const across = (from: number, to: number, fromSize: number, toSize: number) =>
+		Math.min(Math.abs(to - from), Math.abs(to + toSize - (from + fromSize)));
 	const shifted = both.filter(
-		({ then, now }) => Math.abs(now.x - then.x) > MOVED_PX || Math.abs(now.y - then.y) > MOVED_PX,
+		({ then, now }) =>
+			sized(then) &&
+			sized(now) &&
+			(across(then.x, now.x, then.w, now.w) > MOVED_PX || across(then.y, now.y, then.h, now.h) > MOVED_PX),
 	);
 	const shiftedIds = new Set(shifted.map(({ now }) => now.id));
 	const moved = shifted.filter(({ now }) => now.parent === undefined || !shiftedIds.has(now.parent));

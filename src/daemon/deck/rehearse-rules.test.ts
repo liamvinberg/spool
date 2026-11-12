@@ -84,6 +84,15 @@ describe("layoutMoved", () => {
 			layoutMoved(rested, [element(1, 80), element(4, 80, { x: 700 })], restless(rested, typing)),
 		).toBeUndefined();
 	});
+
+	it("takes a box that only grew from an edge it kept, or one with nothing to draw, for no move", () => {
+		// right-aligned words set bolder on their beat: wider to the left, their right edge where it was
+		expect(layoutMoved([element(1, 80, { x: 1285, w: 563 })], [element(1, 80, { x: 1277, w: 571 })])).toBeUndefined();
+		// a <br>, which lays out nowhere
+		expect(layoutMoved([element(1, 627, { w: 0, h: 0 })], [element(1, 0, { x: 0, w: 0, h: 0 })])).toBeUndefined();
+		// words centred on their line that wrap to one line fewer: both edges move
+		expect(layoutMoved([element(1, 382, { h: 179 })], [element(1, 427, { h: 90 })])?.shift).toBe(45);
+	});
 });
 
 describe("missedFrames", () => {
