@@ -232,10 +232,12 @@ function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 		if (presentOver !== undefined) return false;
 		const over = { bars: hideBars() };
 		presentOver = over;
-		keepBarsHidden(
-			() => presentOver === over,
-			() => BrowserWindow.getFocusedWindow() !== null,
-		);
+		// watched only with the options to put back: ones hidden later would outlast the talk
+		if (over.bars !== undefined)
+			keepBarsHidden(
+				() => presentOver === over,
+				() => BrowserWindow.getFocusedWindow() !== null,
+			);
 		presentLevel(showing);
 		return false;
 	}
@@ -300,9 +302,10 @@ function refillAfterUnplug(): void {
 /**
  * The window over the Dock and the menu bar while it covers its display for the slides and spool is in front, as
  * Keynote's slides are; back among the other apps' windows the moment another app comes forward (⌘Tab), and again
- * when spool does. Its level rather than presentation options (`hideBars`), so the slides cover both even where the
- * presenting module could not be loaded. A window full screen the macOS way needs both: macOS brings the Dock up over
- * it whatever the options say, and the menu bar comes down with the window's own title bar, which no level covers.
+ * when spool does. In simple full screen its level rather than presentation options (`hideBars`), so the slides cover
+ * both even where the presenting module could not be loaded. A window full screen the macOS way needs both: its level
+ * for the Dock, which macOS brings up over it whatever the options say, and the options for the menu bar, which comes
+ * down with the window's own title bar, where no level covers it.
  */
 function presentLevel(showing: BrowserWindow): void {
 	if (showing.isDestroyed()) return;

@@ -77,11 +77,12 @@ export function hideBars(): number | undefined {
 const KEEP_LOOK_MS = 100;
 
 /**
- * Keeps the menu bar and the Dock hidden for as long as `hiding` says the talk wants them gone. macOS puts the full
- * screen's own options back, with no word to the app, each time spool comes back to its full screen window: after ⌘Tab,
- * after Mission Control, sometimes twice as the Space slides into place. So it looks, and puts the talk's back each
- * time the full screen's appear while spool is the app in front (`inFront`). Never before they do: options set in the
- * middle of the slide, or while another app is in front, stand in for the full screen's own and outlast the talk.
+ * Keeps the talk's options, and so the menu bar hidden, for as long as `hiding` says the talk wants them. macOS puts
+ * the full screen's own options back, with no word to the app, each time spool comes back to its full screen window:
+ * after ⌘Tab, after Mission Control, sometimes twice as the Space slides into place. So it looks, and puts the talk's
+ * back each time the full screen's appear while spool is the app in front (`inFront`). Never before they do: options
+ * set in the middle of the slide, or while another app is in front, stand in for the full screen's own and outlast the
+ * talk.
  */
 export function keepBarsHidden(
 	hiding: () => boolean,

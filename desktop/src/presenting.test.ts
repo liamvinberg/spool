@@ -53,16 +53,20 @@ test("a talk keeps the bars hidden, each time macOS puts the full screen's back 
 	options = full;
 	look();
 	assert.deepEqual(set, [talk]);
-	// macOS puts them back once more as the slide ends
+	// macOS puts them back once more as the slide ends, and again whenever spool comes back, however long the talk
 	options = full;
 	look();
 	look();
 	assert.deepEqual(set, [talk, talk]);
+	for (let turn = 0; turn < 10_000; turn++) look();
+	options = full;
+	look();
+	assert.deepEqual(set, [talk, talk, talk]);
 	// the talk over, it stops looking
 	hiding = false;
 	options = full;
 	look();
-	assert.deepEqual(set, [talk, talk]);
+	assert.deepEqual(set, [talk, talk, talk]);
 	assert.equal(waits.length, 0);
 });
 
