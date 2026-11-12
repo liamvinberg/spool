@@ -130,28 +130,51 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 			return false;
 		}
 	};
+	// whose code said a line or asked for a file, asked of the stage at once, while what tells is still there
+	const asking: Promise<void>[] = [];
+	const whose = (stack: string, url: string | undefined, told: (frame: string) => void) => {
+		const asked = `${PROBES}.whose(${JSON.stringify(stack)}${url === undefined ? "" : `, ${JSON.stringify(url)}`})`;
+		asking.push(
+			inStage<string | null>(asked).then(
+				(frame) => {
+					if (frame !== null) told(frame);
+				},
+				() => {},
+			),
+		);
+	};
 	page.on("console", (message) => {
 		if (!listening || message.type() !== "error") return;
 		const text = message.text();
 		// a failed request is said once, as a request
 		if (text.startsWith("Failed to load resource")) return;
+		const { url, lineNumber, columnNumber } = message.location();
 		try {
-			if (new URL(message.location().url).host === controlHost) return;
+			if (new URL(url).host === controlHost) return;
 		} catch {}
-		consoled.push({ text, at: Date.now() });
+		const line = { text, at: Date.now() };
+		const at = consoled.push(line) - 1;
+		whose(`${url}:${lineNumber}:${columnNumber}`, undefined, (frame) => (consoled[at] = { ...line, frame }));
 	});
 	page.on("pageerror", (error) => {
-		if (listening) consoled.push({ text: error.message, at: Date.now() });
+		if (!listening) return;
+		const line = { text: error.message, at: Date.now() };
+		const at = consoled.push(line) - 1;
+		whose(error.stack ?? "", undefined, (frame) => (consoled[at] = { ...line, frame }));
 	});
+	const failed = (request: FailedRequest) => {
+		const at = requests.push(request) - 1;
+		whose("", request.url, (frame) => (requests[at] = { ...request, frame }));
+	};
 	page.on("requestfailed", (request) => {
 		if (!listening || !ofTalk(request.url())) return;
 		const why = request.failure()?.errorText ?? "failed";
 		if (why === "net::ERR_ABORTED") return;
-		requests.push({ url: request.url(), status: why, at: Date.now() });
+		failed({ url: request.url(), status: why, at: Date.now() });
 	});
 	page.on("response", (response) => {
 		if (!listening || response.status() < 400 || !ofTalk(response.url())) return;
-		requests.push({ url: response.url(), status: response.status(), at: Date.now() });
+		failed({ url: response.url(), status: response.status(), at: Date.now() });
 	});
 
 	const host = async () => {
@@ -392,6 +415,7 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 	} finally {
 		listening = false;
 		await host().catch(() => {});
+		await Promise.all(asking);
 		await page.close().catch(() => {});
 	}
 	return {

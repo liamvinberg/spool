@@ -191,6 +191,19 @@ describe("findingsOf", () => {
 		]);
 	});
 
+	it("puts a line or a file at the slide whose code it was, which the stage readies before it is shown, and drops a slide not rehearsed", () => {
+		const visits = [{ at: 1000, to: at(0, 1), pass: "forward" as const }];
+		const console = [{ text: "two mounted", at: 1100, frame: "talk/two" }];
+		const requests = [
+			{ url: "https://x.test/two.json", status: 404, at: 1200, frame: "talk/two" },
+			{ url: "https://x.test/three.json", status: 404, at: 1300, frame: "talk/three" },
+		];
+		expect(findingsOf(talk({ to: 1, visits, console, requests }))).toEqual([
+			{ kind: "console", place: { slide: 1, beat: 0 }, text: "two mounted", times: 1 },
+			{ kind: "request", place: { slide: 1, beat: 0 }, url: "https://x.test/two.json", status: 404 },
+		]);
+	});
+
 	it("names the elements that share a name for a move that would not run, and leaves the browser's own line about it unsaid", () => {
 		const twins = [
 			{ name: "hero", tag: "h1", source: "frames/talk/two/frame.tsx:3:4" },

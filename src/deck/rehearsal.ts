@@ -162,6 +162,8 @@ export interface BeatAtRest {
 export interface ConsoleLine {
 	readonly text: string;
 	readonly at: number;
+	/** the slide whose code said it, when its stack tells: a slide readied out of sight runs before it is shown */
+	readonly frame?: string;
 }
 
 /** A request of the talk's that failed. */
@@ -170,6 +172,8 @@ export interface FailedRequest {
 	/** the status it answered, or why it never answered */
 	readonly status: number | string;
 	readonly at: number;
+	/** the slide that asked for it, when its element or its fetch's stack tells */
+	readonly frame?: string;
 }
 
 /** The pictures of one move between slides, from inside it. */

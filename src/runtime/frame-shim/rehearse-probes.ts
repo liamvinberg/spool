@@ -48,6 +48,8 @@ interface StageTap {
 	hold: Hold | undefined;
 	readonly ids: WeakMap<Element, number>;
 	next: number;
+	/** the scripts on the stack of each fetch the talk made, by its address */
+	readonly fetched: Map<string, readonly string[]>;
 	readonly raf: (callback: FrameRequestCallback) => number;
 }
 
@@ -62,7 +64,7 @@ export function record(): void {
 	const held = window as unknown as Record<symbol, unknown>;
 	if (held[KEY] !== undefined) return;
 	if (isStage()) {
-		held[KEY] = { tap: recordStage(), since, rest, calls, look, layoutNow, arm, caught, seek, release };
+		held[KEY] = { tap: recordStage(), since, rest, calls, look, layoutNow, arm, caught, seek, release, whose };
 	} else if (window.top === window) {
 		held[KEY] = { tap: recordHost(), heard, shown, settled };
 	}
@@ -104,7 +106,18 @@ function recordStage(): StageTap {
 		hold: undefined,
 		ids: new WeakMap(),
 		next: 1,
+		fetched: new Map(),
 		raf,
+	};
+	const fetch = window.fetch;
+	window.fetch = function (this: unknown, ...args: Parameters<typeof window.fetch>) {
+		try {
+			const [input] = args;
+			const url = input instanceof Request ? input.url : new URL(String(input), location.href).href;
+			if (tap.fetched.size > FETCHED_MOST) tap.fetched.clear();
+			tap.fetched.set(url, scriptsIn(new Error().stack ?? ""));
+		} catch {}
+		return fetch.apply(this, args);
 	};
 	try {
 		performance.setResourceTimingBufferSize(100_000);
@@ -650,6 +663,42 @@ function lateFiles(
 		late.push({ kind: "font", name: face.family, after: Math.round(face.at - shownAt) });
 	}
 	return late;
+}
+
+// --- whose code it was ----------------------------------------------------------------------------------------
+
+/** The most fetches remembered: their stacks are for the ones that fail, which come soon after. */
+const FETCHED_MOST = 500;
+
+/** The scripts a stack runs through, innermost first. */
+function scriptsIn(stack: string): string[] {
+	return [...stack.matchAll(/(https?:\/\/[^\s()]+?):\d+:\d+/g)].flatMap((match) =>
+		match[1] === undefined ? [] : [match[1]],
+	);
+}
+
+/**
+ * The slide whose code said a line or asked for a file: the first script on `stack` that is a slide's own module,
+ * else for a file, the one on its fetch's stack, or the slide whose element shows it. Null when none tells.
+ */
+function whose(stack: string, url?: string): string | null {
+	const owners = new Map<string, string>();
+	for (const link of document.querySelectorAll<HTMLLinkElement>("link[data-spool-frame]"))
+		owners.set(link.href, link.dataset.spoolFrame ?? "");
+	const asked = url === undefined ? [] : (stageTap().fetched.get(url) ?? []);
+	for (const script of [...scriptsIn(stack), ...asked]) {
+		const frame = owners.get(script);
+		if (frame !== undefined && frame !== "") return frame;
+	}
+	if (url === undefined) return null;
+	for (const element of document.querySelectorAll("[src], [href]")) {
+		const src =
+			(element as HTMLImageElement).currentSrc || element.getAttribute("src") || element.getAttribute("href");
+		if (src === null || src === "" || new URL(src, location.href).href !== url) continue;
+		const frame = element.closest("[data-spool-stage-slide]")?.getAttribute("data-spool-stage-slide");
+		if (frame !== undefined && frame !== null) return frame;
+	}
+	return null;
 }
 
 // --- a move held still --------------------------------------------------------------------------------------

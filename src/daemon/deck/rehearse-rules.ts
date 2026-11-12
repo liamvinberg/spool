@@ -224,14 +224,23 @@ function firstLine(text: string): string {
 	return (text.split("\n").find((line) => line.trim() !== "") ?? text).trim();
 }
 
-/** Where the talk was at `at`, epoch ms: the step whose key came last before it, or its opening. */
-function placeAt(rehearsal: Rehearsal, at: number): Place {
+/**
+ * Where the talk was at `at`, epoch ms: the step whose key came last before it, or its opening. When the stage told
+ * whose code it was, and that slide is not the one shown (the stage readies the slides either key plays out of sight
+ * before the key), it is that slide's, from its first beat; undefined when that slide is not rehearsed.
+ */
+function placeAt(rehearsal: Rehearsal, at: number, frame?: string): Place | undefined {
 	let place: Place = { slide: rehearsal.from, beat: 0 };
 	for (const visit of rehearsal.visits) {
 		if (visit.at > at) break;
 		place = placeOf(visit.to, visit.pass);
 	}
-	return place;
+	if (frame === undefined || rehearsal.slides[place.slide]?.frame === frame) return place;
+	const slides = rehearsal.slides.map((slide, index) => ({ frame: slide.frame, index }));
+	const own = slides.filter((slide) => slide.frame === frame);
+	const slide = (own.find((one) => one.index >= place.slide) ?? own[0])?.index;
+	if (slide === undefined || slide < rehearsal.from || slide > rehearsal.to) return undefined;
+	return { slide, beat: 0 };
 }
 
 function heardWhilePlaying(rehearsal: Rehearsal): Finding[] {
@@ -242,7 +251,8 @@ function heardWhilePlaying(rehearsal: Rehearsal): Finding[] {
 		// the browser says so of every move it would not make; the move's own finding says which elements
 		const named = DUPLICATE_NAME.exec(line.text)?.[1];
 		if (named !== undefined && twice.has(named)) continue;
-		const place = placeAt(rehearsal, line.at);
+		const place = placeAt(rehearsal, line.at, line.frame);
+		if (place === undefined) continue;
 		// said again going back, or each time a move into it played again: one line still
 		const key = `${place.slide}:${place.beat}:${line.text}`;
 		const known = said.get(key);
@@ -252,9 +262,10 @@ function heardWhilePlaying(rehearsal: Rehearsal): Finding[] {
 	for (const { place, text, times } of said.values()) found.push({ kind: "console", place, text, times });
 	const asked = new Set<string>();
 	for (const request of rehearsal.requests) {
-		if (asked.has(request.url)) continue;
+		const place = placeAt(rehearsal, request.at, request.frame);
+		if (asked.has(request.url) || place === undefined) continue;
 		asked.add(request.url);
-		found.push({ kind: "request", place: placeAt(rehearsal, request.at), url: request.url, status: request.status });
+		found.push({ kind: "request", place, url: request.url, status: request.status });
 	}
 	return found;
 }
