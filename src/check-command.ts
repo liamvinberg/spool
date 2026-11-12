@@ -32,13 +32,14 @@ export function checkStart(cwd: string, paths: string[]): string {
  * Check the frames the paths name (a path on disk, or a frame's name under
  * design/frames), or every frame when none is named. Slow frames are spelled
  * out only for frames named one by one; the rest are one line after the
- * diagnostics. `on` says which experiments this machine has on: an experiment's own rules are checked only with it on.
+ * diagnostics. `spool` is the version checking, whose booth's failed covers are the frames it names broken on the
+ * canvas. `on` says which experiments this machine has on: an experiment's own rules are checked only with it on.
  */
 export async function runCheck(
 	root: string,
 	cwd: string,
 	paths: string[],
-	on: (id: ExperimentId) => boolean = experimentDefault,
+	{ spool, on = experimentDefault }: { spool: string; on?: (id: ExperimentId) => boolean },
 ): Promise<CheckOutput> {
 	const designDir = realDesignDir(root);
 	const framesDir = join(designDir, "frames");
@@ -130,7 +131,7 @@ export async function runCheck(
 	// that throws as it starts) and an agent should hear of in the same answer.
 	// A note rather than a failure: it is as of the canvas's last picture, which
 	// an edit since may have made moot
-	const broken = [...(await scanBrokenFrames(root))].filter(([frame]) => checked.has(frame));
+	const broken = [...(await scanBrokenFrames(root, spool))].filter(([frame]) => checked.has(frame));
 	for (const [frame, { kind, error }] of broken.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
 		const said = error.split("\n").find((line) => line.trim() !== "") ?? error;
 		stderr.push(

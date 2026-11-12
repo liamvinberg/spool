@@ -598,7 +598,7 @@ describe("frames are https-only", () => {
 		};
 		const shot = await shotFrame({ ...deps, frame: "knock", narrate: () => {} });
 		expect(shot.kind).toBe("shot");
-		const logs = await logsFrame({ ...deps, frame: "knock", narrate: () => {} });
+		const logs = await logsFrame({ ...deps, frame: "knock", narrate: () => {}, spool: "0.0.0" });
 		if (logs.kind !== "logs") throw new Error(`logs failed: ${JSON.stringify(logs)}`);
 		const reported = logs.entries.find((entry) => entry.text.startsWith("reach "));
 		expect(JSON.parse(reported?.text.slice("reach ".length) ?? "null")).toMatchObject({

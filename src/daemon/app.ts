@@ -989,7 +989,7 @@ export function createDaemonApp({
 		},
 		failed: (root, frame, reason, kind) => {
 			if (!frameExists(root, frame)) return;
-			writeCaptureError(root, frame, reason, kind);
+			writeCaptureError(root, frame, reason, kind, version);
 			hub.publish(root, { kind: "cover-failed", frame });
 		},
 		paced: (root, frame, pace) => {
@@ -1110,7 +1110,7 @@ export function createDaemonApp({
 					if (taken !== booth.scheme && frameExists(root, frame))
 						booth.enqueue({ root, project, frame, reason: "stale" });
 				}
-				for (const frame of await scanPreBoothCovers(root)) {
+				for (const frame of await scanPreBoothCovers(root, version)) {
 					if (frameExists(root, frame)) booth.enqueue({ root, project, frame, reason: "stale" });
 				}
 			} catch {
@@ -1683,6 +1683,7 @@ export function createDaemonApp({
 			"/api/p",
 			canvasRoutes({
 				resolve: resolveProject,
+				version,
 				owePicture,
 				flowGraph,
 				resolvePass,

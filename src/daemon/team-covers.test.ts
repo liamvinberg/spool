@@ -180,7 +180,7 @@ describe("a team project brought level with spool.page's covers", () => {
 		const root = withFrames("never", "unknown", "failed", "covered");
 		writeCover(root, "unknown", Buffer.from(JPEG));
 		writeCover(root, "failed", Buffer.from(JPEG));
-		writeCaptureError(root, "failed", "too slow", "capture");
+		writeCaptureError(root, "failed", "too slow", "capture", "0.0.0");
 		writeCover(root, "covered", Buffer.from(JPEG));
 		cloud.kept.set(A, { frame: "covered", bytes: JPEG });
 		const owed: [string, string, CoverOwed][] = [];

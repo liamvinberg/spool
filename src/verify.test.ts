@@ -34,6 +34,9 @@ async function browserAvailable(): Promise<boolean> {
 	}
 }
 
+/** The release booting, whose booth's failures logs reports. */
+const SPOOL = "0.56.0";
+
 async function serveVerifyProject(experiments?: { deck: boolean }) {
 	// the scheme a boot renders in is the machine's until a canvas says; this one is held light
 	const { spoolDir, root, name, url } = await serveProject({
@@ -42,13 +45,14 @@ async function serveVerifyProject(experiments?: { deck: boolean }) {
 	});
 	const controlToken = readDaemonState(spoolDir)?.controlToken;
 	if (controlToken === undefined) throw new Error("test daemon has no control token");
-	const deps = (frame: string, overrides: Partial<BootDeps> = {}): BootDeps => ({
+	const deps = (frame: string, overrides: Partial<BootDeps> = {}): BootDeps & { spool: string } => ({
 		daemonUrl: url,
 		controlToken,
 		root,
 		name,
 		frame,
 		narrate: () => {},
+		spool: SPOOL,
 		...overrides,
 	});
 	return { root, name, url, controlToken, deps };
@@ -120,7 +124,7 @@ describe("shot and logs, compile paths", () => {
 			".spool/verify/shop/checkout.logs.json",
 			`${JSON.stringify({ etag, scenario: "default", scheme, entries: [] })}\n`,
 		);
-		writeCaptureError(root, "shop/checkout", "shop only", "capture");
+		writeCaptureError(root, "shop/checkout", "shop only", "capture", SPOOL);
 
 		const logs = await logsFrame(deps("shop/checkout"));
 
@@ -141,7 +145,7 @@ describe("shot and logs, compile paths", () => {
 			".spool/verify/quiet.logs.json",
 			`${JSON.stringify({ etag, scenario: "default", scheme, entries: [] })}\n`,
 		);
-		writeCaptureError(root, "quiet", "capture canvases too large", "capture");
+		writeCaptureError(root, "quiet", "capture canvases too large", "capture", SPOOL);
 
 		const logs = await logsFrame(deps("quiet"));
 

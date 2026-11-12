@@ -21,6 +21,8 @@ import { scanWords } from "./thumbs";
  */
 export function canvasRoutes(deps: {
 	resolve: ResolveProject;
+	/** This daemon's version: the spool whose failed covers mark a frame broken (spool#321). */
+	version: string;
 	/** A frame read with no cover: the booth owes it a picture. */
 	owePicture: (root: string, project: string, frame: string) => void;
 	flowGraph: Pick<ReturnType<typeof createFlowGraph>, "flows">;
@@ -36,7 +38,11 @@ export function canvasRoutes(deps: {
 				const name = c.req.param("project");
 				return withProject(c, deps.resolve, async (root) => {
 					try {
-						const projection = await listProjectFramesAwaited(root, { seen: true, mirrors: true });
+						const projection = await listProjectFramesAwaited(root, {
+							seen: true,
+							mirrors: true,
+							spool: deps.version,
+						});
 						return c.json({
 							...projection,
 							frames: projection.frames.map((frame) => {

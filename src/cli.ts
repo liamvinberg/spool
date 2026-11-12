@@ -317,7 +317,10 @@ program
 	.action(async (paths: string[]) => {
 		// read-only: a project due its frame-name migration is told so, not migrated
 		const root = await offlineProject(checkStart(process.cwd(), paths), { migrate: false });
-		const output = await runCheck(root, process.cwd(), paths, experimentsOnHere(spoolDir));
+		const output = await runCheck(root, process.cwd(), paths, {
+			spool: pkg.version,
+			on: experimentsOnHere(spoolDir),
+		});
 		// check needs no daemon, but a running one knows what of a team project didn't travel; what check names as an
 		// error itself isn't said twice
 		const daemon = readDaemonState(spoolDir);
@@ -646,7 +649,16 @@ program
 	.option("--scenario <name>", "named scenario seed", parseScenario)
 	.action(async (frame: string, options: Pick<VerifyOptions, "scenario">) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
-		const outcome = await logsFrame({ daemonUrl, controlToken, root, name, frame, narrate, ...options });
+		const outcome = await logsFrame({
+			daemonUrl,
+			controlToken,
+			root,
+			name,
+			frame,
+			narrate,
+			spool: pkg.version,
+			...options,
+		});
 		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
 		if (outcome.kind === "broken") {
 			process.stderr.write(`${outcome.message}\n`);

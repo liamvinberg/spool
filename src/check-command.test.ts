@@ -9,6 +9,8 @@ import { makeTempDir, markProject, writeDesignFile, writeFrame, writePageFrame }
 
 const FRAME = "export default function Frame() { return <main />; }\n";
 const BROKEN = "export default function Frame() { const n: string = 1; return <main>{n}</main>; }\n";
+/** The release checking, whose booth's failures the canvas shows. */
+const SPOOL = "0.56.0";
 
 shareCheckerInFile();
 
@@ -25,23 +27,27 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		writePageFrame(root, "shop", "cart", BROKEN);
 		writePageFrame(root, "shop", "list", FRAME);
 
-		expect(await runCheck(root, root, ["design/frames/home"])).toEqual({
+		expect(await runCheck(root, root, ["design/frames/home"], { spool: SPOOL })).toEqual({
 			stderr: [],
 			stdout: ["checked 1 frame (1 source file), 0 errors"],
 			ok: true,
 		});
 		// a frame's name under design/frames works from anywhere in the project
-		expect((await runCheck(root, join(root, "design"), ["shop/list"])).stdout).toEqual([
+		expect((await runCheck(root, join(root, "design"), ["shop/list"], { spool: SPOOL })).stdout).toEqual([
 			"checked 1 frame (1 source file), 0 errors",
 		]);
-		const page = await runCheck(root, root, ["design/frames/shop"]);
+		const page = await runCheck(root, root, ["design/frames/shop"], { spool: SPOOL });
 		expect(page.stderr).toEqual([
 			"design/frames/shop/cart/frame.tsx:1:41 TS2322: Type 'number' is not assignable to type 'string'.",
 		]);
 		expect(page.stdout).toEqual(["checked 2 frames (2 source files), 1 error"]);
 		expect(page.ok).toBe(false);
-		expect((await runCheck(root, root, [])).stdout).toEqual(["checked 3 frames (3 source files), 1 error"]);
-		expect((await runCheck(root, root, ["."])).stdout).toEqual(["checked 3 frames (3 source files), 1 error"]);
+		expect((await runCheck(root, root, [], { spool: SPOOL })).stdout).toEqual([
+			"checked 3 frames (3 source files), 1 error",
+		]);
+		expect((await runCheck(root, root, ["."], { spool: SPOOL })).stdout).toEqual([
+			"checked 3 frames (3 source files), 1 error",
+		]);
 	});
 
 	it("refuses a path that names no frame before checking anything", async () => {
@@ -50,15 +56,15 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		writeDesignFile(root, "frames/app/menu.tsx", FRAME);
 		writeDesignFile(root, "shared/ui/card.tsx", FRAME);
 
-		expect(await runCheck(root, root, ["design/frames/app/menu.tsx"])).toEqual({
+		expect(await runCheck(root, root, ["design/frames/app/menu.tsx"], { spool: SPOOL })).toEqual({
 			stderr: ["design/frames/app/menu.tsx is not a frame: a frame is design/frames/<name>/frame.tsx"],
 			stdout: [],
 			ok: false,
 		});
-		expect((await runCheck(root, root, ["design/shared"])).stderr).toEqual([
+		expect((await runCheck(root, root, ["design/shared"], { spool: SPOOL })).stderr).toEqual([
 			"design/shared holds no frame: name a frame's folder, its frame.tsx, or a folder of frames",
 		]);
-		expect((await runCheck(root, root, ["nowhere"])).stderr).toEqual([
+		expect((await runCheck(root, root, ["nowhere"], { spool: SPOOL })).stderr).toEqual([
 			"nowhere: no such file, and no frame is named that",
 		]);
 	});
@@ -75,7 +81,7 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		writeFrame(root, "outer", FRAME);
 		writeDesignFile(root, "frames/outer/inner/frame.tsx", FRAME);
 
-		const result = await runCheck(root, root, []);
+		const result = await runCheck(root, root, [], { spool: SPOOL });
 
 		// part.tsx is imported, so it is a part, not a frame meant
 		expect(result.stderr).toEqual([
@@ -99,7 +105,7 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 			);
 		}
 
-		expect(await runCheck(root, root, [])).toEqual({
+		expect(await runCheck(root, root, [], { spool: SPOOL })).toEqual({
 			stderr: ["design/shared/common.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'."],
 			stdout: [`checked ${half} frames (${half * 2 + 1} source files) in 2 batches, 1 error`],
 			ok: false,
@@ -118,12 +124,12 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		for (let index = 0; index < parts; index += 1) writeDesignFile(root, `shared/part${index}.ts`, "export {};\n");
 		const over = `design/frames/huge/frame.tsx: not checked: it imports ${parts + 1} source files, the limit is ${parts}`;
 
-		expect(await runCheck(root, root, [])).toEqual({
+		expect(await runCheck(root, root, [], { spool: SPOOL })).toEqual({
 			stderr: [over],
 			stdout: ["checked 1 frame (1 source file), 0 errors"],
 			ok: false,
 		});
-		expect(await runCheck(root, root, ["huge"])).toEqual({ stderr: [over], stdout: [], ok: false });
+		expect(await runCheck(root, root, ["huge"], { spool: SPOOL })).toEqual({ stderr: [over], stdout: [], ok: false });
 	});
 
 	it("names the frames the canvas shows broken, as a note", async () => {
@@ -131,16 +137,17 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		writeFrame(root, "home", FRAME);
 		writeFrame(root, "cart", FRAME);
 		writeFrame(root, "big", FRAME);
-		writeCaptureError(root, "home", "threw on boot: TypeError: items is undefined\n    at Home", "boot");
+		writeCaptureError(root, "home", "threw on boot: TypeError: items is undefined\n    at Home", "boot", SPOOL);
 		writeCaptureError(
 			root,
 			"cart",
 			'\u2718 [ERROR] No matching export for import "Pay"\n\n    cart.tsx:1:9:',
 			"compile",
+			SPOOL,
 		);
-		writeCaptureError(root, "big", "too large for a cover", "capture");
+		writeCaptureError(root, "big", "too large for a cover", "capture", SPOOL);
 
-		expect(await runCheck(root, root, [])).toEqual({
+		expect(await runCheck(root, root, [], { spool: SPOOL })).toEqual({
 			stderr: [
 				'design/frames/cart/frame.tsx: broken on the canvas: failed to compile: \u2718 [ERROR] No matching export for import "Pay"',
 				"design/frames/home/frame.tsx: broken on the canvas: threw on boot: TypeError: items is undefined",
@@ -148,17 +155,19 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 			stdout: ["checked 3 frames (3 source files), 0 errors; 2 broken on the canvas"],
 			ok: true,
 		});
-		expect((await runCheck(root, root, ["big"])).stdout).toEqual(["checked 1 frame (1 source file), 0 errors"]);
+		expect((await runCheck(root, root, ["big"], { spool: SPOOL })).stdout).toEqual([
+			"checked 1 frame (1 source file), 0 errors",
+		]);
 	});
 
 	it("fails a team project on each file that stays on this Mac, and says nothing of them in a solo one", async () => {
 		const root = project();
 		writeFrame(root, "home", FRAME);
 		writeDesignFile(root, "p-01-home.png", "png");
-		expect((await runCheck(root, root, [])).ok).toBe(true);
+		expect((await runCheck(root, root, [], { spool: SPOOL })).ok).toBe(true);
 
 		writeFileSync(join(root, "spool.json"), JSON.stringify({ project: "https://spool.page/devosurf/shop" }));
-		expect(await runCheck(root, root, [])).toEqual({
+		expect(await runCheck(root, root, [], { spool: SPOOL })).toEqual({
 			stderr: [
 				"design/p-01-home.png: stays on this Mac, teammates never get it: only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync; move it under frames/ or shared/ if the design uses it, or out of design/ if it is scratch (a screenshot, a script)",
 			],
@@ -175,18 +184,18 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		writePageFrame(root, "deck", "reel", FRAME);
 		writePace(root, "deck/reel", { perSecond: 20, slowestMs: 60, scale: 2 });
 
-		const all = await runCheck(root, root, []);
+		const all = await runCheck(root, root, [], { spool: SPOOL });
 		expect(all.stderr).toEqual([
 			"design/frames/glass/frame.tsx:1:41 TS2322: Type 'number' is not assignable to type 'string'.",
 			"2 frames timed slow (deck/reel, glass); name one, as in spool check design/frames/deck/reel, to see why",
 		]);
 
-		const named = await runCheck(root, root, ["deck/reel"]);
+		const named = await runCheck(root, root, ["deck/reel"], { spool: SPOOL });
 		expect(named.stderr).toHaveLength(1);
 		expect(named.stderr[0]).toMatch(/^design\/frames\/deck\/reel\/frame\.tsx: slow: drew 20 frames a second/);
 
 		// a frame outside what was checked is not mentioned at all
-		expect((await runCheck(root, root, ["design/frames/deck"])).stderr).toEqual([
+		expect((await runCheck(root, root, ["design/frames/deck"], { spool: SPOOL })).stderr).toEqual([
 			"1 frame timed slow (deck/reel); name one, as in spool check design/frames/deck/reel, to see why",
 		]);
 	});
@@ -245,7 +254,7 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		writeFrame(root, "home", "const b = 1;\nconst b = 2;\nexport default function Home() { return <p>{b}</p>; }\n");
 		writeFrame(root, "open", "export default function Open() { return <p>;\n");
 
-		const result = await runCheck(root, root, []);
+		const result = await runCheck(root, root, [], { spool: SPOOL });
 
 		expect(result.stderr).toEqual([
 			"design/frames/home/frame.tsx:2:7 TS1003: Identifier 'b' has already been declared.",
@@ -274,13 +283,13 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 			'/* a comment\n   saying "Alt" */\nexport const held = (e: KeyboardEvent) => e.getModifierState("Alt");\n',
 		);
 
-		const all = await runCheck(root, root, []);
+		const all = await runCheck(root, root, [], { spool: SPOOL });
 		expect(all.ok).toBe(true);
 		expect(all.stderr).toEqual([
 			"design/frames/board/keys.ts:3 reads the ⌥ key: inside a live frame ⌥ arrows and a held ⌥ move between frames unless the frame calls preventDefault on them",
 			"design/frames/editor/frame.tsx:3 reads the ⌥ key: inside a live frame ⌥ arrows and a held ⌥ move between frames unless the frame calls preventDefault on them",
 		]);
-		expect((await runCheck(root, root, ["design/frames/home"])).stderr).toEqual([]);
+		expect((await runCheck(root, root, ["design/frames/home"], { spool: SPOOL })).stderr).toEqual([]);
 	});
 
 	it("says what a deck needs with the deck experiment on, and nothing of it with it off", async () => {
@@ -310,7 +319,7 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		writePageFrame(root, "draft", "a", FRAME);
 		writeDesignFile(root, "frames/draft/deck.json", '{ "slides": ["a",] }');
 
-		const on = await runCheck(root, root, [], deck(true));
+		const on = await runCheck(root, root, [], { spool: SPOOL, on: deck(true) });
 		const notesTs2307 =
 			"design/frames/talk/phone/frame.tsx:2:19 TS2307: Cannot find module './notes.md?raw' or its corresponding type declarations.";
 		expect(on.stderr).toEqual([
@@ -328,11 +337,13 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		expect(on.stdout).toEqual(["checked 4 frames (4 source files), 5 errors"]);
 		expect(on.ok).toBe(false);
 		// named alone, a slide is checked with its own deck's rules
-		expect((await runCheck(root, root, ["design/frames/talk/intro"], deck(true))).stderr).toEqual([
+		expect(
+			(await runCheck(root, root, ["design/frames/talk/intro"], { spool: SPOOL, on: deck(true) })).stderr,
+		).toEqual([
 			'design/frames/talk/deck.json:7:3 deck: lists "ghost", and there is no design/frames/talk/ghost/frame.tsx: a slide is a frame\'s folder on this page',
 		]);
 
-		const off = await runCheck(root, root, [], deck(false));
+		const off = await runCheck(root, root, [], { spool: SPOOL, on: deck(false) });
 		expect(off).toEqual({ stderr: [notesTs2307], stdout: ["checked 4 frames (4 source files), 1 error"], ok: false });
 	});
 });
