@@ -24,7 +24,7 @@ declare global {
 }
 
 /** The template holding the played document, and the import map both documents share. */
-export const PLAYED_TEMPLATE_ID = "spool-played";
+const PLAYED_TEMPLATE_ID = "spool-played";
 
 /** Boot the exported file's player from what the file holds. */
 export function bootExportedPlayer(): void {
@@ -48,8 +48,9 @@ export function bootExportedPlayer(): void {
 }
 
 /** The played document: the file's import map first, so its modules find React before any of them loads. */
-export function playedDocument(importMap: string, body: string): string {
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><script type="importmap">${importMap}</script>${body}`;
+function playedDocument(importMap: string, body: string): string {
+	const map = importMap.replaceAll("<", "\\u003c");
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><script type="importmap">${map}</script>${body}`;
 }
 
 /**
@@ -57,7 +58,7 @@ export function playedDocument(importMap: string, body: string): string {
  * wears no bar, since there is nothing there to pull and the screen is all the room there is; the live player keeps
  * its bar however narrow it gets.
  */
-export function exportHost(frames: Record<string, { w: number; h: number }>, touch: boolean): PlayerShellHost {
+function exportHost(frames: Record<string, { w: number; h: number }>, touch: boolean): PlayerShellHost {
 	return { geometry: fixedGeometry(frames), popups: true, ...(touch ? { bare: true as const } : {}) };
 }
 

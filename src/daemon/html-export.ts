@@ -479,7 +479,9 @@ ${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</st
 /**
  * The file with its player (spool#304): the player shell, booted by its export host, around a template holding the
  * played document, which is the file without its player played as the live player's inner document is. The file's one
- * import map serves both: the host hands it to the played document as it plays it, so React rides in the file once.
+ * import map serves both: the host hands it to the played document as it plays it. React rides in the file once, as
+ * its own text, and the map that sends every React specifier to it is made from that text as the file opens, so the
+ * map does not carry React once for each.
  */
 async function playerDocument({
 	config,
@@ -507,6 +509,13 @@ async function playerDocument({
 	const played = { ...config, shell: true };
 	const sheets = frameSheets(styles, config.styles, config.styles[start]);
 	const chrome = await inline(playerChromeCss().replace(ITALIC_FACES, ""));
+	const { imports, ...map } = importMap as { imports?: Record<string, string> };
+	const others = Object.fromEntries(
+		Object.entries(imports ?? {}).filter(
+			([specifier]) => !(REACT_SPECIFIERS as readonly string[]).includes(specifier),
+		),
+	);
+	const mapping = { map: { ...map, imports: others }, react: REACT_SPECIFIERS };
 	return `<!doctype html>
 <html lang="en">
 <head>
@@ -518,7 +527,8 @@ async function playerDocument({
 <style>${escapeInlineStyle(chrome)}</style>
 <style>${PLAYER_SHELL_PAGE_RULES}</style>
 <script>window.__SPOOL_EXPORT__ = JSON.parse(${escapeJsonScript(JSON.stringify({ project, start, frames }))})</script>
-<script type="importmap">${escapeJsonScript(importMap)}</script>
+<script type="text/plain" id="spool-react">${escapeInlineScript(await vendorReactJs())}</script>
+<script>${escapeInlineScript(IMPORT_MAP_SCRIPT.replace("MAPPING", () => escapeJsonScript(mapping)))}</script>
 </head>
 <body>
 <div id="root"></div>
@@ -535,6 +545,20 @@ ${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</st
 </html>
 `;
 }
+
+/**
+ * The file's import map, made before any module loads: the map the file names, with every React specifier sent to
+ * React's own text as one data: URL.
+ */
+const IMPORT_MAP_SCRIPT = `(() => {
+	const { map, react } = MAPPING;
+	const url = "data:text/javascript;charset=utf-8," + encodeURIComponent(document.getElementById("spool-react").textContent);
+	for (const specifier of react) map.imports[specifier] = url;
+	const script = document.createElement("script");
+	script.type = "importmap";
+	script.textContent = JSON.stringify(map);
+	document.currentScript.after(script);
+})();`;
 
 /** The id of the template holding the played document; the export host's `PLAYED_TEMPLATE_ID`. */
 const PLAYED_TEMPLATE_ID = "spool-played";
