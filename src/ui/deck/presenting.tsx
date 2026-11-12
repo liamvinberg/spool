@@ -414,10 +414,22 @@ function Travel({
 	);
 }
 
+/**
+ * The slide's picture, fitted. One decoded ahead is put in as it was decoded, so it is drawn from the first frame it is
+ * in: an image element made for it now is empty for the frames it takes to load, even from the cache (spool#319). Only
+ * one picture of the slide is ever in the view at a time, so that one element is never wanted in two places.
+ */
 function Picture({ src }: { src: string | undefined }) {
-	return src === undefined ? null : (
-		<img alt="" src={src} draggable={false} className="absolute inset-0 h-full w-full object-contain" />
-	);
+	const box = useRef<HTMLDivElement>(null);
+	const ready = decodedPicture(src);
+	useLayoutEffect(() => {
+		if (ready === undefined) return;
+		ready.className = "absolute inset-0 h-full w-full object-contain";
+		box.current?.replaceChildren(ready);
+	}, [ready]);
+	if (src === undefined) return null;
+	if (ready !== undefined) return <div ref={box} className="contents" />;
+	return <img alt="" src={src} draggable={false} className="absolute inset-0 h-full w-full object-contain" />;
 }
 
 const toRect = (box: { x: number; y: number; w: number; h: number }): Rect => ({
