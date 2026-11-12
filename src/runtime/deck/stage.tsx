@@ -2,6 +2,7 @@ import {
 	Activity,
 	Component,
 	type ComponentType,
+	memo,
 	type ReactNode,
 	useLayoutEffect,
 	useRef,
@@ -1073,6 +1074,7 @@ export function bootStage(runtime: StageRuntime): void {
 							screen={slide.component}
 							visible={copy.key === shown}
 							awake={copy.awake}
+							thrown={copy.thrown}
 							size={size}
 						/>
 					);
@@ -1082,12 +1084,14 @@ export function bootStage(runtime: StageRuntime): void {
 		);
 	}
 
-	function Slot({
+	/** A copy's place on the stage, drawn again only when it changes: a slide hears its own beat and state itself. */
+	const Slot = memo(function Slot({
 		copy,
 		slide,
 		screen: Screen,
 		visible,
 		awake,
+		thrown,
 		size,
 	}: {
 		copy: Copy;
@@ -1096,6 +1100,7 @@ export function bootStage(runtime: StageRuntime): void {
 		visible: boolean;
 		/** mounted out of sight, its effects run, unseen and taking nothing */
 		awake: boolean;
+		thrown: Copy["thrown"];
 		size: { w: number; h: number };
 	}) {
 		const box = useRef<HTMLDivElement>(null);
@@ -1140,11 +1145,7 @@ export function bootStage(runtime: StageRuntime): void {
 			>
 				<SlideScope.Provider value={copy.key}>
 					<Activity mode={visible || awake ? "visible" : "hidden"}>
-						<SlideBoundary
-							box={box}
-							thrown={copy.thrown}
-							onBroken={(error, kept) => brokeCopy(copy.key, error, kept)}
-						>
+						<SlideBoundary box={box} thrown={thrown} onBroken={(error, kept) => brokeCopy(copy.key, error, kept)}>
 							<Screen />
 						</SlideBoundary>
 						<span data-spool-rendered="" hidden />
@@ -1152,7 +1153,7 @@ export function bootStage(runtime: StageRuntime): void {
 				</SlideScope.Provider>
 			</div>
 		);
-	}
+	});
 
 	// --- the document ------------------------------------------------------------------------------------
 
