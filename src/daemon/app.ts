@@ -21,6 +21,7 @@ import { fetchLocalCopy, NotAnEditor } from "../open";
 import { hooksMade, readHookToken, writeHookTarget } from "../outside/install";
 import { isFramePath, isPagePath, isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
+import type { RehearseLine } from "../rehearse-report";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "../runtime/record-protocol";
 import { experimentsOn } from "../settings/experiments";
 import { appearanceOf, themeInline } from "../settings/registry";
@@ -66,6 +67,7 @@ import { createFrameCompiler } from "./compile";
 import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
 import { frameBeatAsked, slideBeats } from "./deck/disk";
 import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
+import { runRehearsal, talkOf } from "./deck/rehearse-run";
 import { deckRoutes } from "./deck/routes";
 import { createStagePlay, ROOM_QUERY } from "./deck/stage-play";
 import { talkFile } from "./deck/talk-file";
@@ -161,6 +163,7 @@ import {
 	readCover,
 	readCoverImage,
 	scanCoverSchemes,
+	scanPaces,
 	scanPreBoothCovers,
 	writeCaptureError,
 	writeCover,
@@ -344,6 +347,12 @@ const bootRequest = z.strictObject({
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 	/** a slide's beat to shoot it at rather than its last, by its name or its number from 1 (spool#277) */
 	beat: z.string().min(1).max(200).optional(),
+});
+
+/** A talk to rehearse (spool#322): a deck's page or one of its slides, and which of its slides by number from 1. */
+const rehearseRequest = z.strictObject({
+	talk: z.string().min(1).refine(isPagePath, { message: "not a page or frame name" }),
+	slides: z.strictObject({ from: z.number().int().positive(), to: z.number().int().positive() }).optional(),
 });
 
 const at = z
@@ -1889,6 +1898,57 @@ export function createDaemonApp({
 					out.onAbort(() => clearInterval(beat));
 					try {
 						await write(await boot());
+					} finally {
+						clearInterval(beat);
+					}
+				});
+			},
+		)
+		.post(
+			"/api/p/:project/rehearse",
+			validator("json", (value, c) => {
+				const parsed = rehearseRequest.safeParse(value);
+				return parsed.success ? parsed.data : c.text('a rehearsal is { "talk", "slides"?: { "from", "to" } }', 400);
+			}),
+			(c) => {
+				// a talk played in the stage, forward and back, in a tab the booth lends (spool#322). Lines of JSON, as a
+				// boot's are: a rehearsal takes as long as its talk, and an agent hears where it is while it waits
+				if (!deckOn())
+					return c.text(
+						"A rehearsal plays a deck, the deck experiment's, which is off here: `spool experiments on deck`",
+						409,
+					);
+				const name = c.req.param("project");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				const { talk: asked, slides } = c.req.valid("json");
+				const talk = talkOf(project.root, asked, slides);
+				if ("message" in talk) return c.text(talk.message, 400);
+				if (selfOrigin === undefined) return c.text("the daemon is not listening yet: try again in a moment", 503);
+				c.header("content-type", "application/x-ndjson; charset=utf-8");
+				c.header("cache-control", "no-store");
+				return stream(c, async (out) => {
+					const write = (line: RehearseLine) => out.write(`${JSON.stringify(line)}\n`);
+					const beat = setInterval(() => void write({ beat: true }).catch(() => {}), BOOT_BEAT_MS);
+					out.onAbort(() => clearInterval(beat));
+					try {
+						const outcome = await runRehearsal(
+							{
+								root: project.root,
+								project: name,
+								controlOrigin,
+								lend: booth.lend,
+								paces: scanPaces,
+								narrate: (line) => void write({ narrate: line }).catch(() => {}),
+								...(boothSeams?.rehearse === undefined ? {} : { timing: boothSeams.rehearse }),
+							},
+							talk,
+						);
+						await write({ outcome: { kind: "rehearsed", ...outcome } });
+					} catch (error) {
+						await write({
+							outcome: { kind: "failed", message: error instanceof Error ? error.message : String(error) },
+						});
 					} finally {
 						clearInterval(beat);
 					}
