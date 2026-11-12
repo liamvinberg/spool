@@ -334,6 +334,16 @@ export const HOTKEYS = [
 		repeats: false,
 		listed: false,
 	},
+	// and ⌥⌘↵ the other way to present (spool#298): the caret's second row
+	{
+		id: "canvas.present-other",
+		scope: "canvas",
+		group: "Frames",
+		label: "Present the other way",
+		keys: ["accel+alt+enter"],
+		repeats: false,
+		listed: false,
+	},
 	{
 		id: "canvas.ascend",
 		scope: "canvas",

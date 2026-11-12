@@ -66,6 +66,8 @@ import {
 import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
 import { type DeckInside, DeckKeyList, DeckStage, useDeckInside } from "../deck/deck-inside";
 import { DeckLayer, DeckNumbers, revealOnDeck, useDeckPage } from "../deck/deck-page";
+import { presentAgain, presentCold, presentTakes, warmPresent } from "../deck/present";
+import { PresentControl } from "../deck/present-controls";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
@@ -385,6 +387,8 @@ const NUDGE_FLUSH_MS = 400;
 const SELECTION_PUT_MS = 150;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
+/** A slide of a deck page held this long is readied for Present: ⌘ then ↵ comes too quickly to boot one (spool#298). */
+const PRESENT_SETTLE_MS = 500;
 /** How long C is held before letting go of it hands back the tool it took over from, rather than keeping Comment. */
 const COMMENT_HOLD_MS = 300;
 /** How long a pin's frame has to say what is under the pin, while its composer is open. */
@@ -1036,9 +1040,12 @@ function CanvasField({
 		[frameReads],
 	);
 
+	const deckSlides = useCanvasState(store, (state) => state.deckSlides);
+	const only = selected.length === 1 ? selected[0] : undefined;
+	const settling = only !== undefined && deckSlides?.names.has(only) && deckSlides.settled !== only ? only : null;
 	const selectionTargets = useMemo(
-		() => selectionTargetsOf({ picked, pointerTool, selected, accelDown, entered }),
-		[pointerTool, picked, selected, accelDown, entered],
+		() => selectionTargetsOf({ picked, pointerTool, selected, accelDown, entered, settling }),
+		[pointerTool, picked, selected, accelDown, entered, settling],
 	);
 	// the walks this page can take that no arrow can reach: the ones that land
 	// on another page (#151). Derived at rest — the layer is never gated on a
@@ -1952,6 +1959,25 @@ function CanvasField({
 	deckKeep.current = deckPage.keep;
 	const deckOwns = deckPage.owns;
 	const presentKey = deckPage.presentKey;
+	// one slide of a deck page held a moment, or held with ⌘ down: Present is likely next, so the slide it would play is
+	// readied now, out of sight, and let go when the hold moves off the slides (spool#298)
+	const presentFromHeld = deckPage.presentFrom;
+	const heldSlide = deckPage.on && selected.length === 1 ? selected[0] : undefined;
+	useEffect(() => {
+		if (heldSlide === undefined || presentTakes() !== "slides") return;
+		const from = presentFromHeld();
+		if (from?.slide !== heldSlide) return;
+		if (accelDown) {
+			warmPresent(from);
+			return;
+		}
+		const timer = setTimeout(() => warmPresent(from), PRESENT_SETTLE_MS);
+		return () => clearTimeout(timer);
+	}, [accelDown, heldSlide, presentFromHeld]);
+	useEffect(() => {
+		if (heldSlide === undefined) return;
+		return () => presentCold();
+	}, [heldSlide]);
 	const deckInside = useDeckInside({
 		project,
 		page: activePage,
@@ -5345,13 +5371,18 @@ function CanvasField({
 			"canvas.descend": (event) => {
 				if (store.get().entered !== null) return;
 				event?.preventDefault();
-				// on a deck page ⌘↵ presents from the slide held (spool#265)
-				if (presentKey(false)) return;
+				// on a deck page ⌘↵ presents from the slide held (spool#265), or turns round slides on their way home
+				if (presentAgain() || presentKey(false)) return;
 				setPreview(null);
 				openHeld();
 			},
 			"canvas.present-first": (event) => {
-				if (store.get().entered !== null || !presentKey(true)) return;
+				if (store.get().entered !== null || !(presentAgain() || presentKey(true))) return;
+				event?.preventDefault();
+			},
+			// ⌥⌘↵ presents the other way: the caret's second row (spool#298)
+			"canvas.present-other": (event) => {
+				if (store.get().entered !== null || !(presentAgain() || presentKey(false, "other"))) return;
 				event?.preventDefault();
 			},
 			"canvas.ascend": (event) => {
@@ -6595,6 +6626,23 @@ function CanvasField({
 							after={presenceFaces}
 							tail={<FindDoor hidden={finding} onOpen={() => setFinding(true)} />}
 						/>
+					)}
+					{/* a deck page presents from its top right (spool#298) */}
+					{loaded && deckPage.on && (deckPage.read?.slides.length ?? 0) > 0 && (
+						<div
+							role="toolbar"
+							aria-label="Present the talk"
+							className="absolute top-3 right-3 z-20"
+							onPointerDown={(event) => event.stopPropagation()}
+							onPointerMove={(event) => event.stopPropagation()}
+							onDoubleClick={(event) => event.stopPropagation()}
+							onContextMenu={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+							}}
+						>
+							<PresentControl from={deckPage.presentFrom} />
+						</div>
 					)}
 					<PagePeekCard
 						project={project}

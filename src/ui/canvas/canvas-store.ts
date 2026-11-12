@@ -46,6 +46,11 @@ export interface CanvasState {
 	hiddenPages: ReadonlySet<string>;
 	/** the frame that is live, whose document owns the pointer and the keyboard */
 	entered: string | null;
+	/**
+	 * A deck page's slides, and the one that has settled (spool#305): a slide held holds no document of its own until
+	 * its selection has stood longer than a double-click, or the camera has landed on it
+	 */
+	deckSlides: { readonly names: ReadonlySet<string>; readonly settled: string | null } | null;
 	/** the in-place text edit that is open (#314), which is what hands the frame its pointer */
 	editing: HandEdit | null;
 	/** the tool picked (#321) */
@@ -114,6 +119,7 @@ export function createCanvasStore(): CanvasStore {
 		hidden: new Set<string>(),
 		hiddenPages: new Set<string>(),
 		entered: null,
+		deckSlides: null,
 		editing: null,
 		tool: "select",
 		spaceDown: false,

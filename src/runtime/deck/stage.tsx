@@ -217,6 +217,8 @@ export function bootStage(runtime: StageRuntime): void {
 	let room = true;
 	/** no room watches the talk: B, the period and F are nobody's keys */
 	let alone = false;
+	/** the slides fill the host's screen, which is the room's: F is nobody's key */
+	let filling = false;
 	let opened = !embedded;
 	let session: StageSession = openSession(talk, { slide: startAt, beat: 0 }, runtime.state.read());
 	const copies = new Map<string, Copy>();
@@ -738,6 +740,7 @@ export function bootStage(runtime: StageRuntime): void {
 			mode = message.mode;
 			room = message.room;
 			alone = message.alone === true;
+			filling = message.filling === true;
 			opened = true;
 			let next = message.session;
 			if (next !== undefined && message.frame !== undefined && talk[next.at.slide]?.frame !== message.frame) {
@@ -757,6 +760,12 @@ export function bootStage(runtime: StageRuntime): void {
 		}
 		if (message.spool === "stage-command") {
 			if (mode === "own") command(message.command);
+			return;
+		}
+		if (message.spool === "stage-cursor") {
+			// the slides fill the host's screen and its bar sleeps: the pointer goes, over the slide's document too
+			if (message.hidden) document.documentElement.dataset.spoolStageCursor = "hidden";
+			else delete document.documentElement.dataset.spoolStageCursor;
 			return;
 		}
 		if (message.spool === "stage-apply") {
@@ -806,6 +815,7 @@ export function bootStage(runtime: StageRuntime): void {
 				black: session.black,
 				frozen: session.frozen !== null,
 				alone,
+				filling,
 			},
 			digits,
 		);

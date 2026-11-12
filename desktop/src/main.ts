@@ -188,6 +188,26 @@ function startSetupOpen(showing: BrowserWindow): void {
 	else showing.once("show", tell);
 }
 
+/** where spool's window stood before it covered its display for a talk's slides, while it does */
+let presentFilled: Electron.Rectangle | undefined;
+
+/**
+ * Spool's window over its whole display for a talk's slides, at once: simple full screen, which macOS plays with no
+ * Space of its own to slide to, so the slide growing from its card is the only thing that moves. The lights go with
+ * it, since nothing of the window's own may stand over the slides. It comes back at once too, to exactly where it
+ * stood, as the slide flies home. A window already full screen is left as it is.
+ */
+function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
+	if (showing.isDestroyed() || on === (presentFilled !== undefined)) return false;
+	if (on && (showing.isFullScreen() || showing.isSimpleFullScreen())) return false;
+	const stood = presentFilled;
+	presentFilled = on ? showing.getBounds() : undefined;
+	if (process.platform === "darwin") showing.setWindowButtonVisibility(!on);
+	showing.setSimpleFullScreen(on);
+	if (stood !== undefined) showing.setBounds(stood, false);
+	return true;
+}
+
 function canvasSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): boolean {
 	return window !== undefined && event.sender === window.webContents && event.senderFrame === event.sender.mainFrame;
 }
@@ -432,6 +452,8 @@ function createWindow(): BrowserWindow {
 		canvasReady = false;
 		workspaceReady = false;
 		canvasActive = false;
+		// a talk's slides filling the screen end with the page that played them
+		presentFullScreen(created, false);
 		// the page that loads may be an older daemon's, which answers no tab key
 		wearMenuKeys(undefined);
 		updateCanvasMenu();
@@ -1257,6 +1279,14 @@ function installCanvasChannels(): void {
 	});
 	ipcMain.on("spool:canvas-fullscreen", (event) => {
 		event.returnValue = window?.isFullScreen() ?? false;
+	});
+	// a deck's slides filling this screen (spool#298): two displays play the presenter view instead
+	ipcMain.on("spool:displays", (event) => {
+		event.returnValue = screen.getAllDisplays().length;
+	});
+	ipcMain.handle("spool:present-full-screen", (event, on: unknown) => {
+		if (!canvasSender(event) || window === undefined || typeof on !== "boolean") return false;
+		return presentFullScreen(window, on);
 	});
 	ipcMain.on("spool:canvas-menu-keys", (event, keys: unknown) => {
 		if (canvasSender(event)) wearMenuKeys(keys);

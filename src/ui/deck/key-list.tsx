@@ -7,20 +7,27 @@ interface KeyGroup {
 	readonly rows: readonly { readonly label: string; readonly keys: readonly string[] }[];
 }
 
-/** Where the list is asked for: the presenter view, beside a room; or a slide gone into on the canvas, with none. */
-export type KeyListPlace = { readonly at: "presenter"; readonly swaps: boolean } | { readonly at: "inside" };
+/**
+ * Where the list is asked for: the presenter view, beside a room; the slides filling the screen, which is the room's;
+ * or a slide gone into on the canvas, with none.
+ */
+export type KeyListPlace =
+	| { readonly at: "presenter"; readonly swaps: boolean }
+	| { readonly at: "filling" }
+	| { readonly at: "inside" };
 
 /**
  * The keys of a talk as ? lists them (spool#265). In the presenter view, the room's own keys, with X when the Mac app
- * has a second screen for the room to trade with spool's window. In place on the canvas there is no room, so no room's
- * keys, and Esc comes out of the slide rather than ending a talk.
+ * has a second screen for the room to trade with spool's window. With the slides filling the screen (spool#298) that
+ * screen is the room's, which B blacks, with nothing apart to freeze or swap. In place on the canvas there is no room,
+ * so no room's keys, and Esc comes out of the slide rather than ending a talk.
  */
 export function keyGroups(place: KeyListPlace): readonly KeyGroup[] {
 	const room: KeyGroup = {
 		group: "room",
 		rows: [
 			{ label: "Black screen", keys: ["B", "."] },
-			{ label: "Freeze, then catch up", keys: ["F"] },
+			...(place.at === "presenter" ? [{ label: "Freeze, then catch up", keys: ["F"] }] : []),
 			...(place.at === "presenter" && place.swaps ? [{ label: "Swap screens", keys: ["X"] }] : []),
 		],
 	};
@@ -40,10 +47,10 @@ export function keyGroups(place: KeyListPlace): readonly KeyGroup[] {
 				{ label: "First slide", keys: ["home"] },
 				{ label: "Last slide", keys: ["end"] },
 				{ label: "Slide by number", keys: ["3", "↵"] },
-				{ label: place.at === "presenter" ? "End the talk" : "Leave the slide", keys: ["esc"] },
+				{ label: place.at === "inside" ? "Leave the slide" : "End the talk", keys: ["esc"] },
 			],
 		},
-		...(place.at === "presenter" ? [room] : []),
+		...(place.at === "inside" ? [] : [room]),
 		{
 			group: "live slide",
 			rows: [

@@ -12,9 +12,10 @@ import type { StageCommand } from "./stage-session";
  *   digits then ↵             that slide
  *   B .                       the room's screen black; any key brings it back and does nothing else
  *   F                         the room's screen holds its picture; F again and it catches up
- *                             (with no room, played in place on the canvas, these three are nobody's)
+ *                             (with no room, played in place on the canvas, these three are nobody's; with the
+ *                             slides filling this screen, which is the room, B and the period black it, F is nobody's)
  *   R                         this slide from its start
- *   X                         the room's screen is the other screen
+ *   X                         the room's screen is the other screen (with the slides filling this one, nobody's)
  *   ?                         these keys
  *   ⇥                         the whole keyboard to a live slide; Esc takes it back
  *   Esc                       otherwise up one step: out of the slide, or the talk ends
@@ -59,6 +60,8 @@ export interface KeyPlace {
 	readonly frozen: boolean;
 	/** no room watches the talk (it plays in place on the canvas): B, the period and F have no screen to act on */
 	readonly alone: boolean;
+	/** the slides fill this screen, which is the room's (spool#298): B and the period black it, F and X have nothing apart to act on */
+	readonly filling: boolean;
 }
 
 /** What a key did: the command it is, if any, the digits typed so far, and whether the key was the talk's to take. */
@@ -119,13 +122,13 @@ function commandOf(pressed: PressedKey, place: KeyPlace): KeyCommand | undefined
 			return place.alone ? undefined : { kind: "black", on: true };
 		case "f":
 		case "F":
-			return place.alone ? undefined : { kind: "freeze", on: !place.frozen };
+			return place.alone || place.filling ? undefined : { kind: "freeze", on: !place.frozen };
 		case "r":
 		case "R":
 			return { kind: "restart" };
 		case "x":
 		case "X":
-			return { kind: "swap" };
+			return place.filling ? undefined : { kind: "swap" };
 		case "?":
 			return { kind: "help" };
 		default:

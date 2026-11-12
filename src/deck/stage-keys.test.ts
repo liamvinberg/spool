@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { type KeyPlace, type PressedKey, readKey } from "./stage-keys";
 
-const at: KeyPlace = { typing: false, live: false, keys: false, black: false, frozen: false, alone: false };
+const at: KeyPlace = {
+	typing: false,
+	live: false,
+	keys: false,
+	black: false,
+	frozen: false,
+	alone: false,
+	filling: false,
+};
 const press = (key: string, more: Partial<PressedKey> = {}): PressedKey => ({
 	key,
 	shift: false,
@@ -33,6 +41,12 @@ describe("the keys of a talk", () => {
 		// played in place, with no room, the room's keys are nobody's
 		for (const key of ["b", "B", ".", "f", "F"]) {
 			expect(readKey(press(key), { ...at, alone: true }, ""), key).toEqual({ digits: "", taken: false });
+		}
+		// the slides filling this screen, which is the room: B and the period black it, with nothing apart to hold or swap
+		expect(command("b", { filling: true })).toEqual({ kind: "black", on: true });
+		expect(command(".", { filling: true })).toEqual({ kind: "black", on: true });
+		for (const key of ["f", "F", "x", "X"]) {
+			expect(readKey(press(key), { ...at, filling: true }, ""), key).toEqual({ digits: "", taken: false });
 		}
 		expect(command("r")).toEqual({ kind: "restart" });
 		expect(command("X")).toEqual({ kind: "swap" });

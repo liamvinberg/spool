@@ -15,6 +15,12 @@ interface Made {
 	readonly y: number;
 }
 
+/** A box on screen, from its top left to its bottom right. */
+interface Box {
+	readonly from: { readonly x: number; readonly y: number };
+	readonly to: { readonly x: number; readonly y: number };
+}
+
 /** What a drawn frame of the page shows, as the window samples it each frame. */
 interface Sample {
 	readonly t: number;
@@ -407,5 +413,90 @@ it("scrolls a long talk under a hand held at the window's side, keeping the gap 
 	await answered;
 	await settled();
 	expect(deck.talk().at(-1)).toBe("s1");
+	await page.close();
+});
+
+/**
+ * spool#305: into a slide by a person's double-click and out by esc. Nothing of it starts until the camera is there,
+ * since a document starting under the flight holds the window's frames back (on a real GPU; this browser draws every
+ * frame of a zoom too slowly to time one), and the slide is on screen at every step, its picture and then its stage.
+ */
+it("goes into a slide and out without starting it under the flight or losing its picture", {
+	timeout: 300_000,
+}, async () => {
+	const frames: Record<string, Made> = {
+		a: { colour: [200, 60, 60], x: 0, y: 0 },
+		b: { colour: [60, 160, 90], x: 1440, y: 0 },
+		c: { colour: [60, 90, 200], x: 2880, y: 0 },
+		x: { colour: [220, 190, 60], x: 0, y: 1360 },
+	};
+	const { page, at, now } = await deckPage(frames, ["a", "b", "c"], { x: 1500, y: 500 }, 1800);
+	// how long the camera flies, in milliseconds, as the canvas reads it
+	const fly = await page.evaluate(() => {
+		const value = getComputedStyle(document.documentElement).getPropertyValue("--motion-deck-fly").trim();
+		return Number.parseFloat(value) * (value.endsWith("ms") ? 1 : 1000);
+	});
+	// when each document of the page started: an iframe added
+	await page.evaluate(() => {
+		const started: number[] = [];
+		(window as unknown as { started: number[] }).started = started;
+		new MutationObserver((changes) => {
+			for (const change of changes)
+				for (const node of change.addedNodes)
+					if (node instanceof Element && (node.matches("iframe") || node.querySelector("iframe") !== null))
+						started.push(performance.now());
+		}).observe(document.body, { childList: true, subtree: true });
+	});
+	const started = () => page.evaluate(() => (window as unknown as { started: number[] }).started);
+	/** where b stands on screen while it is gone into: its stage's place */
+	const placeOfB = async (): Promise<Box> => {
+		const stage = await page.locator('[data-deck-stage="talk/b"]').boundingBox();
+		if (stage === null) throw new Error("b's stage is not on screen");
+		return { from: { x: stage.x, y: stage.y }, to: { x: stage.x + stage.width, y: stage.y + stage.height } };
+	};
+	/**
+	 * A point on b where it stood before a flight and where it stood after is on b at every step between, the camera's
+	 * flight being a straight line: every frame recorded shows b's colour there.
+	 */
+	const stayedOnB = (shots: readonly Buffer[], one: Box, other: Box, what: string) => {
+		const point = {
+			x: Math.round((Math.max(one.from.x, other.from.x) + Math.min(one.to.x, other.to.x)) / 2),
+			y: Math.round((Math.max(one.from.y, other.from.y) + Math.min(one.to.y, other.to.y)) / 2),
+		};
+		const lost = shots.findIndex((png) => !near(pixelsOf(png, [point])[0] as Rgb, frames.b?.colour ?? [0, 0, 0]));
+		expect(lost, `b's picture was gone in frame ${lost} of ${shots.length} ${what}`).toBe(-1);
+	};
+	/** where b stands on screen on the canvas */
+	const onCanvas = async (): Promise<Box> => ({
+		from: await at({ x: 1440, y: 0 }),
+		to: await at({ x: 1440 + 1280, y: 720 }),
+	});
+	const out = await onCanvas();
+	const middleOfB = { x: (out.from.x + out.to.x) / 2, y: (out.from.y + out.to.y) / 2 };
+	const shown = page.locator('[data-deck-stage="talk/b"][data-deck-stage-shown]');
+	// b held a moment starts its document, and let go stops it: held again, it starts afresh
+	const documentOfB = page.locator('[data-frame-shell="talk/b"] iframe');
+	await page.mouse.click(middleOfB.x, middleOfB.y);
+	await documentOfB.waitFor();
+	await page.keyboard.press("Escape");
+	await documentOfB.waitFor({ state: "detached" });
+	const goingIn = await recordScreen(page);
+	const clicked = await now();
+	// the first click selects b, and the second, a moment later, goes in
+	await page.mouse.click(middleOfB.x, middleOfB.y);
+	await page.waitForTimeout(150);
+	const flying = await now();
+	await page.mouse.click(middleOfB.x, middleOfB.y, { clickCount: 2 });
+	await shown.waitFor();
+	const gone = await placeOfB();
+	stayedOnB(await goingIn.stop(), out, gone, "going in");
+	// the camera lands no sooner than a flight after the second click
+	const early = (await started()).filter((t) => t >= clicked && t < flying + fly);
+	expect(early, "a document started before the camera was on b").toEqual([]);
+	const goingOut = await recordScreen(page);
+	await page.keyboard.press("Escape");
+	await page.locator("[data-deck-stage-shown]").waitFor({ state: "detached" });
+	await page.waitForTimeout(300);
+	stayedOnB(await goingOut.stop(), gone, await onCanvas(), "coming out");
 	await page.close();
 });

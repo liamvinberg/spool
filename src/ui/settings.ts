@@ -83,17 +83,27 @@ export function useSetting<Key extends SettingKey>(key: Key, project?: string): 
 	return entry === undefined ? undefined : (entry.value as SettingValue<Key>);
 }
 
+/** One setting's value as last read, for a press that cannot wait: undefined until the first read lands. */
+export function settingNow<Key extends SettingKey>(key: Key, project?: string): SettingValue<Key> | undefined {
+	const entry = snapshots.get(keyOf(project))?.entries.find((candidate) => candidate.key === key);
+	return entry === undefined ? undefined : (entry.value as SettingValue<Key>);
+}
+
 /**
  * Move one setting, or unset it with `null` so it reads as its default again.
  * The daemon's event brings the new reading back to every page, this one included.
  */
+export function writeSetting(key: SettingKey, value: SettingPrimitive | null, project?: string) {
+	return putSetting(key, value, project).then((written) => {
+		if (written.ok) settingsMoved();
+		return written;
+	});
+}
+
+/** `writeSetting` for one project, or the machine's alone, kept for a component's life. */
 export function useWriteSetting(project?: string) {
 	return useCallback(
-		(key: SettingKey, value: SettingPrimitive | null) =>
-			putSetting(key, value, project).then((written) => {
-				if (written.ok) settingsMoved();
-				return written;
-			}),
+		(key: SettingKey, value: SettingPrimitive | null) => writeSetting(key, value, project),
 		[project],
 	);
 }

@@ -30,6 +30,8 @@ export interface StageHostOptions {
 	room: boolean;
 	/** no room watches the talk (it plays in place on the canvas): B, the period and F are nobody's keys */
 	alone?: boolean;
+	/** the slides fill this screen, which is the room's (spool#298): B and the period black it, F is nobody's */
+	filling?: boolean;
 	/** where it opens: a session, or a slide by its frame (its first beat); the talk's first slide otherwise */
 	session?: StageSession;
 	frame?: string;
@@ -70,6 +72,8 @@ export interface StageHost {
 	reload(): void;
 	/** the keyboard to the stage's own document, where a live slide given the keys hears them */
 	focus(): void;
+	/** the pointer hidden over the stage's documents, or shown again */
+	cursor(hidden: boolean): void;
 	/** the newest session the host knows */
 	session(): StageSession | undefined;
 	/** the talk, once the stage said it */
@@ -112,6 +116,8 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 	let destroyed = false;
 	let digits = "";
 	let forget: ReturnType<typeof setTimeout> | undefined;
+	/** the pointer is hidden over the stage, as every document of it is told as it opens */
+	let cursorHidden = false;
 
 	const holder = document.createElement("div");
 	holder.dataset.spoolStage = "";
@@ -188,9 +194,11 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				mode,
 				room: options.room,
 				...(options.alone === true ? { alone: true } : {}),
+				...(options.filling === true ? { filling: true } : {}),
 				...(session === undefined ? {} : { session }),
 				...(frameOf === undefined ? {} : { frame: frameOf }),
 			});
+			if (cursorHidden) doc.post({ spool: "stage-cursor", hidden: true });
 		};
 		addEventListener("message", onWindowMessage);
 		doc.timer = setTimeout(() => refuse(doc, "the stage did not answer"), CONNECT_PATIENCE_MS);
@@ -359,6 +367,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 					black: at?.black === true,
 					frozen: at?.frozen !== null && at?.frozen !== undefined,
 					alone: options.alone === true,
+					filling: options.filling === true,
 				},
 				digits,
 			);
@@ -379,6 +388,11 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 		},
 		focus() {
 			current?.frame.focus();
+		},
+		cursor(hidden) {
+			if (hidden === cursorHidden) return;
+			cursorHidden = hidden;
+			for (const doc of [current, incoming]) doc?.post?.({ spool: "stage-cursor", hidden });
 		},
 		session: () => session,
 		talk: () => current?.talk ?? [],

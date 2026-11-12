@@ -242,6 +242,15 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	await page.keyboard.press("Escape");
 	await expect.poll(camera).toEqual(out);
 
+	// a key pressed on the way in moves the talk once it is there, as it would inside
+	await page.mouse.dblclick(back.x, back.y);
+	await page.keyboard.press("Shift+ArrowLeft");
+	await page.locator('[data-deck-stage="presentation/live"][data-deck-stage-shown]').waitFor();
+	await page.keyboard.press("Shift+ArrowRight");
+	await page.locator('[data-deck-stage="presentation/number"][data-deck-stage-shown]').waitFor();
+	await page.keyboard.press("Escape");
+	await expect.poll(camera).toEqual(out);
+
 	// inside, ? lists the keys over the canvas with no room's among them, and esc puts the list away, still inside
 	await page.mouse.dblclick(back.x, back.y);
 	await page.locator('[data-deck-stage="presentation/number"][data-deck-stage-shown]').waitFor();
@@ -266,14 +275,15 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	const from = await pagePointOf(page, { x: 3 * 1440 + 640, y: 360 });
 	await page.mouse.dblclick(from.x, from.y);
 	await page.locator('[data-deck-stage="presentation/close"][data-deck-stage-shown]').waitFor();
-	const opened = page.context().waitForEvent("page");
+	// on one display the slides fill the screen, and end with Esc
+	const presenting = () =>
+		page.evaluate(
+			() => document.querySelector("[data-present-slides]")?.getAttribute("data-present-slides") ?? "warm",
+		);
 	await page.keyboard.press("ControlOrMeta+Enter");
-	const room = await opened;
-	await page.locator("[data-deck-presenter]").waitFor();
-	const closed = room.waitForEvent("close");
+	await expect.poll(presenting).toBe("on");
 	await page.keyboard.press("Escape");
-	await closed;
-	await page.locator("[data-deck-presenter]").waitFor({ state: "detached" });
+	await expect.poll(presenting).toBe("warm");
 	await expect.poll(camera).toEqual(outside);
 	expect(await page.getByRole("button", { name: "close frame" }).getAttribute("aria-pressed")).toBe("true");
 

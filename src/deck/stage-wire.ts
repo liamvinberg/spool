@@ -82,6 +82,8 @@ export type HostMessage =
 			readonly room: boolean;
 			/** no room watches the talk: it plays in place, where B, the period and F are nobody's keys */
 			readonly alone?: true;
+			/** the slides fill the host's screen, which is the room's (spool#298): B and the period black it, F is nobody's */
+			readonly filling?: true;
 			readonly session?: StageSession;
 			readonly frame?: string;
 	  }
@@ -97,7 +99,9 @@ export type HostMessage =
 			readonly session: StageSession;
 			readonly mode?: StageMode;
 			readonly cut?: true;
-	  };
+	  }
+	/** the pointer hidden over the stage's document, or shown again: the slides fill the screen and nobody's hand moves */
+	| { readonly spool: "stage-cursor"; readonly hidden: boolean };
 
 /** stage → host */
 export type StageMessage =
@@ -202,6 +206,7 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 			mode: value.mode,
 			room: value.room,
 			...(value.alone === true ? { alone: true } : {}),
+			...(value.filling === true ? { filling: true } : {}),
 			...(session === undefined ? {} : { session }),
 			...(typeof value.frame === "string" ? { frame: value.frame } : {}),
 		};
@@ -219,6 +224,9 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 			...(isMode(value.mode) ? { mode: value.mode } : {}),
 			...(value.cut === true ? { cut: true } : {}),
 		};
+	}
+	if (value.spool === "stage-cursor") {
+		return typeof value.hidden === "boolean" ? { spool: "stage-cursor", hidden: value.hidden } : undefined;
 	}
 	return undefined;
 }

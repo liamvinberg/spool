@@ -69,6 +69,13 @@ export interface DesktopWindow {
 	swapRoom?(talk: string): void;
 	/** the room's window brought to the front, without the keys */
 	showRoom?(talk: string): void;
+	/** how many displays this Mac has, now (spool#298); an older app does not say */
+	displays?(): number;
+	/**
+	 * Spool's window over its whole display at once for a talk's slides, with no Space to slide to, or back as it was
+	 * (spool#298). True when the window changed; a window already full screen is left as it is. An older app cannot.
+	 */
+	presentFullScreen?(on: boolean): Promise<boolean>;
 }
 
 /** What the Mac app says of a presented talk's room (spool#265). */
