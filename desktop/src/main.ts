@@ -43,6 +43,7 @@ import {
 	type WorkArea,
 	writeRect,
 } from "./play-window";
+import { hideBars, immediately, preparePresenting, restoreBars } from "./presenting";
 import { type CanvasDownloads, installCanvasDownloads } from "./project-download";
 import {
 	type RemoteConfig,
@@ -191,22 +192,37 @@ function startSetupOpen(showing: BrowserWindow): void {
 /** spool's window covering its display for a talk's slides: where it stood, whether it could be resized, and where it was pinned on the way */
 let presentFilled: { stood: Electron.Rectangle; resizable: boolean; pinned: Electron.Rectangle } | undefined;
 
+/** The app's presentation options from before a talk hid the menu bar and the Dock over a window already full screen */
+let presentBars: number | undefined;
+
 /**
- * Spool's window over its whole display for a talk's slides, at once (spool#298, spool#306): simple full screen, which
- * macOS plays with no Space of its own to slide to, so the slide growing from its card is the only thing that moves.
+ * Spool's window over its whole display for a talk's slides, at once (spool#298, spool#306, spool#309): simple full
+ * screen, which macOS plays with no Space of its own to slide to, so the slide growing from its card is the only thing
+ * that moves.
  *
  * Simple full screen alone falls short of a talk twice. It grows the window in an animation macOS draws no frame of the
  * page through, about a fifth of a second after the press. So the window is first set to its display's bounds in one
  * step; macOS keeps a titled window's top under the menu bar, and one that cannot be resized keeps its size there, so
- * all simple full screen has left to animate is the menu bar's height. On the way home it is pinned there again first,
- * leaving it nothing to animate back. And simple full screen only tucks the Dock and the menu bar away, to come back
- * over the slides wherever the pointer touches the screen's edge, so the window stands above both while spool is the
- * app in front (`presentLevel`). The lights go too: nothing of the window's own may stand over the slides. It comes back
- * to exactly where it stood, as the slide lands on its card. A window already full screen is left as it is.
+ * all simple full screen has left to animate is the menu bar's height, which the presenting module takes in one step
+ * too (`immediately`). On the way home it is pinned there again first, and leaves simple full screen in one step as
+ * well. And simple full screen only tucks the Dock and the menu bar away, to come back over the slides wherever the
+ * pointer touches the screen's edge, so the window stands above both while spool is the app in front (`presentLevel`).
+ * The lights go too: nothing of the window's own may stand over the slides. It comes back to exactly where it stood,
+ * as the slide lands on its card.
+ *
+ * A window already full screen the macOS way covers its display in a Space of its own, and stays there: leaving it
+ * would play macOS's Space animation twice. The menu bar and the Dock, which would come down over the slides at the
+ * screen's edges, are hidden for the talk instead (`hideBars`), and are back as they were when it ends.
  */
 function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
-	if (showing.isDestroyed() || on === (presentFilled !== undefined)) return false;
-	if (on && (showing.isFullScreen() || showing.isSimpleFullScreen())) return false;
+	if (!on) presentBarsBack();
+	if (showing.isDestroyed()) return false;
+	if (on && showing.isFullScreen()) {
+		presentBars ??= hideBars();
+		return false;
+	}
+	if (on === (presentFilled !== undefined)) return false;
+	if (on && showing.isSimpleFullScreen()) return false;
 	if (process.platform === "darwin") showing.setWindowButtonVisibility(!on);
 	if (on) {
 		const stood = showing.getBounds();
@@ -216,24 +232,32 @@ function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 		showing.setResizable(false);
 		showing.setBounds(screen.getDisplayMatching(stood).bounds, false);
 		presentFilled.pinned = showing.getBounds();
-		showing.setSimpleFullScreen(true);
+		immediately(showing, () => showing.setSimpleFullScreen(true));
 		return true;
 	}
 	const filled = presentFilled;
 	presentFilled = undefined;
 	if (filled === undefined) return false;
 	showing.setBounds(filled.pinned, false);
-	showing.setSimpleFullScreen(false);
+	immediately(showing, () => showing.setSimpleFullScreen(false));
 	showing.setResizable(filled.resizable);
 	presentLevel(showing);
 	showing.setBounds(filled.stood, false);
 	return true;
 }
 
+/** The menu bar and the Dock as they were before a talk over a window already full screen hid them. */
+function presentBarsBack(): void {
+	if (presentBars === undefined) return;
+	restoreBars(presentBars);
+	presentBars = undefined;
+}
+
 /**
  * The window over the Dock and the menu bar while it covers its display for the slides and spool is in front, as
  * Keynote's slides are; back among the other apps' windows the moment another app comes forward (⌘Tab), and again
- * when spool does. Its level, not presentation options, since Electron offers none but kiosk's, which locks ⌘Tab.
+ * when spool does. Its level rather than presentation options (`hideBars`), so the slides cover both even where the
+ * presenting module could not be loaded.
  */
 function presentLevel(showing: BrowserWindow): void {
 	if (showing.isDestroyed()) return;
@@ -472,6 +496,11 @@ function createWindow(): BrowserWindow {
 	const fullscreen = () => created.webContents.send("spool:canvas-fullscreen", created.isFullScreen());
 	created.on("enter-full-screen", fullscreen);
 	created.on("leave-full-screen", fullscreen);
+	// macOS puts back the options it had before full screen as the window leaves it, and a talk's are gone with them
+	created.on("leave-full-screen", () => {
+		presentBars = undefined;
+	});
+	created.webContents.once("did-finish-load", preparePresenting);
 	created.on("focus", () => {
 		updateCanvasMenu();
 		if (presentFilled !== undefined) presentLevel(created);
@@ -513,6 +542,7 @@ function createWindow(): BrowserWindow {
 		if (created !== window) return;
 		// the presenter view is gone, and the talk with it
 		rooms?.closeAll();
+		presentBarsBack();
 		clearTimeout(coverDeadline);
 		coverDeadline = undefined;
 		cover?.close();

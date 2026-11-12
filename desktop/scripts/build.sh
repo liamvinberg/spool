@@ -36,6 +36,7 @@ done < <(ps -axo comm=)
 
 rm -rf dist release
 ./node_modules/.bin/tsc
+"$ROOT/scripts/native.sh"
 VERSION="$VERSION" "$ROOT/scripts/bundle-cli.sh"
 
 BUILDER=(./node_modules/.bin/electron-builder --mac --publish never "-c.extraMetadata.version=$VERSION")

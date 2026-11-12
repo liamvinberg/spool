@@ -6,7 +6,7 @@
 	"license": "FSL-1.1-MIT",
 	"main": "dist/index.js",
 	"scripts": {
-		"build": "rm -rf dist && tsc",
+		"build": "rm -rf dist && tsc && ./scripts/native.sh",
 		"typecheck": "tsc --noEmit",
 		"test": "pnpm build && node --test dist/*.test.js",
 		"smoke": "pnpm build && electron dist/smoke.js",
@@ -19,6 +19,7 @@
 		"app-builder-lib": "26.18.0",
 		"electron": "43.8.4",
 		"electron-builder": "26.18.0",
+		"node-api-headers": "1.9.0",
 		"typescript": "7.0.2"
 	},
 	"dependencies": {
