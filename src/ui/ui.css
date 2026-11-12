@@ -19,15 +19,20 @@ html {
 }
 
 /* The Mac window keeps its real traffic lights inside this 44px header. Only
- * empty header space drags the window; tabs, help, settings and every menu keep
- * their own pointer. The panes' tab rows are inside the window, never a drag. */
+ * empty header space drags the window, and a double-click there zooms it as the
+ * Mac's own title bar does; tabs, help, settings and every menu keep their own
+ * pointer. The tab row's free space past its new-project button is header
+ * space too, so the row itself drags and only its parts don't (the sheet
+ * behind the focused tab is drawn, not touched). The panes' tab rows are
+ * inside the window, never a drag. */
 :root[data-desktop] .app-header {
 	app-region: drag;
 	user-select: none;
 	padding-left: 96px;
 }
 
-:root[data-desktop] .app-header :is(button, nav),
+:root[data-desktop] .app-header button,
+:root[data-desktop] .app-header nav > :not(.project-tab-sheet),
 :root[data-desktop] [role="menu"] {
 	app-region: no-drag;
 }
