@@ -1853,6 +1853,15 @@ function CanvasField({
 	/** The pointer has reached play (spool#303): the press finds the project composed, not waiting behind the stills. */
 	const warmPlay = useCallback(() => postWarmPlay(project), [project]);
 
+	// a frame selected alone is what P plays, so once the selection settles it is readied the way a pointer at play
+	// readies it (spool#325): arrowing or sweeping through frames asks once, where it comes to rest
+	const playable = entered === null && selected.length === 1 ? selected[0] : undefined;
+	useEffect(() => {
+		if (playable === undefined) return;
+		const timer = setTimeout(warmPlay, SELECTION_PUT_MS);
+		return () => clearTimeout(timer);
+	}, [playable, warmPlay]);
+
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
 	/**
