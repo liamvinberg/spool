@@ -32,6 +32,15 @@ import {
 	tabItem,
 } from "./menu-keys";
 import { userPath } from "./path";
+import {
+	daemonIdentity,
+	keepSpare,
+	type SpareFacts,
+	type SpareSurroundings,
+	shouldMakeSpare,
+	spareForPlay,
+	spareUrl,
+} from "./play-spare";
 import { isPlayMark, type PlayTiming, playTiming, wallClock } from "./play-timing";
 import {
 	BAR_PX,
@@ -492,6 +501,8 @@ function createWindow(): BrowserWindow {
 		canvasReady = false;
 		workspaceReady = false;
 		canvasActive = false;
+		// the spare play window stands on the canvas it was made beside, and is made again once this one answers
+		tendSpare();
 		// a talk's slides filling the screen end with the page that played them
 		presentFullScreen(created, false);
 		// the page that loads may be an older daemon's, which answers no tab key
@@ -525,6 +536,7 @@ function createWindow(): BrowserWindow {
 		workspaceReady = false;
 		canvasActive = false;
 		updateCanvasMenu();
+		tendSpare();
 	});
 
 	return created;
@@ -556,7 +568,7 @@ function guard(created: BrowserWindow): void {
 		}
 		const play = playRequest(url);
 		if (play === undefined) return { action: "allow" };
-		void openPlayWindow(url, play);
+		void openPlayFromPopup(url, play);
 		return { action: "deny" };
 	});
 	created.webContents.on("will-navigate", (event, url) => {
@@ -684,6 +696,8 @@ function point(
 	daemonPort = Number(new URL(url).port);
 	daemonControlToken = controlToken;
 	daemonInfo = { version: daemonVersion, adopted: verdict === "adopted" };
+	daemonOn = daemonIdentity(new URL(url).origin, pid);
+	tendSpare();
 	tray?.setContextMenu(buildTrayMenu());
 	follow(new URL(url).origin, controlToken);
 	log("daemon", verdict, `pid=${pid}`, `v${daemonVersion}`, url);
@@ -1041,15 +1055,29 @@ let rooms: Rooms | undefined;
  */
 const UNKNOWN_AUTHORED = { w: 1440, h: 900 };
 
-async function openPlayWindow(url: string, request: PlayRequest): Promise<void> {
-	const timing = playTiming("fresh", wallClock());
+/**
+ * A play the canvas asked for by opening its URL, as a page that predates the
+ * canvas bridge's `play` does: the frame's size is the daemon's to say, so it
+ * is asked for first. Every canvas this app's daemon serves hands the size over
+ * with the press instead, and nothing stands between that press and the window.
+ */
+async function openPlayFromPopup(url: string, request: PlayRequest): Promise<void> {
+	const pressedAt = wallClock();
 	const authored =
 		daemonControlToken === undefined
 			? undefined
 			: await daemon.frameGeometry(new URL(url).origin, daemonControlToken, request.project, request.frame);
 	if (authored === undefined) log("play", "no geometry", request.project, request.frame ?? "(first)");
-	const size = authored ?? UNKNOWN_AUTHORED;
+	showPlayWindow(url, request, authored ?? UNKNOWN_AUTHORED, pressedAt);
+}
 
+/**
+ * Put a play window on screen at once (spool#301): the spare when there is one
+ * to adopt, else a window made for the press, shown dark before it has loaded
+ * anything. Either way it is placed and titled first, shown, and only then
+ * pointed at the play URL, which mints the single-use handoff for this play.
+ */
+function showPlayWindow(url: string, request: PlayRequest, size: { w: number; h: number }, pressedAt: number): void {
 	// the remote's projects are not this Mac's, though they may share a name
 	const key = rectKey(
 		tunnel !== undefined && remote !== undefined ? `${remote.name}:${request.project}` : request.project,
@@ -1060,32 +1088,19 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 	// nobody can see, so it is not a preference any more.
 	const restored = stored !== undefined && rectIsReachable(stored, workAreas());
 	const rect = restored && stored !== undefined ? stored : fitRect(size, canvasArea());
+	const title = request.frame ?? request.project;
 
-	const window_ = new BrowserWindow({
-		x: rect.x,
-		y: rect.y,
-		width: rect.w,
-		height: rect.h,
-		minWidth: 240,
-		minHeight: 200,
-		title: request.frame ?? request.project,
-		// shown once it has painted, so it opens on its bar and the page's dark
-		// rather than as an empty window the page then fills in
-		show: false,
-		backgroundColor: "#0e0e0e",
-		// The bar is spool's, so the title bar is not the OS's. The lights are
-		// still the OS's and are placed to sit centred in a 30px strip.
-		titleBarStyle: "hiddenInset",
-		trafficLightPosition: { x: 12, y: Math.round((BAR_PX - 12) / 2) },
-		webPreferences: {
-			spellcheck: false,
-			preload: join(__dirname, "play-preload.js"),
-			...AUTOPLAY,
-		},
-	});
+	const choice = spareForPlay(spare, new URL(url).origin, daemonOn);
+	if (choice === "discard") dropSpare("its daemon is gone");
+	const adopted = choice === "adopt" ? takeSpare() : undefined;
+	const window_ = adopted ?? makePlayWindow(rect, title);
+	if (adopted !== undefined) {
+		window_.setBounds({ x: rect.x, y: rect.y, width: rect.w, height: rect.h });
+		window_.setTitle(title);
+	}
+	const timing = playTiming(adopted === undefined ? "fresh" : "spare", pressedAt);
 	const id = window_.webContents.id;
 	played.set(id, { request, key, authored: size, restored, timing });
-	guard(window_);
 	window_.once("show", () => timing.mark("window-shown", wallClock()));
 
 	const remember = () => {
@@ -1104,6 +1119,7 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 		if (settling !== undefined) clearTimeout(settling);
 		settling = setTimeout(remember, SETTLE_MS);
 	};
+	// listened for after the placement above, which is the app's and no preference
 	window_.on("move", settle);
 	window_.on("resize", settle);
 	window_.on("close", () => {
@@ -1111,19 +1127,180 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 		remember();
 		logPlayTiming(request, timing);
 	});
-	window_.on("closed", () => played.delete(id));
-
-	// A page that never paints still gets its window: late, not lost.
-	const showing = setTimeout(() => {
-		if (!window_.isDestroyed()) window_.show();
-	}, PAINT_PATIENCE_MS);
-	window_.once("ready-to-show", () => {
-		clearTimeout(showing);
-		window_.show();
+	window_.on("closed", () => {
+		played.delete(id);
+		revealed(id);
 	});
+	awaitReveal(id);
 
-	log("play", request.project, request.frame ?? "(first)", `${rect.w}x${rect.h}`, restored ? "restored" : "authored");
+	log(
+		"play",
+		request.project,
+		request.frame ?? "(first)",
+		`${rect.w}x${rect.h}`,
+		restored ? "restored" : "authored",
+		adopted === undefined ? `fresh (${choice === "adopt" ? "spare gone" : spareMissing(choice)})` : "spare",
+	);
+	window_.show();
 	void window_.loadURL(url);
+}
+
+/** Why a press made its own window, for its log line. */
+function spareMissing(choice: "fresh" | "discard"): string {
+	if (choice === "discard") return "spare stale";
+	if (spare === undefined) return "no spare";
+	return spare.ready ? "another origin" : "spare loading";
+}
+
+/** A play window, hidden: dark, its own bar's room, and the bridge its page reads. */
+function makePlayWindow(rect: WindowRect, title: string): BrowserWindow {
+	const window_ = new BrowserWindow({
+		x: rect.x,
+		y: rect.y,
+		width: rect.w,
+		height: rect.h,
+		minWidth: 240,
+		minHeight: 200,
+		title,
+		// shown by its caller, dark, before anything has loaded: a window on screen
+		// at the press, and the page fills it in
+		show: false,
+		backgroundColor: "#0e0e0e",
+		// The bar is spool's, so the title bar is not the OS's. The lights are
+		// still the OS's and are placed to sit centred in a 30px strip.
+		titleBarStyle: "hiddenInset",
+		trafficLightPosition: { x: 12, y: Math.round((BAR_PX - 12) / 2) },
+		webPreferences: {
+			spellcheck: false,
+			preload: join(__dirname, "play-preload.js"),
+			...AUTOPLAY,
+		},
+	});
+	guard(window_);
+	return window_;
+}
+
+// MARK: - The spare play window
+
+/** The hidden play window kept ready while a canvas is open (spool#301, play-spare.ts). */
+let spare: (SpareFacts & { window: BrowserWindow }) | undefined;
+/** The daemon the canvas is on, as `daemonIdentity` names it. */
+let daemonOn: string | undefined;
+/** A daemon that answered the spare's page with an error, and is not asked again. */
+let spareRefusedBy: string | undefined;
+/** Play windows whose frame is not revealed yet, each with how long it is waited on. */
+const awaitingReveal = new Map<number, NodeJS.Timeout>();
+let makingSpare: NodeJS.Timeout | undefined;
+
+/** A beat after the last play revealed its frame, so a new spare never shares its dissolve. */
+const SPARE_AFTER_MS = 1_000;
+/** A play whose frame never shows (a compile error, say) holds the next spare back this long at most. */
+const REVEAL_PATIENCE_MS = 10_000;
+
+function spareSurroundings(): SpareSurroundings {
+	return {
+		canvasOpen: window !== undefined && !window.isDestroyed() && canvasReady,
+		daemon: daemonOn,
+		remote: tunnel !== undefined,
+		quitting: shuttingDown,
+		refusedBy: spareRefusedBy,
+		awaitingReveal: awaitingReveal.size,
+	};
+}
+
+/** Throw the spare away when it has no reason to be, and make one when it is wanted and missing. */
+function tendSpare(): void {
+	const now = spareSurroundings();
+	if (spare !== undefined && !keepSpare(spare, now)) dropSpare(now.canvasOpen ? "its daemon is gone" : "no canvas");
+	if (!shouldMakeSpare(spare, now)) {
+		clearTimeout(makingSpare);
+		makingSpare = undefined;
+		return;
+	}
+	if (makingSpare !== undefined) return;
+	makingSpare = setTimeout(() => {
+		makingSpare = undefined;
+		if (shouldMakeSpare(spare, spareSurroundings())) makeSpare();
+	}, SPARE_AFTER_MS);
+}
+
+function makeSpare(): void {
+	if (window === undefined || daemonOn === undefined) return;
+	const origin = new URL(window.webContents.getURL()).origin;
+	const made = makePlayWindow(fitRect(UNKNOWN_AUTHORED, canvasArea()), NAME);
+	// it is no window of the app's until a press adopts it: hidden, it is in no
+	// list, and this keeps it out of the Window menu's
+	made.excludedFromShownWindowsMenu = true;
+	const facts = { window: made, origin, daemon: daemonOn, ready: false };
+	spare = facts;
+	let answered = false;
+	made.webContents.on("did-navigate", (_event, _url, code) => {
+		answered = code >= 200 && code < 300;
+	});
+	made.once("ready-to-show", () => {
+		if (spare !== facts) return;
+		if (!answered) {
+			// an older daemon, with no such page: it is not asked again
+			spareRefusedBy = facts.daemon;
+			dropSpare("its page was refused");
+			return;
+		}
+		facts.ready = true;
+		log("play", "spare ready", origin);
+	});
+	made.webContents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
+		if (spare === facts && isMainFrame && code !== ABORTED) dropSpare("its page did not load");
+	});
+	made.webContents.on("render-process-gone", () => {
+		if (spare === facts) dropSpare("its page is gone");
+	});
+	made.on("closed", () => {
+		if (spare === facts) spare = undefined;
+	});
+	void made.loadURL(spareUrl(origin)).catch(() => {});
+}
+
+/** The spare, handed to a press: a window of the app's from here on. */
+function takeSpare(): BrowserWindow | undefined {
+	const taken = spare;
+	spare = undefined;
+	if (taken === undefined || taken.window.isDestroyed()) return undefined;
+	taken.window.excludedFromShownWindowsMenu = false;
+	return taken.window;
+}
+
+function dropSpare(why: string): void {
+	const dropped = spare;
+	spare = undefined;
+	if (dropped === undefined) return;
+	log("play", "spare dropped", why);
+	if (!dropped.window.isDestroyed()) dropped.window.destroy();
+}
+
+/** A play window is bringing its frame up: the next spare waits until it has. */
+function awaitReveal(id: number): void {
+	clearTimeout(makingSpare);
+	makingSpare = undefined;
+	awaitingReveal.set(
+		id,
+		setTimeout(() => revealed(id), REVEAL_PATIENCE_MS),
+	);
+}
+
+function revealed(id: number): void {
+	const waiting = awaitingReveal.get(id);
+	if (waiting === undefined) return;
+	clearTimeout(waiting);
+	awaitingReveal.delete(id);
+	tendSpare();
+}
+
+/** A frame's size as the canvas hands it over: a pixel at least, and no larger than any screen could be asked for. */
+function isAuthoredSize(value: unknown): value is { w: number; h: number } {
+	if (typeof value !== "object" || value === null) return false;
+	const { w, h } = value as Record<string, unknown>;
+	const pixels = (n: unknown) => typeof n === "number" && n >= 1 && n <= 100_000;
+	return pixels(w) && pixels(h);
 }
 
 /** A play's marks, once: when its frame is revealed, or as far as it got when it closes first. */
@@ -1134,9 +1311,6 @@ function logPlayTiming(request: PlayRequest, timing: PlayTiming): void {
 
 /** Long enough to be the end of a drag rather than a frame of one. */
 const SETTLE_MS = 400;
-
-/** How long a play window waits on its first paint before it is shown anyway. */
-const PAINT_PATIENCE_MS = 1_000;
 
 function boundsOf(window_: BrowserWindow): WindowRect {
 	const { x, y, width, height } = window_.getBounds();
@@ -1166,10 +1340,27 @@ function installPlayChannels(): void {
 	ipcMain.on("spool:play-window-restored", (event) => {
 		event.returnValue = played.get(event.sender.id)?.restored === true;
 	});
+	// Play from the canvas (spool#301), with the frame's size the canvas already has, so the window is on screen at
+	// the press: the one route in the app from a press to a play window that waits on nothing
+	ipcMain.on("spool:play", (event, path: unknown, size: unknown) => {
+		const pressedAt = wallClock();
+		if (!canvasSender(event) || typeof path !== "string" || !isAuthoredSize(size)) return;
+		let url: string;
+		try {
+			url = new URL(path, event.sender.getURL()).href;
+		} catch {
+			return;
+		}
+		const request = isDaemonUrl(url) ? playRequest(url) : undefined;
+		if (request === undefined) return;
+		showPlayWindow(url, request, { w: Math.round(size.w), h: Math.round(size.h) }, pressedAt);
+	});
 	ipcMain.on("spool:play-window-mark", (event, mark: unknown, at: unknown) => {
 		const state = played.get(event.sender.id);
 		if (state === undefined || !isPlayMark(mark) || typeof at !== "number") return;
-		if (state.timing.mark(mark, at)) logPlayTiming(state.request, state.timing);
+		if (!state.timing.mark(mark, at)) return;
+		logPlayTiming(state.request, state.timing);
+		revealed(event.sender.id);
 	});
 	ipcMain.on("spool:play-window-reset", (event) => {
 		const window_ = BrowserWindow.fromWebContents(event.sender);
@@ -1390,6 +1581,7 @@ function installCanvasChannels(): void {
 		canvasReady = true;
 		canvasActive = active;
 		updateCanvasMenu();
+		tendSpare();
 		if (pendingCanvasCommand !== undefined) {
 			const command = pendingCanvasCommand;
 			pendingCanvasCommand = undefined;

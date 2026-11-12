@@ -79,6 +79,8 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 		return () => ipcRenderer.removeListener("spool:canvas-command", handler);
 	},
 	setCanvasActive: (active: boolean) => ipcRenderer.send("spool:canvas-active", active),
+	// play in the app's own window, at the size the canvas already has for the frame (spool#301)
+	play: (path: string, size: { w: number; h: number }) => ipcRenderer.send("spool:play", path, size),
 	setMenuKeys: (keys: Partial<Record<CanvasCommand, string>>) => ipcRenderer.send("spool:canvas-menu-keys", keys),
 	closeWindow: () => ipcRenderer.send("spool:canvas-close-window"),
 	// a presented talk's room: which screen it is on, by name, and X trading the two screens (spool#265)
