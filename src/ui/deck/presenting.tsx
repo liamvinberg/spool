@@ -8,7 +8,7 @@ import type { CameraStore } from "../canvas/camera-store";
 import type { CanvasStore } from "../canvas/canvas-store";
 import { type DeckReads, useDeckRead } from "./deck-api";
 import { type DeckMotion, useDeckMotion } from "./deck-motion";
-import { decodedPicture, openingOf, readyPicture } from "./opening";
+import { decodedPicture, letGo, openingOf } from "./opening";
 import { presentDone, usePresentAsk, usePresentWarm } from "./present";
 import { type Card, PresentSlides } from "./present-slides";
 import { Presenter, useWindowSize } from "./presenter";
@@ -38,7 +38,8 @@ interface Rect {
 
 type Moment =
 	/**
-	 * Present was pressed: the chrome falls away and the slide travels as `picture`, from `from` when it was on screen
+	 * Present was pressed: the chrome falls away and the slide travels as `picture`, from `from` when it was on screen;
+	 * `image` is that picture decoded, when it is the slide's opening still
 	 */
 	| {
 			readonly kind: "leave";
@@ -46,6 +47,7 @@ type Moment =
 			readonly frame: string;
 			readonly from: Rect | null;
 			readonly picture: string | undefined;
+			readonly image: HTMLImageElement | undefined;
 	  }
 	/** the presenter view is drawn; the picture that travelled stays until the stage has drawn its own, then goes at once */
 	| {
@@ -53,6 +55,7 @@ type Moment =
 			readonly talk: string;
 			readonly frame: string;
 			readonly picture: string | undefined;
+			readonly image: HTMLImageElement | undefined;
 			readonly handed: boolean;
 	  }
 	/** End: the slide the talk ended on goes back to its place, `to` once the canvas has it there */
@@ -165,15 +168,23 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 		(from: Moment) =>
 			setMoment((now) =>
 				now === from && now.kind === "leave"
-					? { kind: "on", talk: from.talk, frame: from.frame, picture: now.picture, handed: false }
+					? {
+							kind: "on",
+							talk: from.talk,
+							frame: from.frame,
+							picture: now.picture,
+							image: now.image,
+							handed: false,
+						}
 					: now,
 			),
 		[],
 	);
-	// the stage has drawn the slide, and the slide is there: its picture goes before the frame is painted
+	// the stage has drawn the slide, and the slide is there: its picture goes before the frame is painted, and with it
+	// the opening still it was decoded as
 	useLayoutEffect(() => {
 		if (moment?.kind !== "on" || moment.handed || !pictured) return;
-		setMoment((now) => (now === moment ? { ...moment, handed: true } : now));
+		setMoment((now) => (now === moment ? { ...moment, image: undefined, handed: true } : now));
 	}, [moment, pictured]);
 	/** the slide is home: the talk is over, and Present can be pressed again */
 	const done = useCallback((from: Moment) => {
@@ -191,21 +202,23 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 	);
 
 	// Present pressed: the slide leaves the canvas from where it stands, if it stands on screen, as its opening still
-	// when that is decoded, else as its cover
+	// when that is decoded, else as its cover. The travel holds the still from here, not the canvas, and lets it go once
+	// the stage has drawn the slide.
 	useLayoutEffect(() => {
 		if (mine === null) return;
+		const opening = openingOf(store, project, mine.slide);
+		const image = decodedPicture(opening);
+		if (opening !== undefined) letGo(opening);
 		setMoment((now) => {
 			if (now !== null && now.talk === mine.talk) return now;
 			const card = where.current(mine.slide);
-			const opening = openingOf(store, project, mine.slide);
-			if (opening !== undefined) void readyPicture(opening);
-			const picture = decodedPicture(opening) === undefined ? coverOf(store, project, mine.slide) : opening;
 			return {
 				kind: "leave",
 				talk: mine.talk,
 				frame: mine.slide,
 				from: still || card === null ? null : card,
-				picture,
+				picture: image === undefined ? coverOf(store, project, mine.slide) : opening,
+				image,
 			};
 		});
 		setPictured(false);
@@ -321,6 +334,7 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 					key={`leave-${moment.talk}`}
 					timing={timing}
 					picture={moment.picture}
+					image={moment.image}
 					from={moment.from}
 					to={big}
 					leaving
@@ -335,7 +349,7 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 					className="pointer-events-none fixed top-0 left-0 z-50 overflow-hidden rounded-md bg-[black]"
 					style={{ left: big.x, top: big.y, width: big.w, height: big.h }}
 				>
-					<Picture src={moment.picture} />
+					<Picture src={moment.picture} image={moment.image} />
 				</div>
 			) : null}
 			{moment.kind === "back" && moment.to !== null ? (
@@ -372,6 +386,7 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 function Travel({
 	timing,
 	picture,
+	image,
 	from,
 	to,
 	leaving = false,
@@ -379,6 +394,7 @@ function Travel({
 }: {
 	timing: DeckMotion;
 	picture: string | undefined;
+	image?: HTMLImageElement | undefined;
 	from: Rect;
 	to: Rect;
 	leaving?: boolean;
@@ -409,7 +425,7 @@ function Travel({
 			}}
 			onAnimationComplete={finish}
 		>
-			<Picture src={picture} />
+			<Picture src={picture} image={image} />
 		</motion.div>
 	);
 }
@@ -419,16 +435,15 @@ function Travel({
  * in: an image element made for it now is empty for the frames it takes to load, even from the cache (spool#319). Only
  * one picture of the slide is ever in the view at a time, so that one element is never wanted in two places.
  */
-function Picture({ src }: { src: string | undefined }) {
+function Picture({ src, image }: { src: string | undefined; image?: HTMLImageElement | undefined }) {
 	const box = useRef<HTMLDivElement>(null);
-	const ready = decodedPicture(src);
 	useLayoutEffect(() => {
-		if (ready === undefined) return;
-		ready.className = "absolute inset-0 h-full w-full object-contain";
-		box.current?.replaceChildren(ready);
-	}, [ready]);
+		if (image === undefined) return;
+		image.className = "absolute inset-0 h-full w-full object-contain";
+		box.current?.replaceChildren(image);
+	}, [image]);
 	if (src === undefined) return null;
-	if (ready !== undefined) return <div ref={box} className="contents" />;
+	if (image !== undefined) return <div ref={box} className="contents" />;
 	return <img alt="" src={src} draggable={false} className="absolute inset-0 h-full w-full object-contain" />;
 }
 

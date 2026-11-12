@@ -475,6 +475,8 @@ export default function Slide() {
 	expect(read.frames.some((frame) => frame.pictures.length > 0)).toBe(true);
 	expect(everStretched(read)).toEqual([]);
 	expect(stretched(read)).toEqual([]);
+	// and it has gone: the slide is the stage's own
+	expect(read.frames.at(-1)?.pictures).toEqual([]);
 	// on the first of two slides, what comes next is the second, in every frame the view has been there
 	const words = read.frames.flatMap((frame) => (frame.presenter === null ? [] : [frame.presenter]));
 	expect(words.length).toBeGreaterThan(0);

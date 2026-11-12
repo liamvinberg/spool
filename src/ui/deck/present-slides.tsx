@@ -13,7 +13,7 @@ import { cn } from "../cn";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { useDeckMotion } from "./deck-motion";
 import { KeyList } from "./key-list";
-import { readyPicture } from "./opening";
+import { letGo, readyPicture } from "./opening";
 import {
 	fillScreen,
 	onPresentAgain,
@@ -528,7 +528,9 @@ export function PresentSlides({
 		});
 		const slide = ask.slide;
 		const { opening, cover } = hands.current.pictureOf(slide);
-		const flyAs = (image: HTMLImageElement) => {
+		// the flight holds the picture it flies from here, not the canvas, and drops it once the live slide has taken over
+		const flyAs = (url: string, image: HTMLImageElement) => {
+			letGo(url);
 			image.className = "absolute inset-0 h-full w-full object-contain";
 			pictureBox.current?.replaceChildren(image);
 			// an opening still stands over the live slide until it goes; a cover is what the live slide fades in over
@@ -546,15 +548,15 @@ export function PresentSlides({
 			}
 			if (cover === undefined) return;
 			void readyPicture(cover).then((image) => {
-				if (trip.current === n && !liveOn.current && image !== null) flyAs(image);
+				if (trip.current === n && !liveOn.current && image !== null) flyAs(cover, image);
 			});
 		};
 		stillFlies.current = opening !== undefined;
 		if (opening === undefined) return asBefore();
 		void readyPicture(opening).then((image) => {
-			if (trip.current !== n || liveOn.current) return;
+			if (trip.current !== n || liveOn.current) return letGo(opening);
 			if (image === null) asBefore();
-			else flyAs(image);
+			else flyAs(opening, image);
 		});
 	}, [ask, draw, landing, launch, onCard, setPhase]);
 
