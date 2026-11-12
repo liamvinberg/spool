@@ -406,6 +406,49 @@ describe("the booth before any browser", () => {
 		await vi.waitFor(() => expect(late.kill).toHaveBeenCalled());
 	});
 
+	it("lends two tabs at once, each its own context, and tells a third rehearsal it waits for them", async () => {
+		const contexts: { close: () => Promise<void> }[] = [];
+		const browser = {
+			on: () => {},
+			newContext: vi.fn(async () => {
+				const context = { close: vi.fn(async () => {}) };
+				contexts.push(context);
+				return context;
+			}),
+		} as unknown as HeadlessShell["browser"];
+		const { booth: made } = booth({
+			launch: vi.fn<NonNullable<BoothDeps["launch"]>>(async () => ({
+				browser,
+				software: false,
+				close: async () => {},
+				kill: async () => {},
+			})),
+		});
+		const ends: (() => void)[] = [];
+		let running = 0;
+		let most = 0;
+		const work = () =>
+			new Promise<void>((end) => {
+				running++;
+				most = Math.max(most, running);
+				ends.push(() => {
+					running--;
+					end();
+				});
+			});
+		const said: string[][] = [[], [], []];
+		const lends = said.map((lines) => made.lend({}, (line) => lines.push(line), work));
+		await vi.waitFor(() => expect(ends).toHaveLength(2));
+		expect(said[2]).toEqual(["waiting for 2 other rehearsals to finish"]);
+		ends[0]?.();
+		await vi.waitFor(() => expect(ends).toHaveLength(3));
+		for (const end of ends.slice(1)) end();
+		await Promise.all(lends);
+		expect(most).toBe(2);
+		expect(contexts).toHaveLength(3);
+		for (const context of contexts) expect(context.close).toHaveBeenCalled();
+	});
+
 	it("tells a waiting shot the browser would not start", async () => {
 		const { booth: made } = booth();
 		await expect(

@@ -1,5 +1,5 @@
 ---
-summary: the loops: shot, logs, url, driving a frame, selection, flows
+summary: the loops: shot, logs, url, rehearse, driving a frame, selection, flows
 ---
 
 shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), at frame.json's size (else a narrated 1440×900), in the colour scheme the canvas shows. The first boot on a machine downloads spool's pinned headless Chrome once, narrated on stderr: relay the wait, don't kill it.
@@ -37,6 +37,13 @@ To click, type or reach a state before a shot, drive the frame with spool's own 
   await browser.close();
 
 Wait for DOMContentLoaded and then a meaningful selector from the frame. Do not wait for networkidle: Spool's live reload connection stays open. On a --raw URL the frame is the page, so use top-level locators. The local player mounts every frame inside a sandboxed `<iframe id="spool-player">`, so its selectors go through `page.frameLocator("#spool-player")`; for a portable website use `page.frameLocator("#website")`. The player's first load after an edit compiles every frame of the project behind a "loading" bar: on a large canvas give that first wait a minute, not Playwright's default 30 s. The played page is never scaled: its viewport width is capped at the frame's authored w, and its height is the window's after the player's chrome, so percentage heights and viewport units answer to that, not frame.json's h. A state you only need to open in is a scenario (topic: scenarios), not a driver.
+
+`spool rehearse <talk>` plays a deck's talk in the stage the room sees, in spool's headless browser, by a presenter's keys from its first beat to its last and back, and says at each slide and beat what broke, moved wrong or lagged (topic: deck), each line opening with the file and line to fix and saying how. It exits 1 only for what breaks the talk: a slide that threw or never became ready, a move that cannot run, a rehearsal that could not finish. It ends with where its pictures are:
+
+  rehearsed talk, 12 slides (19 beats), forward and back in 130 s: 1 broken, 2 notes
+  sheet: design/.spool/rehearse/talk/sheet-1.png, sheet-2.png (…); every picture full size in design/.spool/rehearse/talk/stills/
+
+The sheet is every beat at rest in order and every move between slides at its start, middle and end, labelled, edged red where something broke and amber at a note: read every page, as a person would watch the talk. Its folder is made new on every rehearsal; `--out <folder>` copies it where you say. `--slides 4` or `--slides 4-6` rehearses part of the talk, and naming one slide's frame rehearses that slide. A rehearsal takes about ten seconds a slide, more on a busy machine, and narrates on stderr: let it finish. Two rehearse at once on a machine; another waits its turn and says so. A save while it plays is named at the end: rehearse again once you are done saving.
 
 Walks you take in the player flip verified marks on the map's derived edges: `spool flows` shows which a real session confirmed, most valuable on might edges, where a verified one is a branch that actually fired. Reloading the played tab re-reads the scenario, so edit-seed-reload iterates on one URL.
 

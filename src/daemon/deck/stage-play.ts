@@ -172,9 +172,20 @@ html[data-spool-stage-cursor="hidden"], html[data-spool-stage-cursor="hidden"] *
 function stageDocument(config: PlayerConfig & { deck: StageConfig }, bundle: PlayerBundle): string {
 	const base = playerChunkBase(config.project);
 	const modules = new Set([bundle.entry]);
-	for (const slide of config.deck.slides) for (const name of bundle.screens.get(slide.frame) ?? []) modules.add(name);
+	// each slide's own module names its slide: a rehearsal tells by it whose code said a line or asked for a file
+	const owners = new Map<string, string>();
+	for (const slide of config.deck.slides) {
+		const screens = bundle.screens.get(slide.frame) ?? [];
+		const own = screens[0];
+		if (own !== undefined && !owners.has(own)) owners.set(own, slide.frame);
+		for (const name of screens) modules.add(name);
+	}
 	const preload = [...modules]
-		.map((name) => `<link rel="modulepreload" href="${escapeHtml(base + name)}">`)
+		.map((name) => {
+			const owner = owners.get(name);
+			const named = owner === undefined ? "" : ` data-spool-frame="${escapeHtml(owner)}"`;
+			return `<link rel="modulepreload" href="${escapeHtml(base + name)}"${named}>`;
+		})
 		.join("\n");
 	const fonts = bundle.fonts === undefined ? "" : `<style>${escapeInlineStyle(bundle.fonts)}</style>\n`;
 	return `<!doctype html>
