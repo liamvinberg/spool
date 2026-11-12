@@ -13,6 +13,7 @@ import { cn } from "../cn";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { useDeckMotion } from "./deck-motion";
 import { KeyList } from "./key-list";
+import { letGo, readyPicture } from "./opening";
 import {
 	fillScreen,
 	onPresentAgain,
@@ -37,13 +38,17 @@ import { talkSource } from "./talk-source";
  * pointer goes with it. End, Esc, or a browser leaving full screen flies the slide home to its card.
  *
  * What flies is one layer moved by a transform on one spring, aimed again from wherever it is, so Esc during the way in
- * or Present during the way home turns it round. It flies as the live slide when the stage has already drawn it (the
- * stage is readied while the hand is on its way to Present), else as the canvas's picture of it, when that is the slide
- * as the talk starts it, with the live slide taking over once drawn: fading in over it on the way, in one frame once it
- * has landed, as a picture stretched to the screen is never what stands there (spool#316); else it waits, the screen
- * filling, until one of the two is there, rather than fly blank. The stage puts its first slide on at rest, as its
- * picture shows it, so the two are the same slide. Once the live slide is on, it stays on: the way home flies it as
- * drawn, and on its card the card is shown under it before it lets go.
+ * or Present during the way home turns it round. It flies as the slide's opening still, the photo booth's picture of
+ * it at the size a talk draws it on the beat the talk opens on, whenever the booth has one (spool#319): a picture flies
+ * at the same cost whatever is on the slide, where a live slide flown by a transform is drawn again at every size it
+ * passes through and stands soft behind it. The live slide takes over in one frame once it has landed and the stage has
+ * drawn it, the two the same slide. A slide with no opening still flies as before: as the live slide when the stage has
+ * already drawn it (the stage is readied while the hand is on its way to Present), else as the canvas's cover, when
+ * that is the slide as the talk starts it, with the live slide taking over once drawn: fading in over it on the way, in
+ * one frame once it has landed, as a picture stretched to the screen is never what stands there (spool#316); else it
+ * waits, the screen filling, until one of the two is there, rather than fly blank. The stage puts its first slide on at
+ * rest, as its picture shows it. Once the live slide is on, it stays on: the way home flies it as drawn, and on its
+ * card the card is shown under it before it lets go.
  *
  * With two displays, the caret's Full screen plays this way here and the room on the other display, which follows the
  * talk over its channel as it follows the presenter view.
@@ -80,6 +85,20 @@ type Phase =
 /** How long a readied stage waits for Present before it is let go. */
 const WARM_MS = 30_000;
 
+/**
+ * Frames an opening still stands over the live slide once it is on under it, at rest: about what a cross-process frame
+ * takes to be drawn again at a new size, which the still hides (spool#319).
+ */
+const SETTLE_FRAMES = 4;
+
+/** Once `count` frames have been drawn. */
+function frames(count: number): Promise<void> {
+	return new Promise((done) => {
+		const next = (left: number) => (left <= 0 ? done() : requestAnimationFrame(() => next(left - 1)));
+		next(count);
+	});
+}
+
 export interface PresentSlidesProps {
 	/**
 	 * the talk asked for this way, while one is: without the room's window, a window of another origin, which refuses
@@ -94,8 +113,11 @@ export interface PresentSlidesProps {
 	readonly talk: Size;
 	/** where a frame's card stands on the window, while it stands in view */
 	cardOf(frame: string): Card | null;
-	/** the canvas's picture of a frame, while that is the slide as a talk starts on it */
-	pictureOf(frame: string): string | undefined;
+	/**
+	 * pictures of a frame that are the slide as a talk starts on it: its opening still, when the booth has taken one, and
+	 * the canvas's cover, of a slide of one beat
+	 */
+	pictureOf(frame: string): { readonly opening: string | undefined; readonly cover: string | undefined };
 	/** the talk ended on `frame`: the canvas selects it, and brings it into view */
 	onEnded(frame: string): void;
 	/** a talk that could not be played, and why */
@@ -168,6 +190,8 @@ export function PresentSlides({
 	const liveOn = useRef(false);
 	/** the picture the slide flies as, decoded */
 	const pictured = useRef(false);
+	/** the slide flies as its opening still the whole way, and the live slide takes over once it has landed */
+	const stillFlies = useRef(false);
 	/** where the window's page stands on the screen, so the slide stays put on it while the window moves */
 	const origin = useRef(viewportOrigin());
 	const hands = useRef({ cardOf, pictureOf, onEnded, say, closeRoom, talk, still, timing, pinned, help });
@@ -245,20 +269,25 @@ export function PresentSlides({
 
 	/**
 	 * the live slide on in the flying layer, fading in over its picture while it flies, or at once when `now` (the talk
-	 * moved on from what the picture shows) or once it has landed; never off again this talk
+	 * moved on from what the picture shows) or once it has landed; never off again this talk. Under an opening still
+	 * that has landed, it comes on a few frames before the still goes: a live slide is drawn at the size it stands only
+	 * in the frames after it is shown there, and one first drawn small on the way stands soft until then (spool#319).
 	 */
 	const handOver = useCallback(
-		(ms: number) =>
-			void fade(liveBox.current, 1, ms).then(() => {
-				if (liveOn.current) pictureBox.current?.replaceChildren();
-			}),
+		(ms: number, under = false) =>
+			void fade(liveBox.current, 1, ms)
+				.then(() => (under ? frames(SETTLE_FRAMES) : undefined))
+				.then(() => {
+					if (liveOn.current) pictureBox.current?.replaceChildren();
+				}),
 		[fade],
 	);
 	const showLive = useCallback(
-		(at: "now" | "fade") => {
+		(at: "now" | "fade" | "landed") => {
 			if (liveOn.current) return;
 			liveOn.current = true;
-			handOver(at === "fade" && phaseRef.current === "in" ? hands.current.timing.handOver : 0);
+			if (at === "landed") handOver(0, stillFlies.current);
+			else handOver(at === "fade" && phaseRef.current === "in" ? hands.current.timing.handOver : 0);
 		},
 		[handOver],
 	);
@@ -269,15 +298,16 @@ export function PresentSlides({
 			setPhase("on");
 			// a hand-over still fading as the slide lands is done in this frame: a stretched picture never stands there
 			if (liveOn.current) handOver(0);
+			else if (stillFlies.current && drawn.current !== null && drawn.current === wanted.current) showLive("landed");
 		},
-		[handOver, setPhase],
+		[handOver, setPhase, showLive],
 	);
 
-	/** the slide sets off, as the live slide when the stage has drawn it, else as its picture, else not yet */
+	/** the slide sets off, as its opening still, else as the live slide when the stage has drawn it, else as its cover */
 	const launch = useCallback(() => {
 		if (phaseRef.current !== "waiting" || filling.current) return;
 		const start = wanted.current;
-		if (start !== null && drawn.current === start) showLive("now");
+		if (!stillFlies.current && start !== null && drawn.current === start) showLive("now");
 		else if (!pictured.current) return;
 		const n = trip.current;
 		const card = start === null ? null : hands.current.cardOf(start);
@@ -429,7 +459,10 @@ export function PresentSlides({
 					drawn.current = shown.at.beat === 0 ? shown.frame : null;
 					if (shown.frame !== wanted.current) return;
 					if (phaseRef.current === "waiting") launching.current();
-					else if (phaseRef.current === "in" || phaseRef.current === "on") showing.current("fade");
+					// an opening still flies the whole way, and the live slide takes over as it lands
+					else if (stillFlies.current) {
+						if (phaseRef.current === "on") showing.current("landed");
+					} else if (phaseRef.current === "in" || phaseRef.current === "on") showing.current("fade");
 				},
 				command: (command) => carry.current(command),
 				pointer: (at) => pointed.current(at),
@@ -493,27 +526,38 @@ export function PresentSlides({
 			filling.current = false;
 			launching.current();
 		});
-		// a stage readied on the slide has drawn it already, and it sets off as that
-		if (drawn.current === ask.slide) {
+		const slide = ask.slide;
+		const { opening, cover } = hands.current.pictureOf(slide);
+		// the flight holds the picture it flies from here, not the canvas, and drops it once the live slide has taken over
+		const flyAs = (url: string, image: HTMLImageElement) => {
+			letGo(url);
+			image.className = "absolute inset-0 h-full w-full object-contain";
+			pictureBox.current?.replaceChildren(image);
+			// an opening still stands over the live slide until it goes; a cover is what the live slide fades in over
+			if (pictureBox.current !== null) pictureBox.current.style.zIndex = stillFlies.current ? "1" : "";
+			pictured.current = true;
 			launch();
-			return;
-		}
-		const picture = hands.current.pictureOf(ask.slide);
-		if (picture === undefined) return;
-		const image = new Image();
-		image.alt = "";
-		image.draggable = false;
-		image.className = "absolute inset-0 h-full w-full object-contain";
-		image.src = picture;
-		void image.decode().then(
-			() => {
-				if (trip.current !== n || liveOn.current) return;
-				pictureBox.current?.replaceChildren(image);
-				pictured.current = true;
+		};
+		// with no opening still, or one that would not load: a stage readied on the slide has drawn it already, and it
+		// sets off as that, else as its cover
+		const asBefore = () => {
+			stillFlies.current = false;
+			if (drawn.current === slide) {
 				launch();
-			},
-			() => {},
-		);
+				return;
+			}
+			if (cover === undefined) return;
+			void readyPicture(cover).then((image) => {
+				if (trip.current === n && !liveOn.current && image !== null) flyAs(cover, image);
+			});
+		};
+		stillFlies.current = opening !== undefined;
+		if (opening === undefined) return asBefore();
+		void readyPicture(opening).then((image) => {
+			if (trip.current !== n || liveOn.current) return letGo(opening);
+			if (image === null) asBefore();
+			else flyAs(opening, image);
+		});
 	}, [ask, draw, landing, launch, onCard, setPhase]);
 
 	// a canvas that goes while a talk is on takes the talk with it

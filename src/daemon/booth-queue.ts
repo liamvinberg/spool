@@ -7,17 +7,25 @@ import { pageParent } from "../page-path";
  * by the time a tab is free. A timing is no picture: an edited frame whose
  * redraws the booth could not time right after its cover, because covers were
  * waiting or another frame was being timed, is timed in a sitting of its own,
- * after every cover, wherever it is (spool#318).
+ * after every cover, wherever it is (spool#318). An opening is a slide's
+ * second picture, at the size a talk draws it (spool#319), owed the same way
+ * when covers were waiting, and taken after every cover and before every
+ * timing.
  */
-export type BoothReason = "edited" | "stale" | "missing" | "timing";
+export type BoothReason = "edited" | "stale" | "missing" | "opening" | "timing";
 
-const REASON_RANK: Record<BoothReason, number> = { edited: 0, stale: 1, missing: 2, timing: 3 };
+const REASON_RANK: Record<BoothReason, number> = { edited: 0, stale: 1, missing: 2, opening: 3, timing: 4 };
 
 /**
  * What a frame owed two things is owed. The higher wins, except that a timing
  * and a picture that would not time it make an edit: one sitting owes both.
+ * Every sitting of a slide takes the opening it owes, a timing's first.
  */
 function owed(was: BoothReason, now: BoothReason): BoothReason {
+	if (was === "opening" || now === "opening") {
+		if (was === "timing" || now === "timing") return "timing";
+		return REASON_RANK[now] < REASON_RANK[was] ? now : was;
+	}
 	if ((was === "timing") !== (now === "timing") && was !== "edited" && now !== "edited") return "edited";
 	return REASON_RANK[now] < REASON_RANK[was] ? now : was;
 }
@@ -50,8 +58,10 @@ interface BoothView {
 type Place = "on screen" | "on an open page" | "elsewhere";
 
 const PLACE_RANK: Record<Place, number> = { "on screen": 0, "on an open page": 1, elsewhere: 2 };
-/** Where a timing waits: behind every cover. */
-const PLACE_AFTER_ALL = 3;
+/** Where an opening waits: behind every cover, the open deck's before the rest. */
+const PLACE_OPENINGS = 3;
+/** Where a timing waits: behind every cover and every opening. */
+const PLACE_AFTER_ALL = PLACE_OPENINGS + 3;
 
 export const keyOf = (root: string, frame: string) => `${root}\0${frame}`;
 
@@ -108,8 +118,12 @@ export function createBoothQueue() {
 		let bestPlace = Number.POSITIVE_INFINITY;
 		for (const entry of waiting.values()) {
 			if (!timings && entry.reason === "timing") continue;
-			// a timing is no picture anyone waits for, wherever its frame is
-			const place = entry.reason === "timing" ? PLACE_AFTER_ALL : PLACE_RANK[placeOf(entry.root, entry.frame)];
+			// a timing or an opening is no cover anyone waits for, wherever its frame is; of the openings, those of the deck
+			// somebody is looking at go first, as it is the one Present would fly from
+			const place =
+				entry.reason === "timing"
+					? PLACE_AFTER_ALL
+					: (entry.reason === "opening" ? PLACE_OPENINGS : 0) + PLACE_RANK[placeOf(entry.root, entry.frame)];
 			if (
 				best === undefined ||
 				place < bestPlace ||
@@ -184,6 +198,12 @@ export function createBoothQueue() {
 		get timings() {
 			let count = 0;
 			for (const entry of waiting.values()) if (entry.reason === "timing") count++;
+			return count;
+		},
+		/** Of those, the ones owed a cover. */
+		get covers() {
+			let count = 0;
+			for (const entry of waiting.values()) if (entry.reason !== "timing" && entry.reason !== "opening") count++;
 			return count;
 		},
 		/** Frames in a tab right now. */

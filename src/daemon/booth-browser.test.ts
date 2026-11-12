@@ -39,13 +39,16 @@ const frameOf = (colour: string, extra = "") => `export default function Frame()
 }
 `;
 
-async function served(booth: BoothSeams = {}) {
+async function served(booth: BoothSeams = {}, experiments?: { deck: boolean }) {
 	// a machine in dark mode would start the booth dark; these start it light
-	const project = await serveProject({ booth: { systemScheme: async () => "light", ...booth } });
+	const project = await serveProject({
+		booth: { systemScheme: async () => "light", ...booth },
+		...(experiments === undefined ? {} : { experiments }),
+	});
 	const control = { headers: { "X-Spool-Control": project.controlToken } };
 	const projection = async () => {
 		const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frames`, control);
-		return (await res.json()) as { frames: { name: string; cover?: { hash: string } }[] };
+		return (await res.json()) as { frames: { name: string; cover?: { hash: string; opening?: string } }[] };
 	};
 	const coverOf = async (frame: string) => (await projection()).frames.find((entry) => entry.name === frame)?.cover;
 	const image = async (frame: string, hash: string) => {
@@ -673,4 +676,66 @@ it("times a talk's slides beat by beat, and check names the slow ones with why",
 		"checked 5 frames (5 source files), 0 errors; 4 of the 5 slides in talk timed slow",
 	]);
 	expect(checked.ok).toBe(true);
+});
+
+it("photographs a slide of a talk again as the talk draws it, on the beat it opens on, and no other frame", {
+	timeout: 120_000,
+}, async () => {
+	if (!(await shellAvailable())) return;
+	const project = await served({}, { deck: true });
+	const json = (value: unknown) => `${JSON.stringify(value, null, "\t")}\n`;
+	writeDesignFile(
+		project.root,
+		"frames/talk/deck.json",
+		json({ version: 1, w: 1280, h: 720, slides: ["one", "two"] }),
+	);
+	// a slide red on the beat it opens on and blue on its last, which its cover shows
+	writeFrame(
+		project.root,
+		"talk/one",
+		`import { ui } from "spool";
+
+export default function Slide() {
+	const beat = ui.beats(["red", "blue"]);
+	return <main style={{ background: beat.name, width: "100%", height: "100vh" }}>one</main>;
+}
+`,
+	);
+	writeFrame(project.root, "talk/two", frameOf("#11aa11"));
+	writeFrame(project.root, "talk/loose", frameOf("#11aa11"));
+	for (const [index, name] of ["one", "two", "loose"].entries()) {
+		writeDesignFile(project.root, `frames/talk/${name}/frame.json`, json({ x: index * 1440, y: 0, w: 1280, h: 720 }));
+	}
+	await project.projection();
+	await expect.poll(async () => (await project.coverOf("talk/one"))?.opening, { timeout: 60_000 }).toBeDefined();
+	const one = await project.coverOf("talk/one");
+	const still = await project.image("talk/one", one?.opening ?? "");
+	expect(still.type).toBe("image/jpeg");
+	// big enough to fill a 4K screen, where the cover is made for a card
+	expect(imageSize(still.bytes)).toEqual({ width: 3840, height: 2160 });
+	expect(imageSize((await project.image("talk/one", one?.hash ?? "")).bytes)).toEqual({ width: 800, height: 450 });
+	const red = await colourOf(still.bytes);
+	expect(red[0]).toBeGreaterThan(200);
+	expect(red[2]).toBeLessThan(60);
+	const blue = await colourOf((await project.image("talk/one", one?.hash ?? "")).bytes);
+	expect(blue[2]).toBeGreaterThan(200);
+	// a slide of one beat stands on it already
+	await expect.poll(async () => (await project.coverOf("talk/two"))?.opening, { timeout: 30_000 }).toBeDefined();
+	// a frame on the deck's page that is no slide of its talk is never presented
+	await expect.poll(() => project.coverOf("talk/loose"), { timeout: 30_000 }).toBeDefined();
+	expect((await project.coverOf("talk/loose"))?.opening).toBeUndefined();
+
+	// an edit lets the opening still go at once, as it is of the slide before the edit, and takes both again
+	const was = (await project.coverOf("talk/two"))?.opening;
+	writeFrame(project.root, "talk/two", frameOf("#1a39f5"));
+	await expect.poll(async () => (await project.coverOf("talk/two"))?.opening, { timeout: 30_000 }).toBeUndefined();
+	await expect
+		.poll(async () => (await project.coverOf("talk/two"))?.opening, { timeout: 30_000 })
+		.not.toBeOneOf([undefined, was]);
+
+	// a slide photographed before the booth took opening stills is owed one once a canvas reads it
+	const folder = join(project.root, "design", ".spool", "thumbs", encodeURIComponent("talk/one"));
+	rmSync(join(folder, `opening-${one?.opening}.jpg`));
+	expect((await project.coverOf("talk/one"))?.opening).toBeUndefined();
+	await expect.poll(async () => (await project.coverOf("talk/one"))?.opening, { timeout: 30_000 }).toBeDefined();
 });

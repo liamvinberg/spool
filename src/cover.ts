@@ -74,6 +74,25 @@ export function coverShape(frameWidth: number, frameHeight: number): CoverShape 
 export const COVER_QUALITY = 0.82;
 
 /**
+ * The screen a slide's opening still is made to fill (spool#319): a 4K one. Full screen on a Retina laptop draws a
+ * slide 3024 device pixels wide and a 4K projector 3840, and a still flies in soft wherever it is drawn bigger than it
+ * was made; the presenter view's slide, about 1950 wide, takes it shrunk, which stays sharp where one made at that
+ * size, resampled on the way, does not.
+ */
+export const OPENING_SCREEN = { width: 3840, height: 2160 } as const;
+
+/** A slide's opening still, worked out from its cover: the same CSS size, photographed to fill `OPENING_SCREEN`. */
+export function openingShape(cover: CoverShape): CoverShape | undefined {
+	const fits = Math.min(OPENING_SCREEN.width / cover.width, OPENING_SCREEN.height / cover.height);
+	const scale = Math.max(1, fits);
+	const raster = captureRasterSize(cover.width, cover.height, scale);
+	return raster === undefined ? undefined : { ...cover, scale, raster };
+}
+
+/** JPEG quality for a slide's opening still. */
+export const OPENING_QUALITY = 0.82;
+
+/**
  * How long a frame may wait for its fonts and its entry animations before it
  * is believed (#177): before the photo booth takes its cover, before its cover
  * fades onto it on the canvas, and before an export copies it.
@@ -96,4 +115,9 @@ export type ColorScheme = "light" | "dark";
 /** One immutable image, addressed by the hash of its content. */
 export interface Cover {
 	hash: string;
+	/**
+	 * A slide's opening still, when the photo booth has taken one: the slide at the size a talk draws it, on the beat
+	 * the talk opens on, addressed the same way (spool#319).
+	 */
+	opening?: string;
 }

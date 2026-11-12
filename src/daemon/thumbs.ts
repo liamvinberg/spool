@@ -18,6 +18,15 @@ type CoverExt = (typeof COVER_FORMATS)[number]["ext"];
 const HASH_CHARS = 32;
 const COVER_HASH = new RegExp(`^[0-9a-f]{${HASH_CHARS}}$`);
 const COVER_NAME = new RegExp(`^([0-9a-f]{${HASH_CHARS}})\\.(${COVER_FORMATS.map((f) => f.ext).join("|")})$`);
+/**
+ * A slide's opening still beside its cover (spool#319): the same frame at the size a talk draws it, on the beat the
+ * talk opens on, which presenting flies in place of the cover. It is of the version its cover is of, so it goes with
+ * that cover, as every other file beside a cover does.
+ */
+const OPENING_PREFIX = "opening-";
+const OPENING_NAME = new RegExp(
+	`^${OPENING_PREFIX}([0-9a-f]{${HASH_CHARS}})\\.(${COVER_FORMATS.map((f) => f.ext).join("|")})$`,
+);
 
 export function isCoverHash(value: string): boolean {
 	return COVER_HASH.test(value);
@@ -77,12 +86,16 @@ function coverOf(dir: string): Cover | undefined {
 }
 
 function coverAmong(names: string[]): Cover | undefined {
-	const hashes = names
-		.map((name) => COVER_NAME.exec(name)?.[1])
-		.filter((hash): hash is string => hash !== undefined)
-		.sort();
-	const hash = hashes.at(-1);
-	return hash === undefined ? undefined : { hash };
+	const last = (pattern: RegExp) =>
+		names
+			.map((name) => pattern.exec(name)?.[1])
+			.filter((hash): hash is string => hash !== undefined)
+			.sort()
+			.at(-1);
+	const hash = last(COVER_NAME);
+	if (hash === undefined) return undefined;
+	const opening = last(OPENING_NAME);
+	return opening === undefined ? { hash } : { hash, opening };
 }
 
 export function scanCovers(root: string): Map<string, Cover> {
@@ -135,15 +148,17 @@ export interface StoredCover {
 	type: string;
 }
 
-/** The one image an immutable cover address names. */
+/** The one image an immutable cover address names: a cover, or the opening still beside one. */
 export function readCoverImage(root: string, frame: string, hash: string): StoredCover | undefined {
 	if (!isCoverHash(hash)) return undefined;
 	const dir = coverDir(root, frame);
-	for (const format of COVER_FORMATS) {
-		try {
-			return { bytes: readFileSync(join(dir, `${hash}.${format.ext}`)), type: format.type };
-		} catch (error) {
-			if (error instanceof DesignBoundaryError) throw error;
+	for (const name of [hash, `${OPENING_PREFIX}${hash}`]) {
+		for (const format of COVER_FORMATS) {
+			try {
+				return { bytes: readFileSync(join(dir, `${name}.${format.ext}`)), type: format.type };
+			} catch (error) {
+				if (error instanceof DesignBoundaryError) throw error;
+			}
 		}
 	}
 	return undefined;
@@ -193,6 +208,40 @@ export function writeCover(
 	if (words !== undefined) writeAtomic(join(dir, WORDS_NAME), words.join("\n"));
 	writeAtomic(join(dir, BOOTH_NAME), "");
 	return { hash };
+}
+
+/**
+ * A slide's opening still, beside the cover just written of the same version (spool#319), retiring the one before it.
+ * Nothing is written for a frame with no cover: an opening still never stands without the cover it goes with.
+ */
+export function writeOpening(root: string, frame: string, bytes: Buffer): Cover | undefined {
+	const dir = coverDir(root, frame);
+	const cover = coverOf(dir);
+	if (cover === undefined) return undefined;
+	const format = coverFormat(bytes);
+	if (format === undefined) throw new Error("an opening still must be one PNG or JPEG image");
+	const opening = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
+	const name = `${OPENING_PREFIX}${opening}.${format.ext}`;
+	writeAtomic(join(dir, name), bytes);
+	for (const old of filesIn(dir)) {
+		if (old !== name && OPENING_NAME.test(old)) rmSync(join(dir, old), { force: true });
+	}
+	return { hash: cover.hash, opening };
+}
+
+/**
+ * A slide's opening still let go as the slide is edited (spool#319): it is of the slide before the edit, and a talk
+ * flies its cover until the booth has the new one, as before. The cover stays, as a card shows the last picture it has.
+ * The cover it now stands alone as, when it had a still beside it.
+ */
+export function retireOpening(root: string, frame: string): Cover | undefined {
+	const dir = coverDir(root, frame);
+	const cover = coverOf(dir);
+	if (cover?.opening === undefined) return undefined;
+	for (const old of filesIn(dir)) {
+		if (OPENING_NAME.test(old)) rmSync(join(dir, old), { force: true });
+	}
+	return { hash: cover.hash };
 }
 
 const SCHEME_NAME = "scheme";
@@ -249,6 +298,26 @@ export interface StoredStill {
 	hash: string;
 	source: string | undefined;
 	failed: boolean;
+}
+
+/** What a cover the booth made was taken of: the version, and the scheme when its frame follows one. */
+export function stillTaken(
+	root: string,
+	frame: string,
+): { source: string; scheme: ColorScheme | undefined } | undefined {
+	const dir = coverDir(root, frame);
+	const read = (name: string) => {
+		try {
+			return readFileSync(join(dir, name), "utf8").trim();
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
+			return undefined;
+		}
+	};
+	const source = read(SOURCE_NAME);
+	if (read(BOOTH_NAME) === undefined || source === undefined || !SOURCE_HASH.test(source)) return undefined;
+	const scheme = read(SCHEME_NAME);
+	return { source, scheme: scheme === "light" || scheme === "dark" ? scheme : undefined };
 }
 
 /** Every frame's stored still, read without holding the event loop; `failed` is `spool`'s booth's. */

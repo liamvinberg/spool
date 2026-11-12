@@ -100,6 +100,28 @@ describe("the booth queue", () => {
 		expect(drain(queue)).toEqual(["cart:edited"]);
 	});
 
+	it("takes a slide's opening still after every cover and before every timing, the open deck's first, and owes what both owe in one sitting", () => {
+		const queue = createBoothQueue();
+		queue.add(sitting("talk/timed", "timing"));
+		queue.add(sitting("other-talk/opens", "opening"));
+		queue.add(sitting("talk/opens", "opening"));
+		queue.add(sitting("aside", "missing", OTHER));
+		queue.view("canvas", { root: ROOT, page: "talk", frames: ["talk/timed"] });
+		expect(queue.covers).toBe(1);
+		expect(drain(queue)).toEqual([
+			"aside:missing",
+			"talk/opens:opening",
+			"other-talk/opens:opening",
+			"talk/timed:timing",
+		]);
+		// a timing sitting takes the still first; a cover's sitting takes it after the cover
+		queue.add(sitting("talk/one", "opening"));
+		queue.add(sitting("talk/one", "timing"));
+		queue.add(sitting("talk/two", "opening"));
+		queue.add(sitting("talk/two", "stale"));
+		expect(drain(queue)).toEqual(["talk/two:stale", "talk/one:timing"]);
+	});
+
 	it("takes the frames on screen first, then the rest of the open page, then everything else", () => {
 		const queue = createBoothQueue();
 		queue.add(sitting("elsewhere/one", "edited"));
@@ -291,6 +313,27 @@ describe("the booth before any browser", () => {
 		await vi.waitFor(() => expect(deps.finished).toHaveBeenCalledWith(ROOT, "home"));
 		expect(deps.compile).not.toHaveBeenCalled();
 		expect(deps.launch).not.toHaveBeenCalled();
+	});
+
+	it("does not take again a picture the scheme made stale and then fresh while it waited", async () => {
+		// a canvas showing light on a machine in dark: everything was owed in dark first, then in light again
+		const night = "<style>@media (prefers-color-scheme: dark) { main { color: white } }</style><main></main>";
+		const source = "a".repeat(64);
+		const { booth: made, deps } = booth({
+			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "ok", etag: '"one"', document: night, source })),
+			covered: vi.fn(() => true),
+			taken: vi.fn<NonNullable<BoothDeps["taken"]>>((_root, frame) => ({
+				source,
+				scheme: frame === "dusk" ? "dark" : "light",
+			})),
+		});
+		await made.schemeKnown();
+		made.enqueue(sitting("home", "stale"));
+		await vi.waitFor(() => expect(deps.finished).toHaveBeenCalledWith(ROOT, "home"));
+		expect(deps.launch).not.toHaveBeenCalled();
+		// one still in the other scheme is owed its picture
+		made.enqueue(sitting("dusk", "stale"));
+		await vi.waitFor(() => expect(deps.launch).toHaveBeenCalled());
 	});
 
 	it("keeps a broken compile's reason beside the old cover, and lets only an edit ask again soon", async () => {

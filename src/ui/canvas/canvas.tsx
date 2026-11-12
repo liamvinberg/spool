@@ -68,6 +68,7 @@ import {
 import { type DeckEntry, deckSending, tellDeckChange, tellFrameChange, tellStageChange } from "../deck/deck-api";
 import { type DeckInside, DeckKeyList, DeckStage, useDeckInside } from "../deck/deck-inside";
 import { DeckLayer, DeckNumbers, revealOnDeck, useDeckPage } from "../deck/deck-page";
+import { useOpeningReady } from "../deck/opening";
 import { presentAgain, presentCold, presentTakes, warmPresent } from "../deck/present";
 import { PresentControl } from "../deck/present-controls";
 import { Presenting } from "../deck/presenting";
@@ -1034,8 +1035,13 @@ function CanvasField({
 				// the same address. A picture the canvas already shows is not worth a
 				// render of the whole canvas. A picture landing is also proof the frame
 				// works again, whatever it looks like: the booth only keeps one it made.
+				// A slide's opening still lands after its cover, with the cover's address
+				// (spool#319).
 				const stale = (entry: ProjectedFrame) =>
-					entry.name === frame && (entry.cover?.hash !== cover.hash || entry.broken !== undefined);
+					entry.name === frame &&
+					(entry.cover?.hash !== cover.hash ||
+						entry.cover?.opening !== cover.opening ||
+						entry.broken !== undefined);
 				if (!current.some(stale)) return current;
 				return current.map((entry) => {
 					if (!stale(entry)) return entry;
@@ -2030,6 +2036,8 @@ function CanvasField({
 		if (heldSlide === undefined) return;
 		return () => presentCold();
 	}, [heldSlide]);
+	// the slide Present would play from flies as its opening still, decoded ahead (spool#319)
+	useOpeningReady(store, project, deckPage.on ? presentFromHeld()?.slide : undefined);
 	deckIn.current = deckInside;
 	deckBand.current =
 		deckPage.read === undefined

@@ -20,8 +20,10 @@ import {
 	scanPreBoothCovers,
 	scanStills,
 	scanWords,
+	stillTaken,
 	writeCaptureError,
 	writeCover,
+	writeOpening,
 	writePace,
 } from "./thumbs";
 
@@ -109,6 +111,37 @@ describe("writing a cover", () => {
 
 	it("refuses bytes the store cannot serve", () => {
 		expect(() => writeCover(project(), "home", Buffer.from("nope"))).toThrow("a cover must be one PNG or JPEG image");
+	});
+});
+
+describe("a slide's opening still (spool#319)", () => {
+	it("rides beside the cover it was taken with, at an address of its own, and goes when the cover does", async () => {
+		const root = project();
+		const cover = writeCover(root, "home", JPEG);
+		const opened = writeOpening(root, "home", OTHER_JPEG);
+		expect(opened).toEqual({ hash: cover.hash, opening: expect.stringMatching(/^[0-9a-f]{32}$/) });
+		const opening = opened?.opening ?? "";
+		expect(readCover(root, "home")).toEqual(opened);
+		expect(scanCovers(root).get("home")).toEqual(opened);
+		expect(await readCoverAwaited(root, "home")).toEqual(opened);
+		expect(readCoverImage(root, "home", opening)?.bytes).toEqual(OTHER_JPEG);
+		expect(readCoverImage(root, "home", cover.hash)?.bytes).toEqual(JPEG);
+		// a still taken again goes with its own picture of the opening, or none
+		writeCover(root, "home", PNG);
+		expect(readCover(root, "home")?.opening).toBeUndefined();
+		expect(readCoverImage(root, "home", opening)).toBeUndefined();
+	});
+
+	it("keeps only the last one taken, and none for a frame with no still", () => {
+		const root = project();
+		writeCover(root, "home", JPEG);
+		writeOpening(root, "home", OTHER_JPEG);
+		const last = writeOpening(root, "home", PNG);
+		expect(readdirSync(storeDir(root)).filter((name) => name.startsWith("opening-"))).toEqual([
+			`opening-${last?.opening}.png`,
+		]);
+		expect(writeOpening(root, "cart", JPEG)).toBeUndefined();
+		expect(existsSync(join(root, "design", ".spool", "thumbs", "cart"))).toBe(false);
 	});
 });
 
@@ -248,11 +281,14 @@ describe("the version of the frame a still is of", () => {
 				["cart", { hash: cart.hash, source: undefined, failed: false }],
 			]),
 		);
-		writeCover(root, "home", OTHER_JPEG, undefined, B);
+		writeCover(root, "home", OTHER_JPEG, "dark", B);
 		expect((await scanStills(root, SPOOL)).get("home")?.source).toBe(B);
+		// what the booth reads before it takes a frame again for a scheme: this version, in that scheme
+		expect(stillTaken(root, "home")).toEqual({ source: B, scheme: "dark" });
 		// a still taken without one is of a version nobody can say
 		writeCover(root, "home", JPEG);
 		expect((await scanStills(root, SPOOL)).get("home")?.source).toBeUndefined();
+		expect(stillTaken(root, "home")).toBeUndefined();
 	});
 
 	it("is forgotten when the frame is renamed, since a version names its frame", async () => {
