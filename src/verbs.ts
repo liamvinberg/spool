@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { holdsDeck } from "./daemon/deck/disk";
 import { renderOrigin } from "./daemon/lifecycle";
 import { describeMissingFrame, lookupFrame } from "./daemon/projection";
 import type { SelectionEntry } from "./daemon/selection";
@@ -63,6 +64,20 @@ export async function mintPlayerUrl(
 ): Promise<string> {
 	await assertFrameExists(daemonUrl, name, frame, controlToken);
 	return `${daemonUrl}/play/${encodeURIComponent(name)}?frame=${encodeURIComponent(frame)}`;
+}
+
+/**
+ * The address that plays a deck page's talk from its first slide (spool#323), or nothing for a name that is no deck
+ * page. `deckOn` says whether the deck experiment is on, without which nothing plays.
+ */
+export function mintTalkUrl(daemonUrl: string, name: string, page: string, root: string, deckOn: boolean) {
+	if (!holdsDeck(root, page)) return undefined;
+	if (!deckOn) {
+		throw new SpoolError(
+			`${page} is a deck page, and decks are the deck experiment's, which is off here: \`spool experiments on deck\``,
+		);
+	}
+	return `${daemonUrl}/play/${encodeURIComponent(name)}?${new URLSearchParams({ deck: page })}`;
 }
 
 /** A direct frame document, for browser automation without player chrome. */

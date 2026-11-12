@@ -75,6 +75,7 @@ import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
 import {
 	mintPlayerUrl,
+	mintTalkUrl,
 	mintRawUrl,
 	readFlows,
 	readSelection,
@@ -684,8 +685,8 @@ program
 
 program
 	.command("url")
-	.description("mint a player-session URL to drive in a browser")
-	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
+	.description("mint a player-session URL to drive in a browser, or the address that plays a deck page's talk")
+	.argument("<frame>", "frame name, its path under design/frames, or a deck page's", parseFrame)
 	.option("--raw", "mint the bare frame document URL: one frame, no session")
 	.action(async (frame: string, options: { raw?: boolean }) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
@@ -695,7 +696,8 @@ program
 			`${
 				options.raw === true
 					? await mintRawUrl(daemonUrl, name, frame, root)
-					: await mintPlayerUrl(daemonUrl, name, frame, controlToken)
+					: (mintTalkUrl(daemonUrl, name, frame, root, experimentsOnHere(spoolDir)("deck")) ??
+						(await mintPlayerUrl(daemonUrl, name, frame, controlToken)))
 			}\n`,
 		);
 	});
