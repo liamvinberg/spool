@@ -104,7 +104,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 	const [menu, setMenu] = useState(false);
 	const pointerOn = usePointerShown();
 	/** L pressed with the menu away: what it did, said for a moment */
-	const [said, setSaid] = useState<{ readonly on: boolean } | null>(null);
+	const [pointerSaid, setPointerSaid] = useState<{ readonly on: boolean } | null>(null);
 	const clock = useTalkClock(ask.pressed);
 	const hands = useRef({ onPicture, onEnd, onRefused, help, menu });
 	hands.current = { onPicture, onEnd, onRefused, help, menu };
@@ -155,7 +155,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 				const on = !pointerShown();
 				showPointer(on);
 				// with the menu open its switch says it
-				if (!hands.current.menu) setSaid({ on });
+				if (!hands.current.menu) setPointerSaid({ on });
 			} else if (command.kind !== "blur") host.command(command);
 		};
 		// the Mac app places the room and says where: by the display's own name
@@ -260,10 +260,10 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 
 	// L's cue goes after a moment
 	useEffect(() => {
-		if (said === null) return;
-		const timer = setTimeout(() => setSaid(null), POINTER_SAID_MS);
+		if (pointerSaid === null) return;
+		const timer = setTimeout(() => setPointerSaid(null), POINTER_SAID_MS);
 		return () => clearTimeout(timer);
-	}, [said]);
+	}, [pointerSaid]);
 
 	// the keyboard is the talk's while the view is up: nothing behind it hears a key, and spool's own keys rest
 	useEffect(() => {
@@ -402,11 +402,13 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 												</>,
 												"text-secondary type-detail",
 											)
-										: said !== null
+										: pointerSaid !== null
 											? cue(
-													said.on ? "pointer-on" : "pointer-off",
+													pointerSaid.on ? "pointer-on" : "pointer-off",
 													<>
-														{said.on ? "The room sees your pointer" : "The room doesn't see your pointer"}{" "}
+														{pointerSaid.on
+															? "The room sees your pointer"
+															: "The room doesn't see your pointer"}{" "}
 														<Kbd>L</Kbd>
 													</>,
 													"text-secondary type-detail",
