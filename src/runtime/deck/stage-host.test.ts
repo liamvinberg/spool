@@ -150,7 +150,9 @@ it("takes a new build that readied while a slide wrote ui.state once it shows th
 	// what a slide wrote while the build readied moved nothing: the new build is handed it, and says when it shows it
 	host.apply(at(1, 2, { state: { count: 1 } }));
 	await next.say(shown(1, false));
-	expect(next.heard.at(-1)).toMatchObject({ spool: "stage-apply", session: { revision: 2, state: { count: 1 } } });
+	await vi.waitFor(() =>
+		expect(next.heard.at(-1)).toMatchObject({ spool: "stage-apply", session: { revision: 2, state: { count: 1 } } }),
+	);
 	expect([seen(first), seen(next)]).toEqual(["on", "readying"]);
 	await next.say({ spool: "stage-applied", revision: 2 });
 	expect([seen(first), seen(next)]).toEqual(["gone", "on"]);
