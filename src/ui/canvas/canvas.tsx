@@ -71,6 +71,7 @@ import { PresentControl } from "../deck/present-controls";
 import { Presenting } from "../deck/presenting";
 import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
+import { desktopWindow } from "../desktop-window";
 import { experimentOn } from "../experiments";
 import { isLetGo } from "../gone-projects";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
@@ -1831,13 +1832,17 @@ function CanvasField({
 	 */
 	const playFrame = useCallback(
 		(name: string, record = false) => {
-			window.open(
-				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}${record ? "&record=arm" : ""}`,
-				"_blank",
-				"noopener,noreferrer",
-			);
+			const path = `/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}${record ? "&record=arm" : ""}`;
+			// the Mac app opens its window at the frame's size at the press, so it is handed the size it would ask for
+			const frame = store.get().frames.find((candidate) => candidate.name === name);
+			const desk = desktopWindow();
+			if (desk?.play !== undefined && frame !== undefined) {
+				desk.play(path, { w: Math.round(frame.w), h: Math.round(frame.h) });
+				return;
+			}
+			window.open(path, "_blank", "noopener,noreferrer");
 		},
-		[project],
+		[project, store],
 	);
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
