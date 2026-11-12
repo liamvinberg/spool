@@ -120,6 +120,7 @@ export function useDeckInside({
 	viewport,
 	select,
 	present,
+	carrying,
 }: {
 	project: string;
 	/** the page in front */
@@ -134,6 +135,8 @@ export function useDeckInside({
 	select: (name: string) => void;
 	/** present the talk, from the slide held or the first, as ⌘↵ and ⇧⌘↵ do on the page; false when it did not */
 	present: (first: boolean) => boolean;
+	/** a frame of the page is in the hand or landing: no slide settles meanwhile (spool#299) */
+	carrying: boolean;
 }): DeckInside {
 	const [inside, setInside] = useState<Inside | null>(null);
 	const [element, hold] = useState<HTMLDivElement | null>(null);
@@ -335,16 +338,16 @@ export function useDeckInside({
 		[camera, viewSize],
 	);
 
-	// a slide held settles once its selection has stood longer than a double-click, and the slide the talk is on once
-	// the camera is there; let go, it settles afresh when it is held again
+	// a slide held settles once its selection has stood longer than a double-click with nothing in the hand, and the
+	// slide the talk is on once the camera is there; let go, it settles afresh when it is held again
 	const held = useCanvasState(store, (state) => (state.selected.length === 1 ? (state.selected[0] ?? null) : null));
 	const heldSlide = held !== null && read?.slides.some((slide) => slide.name === held) === true ? held : null;
 	const [settled, setSettled] = useState<string | null>(null);
 	useEffect(() => {
-		if (heldSlide === null || inside !== null) return;
+		if (heldSlide === null || inside !== null || carrying) return;
 		const settle = setTimeout(() => setSettled(heldSlide), SETTLE_MS);
 		return () => clearTimeout(settle);
-	}, [heldSlide, inside]);
+	}, [heldSlide, inside, carrying]);
 	useEffect(() => () => setSettled((was) => (was === heldSlide ? null : was)), [heldSlide]);
 	const flying = inside?.phase === "in" && !inside.flown;
 	useEffect(() => {

@@ -3,6 +3,7 @@ import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
 import { type Box, shellRadiusOnScreen, tooSmall, toScreen } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
+import { boxDrawn, type FrameMotion } from "./frame-motion";
 import { type Glide, useGlide } from "./glide";
 import type { ShownRefusal } from "./hand-edit";
 import { frameSourcePath } from "./pages";
@@ -119,7 +120,7 @@ export function Follow({
 	camera: CameraStore;
 	screen: (camera: Camera) => ScreenBox;
 	/** what `screen` reads besides the camera, when it moves between the camera's frames */
-	glide?: Glide | undefined;
+	glide?: Pick<Glide, "listen"> | undefined;
 	style?: Omit<CSSProperties, (typeof SCREEN_KEYS)[number]>;
 } & Omit<HTMLAttributes<HTMLDivElement>, "style">) {
 	const box = useRef<HTMLDivElement | null>(null);
@@ -213,7 +214,10 @@ export function SelectionOverlay({
 	dropLine = null,
 	landing = null,
 	overview = false,
+	motion,
 }: {
+	/** Frames drawn other than where they stand: a frame's ring rides it where it is drawn, grown as it is (spool#299). */
+	motion?: FrameMotion | undefined;
 	/** a move between frames while live just landed here (DEV-295): its ring flashes once */
 	landing?: { frame: string; at: number } | null;
 	/** the ⌥ overview is up, and rings the frames itself */
@@ -311,7 +315,8 @@ export function SelectionOverlay({
 			{hoveredFrame !== undefined && (
 				<Follow
 					camera={camera}
-					screen={(at) => ringBox(at, hoveredFrame)}
+					screen={(at) => ringBox(at, boxDrawn(hoveredFrame, motion?.drawn(hoveredFrame.name)))}
+					glide={motion}
 					data-frame-hover={hoveredFrame.name}
 					// at once under the pointer, and let go of slowly enough to see it go
 					className={`absolute border border-line-strong ${
@@ -327,7 +332,8 @@ export function SelectionOverlay({
 					<Follow
 						key={`ring-${name}`}
 						camera={camera}
-						screen={(at) => ringBox(at, frame)}
+						screen={(at) => ringBox(at, boxDrawn(frame, motion?.drawn(name)))}
+						glide={motion}
 						// the ring's own strength is the system page's law and does not move; the
 						// cursor on this frame's chip fills the box instead, which is the same
 						// thing a lit element outline does one level down (#116)

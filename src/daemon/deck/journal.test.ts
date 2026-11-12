@@ -24,12 +24,12 @@ function fixture() {
 		chmodSync(join(designDir, path), 0o555);
 		onTestFinished(() => chmodSync(join(designDir, path), 0o755));
 	};
-	const trade = [
+	const change = [
 		{ path: "frames/talk/x/notes.md", before: "WORDS OF X\n", after: "WORDS OF S\n" },
 		{ path: "frames/talk/s/notes.md", before: "WORDS OF S\n", after: "WORDS OF X\n" },
 		{ path: "frames/talk/deck.json", before: '{ "slides": ["s"] }\n', after: '{ "slides": ["x"] }\n' },
 	];
-	return { designDir, read, records, readOnly, trade };
+	return { designDir, read, records, readOnly, change };
 }
 
 // a folder made read-only refuses its owner only when that owner is not root
@@ -38,13 +38,13 @@ describe.skipIf(process.getuid?.() === 0)("a deck change written as one transact
 		for (const failing of ["frames/talk/s", "frames/talk"]) {
 			const disk = fixture();
 			disk.readOnly(failing);
-			expect(() => commitSteps(disk.designDir, "talk", disk.trade)).toThrow();
+			expect(() => commitSteps(disk.designDir, "talk", disk.change)).toThrow();
 			expect(disk.read("frames/talk/x/notes.md")).toBe("WORDS OF X\n");
 			expect(disk.read("frames/talk/s/notes.md")).toBe("WORDS OF S\n");
 			expect(disk.read("frames/talk/deck.json")).toBe('{ "slides": ["s"] }\n');
 			expect(disk.records()).toEqual([]);
 			chmodSync(join(disk.designDir, failing), 0o755);
-			commitSteps(disk.designDir, "talk", disk.trade);
+			commitSteps(disk.designDir, "talk", disk.change);
 			expect(disk.read("frames/talk/x/notes.md")).toBe("WORDS OF S\n");
 			expect(disk.read("frames/talk/deck.json")).toBe('{ "slides": ["x"] }\n');
 			expect(disk.records()).toEqual([]);
@@ -55,11 +55,11 @@ describe.skipIf(process.getuid?.() === 0)("a deck change written as one transact
 describe("a deck change the daemon died inside", () => {
 	it("is put back whole while its files hold what it found or wrote, and left whole where a hand wrote since", () => {
 		const disk = fixture();
-		// died after the notes traded and before deck.json: as a crash leaves it
+		// died after the notes were written and before deck.json: as a crash leaves it
 		writeFileSync(join(disk.designDir, "frames/talk/x/notes.md"), "WORDS OF S\n");
 		writeFileSync(join(disk.designDir, "frames/talk/s/notes.md"), "WORDS OF X\n");
 		mkdirSync(join(disk.designDir, ".spool", "deck-changes"), { recursive: true });
-		const record = JSON.stringify({ page: "talk", steps: disk.trade });
+		const record = JSON.stringify({ page: "talk", steps: disk.change });
 		writeFileSync(join(disk.designDir, ".spool/deck-changes/one.json"), record);
 		expect(recoverDeckChanges(disk.designDir)).toEqual([]);
 		expect(disk.read("frames/talk/x/notes.md")).toBe("WORDS OF X\n");
@@ -81,7 +81,7 @@ describe("a deck change the daemon died inside", () => {
 		const disk = fixture();
 		writeFileSync(join(disk.designDir, "frames/talk/x/notes.md"), "WORDS OF S\n");
 		mkdirSync(join(disk.designDir, ".spool", "deck-changes"), { recursive: true });
-		const steps = disk.trade.slice(0, 1);
+		const steps = disk.change.slice(0, 1);
 		// the parent of this test runs; a child that has exited does not
 		const gone = spawnSync(process.execPath, ["-e", ""]).pid;
 		writeFileSync(

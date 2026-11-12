@@ -12,8 +12,6 @@ import type { Cell, Deck, Spot } from "./layout";
 export type DeckRule =
 	/** frames, loose or slides, join the talk in the gap before slide `at` (the talk's length is its end) */
 	| { readonly kind: "insert"; readonly frames: readonly string[]; readonly at: number }
-	/** a loose frame takes a slide's place and its notes; the slide goes loose into the frame's cell */
-	| { readonly kind: "trade"; readonly frame: string; readonly slide: string }
 	/**
 	 * frames go into the grid as a block down a column from `cell`, the frames there and under it moving down to
 	 * make room; slides among them leave the talk, which closes. No cell: the first free one under the talk's end.
@@ -27,8 +25,7 @@ export type DeckRule =
 	| { readonly kind: "size"; readonly size: Size };
 
 export type RuleResult =
-	/** `swap`: two frames whose notes trade places, as a trade's do */
-	| { readonly kind: "changed"; readonly deck: Deck; readonly swap?: readonly [string, string] }
+	| { readonly kind: "changed"; readonly deck: Deck }
 	| { readonly kind: "refused"; readonly message: string };
 
 const refuse = (message: string): RuleResult => ({ kind: "refused", message });
@@ -43,11 +40,6 @@ export function applyRule(deck: Deck, rule: DeckRule): RuleResult {
 			if (missing !== undefined) return refuse(`no frame "${missing}" on this page`);
 			if (!Number.isInteger(rule.at)) return refuse("an insert's place is a whole number");
 			return { kind: "changed", deck: insert(deck, rule.frames, rule.at) };
-		}
-		case "trade": {
-			if (!deck.loose.some((spot) => spot.folder === rule.frame)) return refuse(`"${rule.frame}" is not loose`);
-			if (!deck.line.includes(rule.slide)) return refuse(`"${rule.slide}" is not in the talk`);
-			return { kind: "changed", deck: trade(deck, rule.frame, rule.slide), swap: [rule.frame, rule.slide] };
 		}
 		case "place": {
 			if (rule.frames.length === 0) return refuse("a place names at least one frame");
@@ -98,15 +90,6 @@ function insert(deck: Deck, frames: readonly string[], at: number): Deck {
 	const line = deck.line.filter((folder) => !moving.has(folder));
 	line.splice(gap - before, 0, ...block);
 	return { ...deck, line, loose: deck.loose.filter((spot) => !moving.has(spot.folder)) };
-}
-
-function trade(deck: Deck, frame: string, slide: string): Deck {
-	const spot = deck.loose.find((one) => one.folder === frame) as Spot;
-	return {
-		...deck,
-		line: deck.line.map((one) => (one === slide ? frame : one)),
-		loose: deck.loose.map((one) => (one.folder === frame ? { folder: slide, col: spot.col, row: spot.row } : one)),
-	};
 }
 
 function place(deck: Deck, frames: readonly string[], cell: Cell | undefined): Deck {

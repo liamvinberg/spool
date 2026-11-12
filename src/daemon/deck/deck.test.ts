@@ -222,7 +222,6 @@ describe("a deck on disk", () => {
 		expect(deck.files()).toEqual(madeFiles);
 
 		const changes: DeckChange[] = [
-			{ kind: "trade", page: "talk", frame: "alt", slide: "body" },
 			{ kind: "insert", page: "talk", frames: ["spare", "alt"], at: 1 },
 			{ kind: "place", page: "talk", frames: ["end"], cell: { col: 0, row: 1 } },
 			{ kind: "reorder", page: "talk", frame: "alt", to: 0 },
@@ -246,38 +245,34 @@ describe("a deck on disk", () => {
 			expect(deck.files()).toEqual(after);
 		}
 
-		// the trade took the notes with the place, and nothing of either was lost on the way back and forth
+		// the same undo sent again finds the files it would put back already back, and puts nothing back a second time
 		const fresh = deckProject();
 		for (const folder of ["one", "two", "loose"]) writePageFrame(fresh.root, "talk", folder, tsx(folder));
-		writeDesignFile(fresh.root, "frames/talk/one/notes.md", "One's words.\n");
 		await fresh.change({ kind: "make", page: "talk", slides: ["one", "two"] });
-		const traded = await fresh.change({ kind: "trade", page: "talk", frame: "loose", slide: "one" });
-		expect(fresh.files()["loose/notes.md"]).toBe("One's words.\n");
-		expect(fresh.files()["one/notes.md"]).toBeUndefined();
-		const undo = traded.answer?.undo as DeckChange;
+		const joined = await fresh.change({ kind: "insert", page: "talk", frames: ["loose"], at: 0 });
+		const talk = fresh.files()["deck.json"];
+		const undo = joined.answer?.undo as DeckChange;
 		await fresh.change(undo);
-		expect(fresh.files()["one/notes.md"]).toBe("One's words.\n");
-		expect(fresh.files()["loose/notes.md"]).toBeUndefined();
-		// the same undo sent again finds the files it would put back already back, and trades nothing a second time
+		const unjoined = fresh.files();
 		expect((await fresh.change(undo)).status).toBe(409);
-		expect(fresh.files()["one/notes.md"]).toBe("One's words.\n");
+		expect(fresh.files()).toEqual(unjoined);
 
 		// an undo or redo never writes over a hand's change since: to the talk, to notes, or a place in flight
-		const redo = traded.answer?.redo as DeckChange;
-		const untouched = fresh.files();
+		const redo = joined.answer?.redo as DeckChange;
 		writeDesignFile(fresh.root, "frames/talk/deck.json", json({ version: 1, slides: ["one", "two", "loose"] }));
 		expect((await fresh.change(redo)).status).toBe(409);
-		writeDesignFile(fresh.root, "frames/talk/deck.json", untouched["deck.json"] as string);
-		writeDesignFile(fresh.root, "frames/talk/one/notes.md", "One's words, edited.\n");
-		expect((await fresh.change(redo)).status).toBe(409);
-		writeDesignFile(fresh.root, "frames/talk/one/notes.md", "One's words.\n");
+		writeDesignFile(fresh.root, "frames/talk/deck.json", unjoined["deck.json"] as string);
 		writeDesignFile(fresh.root, "frames/talk/loose/frame.json", '{ "x": ');
 		expect((await fresh.change(redo)).status).toBe(409);
-		writeDesignFile(fresh.root, "frames/talk/loose/frame.json", untouched["loose/frame.json"] as string);
-		expect(fresh.files()).toEqual(untouched);
+		writeDesignFile(fresh.root, "frames/talk/loose/frame.json", unjoined["loose/frame.json"] as string);
+		expect(fresh.files()).toEqual(unjoined);
+		const worded = await fresh.change({ kind: "notes", page: "talk", frame: "one", beat: 0, text: "One's words." });
+		writeDesignFile(fresh.root, "frames/talk/one/notes.md", "One's words, edited.\n");
+		expect((await fresh.change(worded.answer?.undo as DeckChange)).status).toBe(409);
+		expect(fresh.files()["one/notes.md"]).toBe("One's words, edited.\n");
 		// put back as it was, the redo lands
 		expect((await fresh.change(redo)).status).toBe(200);
-		expect(fresh.files()["loose/notes.md"]).toBe("One's words.\n");
+		expect(fresh.files()["deck.json"]).toBe(talk);
 	});
 
 	it("makes New presentation's page whole in one change, its starter laid out with its beats and notes", async () => {

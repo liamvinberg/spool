@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import type { CameraStore } from "./camera-store";
+import type { FrameMotion } from "./frame-motion";
 import { type PictureFrame, PictureLayer, type PictureReport } from "./picture-layer";
 
 /**
@@ -43,6 +44,7 @@ export function PictureCanvas({
 	frames,
 	claims,
 	booting,
+	motion = null,
 	onDrawing,
 }: {
 	camera: CameraStore;
@@ -51,6 +53,8 @@ export function PictureCanvas({
 	claims: PictureClaims;
 	/** Whether a frame's document is booting, which the rest of the page's stills wait out (`setBooting`). */
 	booting: boolean;
+	/** Frames drawn other than where they stand, drawn again in every animation frame they move in (spool#299). */
+	motion?: FrameMotion | null | undefined;
 	/** Whether the layer can draw at all: not with no WebGL2, nor while a lost context is away. */
 	onDrawing?: (drawing: boolean) => void;
 }) {
@@ -58,12 +62,15 @@ export function PictureCanvas({
 	const layer = useRef<PictureLayer | null>(null);
 	const drawing = useRef(onDrawing);
 	drawing.current = onDrawing;
+	const moves = useRef(motion);
+	moves.current = motion;
 
 	useLayoutEffect(() => {
 		const canvas = element.current;
 		if (canvas === null) return;
 		const made = new PictureLayer(canvas, (now) => drawing.current?.(now));
 		layer.current = made;
+		made.setMotion(moves.current);
 		claims.attach(made);
 		canvas.spoolPictures = () => made.report();
 
@@ -134,6 +141,11 @@ export function PictureCanvas({
 	useLayoutEffect(() => {
 		layer.current?.setBooting(booting);
 	}, [booting]);
+
+	useLayoutEffect(() => {
+		layer.current?.setMotion(motion);
+		return motion?.listen(() => layer.current?.moved());
+	}, [motion]);
 
 	useLayoutEffect(() => {
 		layer.current?.draw(camera.get());
