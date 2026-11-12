@@ -6,7 +6,7 @@ import type { CameraStore } from "./camera-store";
 import type { CanvasStore } from "./canvas-store";
 import { CornerRow } from "./corner-row";
 import type { PresenceRoom } from "./presence";
-import { facesOf, PresenceFaces, useRoomDrawn } from "./presence-faces";
+import { Faces, facesOf, useRoomDrawn } from "./presence-faces";
 
 /**
  * What the canvas holds at its top right (spool#312): the agent's path, who's here on a team canvas and, on a deck
@@ -69,17 +69,17 @@ export function CanvasCorner({
 		toPage,
 		onLand,
 	});
-	const anyone = team && facesOf(room, page, Date.now()).faces.length > 0;
+	const here = facesOf(room, page, Date.now());
 	return (
 		<CornerRow
 			viewport={viewportRef}
 			under={under}
 			trail={loaded ? trail : null}
 			faces={
-				anyone
+				team && here.faces.length > 0
 					? (max) => (
-							<PresenceFaces
-								room={room}
+							<Faces
+								here={here}
 								page={page}
 								project={project}
 								following={following}

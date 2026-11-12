@@ -64,7 +64,7 @@ export function useRoomDrawn(room: PresenceRoom): void {
 }
 
 /** Who to draw a face for, at `now`: the people on this page first, then the ones on the project's other pages. */
-export function facesOf(room: PresenceRoom, page: string, now: number) {
+export function facesOf(room: PresenceRoom, page: string, now: number): Here {
 	// in the order they arrived, so a face that dims stays where it was instead of trading places
 	const mates = room
 		.teammates()
@@ -73,19 +73,24 @@ export function facesOf(room: PresenceRoom, page: string, now: number) {
 	const onPage = mates.filter((one) => here(one.look) && one.mate.state.page === page);
 	const elsewhere = mates.filter((one) => here(one.look) && one.mate.state.page !== page);
 	const away = mates.filter((one) => one.look === "away");
-	return { onPage, elsewhere, away, faces: [...onPage, ...elsewhere] };
+	return { now, onPage, elsewhere, away, faces: [...onPage, ...elsewhere], hidden: room.pointerHidden() };
 }
 
-export function PresenceFaces({
-	room,
-	page,
-	project,
-	following,
-	onFollow,
-	max = FACES_SHOWN,
-	align = "start",
-}: {
-	room: PresenceRoom;
+type Seen = { mate: Teammate; look: Look };
+
+/** Who's here at one moment, as the faces draw them. */
+export interface Here {
+	readonly now: number;
+	readonly onPage: readonly Seen[];
+	readonly elsewhere: readonly Seen[];
+	readonly away: readonly Seen[];
+	/** `onPage`, then `elsewhere` */
+	readonly faces: readonly Seen[];
+	/** this person's pointer is hidden from the others, the room being full */
+	readonly hidden: boolean;
+}
+
+interface FacesProps {
 	/** The page this canvas is on: someone elsewhere is drawn as a ring. */
 	page: string;
 	/** What the project's root page is called where a place names it. */
@@ -96,16 +101,33 @@ export function PresenceFaces({
 	max?: number;
 	/** Which edge the list lets down from: the faces' end where they stand at the right. */
 	align?: "start" | "end";
-}) {
+}
+
+/** The faces of whoever is in the room, drawn again as it changes. */
+export function PresenceFaces({ room, ...props }: FacesProps & { room: PresenceRoom }) {
 	useRoomDrawn(room);
+	return <Faces here={facesOf(room, props.page, Date.now())} {...props} />;
+}
+
+/**
+ * The faces of who's here at one moment (`facesOf`). The top right's row keeps the last moment it drew while the
+ * faces fade out, so the last to leave goes with them.
+ */
+export function Faces({
+	here: { now, onPage, elsewhere, away, faces, hidden },
+	page,
+	project,
+	following,
+	onFollow,
+	max = FACES_SHOWN,
+	align = "start",
+}: FacesProps & { here: Here }) {
 	const measuring = useContext(Measuring);
 	const still = useReducedMotion() === true;
 	const [opened, setOpen] = useState(false);
 	const open = opened && !measuring;
 	const root = useRef<HTMLDivElement | null>(null);
 	const button = useRef<HTMLButtonElement | null>(null);
-	const now = Date.now();
-	const { onPage, elsewhere, away, faces } = facesOf(room, page, now);
 	const empty = faces.length === 0;
 	useEffect(() => {
 		if (empty) setOpen(false);
@@ -131,6 +153,7 @@ export function PresenceFaces({
 	}, [open]);
 
 	// the canvas under it never takes a press, a wheel or a menu meant for the faces or the list
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the faces drawn again after nobody was here are a new element
 	useEffect(() => {
 		const element = root.current;
 		if (element === null || measuring) return;
@@ -140,7 +163,7 @@ export function PresenceFaces({
 		return () => {
 			for (const kind of kinds) element.removeEventListener(kind, keep);
 		};
-	}, [measuring]);
+	}, [measuring, empty]);
 
 	if (empty) return null;
 	const shown = faces.length > max ? faces.slice(0, max - 1) : faces;
@@ -153,7 +176,7 @@ export function PresenceFaces({
 		setOpen(false);
 		onFollow(following === mate.person.accountId ? null : mate.person.accountId);
 	};
-	const row = ({ mate, look }: { mate: Teammate; look: Look }) => (
+	const row = ({ mate, look }: Seen) => (
 		<Row
 			key={mate.person.accountId}
 			mate={mate}
@@ -253,7 +276,7 @@ export function PresenceFaces({
 					</div>
 				</Menu>
 			)}
-			{room.pointerHidden() && !open && !measuring && (
+			{hidden && !open && !measuring && (
 				<div
 					data-presence-hidden=""
 					role="status"
