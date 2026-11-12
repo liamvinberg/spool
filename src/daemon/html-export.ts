@@ -7,7 +7,7 @@ import { type CompileHost, describeCompileError } from "./design-compile";
 import { realDesignDir } from "./design-path";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } from "./document";
 import type { FlowEdge } from "./flows";
-import { chromeFontFile } from "./play";
+import { chromeFontFile, PLAYER_SHELL_PAGE_RULES, playerChromeCss } from "./play";
 import {
 	beginPlayerCompile,
 	compositionOptions,
@@ -21,7 +21,7 @@ import { readScenario } from "./project-files";
 import { listProjectFrames, type ProjectedFrame } from "./projection";
 import { type FetchModule, isWebImport, RemoteImportError, remoteModules } from "./remote-imports";
 import { readCoverImage } from "./thumbs";
-import { REACT_SPECIFIERS, vendorReactJs, vendorSpoolJs, vendorSpoolJsxJs } from "./vendor";
+import { REACT_SPECIFIERS, vendorPlayerShellExportJs, vendorReactJs, vendorSpoolJs, vendorSpoolJsxJs } from "./vendor";
 import { remoteImports, WEBFONT_PATH, type Webfonts } from "./webfonts";
 
 /**
@@ -30,6 +30,11 @@ import { remoteImports, WEBFONT_PATH, type Webfonts } from "./webfonts";
  * document that opens from disk with nothing behind it. React, the runtime,
  * every stylesheet, font and image, and the default scenario ride inside it;
  * the start frame's still shows until the live frame replaces it.
+ *
+ * With its player (spool#304) the file opens in the player a played frame
+ * gets, the same shell with a host of its own (`player-shell-export.tsx`):
+ * the bar and its sizes around the same packed frames, played in a sandboxed
+ * iframe so they have a viewport of their own to respond to.
  */
 
 export type ExportScope = "flow" | "one";
@@ -100,6 +105,7 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 		project: string,
 		frame: string,
 		scope: ExportScope,
+		options: { player?: boolean } = {},
 	): Promise<ExportAnswer<ExportedFile>> {
 		const { frames } = listProjectFrames(root);
 		const start = frames.find((ref) => ref.name === frame);
@@ -113,8 +119,7 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 
 		const packed = await pack(root, refs);
 		if (packed.kind !== "ok") return packed;
-		const { js, styles, styleOf, fonts, transitions, importMap, state } = packed.value;
-		const poster = start.cover === undefined ? undefined : stillOf(root, frame, start.cover.hash);
+		const { js, styles, styleOf, fonts, transitions, importMap, state, inline } = packed.value;
 		const config = {
 			project,
 			projectCapability: "",
@@ -124,7 +129,19 @@ export function createHtmlExport(deps: HtmlExportDeps) {
 			styles: styleOf,
 			exported: { state },
 		};
-		const html = exportDocument({ config, width: start.w, js, styles, fonts, transitions, importMap, poster });
+		const html =
+			options.player === true
+				? await playerDocument({ config, js, styles, fonts, transitions, importMap, inline })
+				: exportDocument({
+						config,
+						width: start.w,
+						js,
+						styles,
+						fonts,
+						transitions,
+						importMap,
+						poster: start.cover === undefined ? undefined : stillOf(root, frame, start.cover.hash),
+					});
 		return { kind: "ok", value: { html, filename: exportFilename(project, frame) } };
 	}
 
@@ -457,6 +474,101 @@ ${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</st
 </body>
 </html>
 `;
+}
+
+/**
+ * The file with its player (spool#304): the player shell, booted by its export host, around a template holding the
+ * played document, which is the file without its player played as the live player's inner document is. The file's one
+ * import map serves both: the host hands it to the played document as it plays it, so React rides in the file once.
+ */
+async function playerDocument({
+	config,
+	js,
+	styles,
+	fonts,
+	transitions,
+	importMap,
+	inline,
+}: {
+	config: {
+		project: string;
+		start: string;
+		frames: Record<string, { w: number; h: number }>;
+		styles: Record<string, string>;
+	};
+	js: string;
+	styles: ReadonlyMap<string, string>;
+	fonts: string | undefined;
+	transitions: string | undefined;
+	importMap: object;
+	inline: (text: string) => Promise<string>;
+}): Promise<string> {
+	const { project, start, frames } = config;
+	const played = { ...config, shell: true };
+	const sheets = frameSheets(styles, config.styles, config.styles[start]);
+	const chrome = await inline(playerChromeCss().replace(ITALIC_FACES, ""));
+	return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="generator" content="Spool">
+<title>${escapeHtml(start)} · ${escapeHtml(project)}</title>
+<link rel="icon" href="data:,">
+<style>${escapeInlineStyle(chrome)}</style>
+<style>${PLAYER_SHELL_PAGE_RULES}</style>
+<script>window.__SPOOL_EXPORT__ = JSON.parse(${escapeJsonScript(JSON.stringify({ project, start, frames }))})</script>
+<script type="importmap">${escapeJsonScript(importMap)}</script>
+</head>
+<body>
+<div id="root"></div>
+<template id="${PLAYED_TEMPLATE_ID}">
+<title>${escapeHtml(start)}</title>
+<script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(played))})</script>
+<style>html, body, #root { height: 100%; }</style>
+${fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`}${sheets}
+${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</style>\n`}<div id="root"></div>
+<script type="module">${escapeInlineScript(js)}</script>
+</template>
+<script type="module">${escapeInlineScript(await exportShellJs())}</script>
+</body>
+</html>
+`;
+}
+
+/** The id of the template holding the played document; the export host's `PLAYED_TEMPLATE_ID`. */
+const PLAYED_TEMPLATE_ID = "spool-played";
+
+/** The bar's italic faces, which it never sets: a file carries only what it draws with. */
+const ITALIC_FACES = /@font-face\s*{[^}]*font-style:\s*italic[^}]*}/g;
+
+/** The player shell and its export host as one module that boots on load, React left to the file's import map. */
+async function exportShellJs(): Promise<string> {
+	const shell = (await vendorPlayerShellExportJs()).js;
+	const result = await build({
+		stdin: { contents: `import { bootExportedPlayer } from "spool-player"; bootExportedPlayer();`, loader: "js" },
+		bundle: true,
+		format: "esm",
+		platform: "browser",
+		target: "es2022",
+		minify: true,
+		legalComments: "none",
+		write: false,
+		logLevel: "silent",
+		plugins: [
+			{
+				name: "spool-export-shell",
+				setup(on) {
+					on.onResolve({ filter: /^spool-player$/ }, () => ({ path: "spool-player", namespace: "spool-shell" }));
+					on.onResolve({ filter: /.*/ }, (args) => ({ path: args.path, external: true }));
+					on.onLoad({ filter: /.*/, namespace: "spool-shell" }, () => ({ contents: shell, loader: "js" }));
+				},
+			},
+		],
+	});
+	const js = result.outputFiles[0]?.text;
+	if (js === undefined) throw new Error("the export's player compiled to no module");
+	return js;
 }
 
 /**
