@@ -116,6 +116,29 @@ export function checkDecks(root: string, frames?: readonly string[]): DeckCheck 
 	return { errors, warnings };
 }
 
+/** A talk of the project: its page, and its slides in the order they play, by frame name. */
+export interface Talk {
+	readonly page: string;
+	readonly slides: readonly string[];
+}
+
+/** Every talk of the project, each with the slides its `deck.json` lists that are frames on its page. */
+export function talksOf(root: string): Talk[] {
+	const designDir = realDesignDir(root);
+	const read = reader(designDir);
+	const talks: Talk[] = [];
+	for (const page of deckPages(root)) {
+		const file = parseDeckFile(read(join(designDir, "frames", page, DECK_FILE)) ?? "");
+		if (file.kind !== "deck") continue;
+		const present = new Set(framesOf(designDir, page, read));
+		talks.push({
+			page,
+			slides: file.file.slides.filter((slide) => present.has(slide)).map((slide) => `${page}/${slide}`),
+		});
+	}
+	return talks;
+}
+
 /** Whether a size has the talk's proportions and turn, within a little: a slide meant at the talk's size. */
 function sameShape(size: Size, talk: Size): boolean {
 	const ratio = size.w / size.h;
