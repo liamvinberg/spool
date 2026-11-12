@@ -14,7 +14,7 @@ import { DECK_FILE, type DeckFileRead, parseDeckFile } from "../../deck/deck-fil
 import { type DeckFrame, settle } from "../../deck/layout";
 import { NOTES_FILE, notesByBeat } from "../../deck/notes";
 import type { DeckProblem, DeckRead, DeckSlide, UnreadDeck } from "../../deck/wire";
-import { isPagePath, isSafeName, pageUnder } from "../../page-path";
+import { isPagePath, isSafeName, pageName, pageParent, pageUnder } from "../../page-path";
 import { realDesignDir, resolveDesignPath } from "../design-path";
 import { parseSidecar } from "../sidecar";
 import { beatAsked, readSlideSource } from "./slide-source";
@@ -163,6 +163,23 @@ export function frameBeatAsked(
 		return undefined;
 	}
 	return text === undefined ? undefined : beatAsked(frame, readSlideSource(text), asked);
+}
+
+/**
+ * The beats a frame names when it is a slide of a talk (its page's `deck.json` lists it), as its source on disk names
+ * them; none for any other frame, and none for a slide that names none (spool#318: what the booth times beat by beat).
+ */
+export function slideBeats(root: string, frame: string): readonly string[] {
+	const page = pageParent(frame);
+	if (!isPagePath(page)) return [];
+	try {
+		const designDir = realDesignDir(root);
+		const file = parseDeckFile(readText(designDir, join(designDir, "frames", page, DECK_FILE)) ?? "");
+		if (file.kind !== "deck" || !file.file.slides.includes(pageName(frame))) return [];
+		return readSlideSource(readText(designDir, join(designDir, "frames", frame, "frame.tsx")) ?? "").beats;
+	} catch {
+		return [];
+	}
 }
 
 /**

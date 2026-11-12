@@ -1,14 +1,26 @@
 import { pageParent } from "../page-path";
 
 /**
- * Why a frame owes a cover. An edit is fresh work somebody is likely watching
+ * Why a frame owes a sitting. An edit is fresh work somebody is likely watching
  * for; a stale picture (its colour scheme went out from under it) and a missing
  * one are the backlog. Only a missing picture is skipped when one has turned up
- * by the time a tab is free.
+ * by the time a tab is free. A timing is no picture: an edited frame whose
+ * redraws the booth could not time right after its cover, because covers were
+ * waiting or another frame was being timed, is timed in a sitting of its own,
+ * after every cover, wherever it is (spool#318).
  */
-export type BoothReason = "edited" | "stale" | "missing";
+export type BoothReason = "edited" | "stale" | "missing" | "timing";
 
-const REASON_RANK: Record<BoothReason, number> = { edited: 0, stale: 1, missing: 2 };
+const REASON_RANK: Record<BoothReason, number> = { edited: 0, stale: 1, missing: 2, timing: 3 };
+
+/**
+ * What a frame owed two things is owed. The higher wins, except that a timing
+ * and a picture that would not time it make an edit: one sitting owes both.
+ */
+function owed(was: BoothReason, now: BoothReason): BoothReason {
+	if ((was === "timing") !== (now === "timing") && was !== "edited" && now !== "edited") return "edited";
+	return REASON_RANK[now] < REASON_RANK[was] ? now : was;
+}
 
 /** One frame of one registered project. */
 interface BoothFrame {
@@ -38,6 +50,8 @@ interface BoothView {
 type Place = "on screen" | "on an open page" | "elsewhere";
 
 const PLACE_RANK: Record<Place, number> = { "on screen": 0, "on an open page": 1, elsewhere: 2 };
+/** Where a timing waits: behind every cover. */
+const PLACE_AFTER_ALL = 3;
 
 export const keyOf = (root: string, frame: string) => `${root}\0${frame}`;
 
@@ -80,22 +94,22 @@ export function createBoothQueue() {
 			// the tab is photographing what the frame was: a missing picture is
 			// being made right now, anything else sits again after
 			if (sitting.reason === "missing") return;
-			if (occupant.again === undefined || REASON_RANK[sitting.reason] < REASON_RANK[occupant.again]) {
-				occupant.again = sitting.reason;
-			}
+			occupant.again = occupant.again === undefined ? sitting.reason : owed(occupant.again, sitting.reason);
 			return;
 		}
 		const queued = waiting.get(key);
 		if (queued === undefined) waiting.set(key, { ...sitting, seq: seq++ });
-		else if (REASON_RANK[sitting.reason] < REASON_RANK[queued.reason]) queued.reason = sitting.reason;
+		else queued.reason = owed(queued.reason, sitting.reason);
 	}
 
-	/** The next frame for a free tab, which is now in it. */
-	function take(): Sitting | undefined {
+	/** The next frame for a free tab, which is now in it; a timing only when `timings` allows one. */
+	function take(timings = true): Sitting | undefined {
 		let best: Waiting | undefined;
 		let bestPlace = Number.POSITIVE_INFINITY;
 		for (const entry of waiting.values()) {
-			const place = PLACE_RANK[placeOf(entry.root, entry.frame)];
+			if (!timings && entry.reason === "timing") continue;
+			// a timing is no picture anyone waits for, wherever its frame is
+			const place = entry.reason === "timing" ? PLACE_AFTER_ALL : PLACE_RANK[placeOf(entry.root, entry.frame)];
 			if (
 				best === undefined ||
 				place < bestPlace ||
@@ -165,6 +179,12 @@ export function createBoothQueue() {
 		/** Frames waiting for a tab. */
 		get waiting() {
 			return waiting.size;
+		},
+		/** Of those, the ones owed only a timing. */
+		get timings() {
+			let count = 0;
+			for (const entry of waiting.values()) if (entry.reason === "timing") count++;
+			return count;
 		},
 		/** Frames in a tab right now. */
 		get busy() {
