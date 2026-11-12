@@ -19,7 +19,8 @@ export function deckRoutes(deps: {
 	keeper: Pick<DeckKeeper, "watch" | "settleAll" | "problems">;
 	hub: Pick<ChangeHub, "publish">;
 	/** a fresh address of a deck's stage document, for a window of spool's to embed */
-	stage: (project: string, root: string, page: string) => StageAddress | { message: string };
+	/** the stage's address, on the room's host when `room` asks for it (spool#320) */
+	stage: (project: string, root: string, page: string, room: boolean) => StageAddress | { message: string };
 	/** a deck's talk as one HTML file that plays from disk (spool#275) */
 	talkFile: (root: string, project: string, page: string) => Promise<ExportAnswer<ExportedFile>>;
 }) {
@@ -75,11 +76,12 @@ export function deckRoutes(deps: {
 		.post("/:project/deck-stage", async (c) => {
 			if (!deps.on()) return c.notFound();
 			const body: unknown = await c.req.json().catch(() => undefined);
-			const page = typeof body === "object" && body !== null ? (body as { page?: unknown }).page : undefined;
-			if (typeof page !== "string") return c.text('a stage is asked for as { "page" }', 400);
+			const asked = typeof body === "object" && body !== null ? (body as { page?: unknown; room?: unknown }) : {};
+			const page = asked.page;
+			if (typeof page !== "string") return c.text('a stage is asked for as { "page", "room"? }', 400);
 			const project = c.req.param("project");
 			return withProject(c, deps.resolve, (root) => {
-				const stage = deps.stage(project, root, page);
+				const stage = deps.stage(project, root, page, asked.room === true);
 				return "message" in stage ? c.text(stage.message, 404) : c.json(stage);
 			});
 		})

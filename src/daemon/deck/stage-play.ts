@@ -30,6 +30,8 @@ export interface StagePlayDeps {
 	issue(project: string, key: string): string;
 	consume(token: string | undefined, project: string, key: string): boolean;
 	renderOrigin(): string;
+	/** the room's host's origin, as untrusted as the render origin, a site of its own (spool#320) */
+	roomOrigin(): string;
 	controlToken: string;
 	/** a document only spool's own window may hold */
 	protect(c: Context): void;
@@ -68,14 +70,17 @@ export function stageOf(root: string, page: string): StageConfig | { message: st
 }
 
 export function createStagePlay(deps: StagePlayDeps) {
-	/** A fresh address of a deck's stage document, for a window of spool's to embed once. */
-	function address(project: string, root: string, page: string): StageAddress | { message: string } {
+	/**
+	 * A fresh address of a deck's stage document, for a window of spool's to embed once: on the room's host for the
+	 * room's window, where the browser plays it in a process of its own, its WebGL contexts its own (spool#320).
+	 */
+	function address(project: string, root: string, page: string, room = false): StageAddress | { message: string } {
 		const stage = stageOf(root, page);
 		if ("message" in stage) return stage;
 		const token = deps.issue(project, passKey(page));
 		const query = new URLSearchParams({ deck: page, shell: "1", handoff: token });
 		return {
-			address: `${deps.renderOrigin()}/play/${encodeURIComponent(project)}?${query}`,
+			address: `${room ? deps.roomOrigin() : deps.renderOrigin()}/play/${encodeURIComponent(project)}?${query}`,
 			size: stage.size,
 			talk: stage,
 		};

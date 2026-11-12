@@ -141,7 +141,9 @@ import {
 	normalizeHostname,
 	PROJECT_HEADER,
 	RENDER_HOST,
+	ROOM_HOST,
 	renderOriginFor,
+	roomOriginFor,
 } from "./security";
 import { createSelectionStore } from "./selection";
 import { type AppEvent, type MachineStateWatchAdapter, updateSession, watchMachineState } from "./session";
@@ -484,6 +486,7 @@ export function createDaemonApp({
 	let hookSecret: string | undefined;
 	let controlOrigin = `http://${controlHostname.includes(":") ? `[${controlHostname}]` : controlHostname}`;
 	let renderOrigin = renderOriginFor(controlOrigin);
+	let roomOrigin = roomOriginFor(controlOrigin);
 	let captureOrigin = captureOriginFor(controlOrigin);
 	const projectCapabilities = new Map<string, string>();
 	const playerHandoffs = new Map<string, { project: string; frame: string; scenario: string; expiresAt: number }>();
@@ -715,6 +718,7 @@ export function createDaemonApp({
 		issue: (project, key) => issuePlayerHandoff(project, key, "default"),
 		consume: (token, project, key) => consumePlayerHandoff(token, project, key, "default"),
 		renderOrigin: () => renderOrigin,
+		roomOrigin: () => roomOrigin,
 		controlToken,
 		protect: (c) => protectControlDocument(c),
 	});
@@ -1317,12 +1321,13 @@ export function createDaemonApp({
 		c.header("x-content-type-options", "nosniff");
 	}
 
-	type HostClass = "control" | "alias" | "render" | "capture" | "unexpected";
+	type HostClass = "control" | "alias" | "render" | "room" | "capture" | "unexpected";
 
 	function hostClass(url: string): HostClass {
 		const hostname = normalizeHostname(new URL(url).hostname);
 		if (hostname === controlHostname) return "control";
 		if (hostname === RENDER_HOST) return "render";
+		if (hostname === ROOM_HOST) return "room";
 		if (hostname === CAPTURE_HOST) return "capture";
 		// The other names for this machine reach the same listener but are not the
 		// same origin. They are not strangers either — see the redirect above.
@@ -1394,6 +1399,21 @@ export function createDaemonApp({
 			ASSET_PATH.test(path) ||
 			// a Fast Refresh document's own modules (the fast-refresh experiment)
 			/^\/p\/[^/]+\/hot\/[^/]+$/.test(path)
+		);
+	}
+
+	/**
+	 * What the room's host answers (spool#320): a deck's stage document, handed to the room's window alone, and what that
+	 * document loads. Never the canvas's frames, the ordinary player or anything else of the render host's.
+	 */
+	function isRoomPath(path: string, query: URLSearchParams): boolean {
+		if (/^\/play\/[^/]+$/.test(path)) return query.has("deck") && query.get("shell") === "1";
+		return (
+			/^\/play\/[^/]+\/-\//.test(path) ||
+			path.startsWith("/vendor/") ||
+			isProjectDataPath(path) ||
+			ASSET_PATH.test(path) ||
+			path === "/favicon.svg"
 		);
 	}
 
@@ -1478,14 +1498,18 @@ export function createDaemonApp({
 				await next();
 				return;
 			}
-			if (host === "render") {
-				const allowed = isRenderOnlyPath(path) || path.startsWith("/play/") || path === "/favicon.svg";
+			if (host === "render" || host === "room") {
+				const allowed =
+					host === "room"
+						? isRoomPath(path, new URL(c.req.url).searchParams)
+						: isRenderOnlyPath(path) || path.startsWith("/play/") || path === "/favicon.svg";
 				if (!allowed) return c.text("not found", 404);
 				// A direct render URL must retain the opaque-origin law that its
 				// canvas and Play wrappers impose. This also keeps capabilities
 				// in one document unreadable to another project on the shared host,
 				// and every frame https-only wherever it plays (DEV-175).
-				if (isExecutableRenderPath(path)) c.header("content-security-policy", servedFrameCsp(renderOrigin));
+				if (isExecutableRenderPath(path))
+					c.header("content-security-policy", servedFrameCsp(host === "room" ? roomOrigin : renderOrigin));
 				await next();
 				return;
 			}
@@ -2037,7 +2061,8 @@ export function createDaemonApp({
 						.map((issue) => `${issue.path.join(".")}: ${issue.message}`)
 						.join("; ");
 					const message = `not a playable request — ${issues}`;
-					return value.shell === "1" && hostClass(c.req.url) === "render"
+					const host = hostClass(c.req.url);
+					return value.shell === "1" && (host === "render" || host === "room")
 						? c.html(playerLoadErrorDocument(message, "failed to load"), 400)
 						: c.text(message, 400);
 				}
@@ -2936,6 +2961,7 @@ export function createDaemonApp({
 		setSelfOrigin: (origin: string) => {
 			controlOrigin = new URL(origin).origin;
 			renderOrigin = renderOriginFor(controlOrigin);
+			roomOrigin = roomOriginFor(controlOrigin);
 			captureOrigin = captureOriginFor(controlOrigin);
 			selfOrigin = renderOrigin;
 			boothKeeping(registeredRoots());
