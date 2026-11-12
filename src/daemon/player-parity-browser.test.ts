@@ -1424,7 +1424,7 @@ it("reveals the preflight geometry while the first live geometry request hangs",
 	});
 });
 
-it("reveals on the geometry it holds, asking nothing more once the played document connects", {
+it("reveals on the geometry it was served with while its first live geometry is still on its way", {
 	timeout: 60_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -1434,24 +1434,26 @@ it("reveals on the geometry it holds, asking nothing more once the played docume
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
-	// the bridge's one-second fallback would reveal on what it holds anyway: held, only an answer reveals
-	await page.addInitScript(() => {
-		if (window.top !== window) return;
-		const setTimeout = window.setTimeout;
-		window.setTimeout = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) =>
-			String(handler).includes("announceGeometry")
-				? 0
-				: setTimeout(handler, timeout, ...rest)) as typeof window.setTimeout;
-	});
-	// the bridge asks once its stream is open; every ask after that hangs (spool#303)
+	// the bridge asks once its stream is open, and that answer is held until the
+	// frame is revealed; the played document connects while it is pending (spool#303)
 	let asked = 0;
+	let askedResolve: () => void = () => {};
+	const firstAsked = new Promise<void>((resolve) => {
+		askedResolve = resolve;
+	});
+	let releaseResolve: () => void = () => {};
+	const release = new Promise<void>((resolve) => {
+		releaseResolve = resolve;
+	});
+	onTestFinished(() => releaseResolve());
 	await page.route(`**/api/p/${project.name}/frames`, async (route) => {
 		asked += 1;
-		if (asked === 1) await route.continue();
+		askedResolve();
+		await release;
+		await route.continue().catch(() => {});
 	});
-	const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/frames"));
 	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}?*`, async (route) => {
-		await answered;
+		await firstAsked;
 		await route.continue();
 	});
 
@@ -1468,6 +1470,7 @@ it("reveals on the geometry it holds, asking nothing more once the played docume
 		height: 844,
 	});
 	expect(asked).toBe(1);
+	releaseResolve();
 });
 
 it("replays geometry emitted before the shell runtime connects without SSE", { timeout: 60_000 }, async () => {

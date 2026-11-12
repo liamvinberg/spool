@@ -2747,13 +2747,8 @@ export function createDaemonApp({
 	const config = window.__SPOOL_SHELL__;
 	const headers = { "${CONTROL_HEADER}": config.controlToken };
 	let geometryRevision = 0;
+	let announcedRevision = 0;
 	let geometryRequest = 0;
-	let geometrySubscribed = false;
-	// whether the latest geometry is the daemon's as of a time the stream was
-	// already open, so nothing since can have been missed, and whether an
-	// answer is still on its way
-	let geometryCurrent = false;
-	let geometryAsking = false;
 	function retainedGeometry() {
 		return Object.entries(config.frames).map(([name, geometry]) => ({ name, w: geometry.w, h: geometry.h }));
 	}
@@ -2764,22 +2759,27 @@ export function createDaemonApp({
 		return revision;
 	}
 	function announceGeometry(revision, frames) {
+		announcedRevision = revision;
 		window.dispatchEvent(new CustomEvent("spool-player-geometry", { detail: { revision, frames } }));
 	}
 	function replayGeometry() {
 		const revision = pendingGeometry();
 		announceGeometry(revision, latestGeometry);
 	}
-	async function sendGeometry() {
+	function sameGeometry(a, b) {
+		return a.length === b.length && a.every((frame, i) => frame.name === b[i].name && frame.w === b[i].w && frame.h === b[i].h);
+	}
+	// Ask the daemon for its geometry. A change the stream told of is pending
+	// until the answer lands, or a second passes without one, so nothing is
+	// revealed at a box known to be stale. Asking to catch up (the stream has
+	// just opened, or none opens) holds nothing back: the played document
+	// reveals on the geometry this document was served with (spool#303), and an
+	// answer that differs lands after, as any live update does.
+	async function sendGeometry(changed) {
 		const request = ++geometryRequest;
-		const revision = pendingGeometry();
-		const subscribed = geometrySubscribed;
-		geometryAsking = true;
-		let settled = false;
+		if (changed) pendingGeometry();
 		const fallback = setTimeout(() => {
-			if (request !== geometryRequest || settled) return;
-			settled = true;
-			announceGeometry(revision, latestGeometry);
+			if (request === geometryRequest && announcedRevision < geometryRevision) announceGeometry(geometryRevision, latestGeometry);
 		}, 1000);
 		try {
 			const response = await fetch("/api/p/" + encodeURIComponent(config.project) + "/frames", { headers });
@@ -2791,22 +2791,15 @@ export function createDaemonApp({
 				.filter((frame) => frame && typeof frame.name === "string" && Number.isInteger(frame.w) && frame.w > 0 && Number.isInteger(frame.h) && frame.h > 0)
 				.map(({ name, w, h }) => ({ name, w, h }));
 			if (frames.length !== listing.frames.length) throw new Error("invalid geometry");
-			latestGeometry = frames;
-			geometryCurrent = subscribed && geometrySubscribed;
-			if (settled || revision !== geometryRevision) {
+			if (!sameGeometry(frames, latestGeometry)) {
+				latestGeometry = frames;
 				replayGeometry();
-			} else {
-				settled = true;
-				announceGeometry(revision, latestGeometry);
 			}
 		} catch {
-			if (request === geometryRequest && !settled) {
-				settled = true;
-				announceGeometry(revision, latestGeometry);
-			}
+			// what the bridge holds stands until an answer comes
 		} finally {
 			clearTimeout(fallback);
-			if (request === geometryRequest) geometryAsking = false;
+			if (request === geometryRequest && announcedRevision < geometryRevision) announceGeometry(geometryRevision, latestGeometry);
 		}
 	}
 	async function followGeometry() {
@@ -2816,11 +2809,10 @@ export function createDaemonApp({
 				headers: { ...headers, accept: "text/event-stream" },
 			});
 			if (!response.ok || !response.body) return;
-			geometrySubscribed = subscribed = true;
+			subscribed = true;
 			// asked once the stream is open, so a change between serving this
-			// document and opening the stream is not missed; it is answered long
-			// before the played document connects, which then waits on nothing
-			void sendGeometry();
+			// document and opening the stream is not missed
+			void sendGeometry(false);
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = "";
@@ -2835,26 +2827,23 @@ export function createDaemonApp({
 					if (!raw) continue;
 					try {
 						const change = JSON.parse(raw);
-						if (change.kind === "geometry") void sendGeometry();
+						if (change.kind === "geometry") void sendGeometry(true);
 					} catch {}
 				}
 			}
 		} catch {
 			// a stream that broke is opened again below, as one that ended is
 		} finally {
-			geometrySubscribed = false;
-			geometryCurrent = false;
 			// no stream: the daemon's geometry as of now is the best there is
-			if (!subscribed) void sendGeometry();
+			if (!subscribed) void sendGeometry(false);
 			setTimeout(followGeometry, 1000);
 		}
 	}
-	// The played document has connected (spool#303): what the bridge holds is
-	// enough to reveal on when it is current and nothing newer is on its way;
-	// otherwise the daemon is asked, and the reveal waits for the answer.
+	// The played document has connected: it is handed what the bridge holds at
+	// once, and reveals on it, unless a change the stream told of is still on
+	// its way, whose answer it then waits for.
 	addEventListener("spool-player-geometry-request", () => {
-		replayGeometry();
-		if (geometrySubscribed && (geometryAsking || !geometryCurrent)) void sendGeometry();
+		if (announcedRevision === geometryRevision) replayGeometry();
 	});
 	addEventListener("spool-player-walked", (event) => {
 		const walk = event.detail;
