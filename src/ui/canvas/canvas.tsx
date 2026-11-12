@@ -52,6 +52,7 @@ import {
 	postSeen,
 	postTrash,
 	postWalk,
+	postWarmPlay,
 	putCanvasState,
 	putCanvasView,
 	putGeometry,
@@ -1848,6 +1849,9 @@ function CanvasField({
 		},
 		[project, store],
 	);
+
+	/** The pointer has reached play (spool#303): the press finds the project composed, not waiting behind the stills. */
+	const warmPlay = useCallback(() => postWarmPlay(project), [project]);
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
@@ -6248,6 +6252,7 @@ function CanvasField({
 											numberAside={deckPage.numberAside(frame.name)}
 											motion={deckPage.motion}
 											onPlay={deckPage.playOf(frame.name, playFrame)}
+											onPlayIntent={warmPlay}
 											playTitle={deckPage.playTitleOf(frame.name)}
 											live={
 												inSlide

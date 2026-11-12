@@ -682,6 +682,14 @@ export async function postSeen(project: string, frames: readonly string[]): Prom
 	}
 }
 
+/**
+ * The pointer is reaching for play (spool#303): the daemon composes the project's
+ * player now if an edit left it waiting, so the press finds it ready. Never waited on.
+ */
+export function postWarmPlay(project: string): void {
+	void client.api.p[":project"].warm.$post({ param: { project } }).catch(() => {});
+}
+
 /** An entered walk really happened — the canvas is the witness (#25). */
 export function postWalk(project: string, from: string, to: string): void {
 	void client.api.p[":project"].walked.$post({ param: { project }, json: { from, to } }).catch(() => {});

@@ -70,7 +70,7 @@ async function mountCanvas(): Promise<Harness> {
 
 describe("playing a frame", () => {
 	it("opens the play door on the frame the press meant", async () => {
-		const { host, opened } = await mountCanvas();
+		const { host, opened, requests } = await mountCanvas();
 
 		await act(async () => {
 			host.querySelector<HTMLElement>('[role="application"]')?.focus();
@@ -80,6 +80,13 @@ describe("playing a frame", () => {
 		expect(opened).not.toHaveBeenCalled();
 
 		await act(async () => clickFrame(host, "cart"));
+		// reaching for play readies what the press will open (spool#303)
+		await act(async () => {
+			host
+				.querySelector('button[aria-label="Play cart"]')
+				?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+		});
+		expect(requests).toContain("/api/p/test/warm");
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
 		});

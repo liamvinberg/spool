@@ -71,6 +71,7 @@ export const FrameLabel = memo(function FrameLabel({
 	numberAside = false,
 	motion,
 	onPlay,
+	onPlayIntent,
 	playTitle,
 	live,
 	clickEnters = false,
@@ -119,6 +120,8 @@ export const FrameLabel = memo(function FrameLabel({
 	motion?: FrameMotion | undefined;
 	/** Play this frame, by its name. Offered on the frame pointed at, the selection and the live one. */
 	onPlay?: ((name: string) => void) | undefined;
+	/** The pointer has reached play (spool#303): what the press will open can start getting ready. */
+	onPlayIntent?: ((name: string) => void) | undefined;
 	/** What play does, where it is not playing the frame: a slide's presents from it (spool#265). */
 	playTitle?: string | undefined;
 }) {
@@ -218,7 +221,9 @@ export const FrameLabel = memo(function FrameLabel({
 							</span>
 						)}
 						{/* inside it is where you try the frame, so playing it from there stays one click */}
-						{onPlay !== undefined && <PlayButton name={name} leaf={leaf} onPlay={onPlay} title={playTitle} />}
+						{onPlay !== undefined && (
+							<PlayButton name={name} leaf={leaf} onPlay={onPlay} onIntent={onPlayIntent} title={playTitle} />
+						)}
 					</div>
 				) : (
 					<div
@@ -263,7 +268,7 @@ export const FrameLabel = memo(function FrameLabel({
 					    chrome. Beside the name rather than at the row's far end, because
 					    the far end is where teammates inside the frame dock their names. */}
 						{(selected || hovered) && onPlay !== undefined && (
-							<PlayButton name={name} leaf={leaf} onPlay={onPlay} title={playTitle} />
+							<PlayButton name={name} leaf={leaf} onPlay={onPlay} onIntent={onPlayIntent} title={playTitle} />
 						)}
 						{clickEnters && overview === null && (
 							<span
@@ -293,11 +298,13 @@ function PlayButton({
 	name,
 	leaf,
 	onPlay,
+	onIntent,
 	title,
 }: {
 	name: string;
 	leaf: string;
 	onPlay: (name: string) => void;
+	onIntent?: ((name: string) => void) | undefined;
 	title?: string | undefined;
 }) {
 	return (
@@ -306,6 +313,7 @@ function PlayButton({
 			aria-label={title ?? `Play ${leaf}`}
 			title={title}
 			className="flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-colors duration-fast ease-out hover:text-accent-strong group-data-away/label:hidden type-detail"
+			onPointerEnter={() => onIntent?.(name)}
 			onPointerDown={(event) => {
 				event.stopPropagation();
 				onPlay(name);
