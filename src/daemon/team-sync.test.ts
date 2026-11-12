@@ -734,6 +734,30 @@ describe("a collision", () => {
 		expect(said.ben.filter((message) => message.includes("set aside"))).toEqual([]);
 	});
 
+	it("lets a frame.json collide when the version it was built on is gone, and a later merge of it clears the mark", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		const json = (fields: Record<string, number>) => `${JSON.stringify(fields, null, "\t")}\n`;
+		const path = "frames/home/frame.json";
+		const placed = { x: 0, y: 600, w: 400, h: 300 };
+		writeDesignFile(ana.root, path, json(placed));
+		const record = () =>
+			JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8")) as {
+				files: Record<string, { hash: string | null }>;
+			};
+		await until(() => same(ana.root, ben.root, path) && typeof record().files[path]?.hash === "string");
+		// the bytes Ben's copy kept of the version both build on are lost: two real moves can't be told from a race
+		rmSync(join(ben.root, "design/.spool/base", record().files[path]?.hash ?? ""), { force: true });
+
+		const back = cloud.offline("ben");
+		writeDesignFile(ana.root, path, json({ ...placed, x: 900 }));
+		writeDesignFile(ben.root, path, json({ ...placed, x: 20 }));
+		await until(() => cloud.file("checkout", path) === json({ ...placed, x: 900 }));
+		back();
+		await until(() => existsSync(join(ben.root, "design/.spool/set-aside/marks.json")), 10_000);
+		expect(await marks(ben.daemon)).toMatchObject([{ path, kind: "set-aside" }]);
+		expect(text(ben.root, path)).toBe(json({ ...placed, x: 900 }));
+	});
+
 	it("after a while offline, catches up without overwriting teammates' newer work, as one batch", async () => {
 		const { cloud, ana, ben } = await twoEditors();
 		const names = ["a", "b", "c", "d", "e"];

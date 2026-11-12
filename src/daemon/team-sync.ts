@@ -1406,6 +1406,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	): Buffer | undefined => {
 		if (team === undefined || mine === undefined || path === CANVAS_PATH) return undefined;
 		const base = built === null ? undefined : baseOf(designDir, built);
+		// a version built on whose bytes are gone merges nothing: only a save built on none starts from empty
+		if (built !== null && base === undefined) return undefined;
 		// a frame's frame.json, field by field: the first placement stands, a later move or resize wins
 		const fields = isFrameJson(path) ? mergeFrameJson(base ?? null, team, mine) : null;
 		if (fields !== null) return Buffer.from(fields.buffer, fields.byteOffset, fields.byteLength);
