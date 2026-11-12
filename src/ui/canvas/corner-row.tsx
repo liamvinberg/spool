@@ -134,7 +134,7 @@ export function CornerRow({
 	const hasTrail = trail !== null;
 	const hasFaces = faces !== null;
 
-	const fit = useCallback(() => {
+	const refit = useCallback(() => {
 		const row = root.current;
 		const box = sizer.current;
 		const scope = viewport.current;
@@ -145,8 +145,9 @@ export function CornerRow({
 		// the path's own end: its names and the finder's door, not the keys ⌘ shows after them
 		let end = scope.getBoundingClientRect().left;
 		if (path !== null) {
-			for (const one of Array.from(path.children)) {
-				if ((one as HTMLElement).dataset.pathTrail !== undefined) continue;
+			for (const one of Array.from(path.children) as HTMLElement[]) {
+				// a name on its way out stands out of the path's flow until it has gone
+				if (one.dataset.pathTrail !== undefined || getComputedStyle(one).position === "absolute") continue;
 				end = Math.max(end, one.getBoundingClientRect().right);
 			}
 		}
@@ -172,7 +173,7 @@ export function CornerRow({
 	}, [viewport, hasTrail, hasFaces]);
 
 	// every commit, before paint: what the parts say changes with a render, so the fold is chosen in the same frame
-	useLayoutEffect(fit);
+	useLayoutEffect(refit);
 
 	// a part is pushed along only by what stands right of it changing width, never by its own: so it is its right edge
 	// that is followed, and a part whose right edge moved slides there from where it was seen
@@ -195,23 +196,35 @@ export function CornerRow({
 
 	useLayoutEffect(() => {
 		const scope = viewport.current;
-		const watched = [
-			scope,
-			scope?.querySelector<HTMLElement>("[data-page-path]"),
-			presentBox.current,
-			...Array.from(sizer.current?.children ?? []),
-		].filter((one): one is HTMLElement => one instanceof HTMLElement);
-		const sizes = new ResizeObserver(fit);
-		for (const one of watched) sizes.observe(one);
-		// words change inside the parts, and the path comes and goes, without a resize of what is watched
-		const words = new MutationObserver(fit);
-		if (sizer.current !== null) words.observe(sizer.current, { subtree: true, childList: true, characterData: true });
-		if (scope !== null) words.observe(scope, { childList: true });
+		const sizes = new ResizeObserver(refit);
+		// what is watched is found again whenever the path or a part comes or goes: the path appears once the project
+		// loads, and a page's names go one by one
+		const watch = () => {
+			sizes.disconnect();
+			const path = scope?.querySelector<HTMLElement>("[data-page-path]");
+			for (const one of [scope, path, presentBox.current, ...Array.from(sizer.current?.children ?? [])])
+				if (one instanceof HTMLElement) sizes.observe(one);
+			paths.disconnect();
+			if (path !== null && path !== undefined) paths.observe(path, { childList: true });
+		};
+		const paths = new MutationObserver(refit);
+		const comings = new MutationObserver(() => {
+			watch();
+			refit();
+		});
+		watch();
+		if (scope !== null) comings.observe(scope, { childList: true });
+		if (sizer.current !== null) comings.observe(sizer.current, { childList: true });
+		// words change inside the parts without a resize of what is watched
+		const words = new MutationObserver(refit);
+		if (sizer.current !== null) words.observe(sizer.current, { subtree: true, characterData: true, childList: true });
 		return () => {
 			sizes.disconnect();
+			paths.disconnect();
+			comings.disconnect();
 			words.disconnect();
 		};
-	}, [viewport, fit]);
+	}, [viewport, refit]);
 
 	const at = LEVELS[level] ?? (LEVELS[0] as Level);
 	// an arrival fades in a beat late, once what it pushes along has started to make room
@@ -234,7 +247,8 @@ export function CornerRow({
 				data-corner-row=""
 				data-fold={hasTrail ? at.fold : undefined}
 				data-faces-max={hasFaces ? at.faces : undefined}
-				className="relative flex h-control-sm items-center gap-2"
+				// over what hangs under it, so a part's menu or list is never covered by an agent's line
+				className="relative z-10 flex h-control-sm items-center gap-2"
 			>
 				{/* a part leaving keeps its place from the right, where the row stands */}
 				<AnimatePresence initial={false} mode="popLayout" anchorX="right">

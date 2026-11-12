@@ -696,4 +696,7 @@ it("stands the agent's path, the faces and Present apart in one row at a talk's 
 	expect(await apart()).toBe("full");
 	await page.setViewportSize({ width: 1100, height: 900 });
 	expect(await apart()).not.toBe("full");
+	// and opens out again once there is room
+	await page.setViewportSize({ width: 1800, height: 900 });
+	expect(await apart()).toBe("full");
 });
