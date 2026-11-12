@@ -645,8 +645,8 @@ function createWindow(): BrowserWindow {
  *
  * A popup the daemon opened is part of spool; anything else is the web and
  * belongs in the browser the person already has their tabs in. Loopback and the
- * same port rather than the same origin, because the daemon serves frames and
- * captures from two more hostnames on the one listener.
+ * same port rather than the same origin, because the daemon serves frames,
+ * captures and the room's slides from three more hostnames on the one listener.
  *
  * Play is the one popup this app does not let Chromium open for itself (#275).
  * Left to the default, Electron picks a size nobody chose and puts an OS title

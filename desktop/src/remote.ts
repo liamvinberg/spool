@@ -5,8 +5,8 @@ import { join } from "node:path";
 // Another machine's daemon, reached through an SSH local forward.
 //
 // The daemon binds loopback on purpose, and the frames it serves live on
-// run.spool.localhost and capture-spool.localhost, which only resolve to
-// loopback. So the window has to see the remote daemon at 127.0.0.1, and on the
+// run.spool.localhost, capture-spool.localhost and room-spool.localhost, which
+// only resolve to loopback. So the window has to see the remote daemon at 127.0.0.1, and on the
 // same port number it listens on there: the daemon checks Origin against its own
 // port, so a write through 127.0.0.1:9000 to a daemon on 7768 is refused.
 // `ssh -L 127.0.0.1:P:127.0.0.1:P` is the one way in that keeps all of that.
