@@ -79,6 +79,7 @@ import {
 	readFlows,
 	readSelection,
 	readUntold,
+	tellSetAsideTold,
 	refusalOf,
 	resolveRegisteredProject,
 } from "./verbs";
@@ -338,8 +339,15 @@ program
 					if (!staying.some((path) => line.startsWith(`${path} didn't travel: `))) narrate(line);
 			}
 			setAside = await (at === undefined ? marksOnDisk(root) : readSetAside(at).catch(() => marksOnDisk(root)));
+			for (const mark of setAside) narrate(setAsideTold(mark));
+			if (at !== undefined)
+				await tellSetAsideTold(
+					at.daemonUrl,
+					at.name,
+					at.controlToken,
+					setAside.map((mark) => mark.id),
+				);
 		}
-		for (const mark of setAside) narrate(setAsideTold(mark));
 		for (const line of output.stderr) process.stderr.write(`${line}\n`);
 		for (const line of output.stdout) process.stdout.write(`${line}\n`);
 		if (!output.ok || setAside.length > 0) process.exitCode = 1;
