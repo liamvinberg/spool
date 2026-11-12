@@ -7,8 +7,9 @@ import type { RehearseOutcome } from "../../rehearse-report";
 import { realDesignDir } from "../design-path";
 import type { FramePace } from "../thumbs";
 import { deckReadOf, readPage } from "./disk";
-import { composeSheets, type RehearseTalk, type RehearseTiming, rehearse, sheetCells } from "./rehearse";
+import { type RehearseTalk, type RehearseTiming, rehearse } from "./rehearse";
 import { breaks, type Finding, findingsOf } from "./rehearse-rules";
+import { composeSheets, sheetCells } from "./rehearse-sheet";
 import { stageOf } from "./stage-play";
 
 /**
