@@ -96,7 +96,6 @@ import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import type { AgentDeck } from "./agent-stream";
-import { AgentTrail } from "./agent-trail";
 import type { AgentTile } from "./agent-transcript";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
@@ -122,6 +121,7 @@ import {
 	zoomFloor,
 } from "./camera";
 import { type CameraStore, createCameraStore, createViewChanges, useCameraFollow } from "./camera-store";
+import { CanvasCorner } from "./canvas-corner";
 import { CanvasPath, PATH_KEYS, type PathSeg, type PathWay } from "./canvas-path";
 import {
 	createCanvasStore,
@@ -236,7 +236,7 @@ import { PictureCanvas, PictureClaims } from "./picture-canvas";
 import type { PictureFrame } from "./picture-layer";
 import { PlaceholderFrame } from "./placeholder-frame";
 import { createPresenceRoom } from "./presence";
-import { FollowMark, PresenceFaces } from "./presence-faces";
+import { FollowMark } from "./presence-faces";
 import { PresenceLayer } from "./presence-layer";
 import { type Held, PropertiesRail, rungOf, stampsOf, useRungs } from "./properties-rail";
 import {
@@ -5584,16 +5584,6 @@ function CanvasField({
 		goToPage: followPage,
 	});
 	const followed = following === null ? undefined : presenceRoom.get(following);
-	// who else is here, after the path at the canvas's top left rather than in the window's bar (task 503)
-	const presenceFaces = team ? (
-		<PresenceFaces
-			room={presenceRoom}
-			page={activePage}
-			project={project}
-			following={following}
-			onFollow={setFollowing}
-		/>
-	) : null;
 	// read from the frame protocol's handler, which is bound before the sender is
 	const insideFrameRef = useRef(insideFrame);
 	insideFrameRef.current = insideFrame;
@@ -6424,21 +6414,39 @@ function CanvasField({
 						</>
 					)}
 					{followed !== undefined && <FollowMark mate={followed} />}
-					{/* the agent's own path at the top right (task 443) */}
-					{loaded && (
-						<AgentTrail
-							deck={deck}
-							store={store}
-							camera={camera}
-							viewportRef={viewportRef}
-							page={activePage}
-							project={project}
-							under={followed !== undefined}
-							teammate={following !== null}
-							onFollow={() => setFollowing(null)}
-							toPage={switchToPage}
-							onLand={landOnFrame}
-						>
+					{/* the agent's own path, who else is here and Present, in one row at the top right (spool#312) */}
+					<CanvasCorner
+						loaded={loaded}
+						deck={deck}
+						store={store}
+						camera={camera}
+						viewportRef={viewportRef}
+						page={activePage}
+						project={project}
+						team={team}
+						room={presenceRoom}
+						following={following}
+						under={followed !== undefined}
+						onFollowMate={setFollowing}
+						toPage={switchToPage}
+						onLand={landOnFrame}
+						present={
+							loaded && deckPage.on && (deckPage.read?.slides.length ?? 0) > 0 ? (
+								<div
+									role="toolbar"
+									aria-label="Present the talk"
+									onPointerMove={(event) => event.stopPropagation()}
+									onContextMenu={(event) => {
+										event.preventDefault();
+										event.stopPropagation();
+									}}
+								>
+									<PresentControl from={deckPage.presentFrom} />
+								</div>
+							) : undefined
+						}
+					>
+						{loaded ? (
 							<OutsideLines
 								sessions={outside?.sessions ?? []}
 								project={project}
@@ -6456,12 +6464,8 @@ function CanvasField({
 									/>
 								) : null}
 							</OutsideLines>
-						</AgentTrail>
-					)}
-					{/* who else is here stands after the path; with no path drawn, where it would start */}
-					{presenceFaces !== null && !(loaded && !projectEmpty) && (
-						<div className="absolute top-3 left-3 z-20">{presenceFaces}</div>
-					)}
+						) : null}
+					</CanvasCorner>
 
 					{menu !== null && (
 						<ContextMenu
@@ -6631,26 +6635,8 @@ function CanvasField({
 								if (pageWithin(page, activePage) || page === ROOT_PAGE) goUpTo(page);
 								else goInsidePage(page);
 							}}
-							after={presenceFaces}
 							tail={<FindDoor hidden={finding} onOpen={() => setFinding(true)} />}
 						/>
-					)}
-					{/* a deck page presents from its top right (spool#298) */}
-					{loaded && deckPage.on && (deckPage.read?.slides.length ?? 0) > 0 && (
-						<div
-							role="toolbar"
-							aria-label="Present the talk"
-							className="absolute top-3 right-3 z-20"
-							onPointerDown={(event) => event.stopPropagation()}
-							onPointerMove={(event) => event.stopPropagation()}
-							onDoubleClick={(event) => event.stopPropagation()}
-							onContextMenu={(event) => {
-								event.preventDefault();
-								event.stopPropagation();
-							}}
-						>
-							<PresentControl from={deckPage.presentFrom} />
-						</div>
 					)}
 					<PagePeekCard
 						project={project}

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { expect, it } from "vitest";
@@ -7,7 +7,18 @@ import { initTeamProject } from "../init";
 import { decodeFrame, encodeFrame, PROTOCOL_VERSION, type PresenceState } from "../team-sync-protocol";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { testBrowser } from "../test-browser";
-import { builtUi, closeAfterTest, makeTempDir, pagePointOf, writeDesignFile, writeFrame } from "../test-helpers";
+import {
+	builtUi,
+	chooseAgent,
+	closeAfterTest,
+	fixtureAgentExecutor,
+	makeTempDir,
+	pagePointOf,
+	showAgent,
+	writeDesignFile,
+	writeFrame,
+} from "../test-helpers";
+import type { AgentExecutor } from "./agent-exec";
 import { serveDaemon } from "./server";
 import { syncUrl } from "./team-sync";
 
@@ -37,7 +48,16 @@ const at = (x: number, y: number, more: Partial<PresenceState> = {}): PresenceSt
 /** A frame far off, so the page is big enough to zoom out to where docked names crowd a frame's own name. */
 const FAR = { x: 40_000, y: 0, w: 640, h: 400 };
 
-async function teamCanvas(options: { far?: boolean } = {}) {
+async function teamCanvas(
+	options: {
+		far?: boolean;
+		/** a talk of two slides on its own page, opened, with the deck switched on */
+		talk?: boolean;
+		/** the agent this machine has, given the project's folder once it exists */
+		agent?: (root: string) => AgentExecutor;
+		width?: number;
+	} = {},
+) {
 	const cloud = fakeTeam();
 	const ana = cloud.machine("ana");
 	const ben = cloud.machine("ben");
@@ -64,7 +84,28 @@ async function teamCanvas(options: { far?: boolean } = {}) {
 		);
 		writeDesignFile(root, `frames/${name}/frame.json`, `${JSON.stringify(box)}\n`);
 	}
-	writeDesignFile(root, ".spool/state.json", `${JSON.stringify({ camera: { x: 100, y: 200, k: 0.75 } })}\n`);
+	if (options.talk === true) {
+		writeDesignFile(
+			root,
+			"frames/talk/deck.json",
+			`${JSON.stringify({ version: 1, w: 1280, h: 720, slides: ["one", "two"] })}\n`,
+		);
+		for (const [at, name] of ["one", "two"].entries()) {
+			writeFrame(root, `talk/${name}`, `export default function Slide() { return <main>${name}</main>; }\n`);
+			writeDesignFile(
+				root,
+				`frames/talk/${name}/frame.json`,
+				`${JSON.stringify({ x: at * 1440, y: 0, w: 1280, h: 720 })}\n`,
+			);
+		}
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experimental: { deck: true } }));
+	}
+	if (options.agent !== undefined) chooseAgent(spoolDir, { engine: "claude" });
+	writeDesignFile(
+		root,
+		".spool/state.json",
+		`${JSON.stringify({ camera: { x: 100, y: 200, k: 0.75 }, ...(options.talk === true ? { activePage: "talk", pageCameras: { talk: { x: 40, y: 200, k: 0.1 } } } : {}) })}\n`,
+	);
 	const daemon = await serveDaemon({
 		spoolDir,
 		version: "0.0.0-test",
@@ -73,6 +114,7 @@ async function teamCanvas(options: { far?: boolean } = {}) {
 		uiDir: await builtUi(),
 		cloud: ana.cloud,
 		teamNotice: () => {},
+		...(options.agent === undefined ? {} : { agentExecutor: options.agent(root), agentLook: () => true }),
 	});
 	closeAfterTest(daemon);
 
@@ -92,12 +134,15 @@ async function teamCanvas(options: { far?: boolean } = {}) {
 	});
 
 	const browser = await testBrowser();
-	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+	const page = await browser.newPage({ viewport: { width: options.width ?? 1400, height: 900 } });
 	await page.goto(`${daemon.url}/p/checkout`);
-	await page.locator('[data-frame-label="home"]').waitFor({ timeout: 30_000 });
+	await page
+		.locator(options.talk === true ? "[data-deck-band]" : '[data-frame-label="home"]')
+		.waitFor({ timeout: 30_000 });
 	await expect.poll(() => cloud.paths("checkout").includes("frames/menu/frame.json"), { timeout: 10_000 }).toBe(true);
 
 	return {
+		root,
 		page,
 		heard,
 		told,
@@ -384,15 +429,15 @@ it("shows a teammate's clicks, drags and scrolls inside a live frame on their po
 	await expect.poll(() => ben.locator("[data-presence-scroll]").count(), { timeout: 3_000 }).toBe(0);
 });
 
-it("shows the faces of who's here after the path, opens the list from them, collapses a crowd, and follows a row's view or an edge's", {
+it("shows the faces of who's here at the top right, opens the list from them, collapses a crowd, and follows a row's view or an edge's", {
 	timeout: 120_000,
 }, async () => {
 	const { page, say } = await teamCanvas();
 	say(BEN, at(300, 200, { view: { x: 800, y: 0, w: 640, h: 400 } }));
 	const face = page.locator('[data-presence-face="ben"]');
 	await face.waitFor();
-	// after the path on the canvas, never in the window's bar
-	expect(await page.locator('[role="application"] [data-page-path] [data-presence-faces]').count()).toBe(1);
+	// at the canvas's top right, never in the window's bar
+	expect(await page.locator('[role="application"] [data-corner-row] [data-presence-faces]').count()).toBe(1);
 	expect(await page.locator("header [data-presence-faces]").count()).toBe(0);
 	const follow = async (accountId: string) => {
 		await page.locator("[data-presence-open]").click();
@@ -474,7 +519,8 @@ it("shows the faces of who's here after the path, opens the list from them, coll
 	for (const name of ["dag", "eva", "finn", "gus"]) say({ accountId: name, name, color: "#58c6dc" }, at(10, 10));
 	// three faces are also what three people show, so the count is waited on, not the faces
 	await expect.poll(() => page.locator("[data-presence-faces]").textContent()).toContain("+3");
-	expect(await page.locator("[data-presence-face]").count()).toBe(3);
+	// the fourth face fades as the count comes in
+	await expect.poll(() => page.locator("[data-presence-face]").count()).toBe(3);
 	await page.locator("[data-presence-open]").click();
 	expect(await page.locator("[data-presence-row]").count()).toBe(6);
 	// each row's face sits in its own row, not stacked on the first
@@ -569,4 +615,85 @@ it("says Ana is here again when her canvas's stream to the daemon comes back, th
 	await expect.poll(() => told.includes(null), { timeout: 10_000 }).toBe(true);
 	// the stream back, she is said to be here again without touching the mouse
 	await expect.poll(() => told.at(-1), { timeout: 10_000 }).toMatchObject({ page: "" });
+});
+
+it("stands the agent's path, the faces and Present apart in one row at a talk's top right, folding the path when narrow", {
+	timeout: 180_000,
+}, async () => {
+	const PROMPT = "a gift note step";
+	const { page, say } = await teamCanvas({
+		talk: true,
+		width: 1800,
+		// an agent that starts writing a long-named frame on a page two deep, and keeps at it
+		agent: (root) =>
+			fixtureAgentExecutor((proc, line) => {
+				if (!line.includes(PROMPT)) return;
+				proc.emit(
+					JSON.stringify({
+						type: "system",
+						subtype: "init",
+						cwd: root,
+						session_id: "s",
+						model: "claude-opus-5",
+						tools: [],
+					}),
+				);
+				proc.emit(
+					JSON.stringify({
+						type: "assistant",
+						message: {
+							model: "claude-opus-5",
+							id: "msg_1",
+							type: "message",
+							role: "assistant",
+							content: [
+								{
+									type: "tool_use",
+									id: "toolu_1",
+									name: "Write",
+									input: {
+										file_path: join(
+											root,
+											"design/frames/site/launch/order--gift-note-and-delivery-date/frame.tsx",
+										),
+										content: "export default function Frame() { return <main />; }\n",
+									},
+								},
+							],
+						},
+						session_id: "s",
+						parent_tool_use_id: null,
+					}),
+				);
+			}).executor,
+	});
+	for (const one of [BEN, CLEO, { accountId: "dag", name: "dag", color: "#58c6dc" }])
+		say(one, at(10, 10, { page: "talk" }));
+	await showAgent(page);
+	await page.locator("[data-agent-rail] textarea").fill(PROMPT);
+	await page.locator("[data-agent-rail] textarea").press("Enter");
+	await page.locator("[data-agent-trail-button]").waitFor({ timeout: 30_000 });
+	await expect.poll(() => page.locator("[data-presence-face]").count()).toBe(3);
+
+	const row = page.locator("[data-corner-row]");
+	const apart = async () => {
+		// the slides and faces settle before they are measured
+		await page.waitForTimeout(700);
+		const field = await box(page, '[role="application"]');
+		const path = await box(page, "[data-page-path]");
+		const trail = await box(page, '[data-corner-part="trail"]');
+		const faces = await box(page, '[data-corner-part="faces"]');
+		const present = await box(page, '[data-corner-part="present"]');
+		// left to right, none over the next, Present in the corner and the row clear of your path
+		expect(trail.x + trail.width).toBeLessThanOrEqual(faces.x);
+		expect(faces.x + faces.width).toBeLessThanOrEqual(present.x);
+		expect(field.x + field.width - (present.x + present.width)).toBeLessThan(16);
+		expect(trail.x).toBeGreaterThanOrEqual(path.x + path.width);
+		// the faces are nowhere near the top left
+		expect(faces.x).toBeGreaterThan(field.x + field.width / 2);
+		return row.getAttribute("data-fold");
+	};
+	expect(await apart()).toBe("full");
+	await page.setViewportSize({ width: 1100, height: 900 });
+	expect(await apart()).not.toBe("full");
 });

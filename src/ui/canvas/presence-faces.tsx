@@ -1,7 +1,9 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useContext, useEffect, useReducer, useRef, useState } from "react";
 import { PRESENCE_SHOWN } from "../../team-sync-protocol";
 import { cn } from "../cn";
 import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
+import { Measuring } from "./corner-row";
 import {
 	agentSays,
 	awayFor,
@@ -15,11 +17,11 @@ import {
 } from "./presence";
 
 /**
- * Who's here, as a row of faces right after the page path at the canvas's top left (task 503): the people on this
- * page first, filled in their colour, then the ones on the project's other pages as rings, the unfocused at half
- * ink. The away aren't here, so they aren't drawn. Four faces at most, three and a `+N` past that. Pressed, it lets a
- * list down from the path: everyone here with where they are, then the away and how long, then you. A row follows
- * that person; pressing it again, or esc once the list is closed, stops.
+ * Who's here, as a row of faces at the canvas's top right (task 503, spool#312), between the agent's path and Present
+ * (`corner-row.tsx`): the people on this page first, filled in their colour, then the ones on the project's other
+ * pages as rings, the unfocused at half ink. The away aren't here, so they aren't drawn. Four faces at most, three and
+ * a `+N` past that (`max`). Pressed, it lets a list down from the faces: everyone here with where they are, then the
+ * away and how long, then you. A row follows that person; pressing it again, or esc once the list is closed, stops.
  */
 
 /** The near-black every name in a person's colour is written in, whatever the theme: on their colour it always reads. */
@@ -27,6 +29,8 @@ export const PRESENCE_INK = "#0e0e0e";
 
 /** The faces drawn before the rest collapse into `+N`. */
 const FACES_SHOWN = 4;
+/** `--ease-snap`, as motion takes a curve */
+const SNAP = [0.32, 0.72, 0, 1] as const;
 /** A face in the row, and how far each one tucks under the one before it. */
 const SIZE = 18;
 const TUCK = 4;
@@ -59,26 +63,8 @@ export function useRoomDrawn(room: PresenceRoom): void {
 	}, [room]);
 }
 
-export function PresenceFaces({
-	room,
-	page,
-	project,
-	following,
-	onFollow,
-}: {
-	room: PresenceRoom;
-	/** The page this canvas is on: someone elsewhere is drawn as a ring. */
-	page: string;
-	/** What the project's root page is called where a place names it. */
-	project: string;
-	following: string | null;
-	onFollow: (accountId: string | null) => void;
-}) {
-	useRoomDrawn(room);
-	const [open, setOpen] = useState(false);
-	const root = useRef<HTMLDivElement | null>(null);
-	const button = useRef<HTMLButtonElement | null>(null);
-	const now = Date.now();
+/** Who to draw a face for, at `now`: the people on this page first, then the ones on the project's other pages. */
+export function facesOf(room: PresenceRoom, page: string, now: number) {
 	// in the order they arrived, so a face that dims stays where it was instead of trading places
 	const mates = room
 		.teammates()
@@ -87,7 +73,39 @@ export function PresenceFaces({
 	const onPage = mates.filter((one) => here(one.look) && one.mate.state.page === page);
 	const elsewhere = mates.filter((one) => here(one.look) && one.mate.state.page !== page);
 	const away = mates.filter((one) => one.look === "away");
-	const faces = [...onPage, ...elsewhere];
+	return { onPage, elsewhere, away, faces: [...onPage, ...elsewhere] };
+}
+
+export function PresenceFaces({
+	room,
+	page,
+	project,
+	following,
+	onFollow,
+	max = FACES_SHOWN,
+	align = "start",
+}: {
+	room: PresenceRoom;
+	/** The page this canvas is on: someone elsewhere is drawn as a ring. */
+	page: string;
+	/** What the project's root page is called where a place names it. */
+	project: string;
+	following: string | null;
+	onFollow: (accountId: string | null) => void;
+	/** The faces drawn before the rest become `+N`: lowered by the top right's row when it is short (`corner-row.tsx`). */
+	max?: number;
+	/** Which edge the list lets down from: the faces' end where they stand at the right. */
+	align?: "start" | "end";
+}) {
+	useRoomDrawn(room);
+	const measuring = useContext(Measuring);
+	const still = useReducedMotion() === true;
+	const [opened, setOpen] = useState(false);
+	const open = opened && !measuring;
+	const root = useRef<HTMLDivElement | null>(null);
+	const button = useRef<HTMLButtonElement | null>(null);
+	const now = Date.now();
+	const { onPage, elsewhere, away, faces } = facesOf(room, page, now);
 	const empty = faces.length === 0;
 	useEffect(() => {
 		if (empty) setOpen(false);
@@ -115,17 +133,22 @@ export function PresenceFaces({
 	// the canvas under it never takes a press, a wheel or a menu meant for the faces or the list
 	useEffect(() => {
 		const element = root.current;
-		if (element === null) return;
+		if (element === null || measuring) return;
 		const keep = (event: Event) => event.stopPropagation();
 		const kinds = ["pointerdown", "wheel", "contextmenu"] as const;
 		for (const kind of kinds) element.addEventListener(kind, keep);
 		return () => {
 			for (const kind of kinds) element.removeEventListener(kind, keep);
 		};
-	}, []);
+	}, [measuring]);
 
-	const shown = faces.length > FACES_SHOWN ? faces.slice(0, FACES_SHOWN - 1) : faces;
+	if (empty) return null;
+	const shown = faces.length > max ? faces.slice(0, max - 1) : faces;
 	const more = faces.length - shown.length;
+	// a face coming or going slides the others along on one spring, no bounce
+	const slide = still ? { duration: 0 } : ({ type: "spring", duration: 0.4, bounce: 0 } as const);
+	const fade = still ? { duration: 0 } : { duration: 0.18, ease: SNAP };
+	const hook = (value: string) => (measuring ? undefined : value);
 	const follow = (mate: Teammate) => {
 		setOpen(false);
 		onFollow(following === mate.person.accountId ? null : mate.person.accountId);
@@ -144,35 +167,42 @@ export function PresenceFaces({
 	);
 
 	return (
-		<div ref={root} className="relative flex items-center" data-presence-faces="">
-			{!empty && (
-				<button
-					ref={button}
-					type="button"
-					aria-label="Who is here"
-					aria-expanded={open}
-					aria-haspopup="menu"
-					data-presence-open=""
-					className={cn(
-						"group/faces flex h-control-sm items-center rounded-full pr-1.5 pl-1 transition-colors duration-fast ease-out hover:bg-state-hover focus-ring",
-						open && "bg-state-hover",
-					)}
-					onClick={(event) => {
-						const opening = !open;
-						setOpen(opening);
-						// opened from the keyboard, the keyboard goes on into the list
-						if (opening && event.detail === 0)
-							requestAnimationFrame(() =>
-								root.current?.querySelector<HTMLButtonElement>("[data-presence-row]")?.focus(),
-							);
-					}}
-				>
+		<div ref={root} className="relative flex items-center" data-presence-faces={hook("")}>
+			<button
+				ref={button}
+				type="button"
+				tabIndex={measuring ? -1 : undefined}
+				aria-label="Who is here"
+				aria-expanded={open}
+				aria-haspopup="menu"
+				data-presence-open={hook("")}
+				className={cn(
+					"group/faces flex h-control-sm items-center rounded-full pr-1.5 pl-1 transition-colors duration-fast ease-out hover:bg-state-hover focus-ring",
+					open && "bg-state-hover",
+				)}
+				onClick={(event) => {
+					const opening = !open;
+					setOpen(opening);
+					// opened from the keyboard, the keyboard goes on into the list
+					if (opening && event.detail === 0)
+						requestAnimationFrame(() =>
+							root.current?.querySelector<HTMLButtonElement>("[data-presence-row]")?.focus(),
+						);
+				}}
+			>
+				{/* the row grows from the faces' end where they stand at the right */}
+				<AnimatePresence initial={false} mode="popLayout" anchorX={align === "end" ? "right" : "left"}>
 					{shown.map(({ mate, look }, i) => (
-						<span
+						<motion.span
 							key={mate.person.accountId}
-							data-presence-face={mate.person.accountId}
+							layout={measuring ? false : "position"}
+							initial={{ opacity: 0, scale: 0.6 }}
+							animate={{ opacity: 1, scale: 1 }}
+							exit={{ opacity: 0, scale: 0.6 }}
+							transition={{ layout: slide, default: fade }}
+							data-presence-face={hook(mate.person.accountId)}
 							title={`${mate.person.name} · ${agentSays(mate) ?? placeOf(mate, page, project).full}`}
-							className="relative animate-presence-in transition-[margin] duration-fast ease-out group-hover/faces:ml-0.5"
+							className="relative transition-[margin] duration-fast ease-out group-hover/faces:ml-0.5"
 							style={{ marginLeft: i === 0 ? 0 : -TUCK, zIndex: shown.length - i }}
 						>
 							<Face
@@ -181,20 +211,29 @@ export function PresenceFaces({
 								elsewhere={mate.state.page !== page}
 								followed={following === mate.person.accountId}
 							/>
-						</span>
+						</motion.span>
 					))}
-					{more > 0 && (
-						<span data-presence-more="" className="ml-1.5 text-secondary tabular-nums type-detail">
+					{more > 0 ? (
+						<motion.span
+							key="more"
+							layout={measuring ? false : "position"}
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={{ layout: slide, default: fade }}
+							data-presence-more={hook("")}
+							className="ml-1.5 text-secondary tabular-nums type-detail"
+						>
 							+{more}
-						</span>
-					)}
-				</button>
-			)}
+						</motion.span>
+					) : null}
+				</AnimatePresence>
+			</button>
 			{open && (
 				<Menu
 					aria-label="Who is here"
 					data-presence-list=""
-					className="absolute top-full left-0 z-30 mt-1.5 w-[296px]"
+					className={cn("absolute top-full z-30 mt-1.5 w-[296px]", align === "end" ? "right-0" : "left-0")}
 				>
 					{onPage.map(row)}
 					{onPage.length > 0 && elsewhere.length > 0 && <MenuSeparator />}
@@ -214,11 +253,14 @@ export function PresenceFaces({
 					</div>
 				</Menu>
 			)}
-			{room.pointerHidden() && !open && (
+			{room.pointerHidden() && !open && !measuring && (
 				<div
 					data-presence-hidden=""
 					role="status"
-					className="absolute top-full left-0 mt-1.5 whitespace-nowrap rounded-md border border-line-strong bg-surface-window px-2 py-1 text-secondary type-detail"
+					className={cn(
+						"absolute top-full mt-1.5 whitespace-nowrap rounded-md border border-line-strong bg-surface-window px-2 py-1 text-secondary type-detail",
+						align === "end" ? "right-0" : "left-0",
+					)}
 				>
 					Your pointer is hidden: {PRESENCE_SHOWN} others are shown on this page
 				</div>
