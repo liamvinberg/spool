@@ -1,7 +1,7 @@
 /**
  * Export (spool#239), the right-click menu's last step before Move to Trash: the
  * menu itself becomes the choice (png, pdf or html, and for html how much of
- * the flow to take), then the line that says the file is being built, then
+ * the flow to take, and whether it opens in the player), then the line that says the file is being built, then
  * the line that says where it landed. What a step draws lives here; the menu
  * that morphs between them is the StepMenu primitive, worked by the context menu.
  * Export project… (spool#240) takes the same steps past the choice, in the tab's
@@ -15,7 +15,7 @@ import { CheckIcon } from "../icons";
 import { SpinRing } from "../primitives/display";
 import { Drain, Progress } from "../primitives/feedback";
 import { MenuItem, MenuSeparator } from "../primitives/overlays";
-import { Segment, SegmentedControl } from "../primitives/selection";
+import { Segment, SegmentedControl, Switch } from "../primitives/selection";
 import { buildFramePdf, type CapturedFrame, downloadBytes, exportFileName } from "./frame-export";
 
 export type ExportFormat = "png" | "pdf" | "html";
@@ -68,7 +68,7 @@ export interface Exported {
  * from the frames as the canvas draws them; HTML is the daemon's to build.
  */
 export async function exportFrames(
-	request: { project: string; frames: readonly string[]; format: ExportFormat; scope: ExportScope },
+	request: { project: string; frames: readonly string[]; format: ExportFormat; scope: ExportScope; player: boolean },
 	capture: (frame: string) => Promise<CapturedFrame>,
 	progress: (at: ExportProgress) => void,
 ): Promise<Exported> {
@@ -81,7 +81,7 @@ export async function exportFrames(
 		if (format === "html") {
 			// several frames give one file each, and each takes its flow
 			const scope = frames.length === 1 ? request.scope : "flow";
-			const bytes = await fetchExportHtml(project, frame, scope);
+			const bytes = await fetchExportHtml(project, frame, scope, request.player);
 			files.push({ name: exportFileName(project, frame, "html"), type: "text/html", bytes });
 			continue;
 		}
@@ -250,6 +250,8 @@ export function ExportChoice({
 	scope,
 	onScope,
 	reach,
+	player,
+	onPlayer,
 	target,
 	onExport,
 }: {
@@ -257,6 +259,9 @@ export function ExportChoice({
 	onFormat: (format: ExportFormat) => void;
 	scope: ExportScope;
 	onScope: (scope: ExportScope) => void;
+	/** HTML opens in the player (spool#304) */
+	player: boolean;
+	onPlayer: (player: boolean) => void;
 	/** the frames beyond the one exported that its links reach; empty for several frames */
 	reach: number;
 	target: string;
@@ -299,6 +304,12 @@ export function ExportChoice({
 					/>
 				</>
 			) : null}
+			{html ? (
+				<>
+					<MenuSeparator />
+					<PlayerRow on={player} onChange={onPlayer} />
+				</>
+			) : null}
 			<MenuSeparator />
 			<MenuItem
 				label="Export"
@@ -308,6 +319,41 @@ export function ExportChoice({
 				className="bg-state-hover-raised"
 			/>
 		</>
+	);
+}
+
+/**
+ * With player: the row is the switch, a press anywhere on it flips it, and the line under it says what the file opens
+ * as, rising anew as it flips.
+ */
+function PlayerRow({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+	return (
+		<div
+			role="menuitemcheckbox"
+			aria-checked={on}
+			tabIndex={-1}
+			onClick={() => onChange(!on)}
+			onKeyDown={(event) => {
+				if (event.key !== " ") return;
+				event.preventDefault();
+				onChange(!on);
+			}}
+			className="flex cursor-pointer flex-col rounded-sm pt-1.5 pr-2 pb-2 pl-3 transition-colors duration-fast ease-out hover:bg-state-hover-raised motion-reduce:transition-none"
+		>
+			<span className="flex items-center gap-2">
+				<span className="min-w-0 flex-1 text-primary type-control">With player</span>
+				{/* the switch flips it on its own, so its press is not the row's too */}
+				<Switch
+					checked={on}
+					onCheckedChange={onChange}
+					onClick={(event) => event.stopPropagation()}
+					aria-label="With player"
+				/>
+			</span>
+			<span key={on ? "on" : "off"} className="block animate-step-in pt-0.5 pr-8 text-secondary type-label">
+				{on ? "Anyone can resize it in the browser." : "Opens as the frame alone."}
+			</span>
+		</div>
 	);
 }
 

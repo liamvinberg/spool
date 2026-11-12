@@ -41,6 +41,7 @@ function label(props: {
 	selected?: boolean;
 	hovered?: boolean;
 	entered?: boolean;
+	onPlayIntent?: (name: string) => void;
 }): {
 	el: HTMLElement;
 	root: Root;
@@ -70,6 +71,7 @@ function element({
 	selected = false,
 	hovered = false,
 	entered = false,
+	onPlayIntent,
 }: Parameters<typeof label>[0]) {
 	return createElement(FrameLabel, {
 		name,
@@ -81,6 +83,7 @@ function element({
 		selected,
 		hovered,
 		onPlay: () => {},
+		onPlayIntent,
 	});
 }
 
@@ -152,6 +155,16 @@ describe("FrameLabel", () => {
 		expect(play({ hovered: true })).not.toBeNull();
 		expect(play({ selected: true })).not.toBeNull();
 		expect(play({ entered: true })).not.toBeNull();
+
+		// reaching for it says so before the press, so the play can be readied (spool#303)
+		const onPlayIntent = vi.fn();
+		const offered = label({ name: "landing", frameWidth: 1000, camera, hovered: true, onPlayIntent });
+		act(() => {
+			offered.el
+				.querySelector('button[aria-label="Play landing"]')
+				?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+		});
+		expect(onPlayIntent).toHaveBeenCalledWith("landing");
 	});
 
 	it("keeps the selected label's width, and its play button, exact through every frame of a zoom", () => {

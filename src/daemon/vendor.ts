@@ -125,11 +125,16 @@ export const vendorSpoolJsxJs: () => Promise<VendorModule> = lazyBuild(() => ven
 
 export const vendorPlayerShellJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("player-shell-runtime"));
 
+/** The player shell with its export host (spool#304), which an exported HTML file carries inside it. */
+export const vendorPlayerShellExportJs: () => Promise<VendorModule> = lazyBuild(() =>
+	vendorRuntime("player-shell-export"),
+);
+
 /** A deck's stage host (spool#265): the page on spool's origin that holds a talk's stage at its play address. */
 export const vendorDeckStageHostJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("deck-stage-host"));
 
 async function vendorRuntime(
-	name: "frame-runtime" | "player-shell-runtime" | "jsx-dev-runtime" | "deck-stage-host",
+	name: "frame-runtime" | "player-shell-runtime" | "player-shell-export" | "jsx-dev-runtime" | "deck-stage-host",
 ): Promise<VendorModule> {
 	const js = await runtimeJs(name);
 	return { js, etag: `"spool-${createHash("sha256").update(js).digest("hex").slice(0, 32)}"` };
@@ -141,7 +146,7 @@ async function runtimeJs(name: string): Promise<string> {
 	} catch {
 		// no prebuilt module next to this file: running from source
 	}
-	const source = name === "player-shell-runtime" ? `${name}.tsx` : `${name}.ts`;
+	const source = name.startsWith("player-shell-") ? `${name}.tsx` : `${name}.ts`;
 	const result = await build({
 		entryPoints: [fileURLToPath(new URL(`../runtime/${source}`, import.meta.url))],
 		bundle: true,

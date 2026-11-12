@@ -1424,6 +1424,55 @@ it("reveals the preflight geometry while the first live geometry request hangs",
 	});
 });
 
+it("reveals on the geometry it was served with while its first live geometry is still on its way", {
+	timeout: 60_000,
+}, async () => {
+	const browser = await testBrowser();
+	const project = await serveProject();
+	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
+	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+
+	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => page.close());
+	// the bridge asks once its stream is open, and that answer is held until the
+	// frame is revealed; the played document connects while it is pending (spool#303)
+	let asked = 0;
+	let askedResolve: () => void = () => {};
+	const firstAsked = new Promise<void>((resolve) => {
+		askedResolve = resolve;
+	});
+	let releaseResolve: () => void = () => {};
+	const release = new Promise<void>((resolve) => {
+		releaseResolve = resolve;
+	});
+	onTestFinished(() => releaseResolve());
+	await page.route(`**/api/p/${project.name}/frames`, async (route) => {
+		asked += 1;
+		askedResolve();
+		await release;
+		await route.continue().catch(() => {});
+	});
+	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}?*`, async (route) => {
+		await firstAsked;
+		await route.continue();
+	});
+
+	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
+	const inner = page.frameLocator("#spool-player");
+	await inner.locator("#start").waitFor({ state: "attached" });
+	await page.waitForFunction(
+		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
+		undefined,
+		{ timeout: 10_000 },
+	);
+	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
+		width: 390,
+		height: 844,
+	});
+	expect(asked).toBe(1);
+	releaseResolve();
+});
+
 it("replays geometry emitted before the shell runtime connects without SSE", { timeout: 60_000 }, async () => {
 	const browser = await testBrowser();
 	const project = await serveProject();

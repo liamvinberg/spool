@@ -43,6 +43,11 @@ export interface DesktopWindow {
 	/** close the window the canvas is in; an older app has no such call */
 	closeWindow?(): void;
 	/**
+	 * Play in the app's own window (spool#301): the play address and the frame's size, which the window opens at
+	 * without asking the daemon for it. An older app has no such call, and opens the address as a popup instead.
+	 */
+	play?(path: string, size: { w: number; h: number }): void;
+	/**
 	 * The first run's window (spool#250): a step's size, centred and fixed (560 by 480, a
 	 * little taller on a step that holds more), or `grow` back to spool's own. True when the
 	 * window itself changed; false where it can't (full screen, not small), and an older app

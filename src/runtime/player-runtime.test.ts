@@ -254,8 +254,10 @@ describe("the player session", () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
-		await loadPlayerDocument(harness, "?frame=menu");
+		const { fetched } = await loadPlayerDocument(harness, "?frame=menu");
 		await waitForText("output", "2");
+		// the seed came with the document (spool#303): the first screen waited on no fetch for it
+		expect(fetched.filter((request) => request.url.includes("/scenarios/"))).toEqual([]);
 
 		// the authored width is a cap, never a size: the page takes the viewport
 		// below it, and its height is whatever its content is

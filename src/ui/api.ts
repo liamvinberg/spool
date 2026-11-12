@@ -522,10 +522,15 @@ export async function fetchExportPlan(project: string, frame: string): Promise<E
 	return (await res.json()) as ExportPlan;
 }
 
-/** The frame as one HTML file that opens offline: with every frame its links reach, or alone. */
-export async function fetchExportHtml(project: string, frame: string, scope: "flow" | "one"): Promise<Uint8Array> {
+/** The frame as one HTML file that opens offline: with every frame its links reach, or alone; in the player, or bare. */
+export async function fetchExportHtml(
+	project: string,
+	frame: string,
+	scope: "flow" | "one",
+	player: boolean,
+): Promise<Uint8Array> {
 	const res = await controlFetch(
-		`/api/p/${encodeURIComponent(project)}/export/html?frame=${encodeURIComponent(frame)}&scope=${scope}`,
+		`/api/p/${encodeURIComponent(project)}/export/html?frame=${encodeURIComponent(frame)}&scope=${scope}&player=${player ? 1 : 0}`,
 	);
 	if (!res.ok) throw new Error(await errorText(res));
 	return new Uint8Array(await res.arrayBuffer());
@@ -680,6 +685,14 @@ export async function postSeen(project: string, frames: readonly string[]): Prom
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * The pointer is reaching for play (spool#303): the daemon composes the project's
+ * player now if an edit left it waiting, so the press finds it ready. Never waited on.
+ */
+export function postWarmPlay(project: string): void {
+	void client.api.p[":project"].warm.$post({ param: { project } }).catch(() => {});
 }
 
 /** An entered walk really happened — the canvas is the witness (#25). */

@@ -330,6 +330,22 @@ describe("serving the player", () => {
 		expect((await app.request(`/play/${name}`)).headers.get("x-spool-cache")).toBe("hit");
 	});
 
+	it("composes a project for play at once when the pointer reaches for play", { timeout: 20_000 }, async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = scaffold(spoolDir);
+		// the canvas's own composing is held off for good, so only the reach can compose it
+		const app = makeApp(spoolDir, { playerWarmMs: 600_000 });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+
+		const events = sseReader(await app.request(`/api/p/${name}/events`, { signal: controller.signal }));
+		await events.next();
+		expect((await app.request(`/api/p/${name}/warm`, { method: "POST" })).status).toBe(204);
+		// a three-frame compile, so the play only reads it (spool#303)
+		await new Promise((wait) => setTimeout(wait, 5_000));
+		expect((await app.request(`/play/${name}`)).headers.get("x-spool-cache")).toBe("hit");
+	});
+
 	it("starts at ?frame= and 404s a frame that is not there, loudly", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = scaffold(spoolDir);
@@ -652,6 +668,22 @@ describe("serving the player", () => {
 });
 
 describe("the chrome's font", () => {
+	it("serves the Mac app's spare play window a page with nothing in it to run or reach, on the control origin only", async () => {
+		const app = makeApp(makeTempDir());
+
+		const spare = await app.fetch("/player-assets/spare");
+		expect(spare.status).toBe(200);
+		expect(spare.headers.get("cache-control")).toBe("no-store");
+		expect(spare.headers.get("content-security-policy")).toBe(
+			"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+		);
+		// it waits for a play nobody has pressed yet, so it holds nothing minted for one
+		expect(await spare.text()).not.toMatch(/<script|handoff|test-control-token/);
+
+		const render = await app.fetch("http://run.spool.localhost:7766/player-assets/spare");
+		expect(render.status).toBe(404);
+	});
+
 	it("serves the chrome's mono woff2 and 404s anything else", async () => {
 		const app = makeApp(makeTempDir());
 

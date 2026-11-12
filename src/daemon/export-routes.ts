@@ -7,7 +7,11 @@ import type { ExportAnswer, HtmlExport } from "./html-export";
 import { type ResolveProject, withProject } from "./project-route";
 
 const planQuery = z.object({ frame: z.string().refine(isFramePath, { message: "not a frame name" }) });
-const htmlQuery = planQuery.extend({ scope: z.enum(["flow", "one"]).default("flow") });
+/** `player=1` wraps the file in the player (spool#304); without it the file is the frame alone, as it always was. */
+const htmlQuery = planQuery.extend({
+	scope: z.enum(["flow", "one"]).default("flow"),
+	player: z.enum(["0", "1"]).optional(),
+});
 
 /**
  * A frame exported as one HTML file (spool#239), mounted under `/api/p`: what
@@ -31,13 +35,15 @@ export function exportRoutes(deps: { resolve: ResolveProject; htmlExport: HtmlEx
 			"/:project/export/html",
 			validator("query", (value, c) => {
 				const parsed = htmlQuery.safeParse(value);
-				return parsed.success ? parsed.data : c.text("an export is ?frame=<name>&scope=flow|one", 400);
+				return parsed.success ? parsed.data : c.text("an export is ?frame=<name>&scope=flow|one&player=0|1", 400);
 			}),
 			(c) => {
 				const project = c.req.param("project");
 				return withProject(c, deps.resolve, async (root) => {
-					const { frame, scope } = c.req.valid("query");
-					const answer = await refusing(() => deps.htmlExport.html(root, project, frame, scope));
+					const { frame, scope, player } = c.req.valid("query");
+					const answer = await refusing(() =>
+						deps.htmlExport.html(root, project, frame, scope, { player: player === "1" }),
+					);
 					if (answer.kind !== "ok") return refused(c, answer);
 					const { html, filename } = answer.value;
 					c.header("content-disposition", `attachment; filename="${filename.replace(/["\\]/g, "_")}"`);
