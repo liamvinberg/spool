@@ -280,6 +280,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let commentLimits = { perMinute: COMMENTS_PER_MINUTE, open: COMMENTS_OPEN };
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
+	/** Accounts whose team's version after a set-aside waits, as a slow line holds it, until the hold ends. */
+	const slow = new Map<string, Promise<void>>();
 	/** While set, spool.page doesn't answer at all: every request fails as a network that is down does. */
 	let down = false;
 	/** While set, every sync connection is closed as it opens, with this code: a Worker that can't take it. */
@@ -1141,7 +1143,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const [only] = told.answers;
 		if (lone && only !== undefined) from.deliver(encodeFrame({ ...only, ...pace(at, from) }));
 		else from.deliver(encodeFrame({ type: "answers", answers: told.answers, ...pace(at, from) }));
-		for (const frame of told.after) from.deliver(frame);
+		const hold = slow.get(from.person.accountId);
+		for (const frame of told.after)
+			if (hold === undefined) from.deliver(frame);
+			else from.deliverMade(hold.then(() => frame));
 		if (revoked) from.close(from.person.revoked ? CLOSE_SIGNED_OUT : CLOSE_NOT_EDITOR);
 		if (told.relayed.length === 0) return told.changes;
 		const by = { accountId: from.person.accountId, device: from.person.device };
@@ -1889,6 +1894,20 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			for (const project of projects.values())
 				for (const socket of project.sockets) if (socket.person.accountId === accountId) socket.cut();
 			return () => away.delete(accountId);
+		},
+		/** The team's version that follows a set-aside answer reaches this machine only once the returned release. */
+		holdFiles(accountId: string) {
+			let release = () => {};
+			slow.set(
+				accountId,
+				new Promise<void>((resolve) => {
+					release = resolve;
+				}),
+			);
+			return () => {
+				slow.delete(accountId);
+				release();
+			};
 		},
 		soloMoves,
 		/** How many files each ask of what the team has seen named. */

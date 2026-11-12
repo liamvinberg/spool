@@ -4,6 +4,7 @@ import {
 	type Comment,
 	type CommentPost,
 	commentBodyRefusal,
+	mergeFrameJson,
 	PRESENCE_AGENT_WORDS,
 	PRESENCE_AGENT_WORK,
 	type PresenceAgent,
@@ -332,5 +333,43 @@ describe("a restore on a bundle (spool#188)", () => {
 		expect(readRestore({ ...restore, to: -1 })).toBeNull();
 		expect(readRestore({ ...restore, to: 1.5 })).toBeNull();
 		expect(readRestore("r1")).toBeNull();
+	});
+});
+
+describe("a frame's frame.json merged by field (spool#313)", () => {
+	const bytes = (fields: Record<string, unknown>) =>
+		new TextEncoder().encode(`${JSON.stringify(fields, null, "\t")}\n`);
+	const merged = (
+		base: Record<string, unknown> | null,
+		team: Record<string, unknown>,
+		mine: Record<string, unknown>,
+	) => {
+		const teams = bytes(team);
+		const out = mergeFrameJson(base === null ? null : bytes(base), teams, bytes(mine));
+		return out === teams ? "team's" : out === null ? null : JSON.parse(new TextDecoder().decode(out));
+	};
+	const placed = { x: 0, y: 0, w: 400, h: 300 };
+
+	it("keeps the first placement of a new frame, whatever spot the later one picked", () => {
+		expect(merged(null, placed, { ...placed, x: 500 })).toBe("team's");
+		expect(merged({ w: 400, h: 300 }, placed, { ...placed, y: 900 })).toBe("team's");
+	});
+
+	it("takes a move and a resize built on the same version, the later one per field", () => {
+		expect(merged(placed, { ...placed, x: 900 }, { ...placed, w: 600 })).toEqual({ ...placed, x: 900, w: 600 });
+		expect(merged(placed, { ...placed, x: 900 }, { ...placed, x: 20 })).toEqual({ ...placed, x: 20 });
+	});
+
+	it("never unplaces a frame for a size-only rewrite, whichever lands first, and drops another field the save removed", () => {
+		expect(merged(placed, { ...placed, x: 900 }, { w: 400, h: 300 })).toBe("team's");
+		expect(merged(placed, { w: 400, h: 300 }, { ...placed, x: 900 })).toEqual({ ...placed, x: 900 });
+		expect(merged(placed, { x: 0, w: 400, h: 300 }, { w: 400, h: 300 })).toEqual(placed);
+		const note = { ...placed, placeholder: { name: "calm" } };
+		expect(merged(note, { ...note, x: 900 }, { w: 400, h: 300 })).toEqual({ ...placed, x: 900 });
+	});
+
+	it("leaves a side that isn't a JSON object to collide", () => {
+		expect(mergeFrameJson(null, bytes(placed), new TextEncoder().encode("[1]"))).toBeNull();
+		expect(mergeFrameJson(null, new TextEncoder().encode("{"), bytes(placed))).toBeNull();
 	});
 });

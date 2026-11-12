@@ -42,6 +42,7 @@ import { describeMigration, FOLDER_NAMES_FORMAT, migrateFrameNames } from "./dae
 import { discoverFrames } from "./daemon/projection";
 import { CONTROL_HEADER } from "./daemon/security";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
+import { marksOnDisk, type ShownSetAside, setAsideTold } from "./daemon/set-aside-routes";
 import { createSettingsStore, experimentsOnHere } from "./daemon/settings";
 import { followedLink } from "./daemon/team-sync";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
@@ -68,6 +69,7 @@ import { isFramePath, isSafeName } from "./page-path";
 import { forgetProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "./runtime/record-protocol";
+import { listSetAside, readSetAside, settleSetAside } from "./set-aside-verb";
 import { skillText } from "./skill";
 import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
@@ -79,6 +81,7 @@ import {
 	readUntold,
 	refusalOf,
 	resolveRegisteredProject,
+	tellSetAsideTold,
 } from "./verbs";
 import { batchShotFailure, formatBatchShot, logsFrame, shotFrames } from "./verify";
 
@@ -318,14 +321,36 @@ program
 		// check needs no daemon, but a running one knows what of a team project didn't travel; what check names as an
 		// error itself isn't said twice
 		const daemon = readDaemonState(spoolDir);
-		if (daemon !== undefined && followedLink(root) !== undefined) {
-			const staying = output.staying ?? [];
-			for (const line of await readUntold(daemonUrl(daemon.host, daemon.port), basename(root), daemon.controlToken))
-				if (!staying.some((path) => line.startsWith(`${path} didn't travel: `))) narrate(line);
+		// and a save of this copy's that was set aside fails the check, told whether a daemon runs or not: an agent
+		// mustn't finish believing work landed that didn't
+		let setAside: ShownSetAside[] = [];
+		if (followedLink(root) !== undefined) {
+			const at =
+				daemon === undefined
+					? undefined
+					: {
+							daemonUrl: daemonUrl(daemon.host, daemon.port),
+							name: basename(root),
+							controlToken: daemon.controlToken,
+						};
+			if (at !== undefined) {
+				const staying = output.staying ?? [];
+				for (const line of await readUntold(at.daemonUrl, at.name, at.controlToken, true))
+					if (!staying.some((path) => line.startsWith(`${path} didn't travel: `))) narrate(line);
+			}
+			setAside = await (at === undefined ? marksOnDisk(root) : readSetAside(at).catch(() => marksOnDisk(root)));
+			for (const mark of setAside) narrate(setAsideTold(mark));
+			if (at !== undefined)
+				await tellSetAsideTold(
+					at.daemonUrl,
+					at.name,
+					at.controlToken,
+					setAside.map((mark) => mark.id),
+				);
 		}
 		for (const line of output.stderr) process.stderr.write(`${line}\n`);
 		for (const line of output.stdout) process.stdout.write(`${line}\n`);
-		if (!output.ok) process.exitCode = 1;
+		if (!output.ok || setAside.length > 0) process.exitCode = 1;
 	});
 
 // --- agent verbs (#25): read-only, cwd-resolved, daemon auto-started ---------
@@ -504,18 +529,27 @@ function warnGoneSource(pid: number): void {
 }
 
 /** Every verb's preamble: the project this cwd is inside, and a live daemon. */
-async function verbContext(): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
+async function verbContext(
+	/**
+	 * `said`: the verb prints every one of this copy's set-aside saves itself (`spool set-aside`), so the preamble
+	 * doesn't. `later`: the verb tells what's untold itself once it has done its work (settling a set-aside save).
+	 */
+	untold: "tell" | "said" | "later" = "tell",
+): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
 	await fetchFirst(process.cwd());
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
 	const { url, controlToken, pid } = await ensureDaemon(spoolDir);
 	warnGoneSource(pid);
-	await tellUntold(url, name, controlToken);
+	if (untold !== "later") await tellUntold(url, name, controlToken, untold === "said");
 	return { root, name, daemonUrl: url, controlToken };
 }
 
-/** Say what of a team project didn't reach the team, and why, before the verb's own output (DEV-261). */
-async function tellUntold(url: string, name: string, controlToken: string): Promise<void> {
-	for (const line of await readUntold(url, name, controlToken)) narrate(line);
+/**
+ * Say what of a team project didn't reach the team, and why, before the verb's own output (DEV-261), and which of
+ * this copy's saves were set aside.
+ */
+async function tellUntold(url: string, name: string, controlToken: string, setAsideSaid = false): Promise<void> {
+	for (const line of await readUntold(url, name, controlToken, setAsideSaid)) narrate(line);
 }
 
 program
@@ -675,6 +709,46 @@ program
 		if (at === undefined) process.stdout.write(`${await listHistory(daemon, named)}\n`);
 		else process.stdout.write(await historyAt(daemon, named, at));
 	});
+
+/**
+ * `spool set-aside`'s preamble: a team project's daemon. Listing says every mark itself, so the preamble leaves them
+ * out; settling one tells the rest after it, as any verb does, so the one it settled isn't said first.
+ */
+async function setAsideContext(untold: "said" | "later") {
+	const { root, name, daemonUrl, controlToken } = await verbContext(untold);
+	if (followedLink(root) === undefined)
+		throw new SpoolError("nothing is ever set aside here: collisions happen only in a team project");
+	return { daemonUrl, name, controlToken };
+}
+
+const setAside = program
+	.command("set-aside")
+	.description("this copy's saves to a team project that lost a collision, and settling them, as your agent");
+
+setAside
+	.command("list", { isDefault: true })
+	.description("print each file whose save from this copy was set aside: whose version stands, where yours is kept")
+	.action(async () => {
+		process.stdout.write(`${await listSetAside(await setAsideContext("said"))}\n`);
+	});
+
+for (const side of ["mine", "theirs"] as const)
+	setAside
+		.command(side)
+		.description(
+			side === "mine"
+				? "put this copy's version of a set-aside file back, as a new save on top of the team's"
+				: "keep the team's version of a set-aside file and let this copy's go",
+		)
+		.argument("<path>", "the file's path in design/, as frames/<frame>/frame.tsx or shared/<file>")
+		.action(async (path: string) => {
+			const daemon = await setAsideContext("later");
+			try {
+				process.stdout.write(`${await settleSetAside(daemon, path, side)}\n`);
+			} finally {
+				await tellUntold(daemon.daemonUrl, daemon.name, daemon.controlToken);
+			}
+		});
 
 /** Words given as arguments, one space between: quote them to keep line breaks. */
 const wordsOf = (words: readonly string[]) => words.join(" ");

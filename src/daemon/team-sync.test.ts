@@ -601,19 +601,23 @@ describe("a collision", () => {
 		writeFrame(ben.root, "home", page("Welcome", "three"));
 		writeFrame(ana.root, "home", page("Home", "four"));
 		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === page("Home", "four"));
+		// the team's version is slow to follow the set-aside answer, and Ben edits again meanwhile: that edit waits
+		// to be merged instead of going up on the old version to be set aside a second time
+		const release = cloud.holdFiles("ben");
 		back();
+		await until(() => cloud.saves("checkout").some((save) => save.by === "ben" && save.outcome === "set_aside"));
+		writeFrame(ben.root, "home", page("Welcome back", "three"));
+		await new Promise((wake) => setTimeout(wake, 300));
+		release();
 		for (const root of [ana.root, ben.root])
-			await until(() => text(root, "frames/home/frame.tsx") === page("Welcome", "four"), 10_000);
-		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe(page("Welcome", "four"));
+			await until(() => text(root, "frames/home/frame.tsx") === page("Welcome back", "four"), 10_000);
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe(page("Welcome back", "four"));
 		expect(
 			cloud
 				.saves("checkout")
-				.filter((save) => save.path === "frames/home/frame.tsx")
-				.slice(-2),
-		).toMatchObject([
-			{ by: "ben", outcome: "set_aside" },
-			{ by: "ben", outcome: "applied" },
-		]);
+				.filter((save) => save.path === "frames/home/frame.tsx" && save.by === "ben")
+				.map((save) => save.outcome),
+		).toEqual(["set_aside", "applied"]);
 		expect(await marks(ben.daemon)).toEqual([]);
 		expect(await marks(ana.daemon)).toEqual([]);
 	});
@@ -678,6 +682,98 @@ describe("a collision", () => {
 			}, 10_000);
 		expect(canvas(ana.root)).toEqual(canvas(ben.root));
 		expect(await marks(ben.daemon)).toEqual([]);
+	});
+
+	it("never leaves a frame.json set aside: the first placement stands, a move and a resize both land", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		const json = (fields: Record<string, number>) => `${JSON.stringify(fields, null, "\t")}\n`;
+		const placed = { x: 0, y: 0, w: 400, h: 300 };
+		for (const frame of ["moved", "sized"]) writeDesignFile(ana.root, `frames/${frame}/frame.json`, json(placed));
+		await until(
+			() =>
+				same(ana.root, ben.root, "frames/moved/frame.json") && same(ana.root, ben.root, "frames/sized/frame.json"),
+		);
+
+		const back = cloud.offline("ben");
+		// both daemons place the same new frame, each in a spot of its own
+		writeDesignFile(ana.root, "frames/new/frame.json", json(placed));
+		writeDesignFile(ben.root, "frames/new/frame.json", json({ ...placed, x: 500 }));
+		// Ana moves a frame Ben resizes, and another Ben's agent rewrites as a size alone
+		writeDesignFile(ana.root, "frames/moved/frame.json", json({ ...placed, x: 900 }));
+		writeDesignFile(ben.root, "frames/moved/frame.json", json({ ...placed, w: 600 }));
+		writeDesignFile(ana.root, "frames/sized/frame.json", json({ ...placed, x: 900 }));
+		writeDesignFile(ben.root, "frames/sized/frame.json", json({ w: 400, h: 300 }));
+		await until(() =>
+			["new", "moved", "sized"].every(
+				(frame) =>
+					cloud.file("checkout", `frames/${frame}/frame.json`) === text(ana.root, `frames/${frame}/frame.json`),
+			),
+		);
+		back();
+		const settled = {
+			new: json(placed),
+			moved: json({ ...placed, x: 900, w: 600 }),
+			sized: json({ ...placed, x: 900 }),
+		};
+		for (const [frame, fields] of Object.entries(settled))
+			for (const root of [ana.root, ben.root])
+				await until(() => text(root, `frames/${frame}/frame.json`) === fields, 10_000);
+		const outcomes = (frame: string) =>
+			cloud
+				.saves("checkout")
+				.filter((save) => save.by === "ben" && save.path === `frames/${frame}/frame.json`)
+				.map((save) => save.outcome);
+		// only a merge that changes the team's version goes up
+		expect([outcomes("new"), outcomes("moved"), outcomes("sized")]).toEqual([
+			["set_aside"],
+			["set_aside", "applied"],
+			["set_aside"],
+		]);
+		expect(await marks(ben.daemon)).toEqual([]);
+		expect(existsSync(join(ben.root, "design/.spool/set-aside/marks.json"))).toBe(false);
+		expect(said.ben.filter((message) => message.includes("set aside"))).toEqual([]);
+	});
+
+	it("lets a frame.json collide when the version it was built on is gone, and a later merge of it clears the mark", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		const json = (fields: Record<string, number>) => `${JSON.stringify(fields, null, "\t")}\n`;
+		const path = "frames/home/frame.json";
+		const placed = { x: 0, y: 600, w: 400, h: 300 };
+		writeDesignFile(ana.root, path, json(placed));
+		const record = () =>
+			JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8")) as {
+				files: Record<string, { hash: string | null }>;
+			};
+		await until(() => same(ana.root, ben.root, path) && typeof record().files[path]?.hash === "string");
+		// the bytes Ben's copy kept of the version both build on are lost: two real moves can't be told from a race
+		rmSync(join(ben.root, "design/.spool/base", record().files[path]?.hash ?? ""), { force: true });
+
+		const back = cloud.offline("ben");
+		writeDesignFile(ana.root, path, json({ ...placed, x: 900 }));
+		writeDesignFile(ben.root, path, json({ ...placed, x: 20 }));
+		await until(() => cloud.file("checkout", path) === json({ ...placed, x: 900 }));
+		back();
+		await until(() => existsSync(join(ben.root, "design/.spool/set-aside/marks.json")), 10_000);
+		expect(await marks(ben.daemon)).toMatchObject([{ path, kind: "set-aside" }]);
+		expect(text(ben.root, path)).toBe(json({ ...placed, x: 900 }));
+
+		// Ben's agent rewrites it as a size alone while Ana moves it again: the merge is the team's version, and the
+		// file reconciled leaves no mark standing
+		const again = cloud.offline("ben");
+		writeDesignFile(ana.root, path, json({ ...placed, x: 1200 }));
+		writeDesignFile(ben.root, path, json({ w: 400, h: 300 }));
+		await until(() => cloud.file("checkout", path) === json({ ...placed, x: 1200 }));
+		again();
+		await until(() => text(ben.root, path) === json({ ...placed, x: 1200 }), 10_000);
+		expect(await marks(ben.daemon)).toEqual([]);
+		expect(
+			cloud
+				.saves("checkout")
+				.filter((save) => save.by === "ben" && save.path === path)
+				.at(-1),
+		).toMatchObject({
+			outcome: "set_aside",
+		});
 	});
 
 	it("after a while offline, catches up without overwriting teammates' newer work, as one batch", async () => {

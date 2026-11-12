@@ -6446,6 +6446,8 @@ function CanvasField({
 							) : undefined
 						}
 					>
+						{/* what of this copy was set aside: a quiet count, first under the row, before load too */}
+						{setAside}
 						{loaded ? (
 							<OutsideLines
 								sessions={outside?.sessions ?? []}
@@ -6561,7 +6563,6 @@ function CanvasField({
 
 					<NoticeStack>
 						{syncState}
-						{setAside}
 						{pendingTrash !== null && (
 							<TrashToast
 								// a new entry is a new undo window, so its drain starts again
