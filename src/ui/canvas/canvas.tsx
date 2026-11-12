@@ -20,6 +20,7 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { parseKnobsDeclared } from "../../runtime/knob-protocol";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
+import { playMarkName } from "../../runtime/play-marks";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { SETTINGS } from "../../settings/registry";
 import type { Comment, Presence, PresenceState } from "../../team-sync-protocol";
@@ -1833,6 +1834,8 @@ function CanvasField({
 	 */
 	const playFrame = useCallback(
 		(name: string, record = false) => {
+			// a played tab's marks are timed from this, on the canvas's own timeline (spool#303)
+			performance.mark(playMarkName("press"));
 			const path = `/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}${record ? "&record=arm" : ""}`;
 			// the Mac app opens its window at the frame's size at the press, so it is handed the size it would ask for
 			const frame = store.get().frames.find((candidate) => candidate.name === name);
