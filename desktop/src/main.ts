@@ -192,10 +192,16 @@ function startSetupOpen(showing: BrowserWindow): void {
 let presentFilled: Electron.Rectangle | undefined;
 
 /**
- * Spool's window over its whole display for a talk's slides, at once: simple full screen, which macOS plays with no
- * Space of its own to slide to, so the slide growing from its card is the only thing that moves. The lights go with
- * it, since nothing of the window's own may stand over the slides. It comes back at once too, to exactly where it
- * stood, as the slide flies home. A window already full screen is left as it is.
+ * Spool's window over its whole display for a talk's slides, at once (spool#298, spool#306): simple full screen, which
+ * macOS plays with no Space of its own to slide to, so the slide growing from its card is the only thing that moves.
+ *
+ * Simple full screen alone falls short of a talk twice. It grows the window in an animation macOS draws no frame of the
+ * page through, a dead fifth of a second after the press, so the window is set to its display's bounds first, in one
+ * step, and simple full screen finds it there already, with nothing left to animate. And it only tucks the Dock and
+ * the menu bar away, to come back over the slides wherever the pointer touches the screen's edge, so the window stands
+ * above both while spool is the app in front (`presentLevel`). The lights go too: nothing of the window's own may stand
+ * over the slides. It comes back at once, to exactly where it stood, as the slide flies home. A window already full
+ * screen is left as it is.
  */
 function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 	if (showing.isDestroyed() || on === (presentFilled !== undefined)) return false;
@@ -203,9 +209,27 @@ function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 	const stood = presentFilled;
 	presentFilled = on ? showing.getBounds() : undefined;
 	if (process.platform === "darwin") showing.setWindowButtonVisibility(!on);
-	showing.setSimpleFullScreen(on);
+	if (presentFilled !== undefined) {
+		presentLevel(showing);
+		showing.setBounds(screen.getDisplayMatching(presentFilled).bounds, false);
+		showing.setSimpleFullScreen(true);
+		return true;
+	}
+	showing.setSimpleFullScreen(false);
+	presentLevel(showing);
 	if (stood !== undefined) showing.setBounds(stood, false);
 	return true;
+}
+
+/**
+ * The window over the Dock and the menu bar while it covers its display for the slides and spool is in front, as
+ * Keynote's slides are; back among the other apps' windows the moment another app comes forward (⌘Tab), and again
+ * when spool does. Its level, not presentation options, since Electron offers none but kiosk's, which locks ⌘Tab.
+ */
+function presentLevel(showing: BrowserWindow): void {
+	if (showing.isDestroyed()) return;
+	if (presentFilled !== undefined && showing.isFocused()) showing.setAlwaysOnTop(true, "pop-up-menu");
+	else showing.setAlwaysOnTop(false);
 }
 
 function canvasSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): boolean {
@@ -439,8 +463,14 @@ function createWindow(): BrowserWindow {
 	const fullscreen = () => created.webContents.send("spool:canvas-fullscreen", created.isFullScreen());
 	created.on("enter-full-screen", fullscreen);
 	created.on("leave-full-screen", fullscreen);
-	created.on("focus", updateCanvasMenu);
-	created.on("blur", updateCanvasMenu);
+	created.on("focus", () => {
+		updateCanvasMenu();
+		if (presentFilled !== undefined) presentLevel(created);
+	});
+	created.on("blur", () => {
+		updateCanvasMenu();
+		if (presentFilled !== undefined) presentLevel(created);
+	});
 	// which daemon the window is on, in the title the Window menu and Mission Control show
 	created.on("page-title-updated", (event, title) => {
 		if (remote === undefined || tunnel === undefined) return;
