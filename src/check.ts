@@ -105,6 +105,8 @@ interface SourceClosure {
 	/** What each source reads into the closure, canonical both ways, and where each named entry landed. */
 	reads: Map<string, string[]>;
 	entries: Map<string, string>;
+	/** The stylesheets each source imports, which the typecheck never reads. */
+	stylesheets: Map<string, string[]>;
 }
 
 interface LocalModuleResolution {
@@ -192,6 +194,8 @@ export interface CheckReport {
 	strays: string[];
 	/** The sources a checked frame imports, its own entry among them, by absolute path. */
 	sourcesOf(frame: string): string[];
+	/** The stylesheets a checked frame's sources import, by absolute path, for the stylesheet rules (`check-stylesheets.ts`). */
+	stylesheetsOf(frame: string): string[];
 }
 
 /** Check every HTML frame without registering, compiling, or writing a project. */
@@ -238,6 +242,11 @@ export async function checkProject(root: string, scope?: string[]): Promise<Chec
 			ran: checked.batches > 0 || alone.size === 0,
 			batches: checked.batches,
 			sourcesOf: (frame) => reachOf(checked.reads, entryOf.get(frame)),
+			stylesheetsOf: (frame) => [
+				...new Set(
+					reachOf(checked.reads, entryOf.get(frame)).flatMap((file) => checked.stylesheets.get(file) ?? []),
+				),
+			],
 			notChecked: checked.alone.map(({ entry, usage }) => overLimit(designDir, entry, usage)),
 		};
 	} catch (error) {
@@ -262,6 +271,7 @@ function report(
 		unmatched: selection.unmatched,
 		strays: selection.strays.map((file) => designPath(designDir, file)),
 		sourcesOf: () => [],
+		stylesheetsOf: () => [],
 	};
 }
 
@@ -318,6 +328,8 @@ interface Batched {
 	/** What each source reads into the closure, and where each entry landed, canonical (`SourceClosure`). */
 	reads: Map<string, string[]>;
 	entries: Map<string, string>;
+	/** Every stylesheet those sources import. */
+	stylesheets: Map<string, string[]>;
 	batches: number;
 	/** The frames whose own closure is over the limit, which no batch could hold. */
 	alone: { entry: string; usage: Usage }[];
@@ -331,8 +343,8 @@ interface Batched {
  */
 async function checkInBatches(designDir: string, entries: string[]): Promise<Batched> {
 	try {
-		const { diagnostics, closure, reads, entries: landed } = await runCheckDesign(designDir, entries);
-		return { diagnostics, closure, reads, entries: landed, batches: 1, alone: [] };
+		const { diagnostics, closure, reads, entries: landed, stylesheets } = await runCheckDesign(designDir, entries);
+		return { diagnostics, closure, reads, entries: landed, stylesheets, batches: 1, alone: [] };
 	} catch (error) {
 		if (!(error instanceof CheckSourceLimitError && (error.limit === "files" || error.limit === "total-bytes")))
 			throw error;
@@ -342,14 +354,24 @@ async function checkInBatches(designDir: string, entries: string[]): Promise<Bat
 	const closure = new Map<string, string>();
 	const reads = new Map<string, string[]>();
 	const landed = new Map<string, string>();
+	const stylesheets = new Map<string, string[]>();
 	for (const batch of batches) {
 		const checked = await runCheckDesign(designDir, batch);
 		diagnostics.push(...checked.diagnostics);
 		for (const [file, text] of checked.closure) closure.set(file, text);
 		for (const [file, read] of checked.reads) reads.set(file, read);
 		for (const [entry, canonical] of checked.entries) landed.set(entry, canonical);
+		for (const [file, imported] of checked.stylesheets) stylesheets.set(file, imported);
 	}
-	return { diagnostics: dedupe(diagnostics), closure, reads, entries: landed, batches: batches.length, alone };
+	return {
+		diagnostics: dedupe(diagnostics),
+		closure,
+		reads,
+		entries: landed,
+		stylesheets,
+		batches: batches.length,
+		alone,
+	};
 }
 
 /**
@@ -425,6 +447,7 @@ async function runCheckDesign(
 	closure: Map<string, string>;
 	reads: Map<string, string[]>;
 	entries: Map<string, string>;
+	stylesheets: Map<string, string[]>;
 }> {
 	const sourceBudget = new CheckSourceBudget();
 	const importMap = readImportMap(designDir, sourceBudget);
@@ -436,6 +459,7 @@ async function runCheckDesign(
 		closure: sourceClosure.sources,
 		reads: sourceClosure.reads,
 		entries: sourceClosure.entries,
+		stylesheets: sourceClosure.stylesheets,
 	};
 }
 
@@ -1598,6 +1622,7 @@ function readClosure(designDir: string, entries: string[], sourceBudget: CheckSo
 	// what each source asked for, by the path it asked with, and what each path came to
 	const asked = new Map<string, string[]>();
 	const canonicalOf = new Map<string, string>();
+	const stylesheets = new Map<string, string[]>();
 	for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
 		const canonical = resolveDesignPath(designDir, file, designPath(designDir, file));
 		canonicalOf.set(file, canonical);
@@ -1614,6 +1639,8 @@ function readClosure(designDir: string, entries: string[], sourceBudget: CheckSo
 			if (!isRelativeLocalSpecifier(specifier) || hasInvalidPathCharacter(specifier)) continue;
 			const cssDeclaration = resolveLocalCssDeclaration(designDir, dirname(canonical), specifier);
 			if (cssDeclaration !== undefined) queue.push(cssDeclaration);
+			const stylesheet = resolveLocalStylesheet(designDir, dirname(canonical), specifier);
+			if (stylesheet !== undefined) stylesheets.set(canonical, [...(stylesheets.get(canonical) ?? []), stylesheet]);
 			const resolved = resolveLocalClosureSource(designDir, dirname(canonical), specifier);
 			if (resolved !== undefined) queue.push(resolved);
 		}
@@ -1643,6 +1670,7 @@ function readClosure(designDir: string, entries: string[], sourceBudget: CheckSo
 		inspections,
 		reads: new Map([...asked].map(([file, paths]) => [file, paths.flatMap(landed)])),
 		entries: new Map(entries.flatMap((entry) => landed(entry).map((canonical) => [entry, canonical] as const))),
+		stylesheets,
 	};
 }
 
@@ -1733,11 +1761,16 @@ function resolveLocalClosureSource(designDir: string, base: string, specifier: s
 }
 
 function resolveLocalCssDeclaration(designDir: string, base: string, specifier: string): string | undefined {
+	const css = resolveLocalStylesheet(designDir, base, specifier);
+	return css === undefined ? undefined : selectCandidate(designDir, [css.replace(/\.css$/, ".d.css.ts")]).selected;
+}
+
+/** The stylesheet in design/ a source's import names, if it names one. */
+function resolveLocalStylesheet(designDir: string, base: string, specifier: string): string | undefined {
 	const target = resolveAuthoredLocalPath(designDir, base, specifier);
 	if (!isWithin(designDir, target) || isDesignPackagePath(designDir, target)) return undefined;
 	const css = selectLocalCandidate(designDir, target, extname(target), isDirectoryOnlySpecifier(specifier)).selected;
-	if (css === undefined || !css.endsWith(".css")) return undefined;
-	return selectCandidate(designDir, [css.replace(/\.css$/, ".d.css.ts")]).selected;
+	return css?.endsWith(".css") === true ? css : undefined;
 }
 
 function selectLocalCandidate(

@@ -4,15 +4,18 @@ summary: the loops: shot, logs, url, driving a frame, selection, flows
 
 shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), at frame.json's size (else a narrated 1440×900), in the colour scheme the canvas shows. The first boot on a machine downloads spool's pinned headless Chrome once, narrated on stderr: relay the wait, don't kill it.
 
-  spool shot <frame>… [--viewport <width>x<height>] [--at <ms>[,<ms>…]] [--scroll <px>] [--scenario <name>]
+  spool shot <frame>… [--viewport <width>x<height>] [--at <ms>[,<ms>…]] [--scroll <px>] [--scenario <name>] [--beat <beat>] [--out <dir>]
                        Name every frame to check in one call, or a page folder for every frame under it: they boot in parallel, the options applying to each. One block per frame, in the order named:
                          shop/checkout: shot, content 3765px tall, no console errors
                            <root>/design/.spool/verify/shop/checkout.1.png  css y 0-1800 of 3765, scale 1.111
                        The head line says the content's own height after fonts load; when the frame was shot at another height it names both (`frame.json h 6400, content 6967`): set frame.json's h from it. It ends with the console error count and any uncaught throws, or reads `does not compile`, `not found` or `failed` with the reason under it. Then each file, each console error as a [type] line, an uncaught throw's stack read back to your .tsx files and lines, and each [spool] line: what renders wrong with a clean console, such as Tailwind classes no stylesheet built (`classes with no CSS: bg-white, text-subtle`, a token reset or renamed), a WebGL context lost, or WebGL drawn in software. The boot runs React's development build, so React's errors come in words.
                        A frame much taller than a screen writes overlapping top-to-bottom slices <frame>.1.png … <frame>.N.png. Read every file: the layout's truth is the whole stack.
                        --viewport sets exact CSS pixels instead of frame.json.
-                       --at shoots at each listed time after the first commit (at most 30000 ms) instead of settling, all in one boot, writing <frame>@<ms>.png. Each time is a seek, not a wait: the frame's clocks stand still and are run to it, so the same time is the same picture on any machine.
+                       --at shoots at each listed time after the first commit (at most 30000 ms) instead of settling, all in one boot, writing <frame>@<ms>.png. Each time is a seek, not a wait: the frame's clocks stand still and are run to it, so the same time is the same picture on any machine. A busy machine makes a seek slower, not a failure: the shot waits as long as the frame keeps answering.
                        --scroll scrolls the document down that many CSS pixels once the frame commits and shoots the viewport there, writing <frame>.scroll<px>.png beside the shot from the top. Use it for below-fold content and scroll-driven effects instead of editing the frame or its h. It scrolls the document, not an element that scrolls inside it.
+                       --beat shoots a slide at that beat (topic: deck), by its name or its number counted from 1, writing <frame>.beat-<name>.png.
+                       --out copies each file into that folder by its own name and prints that path; frames of one last name need an --out each. Every file is also in design/.spool/verify.
+                       A shot is of the source as saved when it comes back: a save while it ran takes it again, and a shot that fails leaves none of its old files behind.
                        Exit 1 if any frame did not compile, was not found, or threw uncaught.
   spool logs <frame> [--scenario <name>]
                        The same boot's full console as [type] lines, uncaught errors and [spool] lines included. shot already prints the errors: reach for logs only for the rest. It is cached by compiled document and scenario name, so after editing a scenario's JSON run shot first, which always boots fresh, then logs.

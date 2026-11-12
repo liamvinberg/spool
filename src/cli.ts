@@ -76,6 +76,7 @@ import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade
 import {
 	mintPlayerUrl,
 	mintRawUrl,
+	mintTalkUrl,
 	readFlows,
 	readSelection,
 	readUntold,
@@ -394,6 +395,7 @@ interface VerifyOptions {
 	scroll?: number;
 	scenario?: string;
 	beat?: string;
+	out?: string;
 }
 
 function parseViewport(value: string): { width: number; height: number } {
@@ -591,9 +593,11 @@ program
 		"--beat <beat>",
 		"shoot a slide at this beat, by its name or its number from 1, not its last (deck experiment)",
 	)
+	.option("--out <dir>", "copy each file into this folder as well, by its own name, and print that path")
 	.action(async (frames: string[], options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
 		const names = framesNamed(root, frames);
+		if (options.out !== undefined) options.out = resolvePath(options.out);
 		// one block per frame, in the order named, each with its console errors
 		const failures: string[] = [];
 		let first = true;
@@ -681,8 +685,8 @@ program
 
 program
 	.command("url")
-	.description("mint a player-session URL to drive in a browser")
-	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
+	.description("mint a player-session URL to drive in a browser, or the address that plays a deck page's talk")
+	.argument("<frame>", "frame name, its path under design/frames, or a deck page's", parseFrame)
 	.option("--raw", "mint the bare frame document URL: one frame, no session")
 	.action(async (frame: string, options: { raw?: boolean }) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
@@ -692,7 +696,8 @@ program
 			`${
 				options.raw === true
 					? await mintRawUrl(daemonUrl, name, frame, root)
-					: await mintPlayerUrl(daemonUrl, name, frame, controlToken)
+					: (mintTalkUrl(daemonUrl, name, frame, root, experimentsOnHere(spoolDir)("deck")) ??
+						(await mintPlayerUrl(daemonUrl, name, frame, controlToken)))
 			}\n`,
 		);
 	});

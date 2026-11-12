@@ -375,8 +375,12 @@ export default function Frame() {
 		body: JSON.stringify({ width: 390, height: 844 }),
 	});
 	const lines = (await boot.text()).trim().split("\n");
+	// whichever step it was at when its thread stopped: its boot, or its settle
 	expect(JSON.parse(lines.at(-1) ?? "{}")).toEqual({
-		outcome: { kind: "failed", message: "the frame did not finish booting within 4 s" },
+		outcome: {
+			kind: "failed",
+			message: expect.stringMatching(/^the frame did not answer for 4 s while (booting|settling)$/),
+		},
 	});
 
 	// and the booth goes on: the next edit lands in a fresh tab

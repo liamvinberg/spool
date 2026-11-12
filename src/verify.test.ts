@@ -1,9 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { createServer as createTlsServer } from "node:tls";
 import { inflateSync } from "node:zlib";
 import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
+import type { BoothSeams } from "./daemon/booth";
 import { readDaemonState } from "./daemon/lifecycle";
 import { writeCaptureError } from "./daemon/thumbs";
 import { planShot, recordBoot, SHOT_AT_MAX_MS, type ShotFile } from "./daemon/verify-record";
@@ -37,10 +39,10 @@ async function browserAvailable(): Promise<boolean> {
 /** The release booting, whose booth's failures logs reports. */
 const SPOOL = "0.56.0";
 
-async function serveVerifyProject(experiments?: { deck: boolean }) {
+async function serveVerifyProject(experiments?: { deck: boolean }, timing?: BoothSeams["timing"]) {
 	// the scheme a boot renders in is the machine's until a canvas says; this one is held light
 	const { spoolDir, root, name, url } = await serveProject({
-		booth: { systemScheme: async () => "light" },
+		booth: { systemScheme: async () => "light", ...(timing === undefined ? {} : { timing }) },
 		...(experiments === undefined ? {} : { experiments }),
 	});
 	const controlToken = readDaemonState(spoolDir)?.controlToken;
@@ -739,6 +741,87 @@ export default function Clockless() {
 		expect(logs.entries).toContainEqual({ type: "log", text: "fake clock: false" });
 	});
 
+	it("seeks a frame that runs slower than its own time for as long as it keeps answering", {
+		timeout: 180_000,
+	}, async () => {
+		if (!(await browserAvailable())) return;
+
+		// each of the frame's animation frames holds its main thread 150 ms of real
+		// time, as a heavy scene does on a busy machine: 1000 ms of its own time take
+		// over 9 s to seek, though no step of it comes near the 5 s a step may take
+		const { root, deps } = await serveVerifyProject(undefined, { shotMs: 5000 });
+		const viewport = { width: 160, height: 60 };
+		writeFrame(
+			root,
+			"heavy",
+			`import { useEffect, useState } from "react";
+
+export default function Heavy() {
+	const [drawn, setDrawn] = useState(0);
+	useEffect(() => {
+		let frame = requestAnimationFrame(function draw() {
+			${await heldCall(150)}
+			setDrawn((count) => count + 1);
+			frame = requestAnimationFrame(draw);
+		});
+		return () => cancelAnimationFrame(frame);
+	}, []);
+	return <main>{drawn}</main>;
+}
+`,
+		);
+		// and two at once, as agents on one daemon ask, each slower again for sharing the machine
+		writeFrame(root, "heavier", readFileSync(join(root, "design", "frames", "heavy", "frame.tsx"), "utf8"));
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames({ ...deps(""), viewport, at: [1000] }, ["heavy", "heavier"]))
+			shots.push(shot);
+		expect(shots).toMatchObject([
+			{ frame: "heavy", outcome: { kind: "shot", files: [{ at: 1000 }] } },
+			{ frame: "heavier", outcome: { kind: "shot", files: [{ at: 1000 }] } },
+		]);
+	});
+
+	it("shoots the source as it is saved by the time the shot comes back", { timeout: 120_000 }, async () => {
+		if (!(await browserAvailable())) return;
+
+		// the frame is saved again while its first source is being shot, as an agent's
+		// next edit lands while a shot it asked for still waits or sits
+		const { root, deps } = await serveVerifyProject();
+		const saved = `export default function Saved() {
+	return <main style={{ background: "#00ff00", width: "100vw", height: "100vh" }} />;
+}
+`;
+		const held = await heldCall(1500, () => writeFrame(root, "edited", saved));
+		writeFrame(
+			root,
+			"edited",
+			`${held}
+export default function Before() {
+	return <main style={{ background: "#ff0000", width: "100vw", height: "100vh" }} />;
+}
+`,
+		);
+		const shot = await shotFrame(deps("edited", { viewport: { width: 160, height: 60 } }));
+		if (shot.kind !== "shot") throw new Error(`the shot came back ${shot.kind}`);
+		const file = shot.files[0]?.file ?? "";
+		expect(firstPixel(file)).toEqual([0, 255, 0]);
+
+		// a save that breaks it while it is shot is a shot of a frame that does not compile
+		const breaks = await heldCall(1500, () =>
+			writeFrame(root, "edited", "export default function Broken() { return <main> }\n"),
+		);
+		writeFrame(root, "edited", `${breaks}\nexport default function Before() { return <main /> }\n`);
+		expect(await shotFrame(deps("edited", { viewport: { width: 160, height: 60 } }))).toMatchObject({
+			kind: "broken",
+		});
+
+		// and a source that no longer compiles leaves no picture of the one before it
+		expect(await shotFrame(deps("edited", { viewport: { width: 160, height: 60 } }))).toMatchObject({
+			kind: "broken",
+		});
+		expect(existsSync(file)).toBe(false);
+	});
+
 	it("settles the way a cover does, or runs the frame's timers as far as --at says", {
 		timeout: 120_000,
 	}, async () => {
@@ -830,7 +913,7 @@ export default function Late() {
 		expect(firstPixel(join(verify, "bands.scroll5000.png"))).toEqual([0, 0, 255]);
 	});
 
-	it("shoots a slide at the beat --beat names, by its name or number, beside the shot of its last", {
+	it("shoots a slide at the beat --beat names, by its name or number, into a file named by the beat", {
 		timeout: 120_000,
 	}, async () => {
 		if (!(await browserAvailable())) return;
@@ -857,15 +940,24 @@ export default function Reveal() {
 		expect(firstPixel(join(verify, "reveal.png"))).toEqual([0, 0, 255]);
 		const named = await shotFrame(deps("talk/reveal", { viewport, beat: "dark" }));
 		if (named.kind !== "shot") throw new Error("reveal was not shot at its first beat");
-		expect(named.files).toEqual([{ file: join(verify, "reveal.beat1.png"), y: 0, height: 120, beat: 1 }]);
-		expect(firstPixel(join(verify, "reveal.beat1.png"))).toEqual([255, 0, 0]);
-		await shotFrame(deps("talk/reveal", { viewport, beat: "2" }));
-		expect(firstPixel(join(verify, "reveal.beat2.png"))).toEqual([0, 255, 0]);
+		expect(named.files).toEqual([{ file: join(verify, "reveal.beat-dark.png"), y: 0, height: 120, beat: 1 }]);
+		expect(firstPixel(join(verify, "reveal.beat-dark.png"))).toEqual([255, 0, 0]);
+		// by its number from 1 it is the same beat, and the same file, copied where the agent says
+		const out = join(makeTempDir(), "shots");
+		const copied = await shotFrame(deps("talk/reveal", { viewport, beat: "2", out }));
+		if (copied.kind !== "shot") throw new Error("reveal was not shot at its second beat");
+		expect(copied.files.map(({ file }) => file)).toEqual([join(out, "reveal.beat-mid.png")]);
+		expect(firstPixel(join(out, "reveal.beat-mid.png"))).toEqual([0, 255, 0]);
+		expect(firstPixel(join(verify, "reveal.beat-mid.png"))).toEqual([0, 255, 0]);
+		// two frames that one folder would give one name are refused before either is shot
+		await expect(shotFrames({ ...deps(""), out }, ["talk/reveal", "other/reveal"]).next()).rejects.toThrow(
+			"talk/reveal and other/reveal would both be named reveal",
+		);
 		expect(firstPixel(join(verify, "reveal.png"))).toEqual([0, 0, 255]);
 
 		// a beat the slide does not have is said before any boot, with the beats it has
 		await expect(shotFrame(deps("talk/reveal", { viewport, beat: "4" }))).rejects.toThrow(
-			'talk/reveal has no beat "4": its beats are "dark", "mid", "light", or 1 to 3',
+			'talk/reveal has no beat "4": its beats are "dark", "mid", "light", or 1 to 3 counted from 1',
 		);
 	});
 
@@ -919,6 +1011,26 @@ export default function Seeded() {
 		expect(await logsFrame(deps("seeded"))).toMatchObject({ kind: "logs", replayed: false });
 	});
 });
+
+/**
+ * A line of frame code that holds its main thread `ms` of real time, whatever
+ * its clocks say: a synchronous call to a server that holds its handshake that
+ * long and refuses it. Frames are https-only, and a stopped clock stops every
+ * wait the frame could measure for itself. `onHeld` is told each time it holds.
+ */
+async function heldCall(ms: number, onHeld?: () => void): Promise<string> {
+	const server = createTlsServer({
+		SNICallback: (_name, refuse) => {
+			onHeld?.();
+			setTimeout(() => refuse(new Error("held, never served")), ms);
+		},
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
+	const address = server.address();
+	if (address === null || typeof address === "string") throw new Error("the held server has no port");
+	return `const call = new XMLHttpRequest(); call.open("GET", "https://held.localhost:${address.port}/", false); try { call.send(); } catch {}`;
+}
 
 function readPngSize(file: string): { width: number; height: number } {
 	const png = readFileSync(file);
