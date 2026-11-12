@@ -140,7 +140,7 @@ function lineOf(outcome: RehearseOutcome, finding: Finding): string {
 			const after = seconds(finding.file.after);
 			return finding.file.kind === "picture"
 				? `${head}: its picture ${shortUrl(finding.file.name)} came ${after} after the slide went on screen, so the slide showed without it; draw it from the slide's first beat, where the stage loads it before the slide comes on, or make it smaller`
-				: `${head}: the face "${finding.file.name}" came ${after} after the slide went on screen, so its words drew in another face first; declare it with @font-face in a stylesheet the slide imports, so the stage loads it before the slide comes on`;
+				: `${head}: the face "${finding.file.name}" came ${after} after the slide went on screen, so its words drew in another face first; declare it with @font-face in a stylesheet the slide imports, not through an @import of another site's, so the stage loads it before the slide comes on`;
 		}
 		case "cut": {
 			const path =
