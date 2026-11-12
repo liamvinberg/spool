@@ -522,10 +522,15 @@ export async function fetchExportPlan(project: string, frame: string): Promise<E
 	return (await res.json()) as ExportPlan;
 }
 
-/** The frame as one HTML file that opens offline: with every frame its links reach, or alone. */
-export async function fetchExportHtml(project: string, frame: string, scope: "flow" | "one"): Promise<Uint8Array> {
+/** The frame as one HTML file that opens offline: with every frame its links reach, or alone; in the player, or bare. */
+export async function fetchExportHtml(
+	project: string,
+	frame: string,
+	scope: "flow" | "one",
+	player: boolean,
+): Promise<Uint8Array> {
 	const res = await controlFetch(
-		`/api/p/${encodeURIComponent(project)}/export/html?frame=${encodeURIComponent(frame)}&scope=${scope}`,
+		`/api/p/${encodeURIComponent(project)}/export/html?frame=${encodeURIComponent(frame)}&scope=${scope}&player=${player ? 1 : 0}`,
 	);
 	if (!res.ok) throw new Error(await errorText(res));
 	return new Uint8Array(await res.arrayBuffer());
