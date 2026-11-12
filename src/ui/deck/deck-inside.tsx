@@ -13,7 +13,7 @@ import { type CameraStore, useCameraFollow, type ViewChanges } from "../canvas/c
 import { type CanvasStore, useCanvasState } from "../canvas/canvas-store";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { deckMotion, easing } from "./deck-motion";
-import { insideBox, insideCamera, outCamera } from "./inside-camera";
+import { insideBox, insideCamera, outCamera, SETTLE_MS } from "./inside-camera";
 import { KeyList } from "./key-list";
 import { usePresentAsk } from "./present";
 import { talkSource } from "./talk-source";
@@ -86,12 +86,6 @@ interface Inside {
 
 const stillness = () =>
 	typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-/**
- * How long a slide held stands before it settles, its own document starting and the stage resting on it: longer than a
- * double-click, whose first click selects the slide the second goes into, so that click starts nothing under the flight.
- */
-const SETTLE_MS = 500;
 
 /** Where a key pressed while the camera flies into a slide lands: the slide's own talk, fresh, played in place. */
 const arriving = (event: KeyboardEvent) => ({

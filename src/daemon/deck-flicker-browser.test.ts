@@ -4,6 +4,7 @@ import type { Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, pagePointOf, serveProject, writeDesignFile } from "../test-helpers";
+import { SETTLE_MS } from "../ui/deck/inside-camera";
 import { pixelsOf, recordScreen } from "./deck/stage-browser.test-helpers";
 
 type Rgb = readonly [number, number, number];
@@ -143,15 +144,17 @@ async function deckPage(
 		await page.mouse.move(pointer.x, pointer.y);
 		await page.mouse.down();
 	};
-	/** until every frame of the page has stood still for twenty drawn frames */
+	/** until every frame of the page has stood still for twenty drawn frames, as the samples have them */
 	const settled = async () => {
-		let last = "";
+		let last: string | undefined;
 		for (let still = 0; still < 20; ) {
 			await frame();
-			const latest = await page.evaluate(() =>
-				JSON.stringify((window as unknown as { samples: Sample[] }).samples.at(-1)?.labels),
-			);
-			still = latest === last ? still + 1 : 0;
+			// none sampled yet is nothing standing still
+			const latest = await page.evaluate(() => {
+				const labels = (window as unknown as { samples: Sample[] }).samples.at(-1)?.labels;
+				return labels === undefined ? undefined : JSON.stringify(labels);
+			});
+			still = latest !== undefined && latest === last ? still + 1 : 0;
 			last = latest;
 		}
 	};
@@ -238,7 +241,11 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	const { page, at, middle, now, samples, glide, press, settled } = deck;
 	const screen = await recordScreen(page);
 	const stride = STRIDE * ZOOM;
+	// where each frame rests, read once it has been sampled standing still: read sooner, a frame not sampled yet has
+	// no place, and nothing would ever count as moving from it
+	await settled();
 	const rest = (await samples(0)).at(-1)?.labels ?? {};
+	expect(Object.keys(rest).sort()).toEqual(Object.keys(frames).sort());
 	const restOf = (name: string) => rest[name]?.[0] ?? Number.NaN;
 	// when each document of the page started: an iframe added
 	await page.evaluate(() => {
@@ -259,6 +266,10 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	await glide({ x: deck.pointer().x + 4, y: deck.pointer().y }, 1);
 	await glide(await at({ x: middle("a").x + 0.45 * STRIDE, y: 360 }), Math.round((0.45 * stride) / 2));
 	const carried = await samples(carrying);
+	// when the hand took a: a slide pressed and held still settles, its document starting, so what starts before the
+	// lift is the press's and not the carry's, however long a busy machine takes between the two
+	const lifted = carried.find((sample) => Math.abs((sample.labels.a?.[0] ?? 0) - restOf("a")) >= 0.5)?.t;
+	expect(lifted, "a was never lifted").toBeDefined();
 	const moved = carried.findIndex((sample) => Math.abs((sample.labels.b?.[0] ?? 0) - restOf("b")) >= 0.5);
 	expect(moved, "b never made room").toBeGreaterThan(0);
 	const covered = ((carried[moved]?.labels.a?.[0] ?? 0) - restOf("a")) / stride;
@@ -306,7 +317,7 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	const drop = await samples(dropped);
 	// nothing of a started while it was in the hand, a document starting holding the window's frames back
 	const started = await page.evaluate(() => (window as unknown as { started: number[] }).started);
-	expect(started.filter((t) => t >= carrying && t < dropped)).toEqual([]);
+	expect(started.filter((t) => t >= (lifted ?? carrying) && t < dropped)).toEqual([]);
 	expect(drop.at(-1)?.numbers).toEqual({ b: 1, a: 2, c: 3 });
 	expect(deck.talk()).toEqual(["b", "a", "c"]);
 	for (const name of ["a", "b", "c", "x"]) {
@@ -496,6 +507,12 @@ it("goes into a slide and out without starting it under the flight or losing its
 	await documentOfB.waitFor();
 	await page.keyboard.press("Escape");
 	await documentOfB.waitFor({ state: "detached" });
+	// when each press reached the page
+	await page.evaluate(() => {
+		const presses: number[] = [];
+		(window as unknown as { presses: number[] }).presses = presses;
+		window.addEventListener("pointerdown", () => presses.push(performance.now()), { capture: true });
+	});
 	const goingIn = await recordScreen(page);
 	const clicked = await now();
 	// the first click selects b, and the second, a moment later, goes in
@@ -506,8 +523,15 @@ it("goes into a slide and out without starting it under the flight or losing its
 	await shown.waitFor();
 	const gone = await placeOfB();
 	stayedOnB(await goingIn.stop(), out, gone, "going in");
-	// the camera lands no sooner than a flight after the second click
-	const early = (await started()).filter((t) => t >= clicked && t < flying + fly);
+	// nothing starts from the first click until the camera lands, no sooner than a flight after the second. Only a
+	// machine too busy to put the second click within a double-click of the first lets the selection settle between
+	// the two, as it would under a person who held a slide that long, and that start is the selection's own
+	const [first, second] = (await page.evaluate(() => (window as unknown as { presses: number[] }).presses)).filter(
+		(t) => t >= clicked,
+	);
+	if (first === undefined || second === undefined) throw new Error("the clicks never reached the page");
+	const settledBetween = (t: number) => second - first > SETTLE_MS && t >= first + SETTLE_MS && t < second;
+	const early = (await started()).filter((t) => t >= clicked && t < flying + fly && !settledBetween(t));
 	expect(early, "a document started before the camera was on b").toEqual([]);
 	const goingOut = await recordScreen(page);
 	await page.keyboard.press("Escape");
