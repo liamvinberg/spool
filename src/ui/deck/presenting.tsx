@@ -8,6 +8,7 @@ import type { CameraStore } from "../canvas/camera-store";
 import type { CanvasStore } from "../canvas/canvas-store";
 import { type DeckReads, useDeckRead } from "./deck-api";
 import { type DeckMotion, useDeckMotion } from "./deck-motion";
+import { decodedPicture, openingOf, readyPicture } from "./opening";
 import { presentDone, usePresentAsk, usePresentWarm } from "./present";
 import { type Card, PresentSlides } from "./present-slides";
 import { Presenter, useWindowSize } from "./presenter";
@@ -18,10 +19,13 @@ import { presenterLayout } from "./presenter-layout";
  * own window between Present and End. The chrome falls away around the slide presented from (the window's bar lifts,
  * each side slides out past its edge, the tools sink, the canvas darkens to the presenter's ground) while the slide
  * travels from its place on the canvas to where the presenter view holds it; the rest of the view arrives around it.
- * The slide's picture stays over the presenter's stage until the stage has drawn its own, and goes in one frame, the
- * frame the slide lands or the stage draws, whichever is later: the picture is the canvas's, small, and stretched to the
- * slide's size it is soft, so it never stands over a slide that is ready (spool#316). End plays it back: the slide the
- * talk ended on travels to its place on the canvas, selected there, while the chrome comes back.
+ * The slide travels as its opening still, the photo booth's picture of it at the size a talk draws it on the beat the
+ * talk opens on, when that is decoded by the time Present is pressed (spool#319): a picture flies at the same cost
+ * whatever is on the slide, where a live slide flown by a transform is drawn again at every size it passes through and
+ * stands soft behind it. Else it travels as the canvas's cover, small, which stretched to the slide's size is soft.
+ * Either stays over the presenter's stage until the stage has drawn its own, and goes in one frame, the frame the slide
+ * lands or the stage draws, whichever is later, so it never stands over a slide that is ready (spool#316). End plays it
+ * back: the slide the talk ended on travels to its place on the canvas, selected there, while the chrome comes back.
  */
 
 /** A box on the window, in its pixels. */
@@ -33,10 +37,24 @@ interface Rect {
 }
 
 type Moment =
-	/** Present was pressed: the chrome falls away and the slide travels, from `from` when it was on screen */
-	| { readonly kind: "leave"; readonly talk: string; readonly frame: string; readonly from: Rect | null }
+	/**
+	 * Present was pressed: the chrome falls away and the slide travels as `picture`, from `from` when it was on screen
+	 */
+	| {
+			readonly kind: "leave";
+			readonly talk: string;
+			readonly frame: string;
+			readonly from: Rect | null;
+			readonly picture: string | undefined;
+	  }
 	/** the presenter view is drawn; the picture that travelled stays until the stage has drawn its own, then goes at once */
-	| { readonly kind: "on"; readonly talk: string; readonly frame: string; readonly handed: boolean }
+	| {
+			readonly kind: "on";
+			readonly talk: string;
+			readonly frame: string;
+			readonly picture: string | undefined;
+			readonly handed: boolean;
+	  }
 	/** End: the slide the talk ended on goes back to its place, `to` once the canvas has it there */
 	| { readonly kind: "back"; readonly talk: string; readonly frame: string; readonly to: Rect | null | undefined };
 
@@ -61,6 +79,12 @@ export function Presenting(props: PresentingProps) {
 			<SlidesMoments {...props} />
 		</>
 	);
+}
+
+/** The canvas's cover of a frame: the slide at its last beat, small. */
+function coverOf(store: CanvasStore, project: string, frame: string): string | undefined {
+	const cover = store.get().frames.find((one) => one.name === frame)?.cover;
+	return cover === undefined ? undefined : coverUrl(project, frame, cover.hash);
 }
 
 /** Where a frame's card stands on the window, and its corner there, while it stands in view of the canvas. */
@@ -101,10 +125,12 @@ function SlidesMoments({ project, store, camera, reads, viewport, onEnded, say }
 			talk={talk}
 			cardOf={(frame) => cardOn(store, camera, viewport()?.getBoundingClientRect(), frame)}
 			pictureOf={(frame) => {
-				// the canvas draws a slide at its last beat: its picture is the talk's start only for a slide of one
+				// the canvas draws a slide at its last beat: its cover is the talk's start only for a slide of one
 				const beats = deck?.slides.find((one) => one.name === frame)?.beats.length ?? 1;
-				const cover = store.get().frames.find((one) => one.name === frame)?.cover;
-				return beats > 1 || cover === undefined ? undefined : coverUrl(project, frame, cover.hash);
+				return {
+					opening: openingOf(store, project, frame),
+					cover: beats > 1 ? undefined : coverOf(store, project, frame),
+				};
 			}}
 			onEnded={onEnded}
 			say={say}
@@ -137,7 +163,11 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 	/** the slide arrived where the presenter view holds it: the view is drawn around it */
 	const land = useCallback(
 		(from: Moment) =>
-			setMoment((now) => (now === from ? { kind: "on", talk: from.talk, frame: from.frame, handed: false } : now)),
+			setMoment((now) =>
+				now === from && now.kind === "leave"
+					? { kind: "on", talk: from.talk, frame: from.frame, picture: now.picture, handed: false }
+					: now,
+			),
 		[],
 	);
 	// the stage has drawn the slide, and the slide is there: its picture goes before the frame is painted
@@ -160,16 +190,26 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 		[],
 	);
 
-	// Present pressed: the slide leaves the canvas from where it stands, if it stands on screen
+	// Present pressed: the slide leaves the canvas from where it stands, if it stands on screen, as its opening still
+	// when that is decoded, else as its cover
 	useLayoutEffect(() => {
 		if (mine === null) return;
 		setMoment((now) => {
 			if (now !== null && now.talk === mine.talk) return now;
 			const card = where.current(mine.slide);
-			return { kind: "leave", talk: mine.talk, frame: mine.slide, from: still || card === null ? null : card };
+			const opening = openingOf(store, project, mine.slide);
+			if (opening !== undefined) void readyPicture(opening);
+			const picture = decodedPicture(opening) === undefined ? coverOf(store, project, mine.slide) : opening;
+			return {
+				kind: "leave",
+				talk: mine.talk,
+				frame: mine.slide,
+				from: still || card === null ? null : card,
+				picture,
+			};
 		});
 		setPictured(false);
-	}, [mine, still]);
+	}, [mine, still, store, project]);
 
 	// with nothing to travel, the view is drawn once the chrome has gone
 	useEffect(() => {
@@ -235,10 +275,6 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 
 	if (moment === null) return null;
 	const field = viewport()?.getBoundingClientRect();
-	const picture = (frame: string) => {
-		const cover = store.get().frames.find((one) => one.name === frame)?.cover;
-		return cover === undefined ? undefined : coverUrl(project, frame, cover.hash);
-	};
 	const presenting = mine !== null && mine.talk === moment.talk && moment.kind !== "back";
 
 	return createPortal(
@@ -284,7 +320,7 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 				<Travel
 					key={`leave-${moment.talk}`}
 					timing={timing}
-					picture={picture(moment.frame)}
+					picture={moment.picture}
 					from={moment.from}
 					to={big}
 					leaving
@@ -299,7 +335,7 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 					className="pointer-events-none fixed top-0 left-0 z-50 overflow-hidden rounded-md bg-[black]"
 					style={{ left: big.x, top: big.y, width: big.w, height: big.h }}
 				>
-					<Picture src={picture(moment.frame)} />
+					<Picture src={moment.picture} />
 				</div>
 			) : null}
 			{moment.kind === "back" && moment.to !== null ? (
@@ -307,7 +343,7 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 					<Travel
 						key={`stay-${moment.talk}`}
 						timing={timing}
-						picture={picture(moment.frame)}
+						picture={coverOf(store, project, moment.frame)}
 						from={big}
 						to={big}
 					/>
@@ -315,7 +351,7 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 					<Travel
 						key={`back-${moment.talk}`}
 						timing={timing}
-						picture={picture(moment.frame)}
+						picture={coverOf(store, project, moment.frame)}
 						from={big}
 						to={moment.to}
 						onDone={() => done(moment)}
