@@ -259,7 +259,7 @@ function canvasSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): bool
 /** The control origin of the daemon the window is on: the remote's, through its tunnel, or this Mac's. */
 function controlOrigin(): string | undefined {
 	if (tunnel !== undefined) return remote === undefined ? undefined : `http://127.0.0.1:${remote.port}`;
-	return daemonOrigin;
+	return daemonOn?.origin;
 }
 
 /** The sender's main frame is a page of the daemon's control origin, which is the only origin a play is asked from. */
@@ -710,8 +710,8 @@ function point(
 	daemonPort = Number(new URL(url).port);
 	daemonControlToken = controlToken;
 	daemonInfo = { version: daemonVersion, adopted: verdict === "adopted" };
-	daemonOrigin = new URL(url).origin;
-	daemonOn = daemonIdentity(daemonOrigin, pid);
+	const origin = new URL(url).origin;
+	daemonOn = { origin, identity: daemonIdentity(origin, pid) };
 	tendSpare();
 	tray?.setContextMenu(buildTrayMenu());
 	follow(new URL(url).origin, controlToken);
@@ -1105,7 +1105,7 @@ function showPlayWindow(url: string, request: PlayRequest, size: { w: number; h:
 	const rect = restored && stored !== undefined ? stored : fitRect(size, canvasArea());
 	const title = request.frame ?? request.project;
 
-	const choice = spareForPlay(spare, new URL(url).origin, daemonOn);
+	const choice = spareForPlay(spare, new URL(url).origin, daemonOn?.identity);
 	if (choice === "discard") dropSpare("its daemon is gone");
 	const adopted = choice === "adopt" ? takeSpare() : undefined;
 	const window_ = adopted ?? makePlayWindow(rect, title);
@@ -1203,10 +1203,8 @@ function makePlayWindow(rect: WindowRect, title: string): BrowserWindow {
 
 /** The hidden play window kept ready while a canvas is open (spool#301, play-spare.ts). */
 let spare: (SpareFacts & { window: BrowserWindow }) | undefined;
-/** The daemon the canvas is on, as `daemonIdentity` names it. */
-let daemonOn: string | undefined;
-/** That daemon's control origin, which the spare's page is loaded from; always set beside `daemonOn`. */
-let daemonOrigin: string | undefined;
+/** The daemon the canvas is on: its control origin, and that run of it as `daemonIdentity` names it. */
+let daemonOn: { identity: string; origin: string } | undefined;
 /** A daemon that answered the spare's page with an error, and is not asked again. */
 let spareRefusedBy: string | undefined;
 /** Play windows whose frame is not revealed yet: each holds the next spare back until it is, or it can no longer be. */
@@ -1219,7 +1217,7 @@ const SPARE_AFTER_MS = 1_000;
 function spareSurroundings(): SpareSurroundings {
 	return {
 		canvasOpen: window !== undefined && !window.isDestroyed() && canvasReady,
-		daemon: daemonOn,
+		daemon: daemonOn?.identity,
 		remote: tunnel !== undefined,
 		quitting: shuttingDown,
 		refusedBy: spareRefusedBy,
@@ -1244,14 +1242,14 @@ function tendSpare(): void {
 }
 
 function makeSpare(): void {
-	if (window === undefined || daemonOn === undefined || daemonOrigin === undefined) return;
+	if (window === undefined || daemonOn === undefined) return;
 	// the daemon's own origin, never the canvas window's: that can still be a remote's while the daemon is ours
-	const origin = daemonOrigin;
+	const { origin, identity } = daemonOn;
 	const made = makePlayWindow(fitRect(UNKNOWN_AUTHORED, canvasArea()), NAME);
 	// it is no window of the app's until a press adopts it: hidden, it is in no
 	// list, and this keeps it out of the Window menu's
 	made.excludedFromShownWindowsMenu = true;
-	const facts = { window: made, origin, daemon: daemonOn, ready: false };
+	const facts = { window: made, origin, daemon: identity, ready: false };
 	spare = facts;
 	let answered = false;
 	made.webContents.on("did-navigate", (_event, _url, code) => {
