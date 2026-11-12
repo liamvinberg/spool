@@ -10,6 +10,7 @@ Commands, from anywhere inside a registered project:
   spool check [frame…]  strictly type-check frames and what they import, without starting spool or writing anything; name frames or a page folder, none for all. Ends with "checked N frames (…), M errors"
   spool shot <frame>…   headless screenshot of each frame or page named, with its console errors
   spool logs <frame>    the same boot's full console
+  spool rehearse <talk> play a deck's talk in the stage, forward and back, and say what broke, moved wrong or lagged, with a sheet of every beat; a talk is done when it rehearses clean (topic: deck)
   spool url <frame>     a player URL to walk; --raw for the bare frame document (topic: verbs, with a driver to click and type)
   spool selection       what the human points at, as one <selection> block: frames and elements, paths and lines
   spool flows           the link graph, read from source: edges, certainty, verified walks
