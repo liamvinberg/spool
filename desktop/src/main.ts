@@ -696,7 +696,8 @@ function point(
 	daemonPort = Number(new URL(url).port);
 	daemonControlToken = controlToken;
 	daemonInfo = { version: daemonVersion, adopted: verdict === "adopted" };
-	daemonOn = daemonIdentity(new URL(url).origin, pid);
+	daemonOrigin = new URL(url).origin;
+	daemonOn = daemonIdentity(daemonOrigin, pid);
 	tendSpare();
 	tray?.setContextMenu(buildTrayMenu());
 	follow(new URL(url).origin, controlToken);
@@ -1186,6 +1187,8 @@ function makePlayWindow(rect: WindowRect, title: string): BrowserWindow {
 let spare: (SpareFacts & { window: BrowserWindow }) | undefined;
 /** The daemon the canvas is on, as `daemonIdentity` names it. */
 let daemonOn: string | undefined;
+/** That daemon's control origin, which the spare's page is loaded from; always set beside `daemonOn`. */
+let daemonOrigin: string | undefined;
 /** A daemon that answered the spare's page with an error, and is not asked again. */
 let spareRefusedBy: string | undefined;
 /** Play windows whose frame is not revealed yet, each with how long it is waited on. */
@@ -1225,8 +1228,9 @@ function tendSpare(): void {
 }
 
 function makeSpare(): void {
-	if (window === undefined || daemonOn === undefined) return;
-	const origin = new URL(window.webContents.getURL()).origin;
+	if (window === undefined || daemonOn === undefined || daemonOrigin === undefined) return;
+	// the daemon's own origin, never the canvas window's: that can still be a remote's while the daemon is ours
+	const origin = daemonOrigin;
 	const made = makePlayWindow(fitRect(UNKNOWN_AUTHORED, canvasArea()), NAME);
 	// it is no window of the app's until a press adopts it: hidden, it is in no
 	// list, and this keeps it out of the Window menu's
