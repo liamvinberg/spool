@@ -171,11 +171,17 @@ export function beatAsked(frame: string, source: SlideSource, asked: string): nu
 	return { message: `${frame} has no beat "${asked}": its beats are ${list}, or 1 to ${beats.length}${counted}` };
 }
 
+/** A beat a shot asks a slide for: its index from 0, and what its files are named after (`beatLabel`). */
+export interface ShotBeat {
+	readonly index: number;
+	readonly label: string;
+}
+
 /**
- * What a shot of a slide at one of its beats is named after: the beat's own name, where a file name can carry it, else
- * its number from 1.
+ * What a shot of a slide at one of its beats is named after: the beat's own name, where a file name can carry it and
+ * it starts with a letter, else its number from 1. A name never reads as a number, so no two beats share a file.
  */
 export function beatLabel(source: SlideSource, index: number): string {
 	const name = source.beats[index];
-	return name !== undefined && /^[\w-]+$/.test(name) ? name : String(index + 1);
+	return name !== undefined && /^[A-Za-z][\w-]*$/.test(name) ? name : String(index + 1);
 }

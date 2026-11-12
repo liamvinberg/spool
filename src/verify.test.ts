@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
-import { createServer as createTlsServer } from "node:tls";
 import { join } from "node:path";
+import { createServer as createTlsServer } from "node:tls";
 import { inflateSync } from "node:zlib";
 import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -773,7 +773,8 @@ export default function Heavy() {
 		// and two at once, as agents on one daemon ask, each slower again for sharing the machine
 		writeFrame(root, "heavier", readFileSync(join(root, "design", "frames", "heavy", "frame.tsx"), "utf8"));
 		const shots: BatchShot[] = [];
-		for await (const shot of shotFrames({ ...deps(""), viewport, at: [1000] }, ["heavy", "heavier"])) shots.push(shot);
+		for await (const shot of shotFrames({ ...deps(""), viewport, at: [1000] }, ["heavy", "heavier"]))
+			shots.push(shot);
 		expect(shots).toMatchObject([
 			{ frame: "heavy", outcome: { kind: "shot", files: [{ at: 1000 }] } },
 			{ frame: "heavier", outcome: { kind: "shot", files: [{ at: 1000 }] } },
@@ -805,9 +806,19 @@ export default function Before() {
 		const file = shot.files[0]?.file ?? "";
 		expect(firstPixel(file)).toEqual([0, 255, 0]);
 
+		// a save that breaks it while it is shot is a shot of a frame that does not compile
+		const breaks = await heldCall(1500, () =>
+			writeFrame(root, "edited", "export default function Broken() { return <main> }\n"),
+		);
+		writeFrame(root, "edited", `${breaks}\nexport default function Before() { return <main /> }\n`);
+		expect(await shotFrame(deps("edited", { viewport: { width: 160, height: 60 } }))).toMatchObject({
+			kind: "broken",
+		});
+
 		// and a source that no longer compiles leaves no picture of the one before it
-		writeFrame(root, "edited", "export default function Broken() { return <main> }\n");
-		expect(await shotFrame(deps("edited", { viewport: { width: 160, height: 60 } }))).toMatchObject({ kind: "broken" });
+		expect(await shotFrame(deps("edited", { viewport: { width: 160, height: 60 } }))).toMatchObject({
+			kind: "broken",
+		});
 		expect(existsSync(file)).toBe(false);
 	});
 

@@ -75,8 +75,8 @@ import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
 import {
 	mintPlayerUrl,
-	mintTalkUrl,
 	mintRawUrl,
+	mintTalkUrl,
 	readFlows,
 	readSelection,
 	readUntold,

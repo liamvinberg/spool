@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import type { ColorScheme } from "../cover";
+import type { ShotBeat } from "./deck/slide-source";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
@@ -147,7 +148,7 @@ export function recordBoot(
 		/** The `--scroll` offset the shots were taken at, if one was asked. */
 		scroll?: number;
 		/** The slide's beat the shots show, from 0, and what its files are named after, if `--beat` asked for one. */
-		beat?: { index: number; label: string };
+		beat?: ShotBeat;
 		shots: ReadonlyArray<{ at?: number; pngs: readonly Buffer[] }>;
 		entries: readonly LogEntry[];
 	},

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beatAsked, readSlideSource } from "./slide-source";
+import { beatAsked, beatLabel, readSlideSource } from "./slide-source";
 
 const slide = (body: string, imports = 'import { ui } from "spool";') =>
 	`${imports}\nexport default function Slide() {\n${body}\n\treturn <p />;\n}\n`;
@@ -41,6 +41,11 @@ describe("a slide's source, read without running it", () => {
 			{ line: 2, column: 19, specifier: "./notes.md" },
 			{ line: 4, column: 22, specifier: "./notes.md?raw" },
 		]);
+	});
+
+	it("names a beat's shot by the beat where a file name can carry it, and by its number where not, never twice", () => {
+		const read = readSlideSource(slide('\tui.beats(["2", "price total", "close"]);'));
+		expect([0, 1, 2].map((index) => beatLabel(read, index))).toEqual(["1", "2", "close"]);
 	});
 
 	it("finds the beat a shot asks for by its name or its number from 1, and says what there is when it is not one", () => {

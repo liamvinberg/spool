@@ -17,7 +17,7 @@ import type { DeckProblem, DeckRead, DeckSlide, UnreadDeck } from "../../deck/wi
 import { isPagePath, isSafeName, pageName, pageParent, pageUnder } from "../../page-path";
 import { realDesignDir, resolveDesignPath } from "../design-path";
 import { parseSidecar } from "../sidecar";
-import { beatAsked, beatLabel, readSlideSource } from "./slide-source";
+import { beatAsked, beatLabel, readSlideSource, type ShotBeat } from "./slide-source";
 
 /**
  * A deck's page as the disk has it (spool#265), and the one way the daemon writes into it: a file written whole in a
@@ -155,7 +155,7 @@ export function frameBeatAsked(
 	root: string,
 	frame: string,
 	asked: string,
-): { readonly index: number; readonly label: string } | { readonly message: string } | undefined {
+): ShotBeat | { readonly message: string } | undefined {
 	const designDir = realDesignDir(root);
 	let text: string | undefined;
 	try {
