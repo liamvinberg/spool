@@ -549,7 +549,10 @@ export function bootStage(runtime: StageRuntime): void {
 		}
 	}
 
-	/** The talk was under way when this document opened: its first picture is the slide at rest, its entrances played. */
+	/**
+	 * The talk was under way when this document opened, or its host shows a picture of the slide at rest until it draws
+	 * its own: its first picture is the slide at rest, its entrances played.
+	 */
 	let underWay = false;
 
 	/**
@@ -570,7 +573,6 @@ export function bootStage(runtime: StageRuntime): void {
 			sayApplied();
 		};
 		requestAnimationFrame(() => {
-			const entering = copy?.box === undefined ? 0 : stillEntering(copy.box);
 			const message: StageMessage = {
 				spool: "stage-shown",
 				shown: {
@@ -581,7 +583,6 @@ export function bootStage(runtime: StageRuntime): void {
 					held: held || copy?.broken === true,
 					frames: was.frames,
 					waited,
-					...(entering > 0 ? { entering: Math.ceil(entering) } : {}),
 				},
 			};
 			if (first) requestAnimationFrame(() => say(message));
@@ -750,7 +751,7 @@ export function bootStage(runtime: StageRuntime): void {
 				if (found >= 0) next = { ...next, at: { slide: found, beat: next.at.beat } };
 			}
 			if (next !== undefined) next = { ...next, at: clampAt(talk, next.at) };
-			underWay = next !== undefined;
+			underWay = next !== undefined || message.rest === true;
 			// a talk opened from a slide, with no session yet, starts on that slide's first beat
 			const from = talk.findIndex((slide) => slide.frame === message.frame);
 			const at = next === undefined && from >= 0 ? { slide: from, beat: 0 } : session.at;
@@ -1019,22 +1020,6 @@ function atRest(box: HTMLElement): void {
 		const end = animation.effect?.getComputedTiming().endTime;
 		if (typeof end === "number" && Number.isFinite(end)) animation.finish();
 	}
-}
-
-/**
- * How long, in ms, the entrances of a slide still play: the longest of its CSS animations and transitions under way that
- * end. One that repeats for ever is the slide's own motion, not an entrance, and is not waited for.
- */
-function stillEntering(box: HTMLElement): number {
-	let left = 0;
-	for (const animation of box.getAnimations({ subtree: true })) {
-		if (animation.playState !== "running") continue;
-		const end = animation.effect?.getComputedTiming().endTime;
-		const now = animation.currentTime;
-		if (typeof end !== "number" || !Number.isFinite(end) || typeof now !== "number") continue;
-		left = Math.max(left, (end - now) / Math.abs(animation.playbackRate || 1));
-	}
-	return left;
 }
 
 /**

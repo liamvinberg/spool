@@ -56,6 +56,7 @@ import {
 	type WorkArea,
 	writeRect,
 } from "./play-window";
+import { hideBars, immediately, keepBarsHidden, preparePresenting, restoreBars } from "./presenting";
 import { type CanvasDownloads, installCanvasDownloads } from "./project-download";
 import {
 	type RemoteConfig,
@@ -111,6 +112,7 @@ import {
 	updaterAvailable,
 } from "./updates";
 import { compareVersions, formatVersion, isBeta, parseVersion } from "./version";
+import { installWindowManager, type WindowManager } from "./window-manager";
 
 // Spool, as a Mac app: a window on the canvas the daemon already serves.
 //
@@ -201,56 +203,127 @@ function startSetupOpen(showing: BrowserWindow): void {
 	else showing.once("show", tell);
 }
 
-/** spool's window covering its display for a talk's slides: where it stood, whether it could be resized, and where it was pinned on the way */
-let presentFilled: { stood: Electron.Rectangle; resizable: boolean; pinned: Electron.Rectangle } | undefined;
+/**
+ * spool's window covering its display for a talk's slides: where it stood, whether it could be resized, where it was
+ * pinned on the way, and how to give it back to a tiling window manager
+ */
+let presentFilled:
+	| { stood: Electron.Rectangle; resizable: boolean; pinned: Electron.Rectangle; release: () => void }
+	| undefined;
+
+/** a tiling window manager that needs telling where a talk's windows stand (spool#310) */
+let windowManager: WindowManager | undefined;
+
+/** A talk over a window already full screen the macOS way: the app's presentation options from before it hid the bars, when it could */
+let presentOver: { bars: number | undefined } | undefined;
 
 /**
- * Spool's window over its whole display for a talk's slides, at once (spool#298, spool#306): simple full screen, which
- * macOS plays with no Space of its own to slide to, so the slide growing from its card is the only thing that moves.
+ * Spool's window over its whole display for a talk's slides, at once (spool#298, spool#306, spool#309): simple full
+ * screen, which macOS plays with no Space of its own to slide to, so the slide growing from its card is the only thing
+ * that moves.
  *
  * Simple full screen alone falls short of a talk twice. It grows the window in an animation macOS draws no frame of the
  * page through, about a fifth of a second after the press. So the window is first set to its display's bounds in one
  * step; macOS keeps a titled window's top under the menu bar, and one that cannot be resized keeps its size there, so
- * all simple full screen has left to animate is the menu bar's height. On the way home it is pinned there again first,
- * leaving it nothing to animate back. And simple full screen only tucks the Dock and the menu bar away, to come back
- * over the slides wherever the pointer touches the screen's edge, so the window stands above both while spool is the
- * app in front (`presentLevel`). The lights go too: nothing of the window's own may stand over the slides. It comes back
- * to exactly where it stood, as the slide lands on its card. A window already full screen is left as it is.
+ * all simple full screen has left to animate is the menu bar's height, which the presenting module takes in one step
+ * too (`immediately`). On the way home it is pinned there again first, and leaves simple full screen in one step as
+ * well. And simple full screen only tucks the Dock and the menu bar away, to come back over the slides wherever the
+ * pointer touches the screen's edge, so the window stands above both while spool is the app in front (`presentLevel`).
+ * The lights go too: nothing of the window's own may stand over the slides. It comes back to exactly where it stood,
+ * as the slide lands on its card.
+ *
+ * A window already full screen the macOS way covers its display in a Space of its own, and stays there: leaving it
+ * would play macOS's Space animation twice. The menu bar and the Dock, which would come down over the slides at the
+ * screen's edges, are kept away for the talk instead: the menu bar by the app's presentation options (`hideBars`),
+ * kept so whatever comes and goes in front of spool meanwhile (`keepBarsHidden`), and the Dock by the window's level
+ * (`presentLevel`). Both are back as they were when it ends.
  */
 function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
-	if (showing.isDestroyed() || on === (presentFilled !== undefined)) return false;
-	if (on && (showing.isFullScreen() || showing.isSimpleFullScreen())) return false;
+	if (!on) presentOverBack(showing);
+	if (showing.isDestroyed()) return false;
+	if (on && showing.isFullScreen()) {
+		if (presentOver !== undefined) return false;
+		const over = { bars: hideBars() };
+		presentOver = over;
+		// watched only with the options to put back: ones hidden later would outlast the talk
+		if (over.bars !== undefined)
+			keepBarsHidden(
+				() => presentOver === over,
+				() => BrowserWindow.getFocusedWindow() !== null,
+			);
+		presentLevel(showing);
+		return false;
+	}
+	if (on === (presentFilled !== undefined)) return false;
+	if (on && showing.isSimpleFullScreen()) return false;
 	if (process.platform === "darwin") showing.setWindowButtonVisibility(!on);
 	if (on) {
 		const stood = showing.getBounds();
 		const resizable = showing.isResizable();
-		presentFilled = { stood, resizable, pinned: stood };
+		const filled = { stood, resizable, pinned: stood, release: () => {} };
+		presentFilled = filled;
 		presentLevel(showing);
 		showing.setResizable(false);
-		showing.setBounds(screen.getDisplayMatching(stood).bounds, false);
-		presentFilled.pinned = showing.getBounds();
-		showing.setSimpleFullScreen(true);
+		const display = screen.getDisplayMatching(stood).bounds;
+		showing.setBounds(display, false);
+		filled.pinned = showing.getBounds();
+		immediately(showing, () => showing.setSimpleFullScreen(true));
+		if (windowManager !== undefined) filled.release = windowManager.lift(showing, display).release;
+		if (!refilling) {
+			// heard from the first talk on, since `screen` answers only once the app is ready
+			refilling = true;
+			screen.on("display-removed", refillAfterUnplug);
+		}
 		return true;
 	}
 	const filled = presentFilled;
 	presentFilled = undefined;
 	if (filled === undefined) return false;
+	filled.release();
 	showing.setBounds(filled.pinned, false);
-	showing.setSimpleFullScreen(false);
+	immediately(showing, () => showing.setSimpleFullScreen(false));
 	showing.setResizable(filled.resizable);
 	presentLevel(showing);
 	showing.setBounds(filled.stood, false);
 	return true;
 }
 
+/** The menu bar and the Dock as they were before a talk over a window already full screen kept them away. */
+function presentOverBack(showing?: BrowserWindow): void {
+	const over = presentOver;
+	if (over === undefined) return;
+	presentOver = undefined;
+	if (over.bars !== undefined) restoreBars(over.bars);
+	if (showing !== undefined) presentLevel(showing);
+}
+
+/**
+ * spool's window, covering its display for the slides when that display was unplugged, over the one it is on now. Only
+ * for a tiling window manager, which otherwise keeps it in the gone display's workspace, out of sight: without one,
+ * macOS has moved it already and it stays as it was before spool#310.
+ */
+let refilling = false;
+function refillAfterUnplug(): void {
+	const showing = window;
+	if (presentFilled === undefined || showing === undefined || showing.isDestroyed()) return;
+	if (windowManager === undefined || !windowManager.telling()) return;
+	const display = screen.getDisplayMatching(showing.getBounds()).bounds;
+	showing.setBounds(display, false);
+	windowManager.lift(showing, display);
+}
+
 /**
  * The window over the Dock and the menu bar while it covers its display for the slides and spool is in front, as
  * Keynote's slides are; back among the other apps' windows the moment another app comes forward (⌘Tab), and again
- * when spool does. Its level, not presentation options, since Electron offers none but kiosk's, which locks ⌘Tab.
+ * when spool does. In simple full screen its level rather than presentation options (`hideBars`), so the slides cover
+ * both even where the presenting module could not be loaded. A window full screen the macOS way needs both: its level
+ * for the Dock, which macOS brings up over it whatever the options say, and the options for the menu bar, which comes
+ * down with the window's own title bar, where no level covers it.
  */
 function presentLevel(showing: BrowserWindow): void {
 	if (showing.isDestroyed()) return;
-	if (presentFilled !== undefined && showing.isFocused()) showing.setAlwaysOnTop(true, "pop-up-menu");
+	const covering = presentFilled !== undefined || presentOver !== undefined;
+	if (covering && showing.isFocused()) showing.setAlwaysOnTop(true, "pop-up-menu");
 	else showing.setAlwaysOnTop(false);
 }
 
@@ -498,13 +571,19 @@ function createWindow(): BrowserWindow {
 	const fullscreen = () => created.webContents.send("spool:canvas-fullscreen", created.isFullScreen());
 	created.on("enter-full-screen", fullscreen);
 	created.on("leave-full-screen", fullscreen);
+	// macOS puts back the options it had before full screen as the window leaves it, and a talk's are gone with them
+	created.on("leave-full-screen", () => {
+		presentOver = undefined;
+		presentLevel(created);
+	});
+	created.webContents.once("did-finish-load", preparePresenting);
 	created.on("focus", () => {
 		updateCanvasMenu();
-		if (presentFilled !== undefined) presentLevel(created);
+		if (presentFilled !== undefined || presentOver !== undefined) presentLevel(created);
 	});
 	created.on("blur", () => {
 		updateCanvasMenu();
-		if (presentFilled !== undefined) presentLevel(created);
+		if (presentFilled !== undefined || presentOver !== undefined) presentLevel(created);
 	});
 	// which daemon the window is on, in the title the Window menu and Mission Control show
 	created.on("page-title-updated", (event, title) => {
@@ -541,6 +620,9 @@ function createWindow(): BrowserWindow {
 		if (created !== window) return;
 		// the presenter view is gone, and the talk with it
 		rooms?.closeAll();
+		presentOverBack();
+		presentFilled?.release();
+		presentFilled = undefined;
 		clearTimeout(coverDeadline);
 		coverDeadline = undefined;
 		cover?.close();
@@ -2625,10 +2707,13 @@ export function boot(): void {
 	}
 
 	installPlayChannels();
+	windowManager = installWindowManager((...words) => log(...words));
 	rooms = installRooms({
 		canvas: () => window,
+		filled: () => presentFilled !== undefined,
 		guard,
 		webPreferences: { spellcheck: false, ...AUTOPLAY },
+		manager: windowManager,
 		log: (...words) => log(...words),
 	});
 	installUpdateChannels();

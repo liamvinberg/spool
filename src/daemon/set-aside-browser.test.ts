@@ -19,14 +19,16 @@ import {
 import { serveDaemon } from "./server";
 
 /**
- * A clash as the editor whose save lost sees it: one notice on the canvas, with Use theirs, Use mine and Ask agent
- * to fix. Ana's machine is an in-process daemon; Ben's is served, with a browser
+ * A clash as the editor whose save lost sees it: a quiet count after who's here, which opens a list of the clashes,
+ * each with Use theirs, Use mine and Ask agent to fix. Ana's machine is an in-process daemon; Ben's is served, with a browser
  * on its canvas and a fixture agent that records what it was told.
  */
 
+/** A path long enough that its line has to be cut short before the actions. */
+const GO = "shared/ui/checkout/payment/confirm-and-pay-button-that-books-the-table-for-tonight.tsx";
 const BUTTON = (label: string) => `export function Go() {\n\treturn <button type="button">${label}</button>;\n}\n`;
 const FRAME = (title: string) =>
-	`import { Go } from "shared/ui/go";\n\nexport default function Page() {\n\treturn (\n\t\t<main>\n\t\t\t<h1>${title}</h1>\n\t\t\t<Go />\n\t\t</main>\n\t);\n}\n`;
+	`import { Go } from "${GO.replace(/\.tsx$/u, "")}";\n\nexport default function Page() {\n\treturn (\n\t\t<main>\n\t\t\t<h1>${title}</h1>\n\t\t\t<Go />\n\t\t</main>\n\t);\n}\n`;
 
 async function team() {
 	const cloud = fakeTeam();
@@ -83,43 +85,62 @@ async function team() {
 	return { cloud, ana: anaRoot, ben: benRoot, url: daemon.url, collide, text, told };
 }
 
-it("says a clash once, as a notice, and each of its three actions works", { timeout: 180_000 }, async () => {
+it("counts a clash quietly, lists it whole, and each of its three actions works", { timeout: 180_000 }, async () => {
 	const { ana, ben, url, collide, text, told } = await team();
-	writeDesignFile(ana, "shared/ui/go.tsx", BUTTON("Go"));
+	writeDesignFile(ana, GO, BUTTON("Go"));
 	writeFrame(ana, "home", FRAME("Home"));
 	writeDesignFile(ana, "frames/home/frame.json", '{ "x": 0, "y": 0, "w": 480, "h": 320 }\n');
 	writeFrame(ana, "cart", FRAME("Cart"));
 	writeDesignFile(ana, "frames/cart/frame.json", '{ "x": 600, "y": 0, "w": 480, "h": 320 }\n');
-	await until(() => text(ben, "frames/cart/frame.json") !== undefined && text(ben, "shared/ui/go.tsx") !== undefined);
+	await until(() => text(ben, "frames/cart/frame.json") !== undefined && text(ben, GO) !== undefined);
 
 	// both changed the same line, so nothing merges
-	await collide([{ path: "shared/ui/go.tsx", ana: BUTTON("Book"), ben: BUTTON("Reserve") }]);
+	await collide([{ path: GO, ana: BUTTON("Book"), ben: BUTTON("Reserve") }]);
 
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1600, height: 900 } });
 	const errors: string[] = [];
 	page.on("pageerror", (error) => errors.push(error.message));
 	await page.goto(`${url}/p/checkout`);
-	const notice = page.locator("[data-notices] [data-set-aside]");
-	await notice.getByText("You and ana both changed shared/ui/go.tsx").waitFor({ timeout: 30_000 });
+	const count = page.locator("[data-set-aside-count]");
+	await count.getByRole("button", { name: "1 set aside" }).waitFor({ timeout: 30_000 });
 	await page.locator('[data-frame-label="home"]').waitFor();
-	expect(await notice.count()).toBe(1);
+	// nothing stands across the canvas: the count hangs under who's here, at the top right
+	expect(await page.locator("[data-notices] [data-set-aside]").count()).toBe(0);
+	expect(await page.locator("[data-corner] [data-set-aside-count]").count()).toBe(1);
+
+	await count.getByRole("button", { name: "1 set aside" }).click();
+	const clash = count.locator("[data-set-aside-list] [data-set-aside]");
+	expect(await clash.count()).toBe(1);
+	await clash.getByText(`You and ana both changed ${GO}`).waitFor();
+	// the long line is cut short before the actions, never under them
+	const line = await clash.getByText(`You and ana both changed ${GO}`).boundingBox();
+	const theirs = await clash.getByRole("button", { name: "Use theirs" }).boundingBox();
+	expect(line !== null && theirs !== null && line.x + line.width <= theirs.x).toBe(true);
+	// in a narrow window the list still opens whole on the canvas, which cuts what crosses it
+	await page.setViewportSize({ width: 560, height: 900 });
+	await expect
+		.poll(async () => {
+			const list = await count.locator("[data-set-aside-list]").boundingBox();
+			const field = await page.locator('[role="application"]').boundingBox();
+			return list !== null && field !== null && list.x >= field.x && list.x + list.width <= field.x + field.width;
+		})
+		.toBe(true);
+	await page.setViewportSize({ width: 1600, height: 900 });
 
 	// nothing has reached the agent; one press is a new thread with both sides
 	expect(told()).not.toContain("clashed");
-	await notice.getByRole("button", { name: "Ask agent to fix" }).click();
+	await clash.getByRole("button", { name: "Ask agent to fix" }).click();
 	await expect.poll(told, { timeout: 30_000 }).toContain("My changes to these files in this team project clashed");
-	expect(told()).toMatch(
-		/design\/shared\/ui\/go\.tsx: ana's version is in the file now\. Mine is in design\/\.spool\/set-aside\/[0-9a-f-]+\/go\.tsx/u,
-	);
+	expect(told()).toContain(`design/${GO}: ana's version is in the file now. Mine is in design/.spool/set-aside/`);
 
-	// Use mine: an ordinary new save on top, which reaches Ana, and the notice goes
-	await notice.getByRole("button", { name: "Use mine" }).click();
-	await until(() => text(ana, "shared/ui/go.tsx") === BUTTON("Reserve"), 10_000);
-	await expect.poll(() => notice.count()).toBe(0);
+	// Use mine: an ordinary new save on top, which reaches Ana, and the count goes
+	await clash.getByRole("button", { name: "Use mine" }).click();
+	await until(() => text(ana, GO) === BUTTON("Reserve"), 10_000);
+	await expect.poll(() => count.count()).toBe(0);
 	expect(errors).toEqual([]);
 });
 
-it("says many clashes as one notice, and Use theirs lets them all go", { timeout: 180_000 }, async () => {
+it("lists many clashed files as one clash, and Use theirs lets them all go", { timeout: 180_000 }, async () => {
 	const { ben, ana, url, collide, text } = await team();
 	const names = ["a", "b", "c", "d"];
 	for (const [at, name] of names.entries()) {
@@ -138,10 +159,13 @@ it("says many clashes as one notice, and Use theirs lets them all go", { timeout
 
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1600, height: 900 } });
 	await page.goto(`${url}/p/checkout`);
-	const notice = page.locator("[data-notices] [data-set-aside]");
-	await notice.getByText("You and ana both changed 4 frames").waitFor({ timeout: 30_000 });
-	await notice.getByRole("button", { name: "Use theirs" }).click();
-	await expect.poll(() => notice.count()).toBe(0);
+	const count = page.locator("[data-set-aside-count]");
+	await count.getByRole("button", { name: "4 set aside" }).click({ timeout: 30_000 });
+	const clash = count.locator("[data-set-aside-list] [data-set-aside]");
+	await clash.getByText("You and ana both changed 4 frames").waitFor();
+	expect(await clash.count()).toBe(1);
+	await clash.getByRole("button", { name: "Use theirs" }).click();
+	await expect.poll(() => count.count()).toBe(0);
 	await until(() => !readFileSync(join(ben, "design/.spool/set-aside/marks.json"), "utf8").includes("frames/"));
 	for (const name of names)
 		expect(text(ben, `frames/${name}/frame.tsx`)).toBe(`export default () => <h1>${name} by ana</h1>;\n`);

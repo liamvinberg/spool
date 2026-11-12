@@ -10,6 +10,7 @@ import {
 	roomWindowRect,
 	swapPlaces,
 } from "./room-window";
+import type { WindowManager } from "./window-manager";
 
 // The room's window of a presented talk, as this app makes it (spool#265).
 //
@@ -34,9 +35,13 @@ export interface Rooms {
 export interface RoomsHost {
 	/** spool's own window, which is the presenter view while a talk is presented */
 	canvas(): BrowserWindow | undefined;
+	/** whether spool's window covers its display for the slides, and so is placed by the app itself */
+	filled(): boolean;
 	/** what every window this app makes is allowed to open */
 	guard(window: BrowserWindow): void;
 	webPreferences: WebPreferences;
+	/** a tiling window manager, told where the room stands */
+	manager: WindowManager;
 	log(...words: string[]): void;
 }
 
@@ -47,6 +52,10 @@ interface Room {
 	screen: number | undefined;
 	/** the display that was unplugged under it, while it is a window because of that */
 	unplugged: string | undefined;
+	/** spool's window given back to a tiling window manager, once X carried it for this talk */
+	giveBack: (() => void) | undefined;
+	/** its latest placing, done: it shows only once that one is */
+	placed: Promise<void>;
 }
 
 const ROOM_WINDOWED = "spool:room-windowed";
@@ -101,9 +110,33 @@ export function installRooms(host: RoomsHost): Rooms {
 		room.screen = "display" in to ? to.display.id : undefined;
 		tellWindowed(room);
 		report(room);
-		if (room.window.isDestroyed()) return;
-		if ("display" in to) cover(room.window, to.display.bounds);
-		else uncover(room.window, { x: to.rect.x, y: to.rect.y, width: to.rect.w, height: to.rect.h });
+		const window = room.window;
+		if (window.isDestroyed()) return;
+		const bounds =
+			"display" in to ? to.display.bounds : { x: to.rect.x, y: to.rect.y, width: to.rect.w, height: to.rect.h };
+		// a tiling window manager moves it first, and it is clear till it is where it goes; a room still clear for its
+		// slide waits for the latest placing before it shows
+		if (host.manager.telling() && !drawing.has(window.webContents)) window.setOpacity(0);
+		standOver(window, "display" in to);
+		const { settled } = host.manager.lift(window, bounds);
+		room.placed = settled;
+		void settled.then(() => {
+			if (window.isDestroyed() || rooms.get(room.talk) !== room || room.placed !== settled) return;
+			if (!drawing.has(window.webContents)) window.setOpacity(1);
+		});
+	};
+	/** Once the room's latest placing is done, however many came while it waited. */
+	const placedAtLast = async (room: Room) => {
+		for (let placing = room.placed; ; placing = room.placed) {
+			await placing;
+			if (room.placed === placing) return;
+		}
+	};
+	/** spool's window given back to the manager, once, however the talk ended. */
+	const giveBack = (room: Room) => {
+		const release = room.giveBack;
+		room.giveBack = undefined;
+		release?.();
 	};
 
 	/** the rooms clear till their slide is drawn, by their page */
@@ -120,6 +153,7 @@ export function installRooms(host: RoomsHost): Rooms {
 	 */
 	const shut = (room: Room) => {
 		if (rooms.get(room.talk) === room) rooms.delete(room.talk);
+		giveBack(room);
 		const window = room.window;
 		if (window.isDestroyed()) return;
 		drawing.delete(window.webContents);
@@ -167,6 +201,8 @@ export function installRooms(host: RoomsHost): Rooms {
 			window,
 			screen: where.kind === "screen" ? where.display.id : undefined,
 			unplugged: undefined,
+			giveBack: undefined,
+			placed: Promise.resolve(),
 		};
 		if (where.kind === "screen") cover(window, where.display.bounds);
 		rooms.set(talk, room);
@@ -175,6 +211,7 @@ export function installRooms(host: RoomsHost): Rooms {
 		window.on("closed", () => {
 			if (rooms.get(talk) === room) rooms.delete(talk);
 			drawing.delete(page);
+			giveBack(room);
 		});
 		// clear until its slide is drawn, so it opens on the slide and never on the black it loads in (spool#306); a
 		// room that never says so still shows: late, not lost. Shown clear from the start, not hidden till then: a window
@@ -183,8 +220,11 @@ export function installRooms(host: RoomsHost): Rooms {
 		window.setOpacity(0);
 		window.setIgnoreMouseEvents(true);
 		window.showInactive();
-		const showing = setTimeout(() => reveal(), ROOM_DRAWN_MS);
-		const reveal = () => {
+		// a tiling window manager takes the room as it shows, clear, and may move it to another display: it is put
+		// back before it is seen
+		room.placed = host.manager.lift(window, { x: rect.x, y: rect.y, width: rect.w, height: rect.h }).settled;
+		const showing = setTimeout(() => show(), ROOM_DRAWN_MS);
+		const show = () => {
 			clearTimeout(showing);
 			// a room already closing stays clear
 			if (drawing.get(page) !== reveal) return;
@@ -193,6 +233,7 @@ export function installRooms(host: RoomsHost): Rooms {
 			window.setOpacity(1);
 			window.setIgnoreMouseEvents(false);
 		};
+		const reveal = () => void placedAtLast(room).then(show);
 		drawing.set(page, reveal);
 		host.log("room", talk.slice(0, 6), where.kind === "screen" ? `screen ${where.display.label}` : "window");
 		report(room);
@@ -237,7 +278,13 @@ export function installRooms(host: RoomsHost): Rooms {
 		place(room, { display: plan.room });
 		const from = all.find((display) => display.id === here);
 		const to = plan.canvas;
-		if (to !== undefined && from !== undefined) void carry(canvas, from, to);
+		if (to !== undefined && from !== undefined)
+			void carry(canvas, from, to, host.manager).then((release) => {
+				// every carry of one talk shares the hold of the first: the manager has the window back once, at the end
+				if (release === undefined) return;
+				if (rooms.get(talk) === room) room.giveBack ??= release;
+				else release();
+			});
 	});
 
 	// a display that goes mid-talk: the room on it, or on the one spool's window was carried to, is a window again;
@@ -262,6 +309,17 @@ export function installRooms(host: RoomsHost): Rooms {
 			const home = all.find((display) => display.id === here) ?? all[0];
 			if (home !== undefined) place(room, { rect: roomWindowRect(home.workArea, canvasRect()) });
 		}
+		// a tiling window manager leaves the presenter view in the workspace of the display that went, out of sight:
+		// it is brought to the display it is on now, kept from the manager till the talk ends like the room
+		const canvas = host.canvas();
+		const talk = [...rooms.values()].find((room) => !room.window.isDestroyed());
+		const home = all.find((display) => display.id === here) ?? all[0];
+		if (talk === undefined || canvas === undefined || canvas.isDestroyed() || home === undefined) return;
+		if (host.filled() || !host.manager.telling()) return;
+		const { x, y, width, height } = canvas.getBounds();
+		const rect = carryRect({ x, y, w: width, h: height }, home.workArea, home.workArea);
+		const { release } = host.manager.lift(canvas, { x: rect.x, y: rect.y, width: rect.w, height: rect.h });
+		talk.giveBack ??= release;
 	};
 
 	return {
@@ -283,16 +341,28 @@ function roomDisplayOf(display: Display): RoomDisplay {
 	};
 }
 
-/** spool's window carried to another display, out of full screen and back into it if it was. */
-async function carry(window: BrowserWindow, from: RoomDisplay, to: RoomDisplay): Promise<void> {
+/**
+ * spool's window carried to another display, out of full screen and back into it if it was. A tiling window manager
+ * is told to leave it there till the talk ends, or it tiles it back where it was, under the room: what gives it back.
+ */
+async function carry(
+	window: BrowserWindow,
+	from: RoomDisplay,
+	to: RoomDisplay,
+	manager: WindowManager,
+): Promise<(() => void) | undefined> {
 	const full = window.isFullScreen();
 	await setFullScreen(window, false);
-	if (window.isDestroyed()) return;
+	if (window.isDestroyed()) return undefined;
 	const bounds = window.getBounds();
 	const rect = carryRect({ x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height }, from.workArea, to.workArea);
-	window.setBounds({ x: rect.x, y: rect.y, width: rect.w, height: rect.h });
+	const want = { x: rect.x, y: rect.y, width: rect.w, height: rect.h };
+	// a window in macOS's full screen is a Space of its own, which the manager leaves alone
+	if (full) window.setBounds(want);
+	const release = full ? undefined : manager.lift(window, want).release;
 	if (full) await setFullScreen(window, true);
 	refocus(window);
+	return release;
 }
 
 /**
@@ -302,16 +372,15 @@ async function carry(window: BrowserWindow, from: RoomDisplay, to: RoomDisplay):
  * beside it.
  */
 function cover(window: BrowserWindow, bounds: Electron.Rectangle): void {
-	window.setAlwaysOnTop(true, "pop-up-menu");
-	window.setHasShadow(false);
+	standOver(window, true);
 	window.setBounds(bounds, false);
 }
 
-/** The room as an ordinary window again, at `bounds`, among the other windows. */
-function uncover(window: BrowserWindow, bounds: Electron.Rectangle): void {
-	window.setAlwaysOnTop(false);
-	window.setHasShadow(true);
-	window.setBounds(bounds, false);
+/** The room over the Dock and the menu bar without a shadow, covering a display, or an ordinary window among the rest. */
+function standOver(window: BrowserWindow, covering: boolean): void {
+	if (covering) window.setAlwaysOnTop(true, "pop-up-menu");
+	else window.setAlwaysOnTop(false);
+	window.setHasShadow(!covering);
 }
 
 /**

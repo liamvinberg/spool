@@ -83,21 +83,51 @@ async function assertFrameExists(daemonUrl: string, name: string, frame: string,
 }
 
 /**
- * What an agent's command on a team project says first (DEV-261): each file that didn't travel and why, and a
- * pause, each once. Nothing when the daemon can't say, as an older one can't: the verb itself goes on.
+ * What an agent's command on a team project says first (DEV-261): each file that didn't travel and why, a pause,
+ * and each of this copy's saves that was set aside, each once. Nothing when the daemon can't say, as an older one
+ * can't: the verb itself goes on. The set-aside saves among the lines are told back to the daemon as printed once
+ * the answer is here, so an answer given up on leaves them to the next command.
  */
-export async function readUntold(daemonUrl: string, name: string, controlToken: string): Promise<string[]> {
+export async function readUntold(
+	daemonUrl: string,
+	name: string,
+	controlToken: string,
+	/** The verb prints every set-aside save itself (`check`, `set-aside` with no path), so the lines leave them out. */
+	setAsideSaid = false,
+): Promise<string[]> {
 	try {
-		const res = await fetch(`${daemonUrl}/api/p/${encodeURIComponent(name)}/sync/untold`, {
+		const query = setAsideSaid ? "?setAside=said" : "";
+		const res = await fetch(`${daemonUrl}/api/p/${encodeURIComponent(name)}/sync/untold${query}`, {
 			method: "POST",
 			headers: { "X-Spool-Control": controlToken },
 			signal: AbortSignal.timeout(5_000),
 		});
 		if (!res.ok) return [];
-		const { lines } = (await res.json()) as { lines?: unknown };
+		const { lines, setAside } = (await res.json()) as { lines?: unknown; setAside?: unknown };
+		if (Array.isArray(setAside)) await tellSetAsideTold(daemonUrl, name, controlToken, setAside);
 		return Array.isArray(lines) ? lines.filter((line): line is string => typeof line === "string") : [];
 	} catch {
 		return [];
+	}
+}
+
+/** Tell the daemon these set-aside marks were printed for the agent, so no later command says them again. */
+export async function tellSetAsideTold(
+	daemonUrl: string,
+	name: string,
+	controlToken: string,
+	ids: readonly unknown[],
+): Promise<void> {
+	if (ids.length === 0) return;
+	try {
+		await fetch(`${daemonUrl}/api/p/${encodeURIComponent(name)}/set-aside/told`, {
+			method: "POST",
+			headers: { "X-Spool-Control": controlToken, "Content-Type": "application/json" },
+			body: JSON.stringify({ ids }),
+			signal: AbortSignal.timeout(5_000),
+		});
+	} catch {
+		// not told: the next command says them again
 	}
 }
 

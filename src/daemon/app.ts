@@ -144,7 +144,7 @@ import {
 } from "./security";
 import { createSelectionStore } from "./selection";
 import { type AppEvent, type MachineStateWatchAdapter, updateSession, watchMachineState } from "./session";
-import { setAsideRoutes } from "./set-aside-routes";
+import { createSetAside } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
 import { beatWhileOpen } from "./sse-beat";
@@ -533,6 +533,12 @@ export function createDaemonApp({
 		subscribe: (root, changed) => hub.subscribe(root, changed),
 	});
 	const playerCompiler = createPlayerCompiler(version, webfonts);
+	/**
+	 * A talk's stage, composed of its slides alone (spool#316): the stage plays no other frame, and a whole large
+	 * project took seconds to compose while the talk waited on its picture. Kept apart from the project's player, so
+	 * neither composition retires the other.
+	 */
+	const stageCompiler = createPlayerCompiler(version, webfonts);
 
 	/**
 	 * Where a session opens, and what it is composed of. Both play doors climb
@@ -613,8 +619,10 @@ export function createDaemonApp({
 		});
 	}
 	function letPlayerCool(root: string): void {
-		if (playedRoots.has(root)) return;
 		for (const view of views.values()) if (view.root === root) return;
+		// no canvas of the project is open, so none presents a talk of it: its stage's composition goes
+		void stageCompiler.forget(root);
+		if (playedRoots.has(root)) return;
 		playerWarmers.get(root)?.stop();
 		playerWarmers.delete(root);
 		void playerCompiler.forget(root);
@@ -697,11 +705,7 @@ export function createDaemonApp({
 	const stagePlay = createStagePlay({
 		on: () => deckOn(),
 		resolve: (c, name) => resolveProject(c, name),
-		compile: (root, frames, start) => playerCompiler.getPlayable(root, frames, start),
-		played: (root) => {
-			playedRoots.add(root);
-			keepPlayerWarm(root);
-		},
+		compile: (root, frames, start) => stageCompiler.getPlayable(root, frames, start),
 		projectCapability: (root) => projectCapability(root),
 		issue: (project, key) => issuePlayerHandoff(project, key, "default"),
 		consume: (token, project, key) => consumePlayerHandoff(token, project, key, "default"),
@@ -2119,7 +2123,7 @@ export function createDaemonApp({
 				// as long as a tab served with it might walk to it. A partial player's
 				// stylesheets (SPOOL-165) answer once their frame's is built.
 				const name = c.req.path.slice(c.req.path.indexOf("/-/") + 3);
-				const chunk = await playerCompiler.getChunk(root, name);
+				const chunk = (await playerCompiler.getChunk(root, name)) ?? (await stageCompiler.getChunk(root, name));
 				if (chunk === undefined) return c.text("not found", 404);
 				c.header("access-control-allow-origin", "*");
 				c.header("cache-control", "public, max-age=31536000, immutable");
@@ -2460,9 +2464,27 @@ export function createDaemonApp({
 	app.get("/api/p/:project/record/progress", (c) =>
 		withProject(c, resolveProject, () => c.json({ done: recordingDone })),
 	);
-	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */
+	const setAside = createSetAside({
+		spoolDir,
+		request: cloud,
+		resolve: resolveProject,
+		framesUsing: (root, path) => framesUsingIn(root).framesUsing(path),
+		changed: (root) => hub.publish(root, { kind: "set-aside" }),
+	});
+	/**
+	 * What an agent's next command on a project says of its sync: what didn't travel, a pause and each save of this
+	 * copy's that was set aside, each said once: `setAside` names the marks among the lines, told once the command
+	 * says it printed them. `?setAside=said`: the command says the set-aside saves itself.
+	 */
 	app.post("/api/p/:project/sync/untold", (c) =>
-		withProject(c, resolveProject, (root) => c.json({ lines: teamSync.untold(root) })),
+		withProject(c, resolveProject, async (root) => {
+			const marks = await setAside.untold(root, c.req.query("setAside") === "said");
+			// the marks count as told only once the command says it printed them (`/set-aside/told`)
+			return c.json({
+				lines: [...teamSync.untold(root), ...marks.map((mark) => mark.line)],
+				setAside: marks.map((mark) => mark.id),
+			});
+		}),
 	);
 	app.route(
 		"/api/p",
@@ -2550,16 +2572,7 @@ export function createDaemonApp({
 			importsOf,
 		}),
 	);
-	app.route(
-		"/api/p",
-		setAsideRoutes({
-			spoolDir,
-			request: cloud,
-			resolve: resolveProject,
-			framesUsing: (root, path) => framesUsingIn(root).framesUsing(path),
-			changed: (root) => hub.publish(root, { kind: "set-aside" }),
-		}),
-	);
+	app.route("/api/p", setAside.routes);
 	/*
 	 * Presence on a team canvas: where this machine's person is, from the canvas, as it changes. It goes to the
 	 * team through the local copy's sync connection and nowhere else: never to disk, never into history.
@@ -2923,7 +2936,7 @@ export function createDaemonApp({
 		close: async () => {
 			for (const warmer of playerWarmers.values()) warmer.stop();
 			playerWarmers.clear();
-			const compiled = playerCompiler.close();
+			const compiled = Promise.all([playerCompiler.close(), stageCompiler.close()]);
 			machineStateWatch.stop();
 			history.close();
 			deckSwitch();

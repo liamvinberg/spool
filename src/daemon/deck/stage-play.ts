@@ -3,27 +3,28 @@ import { z } from "zod";
 import { TALK_NAME } from "../../deck/present-wire";
 import { STAGE_GROUND } from "../../deck/stage-fit";
 import type { StageConfig, StageSlideConfig } from "../../deck/stage-wire";
+import { pageUnder } from "../../page-path";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } from "../document";
 import { type PlayerCompile, type PlayerConfig, playerChunkBase } from "../play";
 import type { PlayerBundle, PlayerFrameRef } from "../player-compile";
 import type { ResolveProject } from "../project-route";
-import { listProjectFrames } from "../projection";
-import { deckReadOf, readPage } from "./disk";
+import { deckFramesOf, deckReadOf, readPage } from "./disk";
 
 /**
  * A deck's talk played (spool#265), at the play address of a deck page: `/play/<project>?deck=<page>`, opening on
  * `frame` when it names a slide. On spool's own origin that address is the stage's first host, a black page holding
- * the stage and handing it the keys; on the render origin it is the stage's document, the talk's slides composed from
- * the project's player and nothing of the player's own drawing.
+ * the stage and handing it the keys; on the render origin it is the stage's document, the talk's slides composed on
+ * their own and nothing of the player's own drawing.
+ *
+ * Nothing here reads the project's other frames (spool#316): the stage plays none of them, and on a large canvas
+ * listing them took a tenth of a second each time and composing them seconds, while the talk waited on a picture.
  */
 
 export interface StagePlayDeps {
 	on(): boolean;
 	resolve: ResolveProject;
-	/** the project's player, as ordinary play composes it */
+	/** a player composed of these frames alone, as ordinary play composes a project's */
 	compile(root: string, frames: PlayerFrameRef[], start: string): Promise<PlayerCompile>;
-	/** keep the project's player composed, as a play of it does */
-	played(root: string): void;
 	projectCapability(root: string): string;
 	/** a single-use pass for one embedding of a stage document, and its check */
 	issue(project: string, key: string): string;
@@ -50,8 +51,11 @@ export const ROOM_QUERY = z.string().regex(TALK_NAME, { message: "not a talk" })
 export function stageOf(root: string, page: string): StageConfig | { message: string } {
 	const found = readPage(root, page);
 	const deck = found === undefined ? undefined : deckReadOf(found);
-	if (deck === undefined || "why" in deck) return { message: `no deck "${page}" to play` };
-	const sizes = new Map(listProjectFrames(root).frames.map((frame) => [frame.name, { w: frame.w, h: frame.h }]));
+	if (found === undefined || deck === undefined || "why" in deck) return { message: `no deck "${page}" to play` };
+	// a slide whose sidecar states no size has the talk's, as the deck lays it out
+	const sizes = new Map(
+		deckFramesOf(found).frames.map((frame) => [pageUnder(found.page, frame.folder), frame.size ?? deck.size]),
+	);
 	const slides: StageSlideConfig[] = [];
 	for (const slide of deck.slides) {
 		const size = sizes.get(slide.name);
@@ -111,8 +115,11 @@ export function createStagePlay(deps: StagePlayDeps) {
 		if (!embedded && query.handoff !== undefined) return c.text("a stage pass requires shell=1", 400);
 		if ("message" in stage) return refuse(c, embedded, stage.message, 404);
 		const start = stage.slides.find((slide) => slide.frame === query.frame)?.frame ?? stage.slides[0]?.frame ?? "";
-		deps.played(project.root);
-		const compiled = await deps.compile(project.root, listProjectFrames(project.root).frames, start);
+		const compiled = await deps.compile(
+			project.root,
+			stage.slides.map((slide) => ({ name: slide.frame })),
+			start,
+		);
 		if (compiled.kind === "error") return refuse(c, embedded, compiled.message, 500);
 		const talk = new Set(stage.slides.map((slide) => slide.frame));
 		const config: PlayerConfig & { styles: Record<string, string>; deck: StageConfig } = {
