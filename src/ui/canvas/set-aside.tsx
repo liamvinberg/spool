@@ -218,7 +218,7 @@ export function SetAsideCount({
 					pad="sm"
 					aria-label="Set aside"
 					data-set-aside-list=""
-					className="absolute top-full left-0 z-30 mt-1.5 w-[560px]"
+					className="absolute top-full left-0 z-30 mt-1.5 w-[640px]"
 				>
 					<ul className="flex flex-col">
 						{groups.map((group) => {
