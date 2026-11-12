@@ -83,12 +83,20 @@ async function assertFrameExists(daemonUrl: string, name: string, frame: string,
 }
 
 /**
- * What an agent's command on a team project says first (DEV-261): each file that didn't travel and why, and a
- * pause, each once. Nothing when the daemon can't say, as an older one can't: the verb itself goes on.
+ * What an agent's command on a team project says first (DEV-261): each file that didn't travel and why, a pause,
+ * and each of this copy's saves that was set aside, each once. Nothing when the daemon can't say, as an older one
+ * can't: the verb itself goes on.
  */
-export async function readUntold(daemonUrl: string, name: string, controlToken: string): Promise<string[]> {
+export async function readUntold(
+	daemonUrl: string,
+	name: string,
+	controlToken: string,
+	/** The verb says the saves that were set aside itself, so the daemon counts them as told. */
+	setAsideSaid = false,
+): Promise<string[]> {
 	try {
-		const res = await fetch(`${daemonUrl}/api/p/${encodeURIComponent(name)}/sync/untold`, {
+		const query = setAsideSaid ? "?setAside=said" : "";
+		const res = await fetch(`${daemonUrl}/api/p/${encodeURIComponent(name)}/sync/untold${query}`, {
 			method: "POST",
 			headers: { "X-Spool-Control": controlToken },
 			signal: AbortSignal.timeout(5_000),
