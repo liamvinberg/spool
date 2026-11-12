@@ -54,12 +54,17 @@ function playedDocument(importMap: string, body: string): string {
 }
 
 /**
- * What the file offers the shell: its fixed geometry, and links that open a tab of their own. On a touch screen it
- * wears no bar, since there is nothing there to pull and the screen is all the room there is; the live player keeps
- * its bar however narrow it gets.
+ * What the file offers the shell: its fixed geometry, links that open a tab of their own, and words for whoever it
+ * was sent to when it does not load. On a touch screen it wears no bar, since there is nothing there to pull and the
+ * screen is all the room there is; the live player keeps its bar however narrow it gets.
  */
 function exportHost(frames: Record<string, { w: number; h: number }>, touch: boolean): PlayerShellHost {
-	return { geometry: fixedGeometry(frames), popups: true, ...(touch ? { bare: true as const } : {}) };
+	return {
+		geometry: fixedGeometry(frames),
+		popups: true,
+		stalled: "This prototype could not load. Reload to try again.",
+		...(touch ? { bare: true as const } : {}),
+	};
 }
 
 /** Geometry that never changes: answered again, at a newer revision, whenever the shell asks. */
