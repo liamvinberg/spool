@@ -25,6 +25,8 @@ export function canvasRoutes(deps: {
 	version: string;
 	/** A frame read with no cover: the booth owes it a picture. */
 	owePicture: (root: string, project: string, frame: string) => void;
+	/** Covered frames read with no opening still: the slides of a talk among them are owed one (spool#319). */
+	oweOpenings: (root: string, project: string, frames: readonly string[]) => void;
 	flowGraph: Pick<ReturnType<typeof createFlowGraph>, "flows">;
 	resolvePass: Pick<ReturnType<typeof createResolvePass>, "run">;
 	/** This daemon's own origin once it is really listening, which the resolve pass dials. */
@@ -43,6 +45,13 @@ export function canvasRoutes(deps: {
 							mirrors: true,
 							spool: deps.version,
 						});
+						deps.oweOpenings(
+							root,
+							name,
+							projection.frames.flatMap((frame) =>
+								frame.cover !== undefined && frame.cover.opening === undefined ? [frame.name] : [],
+							),
+						);
 						return c.json({
 							...projection,
 							frames: projection.frames.map((frame) => {

@@ -8,7 +8,15 @@ import type {
 	Page,
 	Request,
 } from "playwright-core";
-import { COVER_QUALITY, type ColorScheme, type CoverShape, coverShape, SETTLE_BUDGET_MS } from "../cover";
+import {
+	COVER_QUALITY,
+	type ColorScheme,
+	type CoverShape,
+	coverShape,
+	OPENING_QUALITY,
+	openingShape,
+	SETTLE_BUDGET_MS,
+} from "../cover";
 import {
 	fetchHeadlessShell,
 	type HeadlessShell,
@@ -370,7 +378,14 @@ export interface BoothDeps {
 	 * times one by one as each enters after timing the slide at rest (spool#318);
 	 * nothing for any other frame.
 	 */
-	beats?(root: string, frame: string): readonly string[];
+	beats?(root: string, frame: string): readonly string[] | undefined;
+	/**
+	 * Whether a frame is a slide of a talk owed its opening still (spool#319): photographed again, after its cover, at
+	 * the size a talk draws it, on the beat the talk opens on. A slide whose cover has its still beside it owes none.
+	 */
+	owesOpening?(root: string, frame: string): boolean;
+	/** A slide's opening still, of the source the frame has now. */
+	storeOpening?(root: string, frame: string, bytes: Buffer): void;
 	/** A cover could not be made; the reason, and whose fault it was, ride beside the old one, which stays (#173). */
 	failed(root: string, frame: string, reason: string, kind: CaptureFailure): void;
 	/** A sitting for this frame is over, whatever came of it. */
@@ -705,7 +720,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	function enqueue(sitting: Sitting): void {
 		if (closed) return;
 		const failed = failedAt.get(keyOf(sitting.root, sitting.frame));
-		if (sitting.reason === "missing" && failed !== undefined && failed + FAILED_COOLDOWN_MS > Date.now()) return;
+		const cools = sitting.reason === "missing" || sitting.reason === "opening";
+		if (cools && failed !== undefined && failed + FAILED_COOLDOWN_MS > Date.now()) return;
 		queue.add(sitting);
 		pump();
 	}
@@ -1072,7 +1088,9 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			const timing = sitting.reason === "timing";
 			if (timing) timingNow++;
 			try {
-				await (timing ? runTiming(slot, sitting) : runCover(slot, sitting));
+				if (timing) await runTiming(slot, sitting);
+				else if (sitting.reason === "opening") await runOpening(slot, sitting);
+				else await runCover(slot, sitting);
 			} catch (error) {
 				// a daemon shutting down took the browser out from under the sitting
 				if (closed) return;
@@ -1121,7 +1139,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	async function runCover(slot: number, sitting: Sitting): Promise<void> {
 		const { root, frame } = sitting;
 		const key = keyOf(root, frame);
-		if (sitting.reason === "missing" && deps.covered(root, frame)) return;
+		// a picture made meanwhile leaves a slide owing only its opening still, if that
+		if (sitting.reason === "missing" && deps.covered(root, frame)) return runOpening(slot, sitting);
 		const origin = deps.origin();
 		if (origin === undefined) return;
 		// the frame's own failure is what the canvas shows and an agent fixes, so it
@@ -1177,6 +1196,13 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		lostInARow = 0;
 		const follows = followsColorScheme(now.document);
 		deps.store(root, frame, shot.bytes, follows ? shot.scheme : undefined, now.source, shot.words);
+		// a slide of a talk is photographed again as a talk draws it (spool#319), its cover out to whoever waits on it:
+		// here while no cover waits for the tab, else in a sitting of its own after the covers
+		let reloaded = false;
+		if (deps.owesOpening?.(root, frame) === true) {
+			if (queue.covers > 0) queue.add({ ...sitting, reason: "opening" });
+			else reloaded = await takeOpening(slot, tab, sitting, shape, now.etag, true);
+		}
 		// the canvas changed scheme while this frame was in the tab
 		if (follows && shot.scheme !== scheme) owedAgain("stale");
 		// timed only when an edit is what sat it: that is a frame an agent may be
@@ -1188,8 +1214,9 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		if ((await tab.live.shell).software) return deps.paced(root, frame, undefined);
 		// timed here, already loaded, only while no cover waits for this tab and no
 		// other frame is being timed; otherwise in a sitting of its own after the
-		// covers, so a timing (seconds, for a slide's beats) never holds one back
-		if (timingNow > 0 || queue.waiting - queue.timings > 0) return queue.add({ ...sitting, reason: "timing" });
+		// covers, so a timing (seconds, for a slide's beats) never holds one back,
+		// and in one of its own too once the frame was loaded again for its still
+		if (timingNow > 0 || queue.covers > 0 || reloaded) return queue.add({ ...sitting, reason: "timing" });
 		timingNow++;
 		try {
 			const pace = await timedPace(slot, tab, shape, deps.beats?.(root, frame) ?? []);
@@ -1215,6 +1242,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const before = await deps.compile(root, frame);
 		if (before.kind !== "ok") return;
 		const tab = await tabFor(slot);
+		// a slide owed its opening still too is photographed first: a talk may be about to fly it
+		if (deps.owesOpening?.(root, frame) === true) await takeOpening(slot, tab, sitting, shape, before.etag, false);
 		tab.covers++;
 		if ((await tab.live.shell).software) return deps.paced(root, frame, undefined);
 		let arrival: Arrival;
@@ -1232,6 +1261,88 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		// a timing of the source the frame had before its latest edit would read as newer than that edit; the edit owes another
 		const now = await deps.compile(root, frame);
 		if (now.kind === "ok" && now.etag === before.etag) deps.paced(root, frame, pace);
+	}
+
+	/** A slide owed only its opening still: loaded as a talk opens on it, at the source it has now, and photographed. */
+	async function runOpening(slot: number, sitting: Sitting): Promise<void> {
+		const { root, frame } = sitting;
+		if (deps.owesOpening?.(root, frame) !== true) return;
+		const shape = coverShape(deps.geometry(root, frame).w, deps.geometry(root, frame).h);
+		if (shape === undefined) return;
+		const before = await deps.compile(root, frame);
+		if (before.kind !== "ok") return;
+		await takeOpening(slot, await tabFor(slot), sitting, shape, before.etag, false);
+	}
+
+	/**
+	 * A slide's opening still (spool#319): the slide at the size a talk draws it, on the beat the talk opens on, of the
+	 * source `etag`. A slide of one beat already `loaded` in the tab is that, and is drawn again there at the still's
+	 * density; any other is loaded on its first beat. A slide that will not load or draw keeps its cover alone, which a
+	 * talk flies as, and is not owed another try for as long as a failed cover is not. True when it was loaded again.
+	 */
+	async function takeOpening(
+		slot: number,
+		tab: Tab,
+		sitting: Sitting,
+		shape: CoverShape,
+		etag: string,
+		loaded: boolean,
+	): Promise<boolean> {
+		const { root, frame } = sitting;
+		const origin = deps.origin();
+		const still = openingShape(shape);
+		if (origin === undefined || still === undefined) return false;
+		const beats = deps.beats?.(root, frame)?.length ?? 0;
+		const url = frameUrl(origin, sitting.project, frame, undefined, beats > 1 ? 0 : undefined);
+		const reload = !loaded || beats > 1;
+		let bytes: Buffer | undefined;
+		try {
+			bytes = await underDeadline(
+				slot,
+				tab,
+				timing.sittingMs,
+				"being photographed",
+				sitOpening(tab, url, still, reload, etag),
+			);
+		} catch (error) {
+			if (closed) return reload;
+			// a page that would not load or draw is not one to load the next frame into
+			if (!(error instanceof TimedOut) && !(await browserGone(tab))) retire(slot, tab);
+		}
+		const now = await deps.compile(root, frame);
+		if (bytes === undefined || now.kind !== "ok" || now.etag !== etag) failedAt.set(keyOf(root, frame), Date.now());
+		else deps.storeOpening?.(root, frame, bytes);
+		return reload;
+	}
+
+	async function sitOpening(
+		tab: Tab,
+		url: string,
+		still: CoverShape,
+		reload: boolean,
+		etag: string,
+	): Promise<Buffer | undefined> {
+		if (reload) {
+			tab.covers++;
+			const arrival = await arrive(tab, url, still);
+			if (arrival.kind !== "arrived" || (arrival.etag ?? etag) !== etag) return undefined;
+		} else {
+			await tab.cdp.send("Emulation.setDeviceMetricsOverride", {
+				width: still.width,
+				height: still.height,
+				deviceScaleFactor: still.scale,
+				mobile: false,
+			});
+			// drawn again at its new density before the picture
+			const world = await isolatedWorld(tab);
+			await evaluate(tab, world, "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))");
+		}
+		return await screenshot(tab, {
+			format: "jpeg",
+			quality: Math.round(OPENING_QUALITY * 100),
+			optimizeForSpeed: true,
+			clip: { x: 0, y: 0, width: still.width, height: still.height, scale: 1 },
+		});
 	}
 
 	/**

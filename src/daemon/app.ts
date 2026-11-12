@@ -19,7 +19,7 @@ import { mutateMachineState } from "../machine-state";
 import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
 import { hooksMade, readHookToken, writeHookTarget } from "../outside/install";
-import { isFramePath, isPagePath, isPageSlot, isSafeName, ROOT_PAGE } from "../page-path";
+import { isFramePath, isPagePath, isPageSlot, isSafeName, pageParent, ROOT_PAGE } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import type { RehearseLine } from "../rehearse-report";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_LIMIT_MS } from "../runtime/record-protocol";
@@ -65,7 +65,7 @@ import { commentRoutes, teamPeople } from "./comment-routes";
 import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
 import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
-import { frameBeatAsked, slideBeats } from "./deck/disk";
+import { frameBeatAsked, holdsDeck, slideBeats } from "./deck/disk";
 import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
 import { runRehearsal, talkOf } from "./deck/rehearse-run";
 import { deckRoutes } from "./deck/routes";
@@ -178,6 +178,7 @@ import {
 	scanPreBoothCovers,
 	writeCaptureError,
 	writeCover,
+	writeOpening,
 	writePace,
 } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
@@ -1016,6 +1017,16 @@ export function createDaemonApp({
 			if (frameExists(root, frame)) writePace(root, frame, pace);
 		},
 		beats: (root, frame) => slideBeats(root, frame),
+		// a slide of a talk, while talks are presented here, whose cover has no opening still beside it (spool#319)
+		owesOpening: (root, frame) => {
+			const cover = readCover(root, frame);
+			return cover !== undefined && cover.opening === undefined && slideOf(root, frame);
+		},
+		storeOpening: (root, frame, bytes) => {
+			if (!frameExists(root, frame)) return;
+			const cover = writeOpening(root, frame, bytes);
+			if (cover !== undefined) hub.publish(root, { kind: "thumb", frame, cover });
+		},
 		reactDev: vendorReactDevJs,
 		// The booth compiles every frame of every registered project, where the
 		// canvas only ever compiled the page it showed, and a compiled document
@@ -1317,6 +1328,28 @@ export function createDaemonApp({
 	function owePicture(root: string, name: string, frame: string): void {
 		if (selfOrigin === undefined) return;
 		booth.enqueue({ root, project: name, frame, reason: "missing" });
+	}
+
+	/** Whether a frame is a slide of a talk, while talks are presented here: what the booth takes an opening still of. */
+	function slideOf(root: string, frame: string): boolean {
+		return deckOn() && slideBeats(root, frame) !== undefined;
+	}
+
+	/**
+	 * A read found covered frames with no opening still beside the cover (spool#319). The slides of a talk among them
+	 * were photographed before the booth took those, or it could not, and are owed one.
+	 */
+	function oweOpenings(root: string, name: string, frames: readonly string[]): void {
+		if (selfOrigin === undefined || !deckOn()) return;
+		const decks = new Map<string, boolean>();
+		for (const frame of frames) {
+			const page = pageParent(frame);
+			const deck = decks.get(page) ?? holdsDeck(root, page);
+			decks.set(page, deck);
+			if (deck && slideBeats(root, frame) !== undefined) {
+				booth.enqueue({ root, project: name, frame, reason: "opening" });
+			}
+		}
 	}
 
 	/**
@@ -1725,6 +1758,7 @@ export function createDaemonApp({
 				resolve: resolveProject,
 				version,
 				owePicture,
+				oweOpenings,
 				flowGraph,
 				resolvePass,
 				origin: () => selfOrigin,

@@ -74,6 +74,23 @@ export function coverShape(frameWidth: number, frameHeight: number): CoverShape 
 export const COVER_QUALITY = 0.82;
 
 /**
+ * How wide a slide's opening still is made at the least (spool#319): about as wide as the presenter view draws a slide
+ * on a Retina laptop (974 CSS px at 2x on a 14-inch MacBook Pro), so it flies there as sharp as the slide stands. A talk
+ * this wide or wider is taken at its own size.
+ */
+export const OPENING_WIDTH = 1920;
+
+/** A slide's opening still, worked out from its cover: the same CSS size, photographed at least `OPENING_WIDTH` wide. */
+export function openingShape(cover: CoverShape): CoverShape | undefined {
+	const scale = Math.max(1, OPENING_WIDTH / cover.width);
+	const raster = captureRasterSize(cover.width, cover.height, scale);
+	return raster === undefined ? undefined : { ...cover, scale, raster };
+}
+
+/** JPEG quality for a slide's opening still. */
+export const OPENING_QUALITY = 0.82;
+
+/**
  * How long a frame may wait for its fonts and its entry animations before it
  * is believed (#177): before the photo booth takes its cover, before its cover
  * fades onto it on the canvas, and before an export copies it.

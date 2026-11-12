@@ -171,18 +171,19 @@ export function frameBeatAsked(
 
 /**
  * The beats a frame names when it is a slide of a talk (its page's `deck.json` lists it), as its source on disk names
- * them; none for any other frame, and none for a slide that names none (spool#318: what the booth times beat by beat).
+ * them, none for a slide that names none (spool#318: what the booth times beat by beat); undefined for any other frame
+ * (spool#319: what the booth takes an opening still of).
  */
-export function slideBeats(root: string, frame: string): readonly string[] {
+export function slideBeats(root: string, frame: string): readonly string[] | undefined {
 	const page = pageParent(frame);
-	if (!isPagePath(page)) return [];
+	if (!isPagePath(page)) return undefined;
 	try {
 		const designDir = realDesignDir(root);
 		const file = parseDeckFile(readText(designDir, join(designDir, "frames", page, DECK_FILE)) ?? "");
-		if (file.kind !== "deck" || !file.file.slides.includes(pageName(frame))) return [];
+		if (file.kind !== "deck" || !file.file.slides.includes(pageName(frame))) return undefined;
 		return readSlideSource(readText(designDir, join(designDir, "frames", frame, "frame.tsx")) ?? "").beats;
 	} catch {
-		return [];
+		return undefined;
 	}
 }
 
