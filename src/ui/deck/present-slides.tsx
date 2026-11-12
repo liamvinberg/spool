@@ -85,6 +85,20 @@ type Phase =
 /** How long a readied stage waits for Present before it is let go. */
 const WARM_MS = 30_000;
 
+/**
+ * Frames an opening still stands over the live slide once it is on under it, at rest: about what a cross-process frame
+ * takes to be drawn again at a new size, which the still hides (spool#319).
+ */
+const SETTLE_FRAMES = 4;
+
+/** Once `count` frames have been drawn. */
+function frames(count: number): Promise<void> {
+	return new Promise((done) => {
+		const next = (left: number) => (left <= 0 ? done() : requestAnimationFrame(() => next(left - 1)));
+		next(count);
+	});
+}
+
 export interface PresentSlidesProps {
 	/**
 	 * the talk asked for this way, while one is: without the room's window, a window of another origin, which refuses
@@ -255,20 +269,25 @@ export function PresentSlides({
 
 	/**
 	 * the live slide on in the flying layer, fading in over its picture while it flies, or at once when `now` (the talk
-	 * moved on from what the picture shows) or once it has landed; never off again this talk
+	 * moved on from what the picture shows) or once it has landed; never off again this talk. Under an opening still
+	 * that has landed, it comes on a few frames before the still goes: a live slide is drawn at the size it stands only
+	 * in the frames after it is shown there, and one first drawn small on the way stands soft until then (spool#319).
 	 */
 	const handOver = useCallback(
-		(ms: number) =>
-			void fade(liveBox.current, 1, ms).then(() => {
-				if (liveOn.current) pictureBox.current?.replaceChildren();
-			}),
+		(ms: number, under = false) =>
+			void fade(liveBox.current, 1, ms)
+				.then(() => (under ? frames(SETTLE_FRAMES) : undefined))
+				.then(() => {
+					if (liveOn.current) pictureBox.current?.replaceChildren();
+				}),
 		[fade],
 	);
 	const showLive = useCallback(
-		(at: "now" | "fade") => {
+		(at: "now" | "fade" | "landed") => {
 			if (liveOn.current) return;
 			liveOn.current = true;
-			handOver(at === "fade" && phaseRef.current === "in" ? hands.current.timing.handOver : 0);
+			if (at === "landed") handOver(0, stillFlies.current);
+			else handOver(at === "fade" && phaseRef.current === "in" ? hands.current.timing.handOver : 0);
 		},
 		[handOver],
 	);
@@ -279,7 +298,7 @@ export function PresentSlides({
 			setPhase("on");
 			// a hand-over still fading as the slide lands is done in this frame: a stretched picture never stands there
 			if (liveOn.current) handOver(0);
-			else if (stillFlies.current && drawn.current !== null && drawn.current === wanted.current) showLive("now");
+			else if (stillFlies.current && drawn.current !== null && drawn.current === wanted.current) showLive("landed");
 		},
 		[handOver, setPhase, showLive],
 	);
@@ -442,7 +461,7 @@ export function PresentSlides({
 					if (phaseRef.current === "waiting") launching.current();
 					// an opening still flies the whole way, and the live slide takes over as it lands
 					else if (stillFlies.current) {
-						if (phaseRef.current === "on") showing.current("now");
+						if (phaseRef.current === "on") showing.current("landed");
 					} else if (phaseRef.current === "in" || phaseRef.current === "on") showing.current("fade");
 				},
 				command: (command) => carry.current(command),
@@ -512,6 +531,8 @@ export function PresentSlides({
 		const flyAs = (image: HTMLImageElement) => {
 			image.className = "absolute inset-0 h-full w-full object-contain";
 			pictureBox.current?.replaceChildren(image);
+			// an opening still stands over the live slide until it goes; a cover is what the live slide fades in over
+			if (pictureBox.current !== null) pictureBox.current.style.zIndex = stillFlies.current ? "1" : "";
 			pictured.current = true;
 			launch();
 		};
