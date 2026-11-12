@@ -445,6 +445,7 @@ it("puts the slide the next key plays on out of sight before the key, its effect
 it("holds a slide waiting out of sight still after its first frame: its WebGL, frames, entrances and sound wait for it to go on", async () => {
 	const webgl = fakeWebgl();
 	let entrance: Animation | undefined;
+	let later: Animation | undefined;
 	let sound = null as HTMLMediaElement | null;
 	let frames = 0;
 	function Spins() {
@@ -461,9 +462,16 @@ it("holds a slide waiting out of sight still after its first frame: its WebGL, f
 			};
 			draw();
 			entrance = words.current?.animate([{ opacity: 0 }, { opacity: 1 }], 400);
+			// an entrance set off a moment after it mounts
+			const soon = setTimeout(() => {
+				later = words.current?.animate([{ scale: 0.9 }, { scale: 1 }], 400);
+			}, 70);
 			sound = video.current;
 			void video.current?.play();
-			return () => cancelAnimationFrame(frame);
+			return () => {
+				cancelAnimationFrame(frame);
+				clearTimeout(soon);
+			};
 		}, []);
 		return createElement(
 			"div",
@@ -487,11 +495,50 @@ it("holds a slide waiting out of sight still after its first frame: its WebGL, f
 	await new Promise((resolve) => setTimeout(resolve, 250));
 	expect([webgl.drawn("talk/b"), frames]).toEqual([waited, ran]);
 	expect([entrance?.playState, entrance?.currentTime, sound?.paused]).toEqual(["paused", 0, true]);
+	expect([later?.playState, later?.currentTime]).toEqual(["paused", 0]);
 
 	on.send({ spool: "stage-command", command: { kind: "next" } });
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
 	await vi.waitFor(() => expect(webgl.drawn("talk/b")).toBeGreaterThan(waited + 2));
-	expect([entrance?.playState, sound?.paused]).toEqual(["running", false]);
+	expect([entrance?.playState, later?.playState, sound?.paused]).toEqual(["running", "running", false]);
+});
+
+it("puts the slide the back key plays on out of sight too, and what it was playing plays again as it goes back on", async () => {
+	const ran: string[] = [];
+	let sound = null as HTMLMediaElement | null;
+	function Plays() {
+		const box = useRef<HTMLDivElement>(null);
+		const video = useRef<HTMLVideoElement>(null);
+		useEffect(() => {
+			sound = video.current;
+			whereRan(ran, "a", box);
+		}, []);
+		return createElement("div", { ref: box }, createElement("video", { ref: video }));
+	}
+	const on = await stage(
+		[
+			{ frame: "talk/a", screen: Plays },
+			{ frame: "talk/b", screen: plain("b") },
+			{ frame: "talk/c", screen: plain("c") },
+		],
+		{ mode: "own", room: true },
+	);
+	await vi.waitFor(() => expect(ran).toEqual(["a on screen"]));
+	// played from a click, as a talk plays its video
+	await sound?.play();
+	for (const frame of ["talk/b", "talk/c"]) {
+		on.send({ spool: "stage-command", command: { kind: "next" } });
+		await vi.waitFor(() => expect(on.onScreen()).toBe(frame));
+	}
+	expect(sound?.paused).toBe(true);
+	on.send({ spool: "stage-command", command: { kind: "back" } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
+	// two slides back it slept; one back it is put on again before the key, so nothing runs as the key plays it
+	await vi.waitFor(() => expect(ran).toEqual(["a on screen", "a out of sight"]));
+	on.send({ spool: "stage-command", command: { kind: "back" } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
+	expect(ran).toEqual(["a on screen", "a out of sight"]);
+	expect(sound?.paused).toBe(false);
 });
 
 it("puts a slide on ahead only while its WebGL contexts fit the stage's share: one that does not makes them as it goes on", async () => {

@@ -107,6 +107,7 @@ let windowError: ((error: unknown) => void) | undefined;
  */
 if (deck !== undefined) {
 	watchWebgl();
+	watchAnimations();
 	if (embedded) {
 		const channel = new MessageChannel();
 		const port = channel.port1;
@@ -507,8 +508,8 @@ export function bootStage(runtime: StageRuntime): void {
 			return;
 		}
 		copy.awake = false;
-		// its effects undone: what they started is gone, and nothing is held for it
-		if (copy.box !== undefined) heldStill.delete(copy.box);
+		// its effects undone: what they started is gone, but for the media it was playing, which plays as it goes on again
+		if (copy.box !== undefined) forgetAnimations(copy.box);
 	}
 
 	function renderedCopy(rendered: Copy, box: HTMLElement): void {
@@ -1133,9 +1134,17 @@ export function bootStage(runtime: StageRuntime): void {
 					holdMedia(element, event.target);
 			};
 			element.addEventListener("play", played, true);
+			// and the CSS animations and transitions it starts, at their start
+			const started = () => {
+				if (element.hasAttribute("data-spool-stage-waiting")) holdStill(element);
+			};
+			element.addEventListener("animationstart", started, true);
+			element.addEventListener("transitionrun", started, true);
 			return () => {
 				observer.disconnect();
 				element.removeEventListener("play", played, true);
+				element.removeEventListener("animationstart", started, true);
+				element.removeEventListener("transitionrun", started, true);
 				// a rendering let go gives its WebGL contexts back for another slide to draw with
 				releaseWebgl(element);
 			};
@@ -1227,13 +1236,41 @@ const heldStill = new WeakMap<Element, Set<Animation | HTMLMediaElement>>();
 function holdStill(box: HTMLElement): void {
 	for (const element of [box, ...box.querySelectorAll("*")]) {
 		for (const animation of element.getAnimations?.() ?? []) {
-			if (animation.playState !== "running") continue;
-			animation.pause();
-			animation.currentTime = 0;
-			hold(box, animation);
+			if (animation.playState === "running") holdAnimation(box, animation);
 		}
 	}
 	for (const media of box.querySelectorAll<HTMLMediaElement>("video, audio")) holdMedia(box, media);
+}
+
+function holdAnimation(box: Element, animation: Animation): void {
+	animation.pause();
+	animation.currentTime = 0;
+	hold(box, animation);
+}
+
+/**
+ * What a slide waiting out of sight starts with element.animate, whenever it starts it, is held at its start as well:
+ * an entrance its effect sets off a moment after it mounts plays on the key all the same.
+ */
+function watchAnimations(): void {
+	const native = Symbol.for("spool.stage.animate");
+	const prototype = Element.prototype as Element & { [native]?: Element["animate"] };
+	prototype[native] ??= prototype.animate;
+	const animate = prototype[native];
+	if (typeof animate !== "function") return;
+	prototype.animate = function (this: Element, ...args: Parameters<Element["animate"]>) {
+		const animation = animate.apply(this, args);
+		const box = this.closest("[data-spool-stage-waiting]");
+		if (box !== null && animation.playState === "running") holdAnimation(box, animation);
+		return animation;
+	};
+}
+
+/** A slide put to sleep: its animations went with its effects, and only its media is still to play as it goes on. */
+function forgetAnimations(box: Element): void {
+	const held = heldStill.get(box);
+	if (held === undefined) return;
+	for (const still of held) if (!(still instanceof HTMLMediaElement)) held.delete(still);
 }
 
 function hold(box: Element, still: Animation | HTMLMediaElement): void {
