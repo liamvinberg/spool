@@ -4,15 +4,7 @@ import { accelChord } from "./accel-chord";
 import { ExternalLinkDialog } from "./external-link-dialog";
 import { accelLabel } from "./platform-keys";
 import { fittedScale, type PlayerSize, playRoom } from "./player-fit";
-import {
-	barLayout,
-	DESK_BAR_PX,
-	DESK_RESTORED_MS,
-	type DeskWindow,
-	deskWindow,
-	useViewport,
-	type Viewport,
-} from "./player-page";
+import { barLayout, DESK_BAR_PX, DESK_RESTORED_MS, type DeskWindow, useViewport, type Viewport } from "./player-page";
 import type { PlayerRecorder } from "./player-recorder";
 import { SizeDesk, SizeGrips, SizeMenu, useSizing } from "./player-size";
 import { CLIP_ASPECTS, type ClipAspect, RECORD_WARN_MS } from "./record-protocol";
@@ -56,7 +48,8 @@ export interface PlayerController {
 	 */
 	walk(frame: string, back?: boolean): void;
 	dismissExternal(): void;
-	close(): void;
+	/** Leave the player. Absent, it cannot be left from inside: the bar has no close and the chord does nothing. */
+	close?(): void;
 	/** The size frames play at, where this player can choose it: absent, a frame is always played responsive. */
 	size?: PlayerSize;
 }
@@ -86,6 +79,7 @@ export function Player({
 	linkable = false,
 	recorder,
 	shaped,
+	desk,
 	said = (frame) => ({ place: project, name: frame }),
 }: {
 	project: string;
@@ -105,6 +99,11 @@ export function Player({
 	recorder?: PlayerRecorder;
 	/** Whether the frame is played at a clip's shape, in a box of its own rather than the window's. */
 	shaped?: () => boolean;
+	/**
+	 * The Mac app's play window (#275), when this document is its page: the bar is then its title bar, sized for
+	 * it, and everything else is the tab #227 designed. It cannot change under a live document.
+	 */
+	desk?: DeskWindow | undefined;
 	/**
 	 * How the bar and the tab name a frame: in the project by its whole path, unless the one playing it sees less
 	 * of the project (an outsider on a share, spool#230), whose bar says the page holding it at most.
@@ -127,11 +126,6 @@ export function Player({
 	const narrow = !barLayout(viewport.vw).word;
 	const sizing = useSizing(controller.size ?? UNSIZED, frame, room, drawn, scale, narrow);
 	const Screen = frames[frame];
-	// Which shell this document is in, asked once: a window the app made and
-	// handed a bridge draws the bar it was sized for, and everything else is the
-	// tab #227 designed. It cannot change under a live document, so it is read at
-	// mount and never again.
-	const [desk] = useState(deskWindow);
 
 	const named = said(frame);
 	usePlayedUrl(named.place === null ? named.name : `${named.name} · ${named.place}`, frame, controller);
@@ -143,6 +137,7 @@ export function Player({
 	// it is the only exit that also forgets nothing it should have kept.
 	const close = controller.close;
 	useEffect(() => {
+		if (close === undefined) return;
 		const onKey = (event: KeyboardEvent) => {
 			if (accelChord(event) === undefined) return;
 			event.preventDefault();
@@ -171,7 +166,9 @@ export function Player({
 						),
 					})}
 			{...(recorder === undefined ? {} : { recorder })}
-			{...(desk === null ? { onClose: close, closeLabel, exitKey, linkable } : { desk })}
+			{...(desk === undefined
+				? { ...(close === undefined ? {} : { onClose: close }), closeLabel, exitKey, linkable }
+				: { desk })}
 		/>
 	);
 
@@ -376,6 +373,7 @@ function TopBar({
 	loading: boolean;
 	/** The app's window, when this is its title bar. */
 	desk?: DeskWindow;
+	/** Leaving, where the player can be left: absent, there is no close. */
 	onClose?: () => void;
 	closeLabel?: string;
 	exitKey?: string;
@@ -422,7 +420,9 @@ function TopBar({
 				)}
 				{recorder !== undefined && <RecordControl recorder={recorder} />}
 				{desk === undefined && linkable && <CopyLinkButton />}
-				{desk === undefined && <CloseButton label={closeLabel} chord={exitKey} onClose={onClose ?? (() => {})} />}
+				{desk === undefined && onClose !== undefined && (
+					<CloseButton label={closeLabel} chord={exitKey} onClose={onClose} />
+				)}
 			</span>
 		</div>
 	);

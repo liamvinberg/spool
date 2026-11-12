@@ -24,6 +24,7 @@ import {
 	parseKnobValues,
 } from "./knob-protocol";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
+import { deskWindow } from "./player-page";
 import { createHandsLog } from "./record-hands";
 import { setSlideBeat, slideCalls } from "./slide-beats";
 import type { KnobRead, SpoolUi } from "./spool-public";
@@ -1872,7 +1873,12 @@ function mountPlayer(config: PlayerConfig): void {
 			? createElement(ExportedDocument)
 			: config.recording === true
 				? createElement(PlayerDocument)
-				: createElement(Player, { project: config.project, frames: screens, controller: playerController }),
+				: createElement(Player, {
+						project: config.project,
+						frames: screens,
+						controller: playerController,
+						desk: deskWindow() ?? undefined,
+					}),
 	);
 	requestAnimationFrame(() => warmScreens(Object.keys(config.frames)));
 }
