@@ -3,6 +3,7 @@ import type {
 	BeatAtRest,
 	ConsoleLine,
 	FailedRequest,
+	LaidOut,
 	Machine,
 	MoveRecord,
 	MoveStills,
@@ -337,6 +338,12 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 				)) as boolean;
 				await host();
 				if (!ready) loading = Date.now() - waitFrom;
+			}
+			if (next.slide === at.slide) {
+				const left = await inStage<LaidOut[] | null>(`${PROBES}.layoutNow()`);
+				const resting = beats.at(-1);
+				if (left !== null && resting !== undefined && same(resting.at, at))
+					beats[beats.length - 1] = { ...resting, left };
 			}
 			const record = await step("ArrowRight", at, next, "forward", loading);
 			steps.push(record);

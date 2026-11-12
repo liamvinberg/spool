@@ -147,6 +147,11 @@ export interface BeatAtRest {
 	readonly shownAt: number;
 	/** the slide called requestAnimationFrame on and on once it rested: a loop of its own */
 	readonly loop: boolean;
+	/**
+	 * the slide laid out once more just before the key that took it to its next beat: what moved since it rested
+	 * moves on its own, with no beat to answer for it
+	 */
+	readonly left?: readonly LaidOut[];
 	/** its picture's file name */
 	readonly still: string;
 }
@@ -191,6 +196,8 @@ export interface RehearsedSlide {
 	readonly frame: string;
 	/** its beats' names, one at least */
 	readonly beats: readonly string[];
+	/** it calls `ui.live()`: what it holds is a prototype to use, whose layout answers to its use, not to a beat */
+	readonly live?: boolean;
 }
 
 /** A whole rehearsal, as the driver hands it to the rules. */

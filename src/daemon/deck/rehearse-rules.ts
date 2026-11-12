@@ -324,8 +324,9 @@ function lookedAt(rehearsal: Rehearsal): Finding[] {
 			cut.add(key);
 			found.push({ kind: "cut", place, words, ...past });
 		}
-		if (before !== undefined && before.at.slide === beat.at.slide) {
-			const moved = layoutMoved(before.look.layout, beat.look.layout);
+		// a live slide's prototype lays itself out as it is used: a beat may well move it
+		if (before !== undefined && before.at.slide === beat.at.slide && rehearsal.slides[beat.at.slide]?.live !== true) {
+			const moved = layoutMoved(before.look.layout, beat.look.layout, restless(before.look.layout, before.left));
 			if (moved !== undefined) found.push({ kind: "layout", place, ...moved });
 		}
 		const most = webgl.get(beat.at.slide);
@@ -398,10 +399,11 @@ const CAUSES_NAMED = 3;
 export function layoutMoved(
 	before: readonly LaidOut[],
 	after: readonly LaidOut[],
+	restless: ReadonlySet<number> = new Set(),
 ): { moved: number; shift: number; causes: LayoutCause[] } | undefined {
 	const was = new Map(before.map((element) => [element.id, element]));
 	const is = new Map(after.map((element) => [element.id, element]));
-	const still = (element: LaidOut) => element.shown && !element.moving;
+	const still = (element: LaidOut) => element.shown && !element.moving && !restless.has(element.id);
 	const sized = (element: LaidOut) => element.w > 0 && element.h > 0;
 	const both = after.flatMap((element) => {
 		const then = was.get(element.id);
@@ -442,6 +444,29 @@ export function layoutMoved(
 			.map(({ then, now }) => cause(now.w * now.h >= then.w * then.h ? "grew" : "shrank", now));
 	}
 	return { moved: moved.length, shift, causes: causes.slice(0, CAUSES_NAMED) };
+}
+
+/**
+ * The elements of a beat that moved, changed size, came or went between its rest and the key that left it: what a
+ * slide's own code moves over time (a typewriter, a clock), which no beat answers for.
+ */
+export function restless(rested: readonly LaidOut[], left: readonly LaidOut[] | undefined): Set<number> {
+	const found = new Set<number>();
+	if (left === undefined) return found;
+	const was = new Map(rested.map((element) => [element.id, element]));
+	for (const element of left) {
+		const then = was.get(element.id);
+		if (
+			then === undefined ||
+			then.shown !== element.shown ||
+			Math.abs(then.x - element.x) > MOVED_PX ||
+			Math.abs(then.y - element.y) > MOVED_PX ||
+			Math.abs(then.w - element.w) > MOVED_PX ||
+			Math.abs(then.h - element.h) > MOVED_PX
+		)
+			found.add(element.id);
+	}
+	return found;
 }
 
 /** A step whose change came later than this after its key lagged. */

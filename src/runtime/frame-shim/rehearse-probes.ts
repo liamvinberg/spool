@@ -62,7 +62,7 @@ export function record(): void {
 	const held = window as unknown as Record<symbol, unknown>;
 	if (held[KEY] !== undefined) return;
 	if (isStage()) {
-		held[KEY] = { tap: recordStage(), since, rest, calls, look, arm, caught, seek, release };
+		held[KEY] = { tap: recordStage(), since, rest, calls, look, layoutNow, arm, caught, seek, release };
 	} else if (window.top === window) {
 		held[KEY] = { tap: recordHost(), heard, shown, settled };
 	}
@@ -397,6 +397,12 @@ function look(shownAt: number): RestLook | null {
 }
 
 const round = (n: number) => Math.round(n * 10) / 10;
+
+/** The slide on screen laid out now, as `look` lays it out; null when no slide of the talk is. */
+function layoutNow(): LaidOut[] | null {
+	const box = shownBox();
+	return box === null ? null : laidOut(stageTap(), box, movingIn(box));
+}
 
 function sourceOf(element: Element): string | undefined {
 	return element.closest("[data-spool-source]")?.getAttribute("data-spool-source") ?? undefined;

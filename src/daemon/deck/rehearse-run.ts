@@ -39,10 +39,14 @@ export function talkOf(
 		return { message: `no talk "${name}" to rehearse: name a deck's page, or one of its slides` };
 	const stage = stageOf(root, page);
 	if ("message" in stage) return stage;
-	const beatsOf = new Map(deck.slides.map((slide) => [slide.name, slide.beats]));
+	const read = new Map(deck.slides.map((slide) => [slide.name, slide]));
 	const slides = stage.slides.map((slide) => {
-		const beats = beatsOf.get(slide.frame) ?? [];
-		return { frame: slide.frame, beats: beats.length === 0 ? [""] : [...beats] };
+		const beats = read.get(slide.frame)?.beats ?? [];
+		return {
+			frame: slide.frame,
+			beats: beats.length === 0 ? [""] : [...beats],
+			...(read.get(slide.frame)?.live === true ? { live: true } : {}),
+		};
 	});
 	const talk: RehearseTalk = { page, size: stage.size, slides };
 	if (deckHere === undefined) {
@@ -155,7 +159,10 @@ const sheetName = (at: number) => `sheet-${at + 1}.png`;
 
 /** The record kept beside the pictures, without each beat's whole layout, which only the rules need. */
 function withoutLayouts(rehearsal: Rehearsal) {
-	return { ...rehearsal, beats: rehearsal.beats.map((beat) => ({ ...beat, look: { ...beat.look, layout: [] } })) };
+	return {
+		...rehearsal,
+		beats: rehearsal.beats.map(({ left: _, ...beat }) => ({ ...beat, look: { ...beat.look, layout: [] } })),
+	};
 }
 
 /** The folder a page's rehearsal goes in, from the project's root. */

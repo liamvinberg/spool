@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BeatAtRest, LaidOut, Machine, Rehearsal, RestLook, StepRecord, WordsAtEdge } from "../../deck/rehearsal";
 import type { At } from "../../deck/stage-session";
-import { cutOf, findingsOf, layoutMoved, missedFrames, unjudgeable } from "./rehearse-rules";
+import { cutOf, findingsOf, layoutMoved, missedFrames, restless, unjudgeable } from "./rehearse-rules";
 
 const SIZE = { w: 1280, h: 720 };
 
@@ -77,6 +77,12 @@ describe("layoutMoved", () => {
 		const before = [element(1, 80), element(2, 300, { moving: true })];
 		expect(layoutMoved(before, [element(1, 80), element(2, 340, { moving: true })])).toBeUndefined();
 		expect(layoutMoved(before, [...before, element(3, 500)])).toBeUndefined();
+		// a caret a typewriter moves along, before the key and after it alike
+		const rested = [element(1, 80), element(4, 80, { x: 100 })];
+		const typing = [element(1, 80), element(4, 80, { x: 400 })];
+		expect(
+			layoutMoved(rested, [element(1, 80), element(4, 80, { x: 700 })], restless(rested, typing)),
+		).toBeUndefined();
 	});
 });
 
@@ -200,6 +206,16 @@ describe("findingsOf", () => {
 				twice: [{ name: "hero", slide: 1, elements: twins }],
 			},
 		]);
+	});
+
+	it("says a beat that moves a slide's layout, but never of a live slide, whose prototype moves as it is used", () => {
+		const laid = (y: number): LaidOut[] => [{ id: 1, tag: "p", shown: true, moving: false, x: 80, y, w: 600, h: 40 }];
+		const beats = [beat(0, 0, "talk/one", { layout: laid(80) }), beat(0, 1, "talk/one", { layout: laid(200) })];
+		expect(findingsOf(talk({ beats }))).toEqual([
+			{ kind: "layout", place: { slide: 0, beat: 1 }, moved: 1, shift: 120, causes: [] },
+		]);
+		const live = talk({ beats }).slides.map((slide, at) => (at === 0 ? { ...slide, live: true } : slide));
+		expect(findingsOf(talk({ beats, slides: live }))).toEqual([]);
 	});
 
 	it("says a slide that threw as it came on at the slide, and one that threw on a beat at that beat", () => {
