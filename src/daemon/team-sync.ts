@@ -26,11 +26,13 @@ import {
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
+	isFrameJson,
 	isRecord,
 	joinParts,
 	type Limited,
 	type ListedFile,
 	type Moved,
+	mergeFrameJson,
 	PRESENCE_UNFOCUSED_MS,
 	PROJECT_LIMIT_BYTES,
 	PROTOCOL_VERSION,
@@ -1402,8 +1404,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		mine: Buffer | undefined,
 		team: Uint8Array | undefined,
 	): Buffer | undefined => {
-		if (team === undefined || built === null || mine === undefined || path === CANVAS_PATH) return undefined;
-		const base = baseOf(designDir, built);
+		if (team === undefined || mine === undefined || path === CANVAS_PATH) return undefined;
+		const base = built === null ? undefined : baseOf(designDir, built);
+		// a frame's frame.json, field by field: the first placement stands, a later move or resize wins
+		const fields = isFrameJson(path) ? mergeFrameJson(base ?? null, team, mine) : null;
+		if (fields !== null) return Buffer.from(fields.buffer, fields.byteOffset, fields.byteLength);
 		return base === undefined ? undefined : mergeText(base, mine, team);
 	};
 

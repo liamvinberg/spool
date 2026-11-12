@@ -590,6 +590,35 @@ export function mergeCanvas(base: Uint8Array | null, team: Uint8Array, mine: Uin
 	return new TextEncoder().encode(`${JSON.stringify(merged, null, "\t")}\n`);
 }
 
+/** A frame's `frame.json`, the other file that never stays set aside: its daemon merges it field by field. */
+export function isFrameJson(path: string): boolean {
+	return path.startsWith("frames/") && path.endsWith("/frame.json");
+}
+
+/** The fields that say where a frame stands: a merge never takes them away. */
+const PLACE_FIELDS = new Set(["x", "y", "w", "h"]);
+
+/**
+ * A frame's `frame.json` as it is once a save built on `base` meets the team's version: a field the save changed
+ * from a value the base had is taken from the save, so the later move or resize wins; a field the save added that
+ * the team's version already has keeps the team's value, so the first placement of a new frame stands; a place
+ * field the save removed stays, so a size-only rewrite never unplaces the frame; any other field the save removed
+ * goes. The team's very bytes where the merge changes nothing of them. Null where either side isn't a JSON object,
+ * which then collides like any other file. A base the team no longer has, or never had, counts as empty.
+ */
+export function mergeFrameJson(base: Uint8Array | null, team: Uint8Array, mine: Uint8Array): Uint8Array | null {
+	const theirs = canvasObject(team);
+	const ours = canvasObject(mine);
+	if (theirs === null || ours === null) return null;
+	const was = (base === null ? null : canvasObject(base)) ?? {};
+	const merged = mergeKeys(was, theirs, ours, (key, before, after, now) => {
+		if (before === undefined && now !== undefined) return now;
+		return after === undefined && PLACE_FIELDS.has(key) ? now : after;
+	});
+	if (JSON.stringify(merged) === JSON.stringify(theirs)) return team;
+	return new TextEncoder().encode(`${JSON.stringify(merged, null, "\t")}\n`);
+}
+
 type Entries = Record<string, unknown>;
 
 /** Every key the save changed from its base, taken onto the team's version; `take` says what a changed key becomes. */
