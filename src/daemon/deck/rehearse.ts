@@ -309,6 +309,7 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 	};
 
 	let openMs: number | undefined;
+	let openSlides: readonly SlideReadiness[] | undefined;
 	let stopped: string | undefined;
 	try {
 		await page.addInitScript({ content: `(${frameShims.rehearseProbes}).record();` });
@@ -328,6 +329,7 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 		input.narrate(`playing ${talk.page} from slide ${from + 1} to ${to + 1}`);
 		await inStage(`${PROBES}.rest(${timing.restMs})`);
 		await atRest(start, opened.at);
+		openSlides = lastSlides();
 
 		// forward, a presenter's keys, from the first beat to the last
 		let at = start;
@@ -400,6 +402,7 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 			to,
 			machine,
 			...(openMs === undefined ? {} : { openMs }),
+			...(openSlides === undefined ? {} : { opened: openSlides }),
 			steps,
 			visits,
 			beats,

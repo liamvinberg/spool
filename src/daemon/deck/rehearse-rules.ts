@@ -168,7 +168,9 @@ function opening(rehearsal: Rehearsal): Finding[] {
 function thrown(rehearsal: Rehearsal): Finding[] {
 	const found: Finding[] = [];
 	const seen = new Set<string>();
-	for (const step of rehearsal.steps) {
+	// what the stage said once the talk opened, before any key: a talk of one beat has no step to say it after
+	const opened = { to: { slide: rehearsal.from, beat: 0 }, pass: "forward" as const, slides: rehearsal.opened };
+	for (const step of [opened, ...rehearsal.steps]) {
 		for (const slide of step.slides ?? []) {
 			if (slide.status !== "broken" || seen.has(slide.frame)) continue;
 			const index = rehearsal.slides.findIndex((each) => each.frame === slide.frame);

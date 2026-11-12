@@ -243,6 +243,10 @@ describe("findingsOf", () => {
 			{ kind: "threw", place: { slide: 0, beat: 1 }, when: "later", why: "Error: no" },
 			{ kind: "threw", place: { slide: 2 }, when: "mount", why: "Error: no" },
 		]);
+		// one slide of one beat, rehearsed alone, has no key to say it after: the talk's opening says it
+		expect(findingsOf(talk({ from: 1, to: 1, opened: slides("talk/two", "mount") }))).toEqual([
+			{ kind: "threw", place: { slide: 1 }, when: "mount", why: "Error: no" },
+		]);
 	});
 
 	it("names a step that lagged on a machine that can tell, and on one that cannot only says so", () => {

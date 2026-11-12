@@ -211,6 +211,8 @@ export interface Rehearsal {
 	readonly machine: Machine;
 	/** how long the talk took to show its first slide, ms; absent when it never did */
 	readonly openMs?: number;
+	/** the stage's word on its slides once the talk opened and rested, before any key */
+	readonly opened?: readonly SlideReadiness[];
 	readonly steps: readonly StepRecord[];
 	/** every key in order, for what the talk said to be put where it was */
 	readonly visits: readonly Visit[];
