@@ -6,8 +6,8 @@ import { log } from "./log";
 // scripts/native.sh builds beside this file. Loaded on macOS, in this process only, once the canvas has loaded
 // (`preparePresenting`), so the first press on Present does not wait for it.
 // Without it a talk plays as it did before: the window spends the menu bar's height in macOS's own animation as it
-// fills its display, and a window already full screen the macOS way lets the menu bar and the Dock come down over the
-// slides at the screen's edges.
+// fills its display, and a window already full screen the macOS way lets the menu bar come down over the slides at the
+// screen's top edge.
 
 /** native/presenting.m, as it loads */
 export interface PresentingModule {
@@ -29,9 +29,10 @@ const FULL_SCREEN = 1 << 10;
 /**
  * The app's presentation options for a talk: the menu bar and the Dock gone rather than coming down where the pointer
  * meets the screen's edge, and the rest as they were (full screen stays full screen). AppKit hides the menu bar only
- * with the Dock, and refuses either hidden and auto-hidden at once. They hold while spool is the app in front: another
- * app brought forward (⌘Tab) shows its own menu bar, and spool back in front gets its full screen's own options back
- * (`keepBarsHidden`).
+ * with the Dock, and refuses either hidden and auto-hidden at once, though over a full screen window it brings the Dock
+ * up all the same (main.ts keeps it off the slides with the window's level). They hold while spool is the app in
+ * front: another app brought forward (⌘Tab) shows its own menu bar, and spool back in front gets its full screen's own
+ * options back (`keepBarsHidden`).
  */
 export function talkOptions(options: number): number {
 	return (options & ~(AUTO_HIDE_DOCK | AUTO_HIDE_MENU_BAR)) | HIDE_DOCK | HIDE_MENU_BAR;

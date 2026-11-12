@@ -201,8 +201,8 @@ let presentFilled:
 /** a tiling window manager that needs telling where a talk's windows stand (spool#310) */
 let windowManager: WindowManager | undefined;
 
-/** The app's presentation options from before a talk hid the menu bar and the Dock over a window already full screen */
-let presentBars: number | undefined;
+/** A talk over a window already full screen the macOS way: the app's presentation options from before it hid the bars, when it could */
+let presentOver: { bars: number | undefined } | undefined;
 
 /**
  * Spool's window over its whole display for a talk's slides, at once (spool#298, spool#306, spool#309): simple full
@@ -221,19 +221,22 @@ let presentBars: number | undefined;
  *
  * A window already full screen the macOS way covers its display in a Space of its own, and stays there: leaving it
  * would play macOS's Space animation twice. The menu bar and the Dock, which would come down over the slides at the
- * screen's edges, are hidden for the talk instead (`hideBars`), kept so whatever comes and goes in front of spool
- * meanwhile (`keepBarsHidden`), and are back as they were when it ends.
+ * screen's edges, are kept away for the talk instead: the menu bar by the app's presentation options (`hideBars`),
+ * kept so whatever comes and goes in front of spool meanwhile (`keepBarsHidden`), and the Dock by the window's level
+ * (`presentLevel`). Both are back as they were when it ends.
  */
 function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
-	if (!on) presentBarsBack();
+	if (!on) presentOverBack(showing);
 	if (showing.isDestroyed()) return false;
 	if (on && showing.isFullScreen()) {
-		if (presentBars !== undefined) return false;
-		presentBars = hideBars();
+		if (presentOver !== undefined) return false;
+		const over = { bars: hideBars() };
+		presentOver = over;
 		keepBarsHidden(
-			() => presentBars !== undefined,
+			() => presentOver === over,
 			() => BrowserWindow.getFocusedWindow() !== null,
 		);
+		presentLevel(showing);
 		return false;
 	}
 	if (on === (presentFilled !== undefined)) return false;
@@ -270,11 +273,13 @@ function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 	return true;
 }
 
-/** The menu bar and the Dock as they were before a talk over a window already full screen hid them. */
-function presentBarsBack(): void {
-	if (presentBars === undefined) return;
-	restoreBars(presentBars);
-	presentBars = undefined;
+/** The menu bar and the Dock as they were before a talk over a window already full screen kept them away. */
+function presentOverBack(showing?: BrowserWindow): void {
+	const over = presentOver;
+	if (over === undefined) return;
+	presentOver = undefined;
+	if (over.bars !== undefined) restoreBars(over.bars);
+	if (showing !== undefined) presentLevel(showing);
 }
 
 /**
@@ -296,11 +301,13 @@ function refillAfterUnplug(): void {
  * The window over the Dock and the menu bar while it covers its display for the slides and spool is in front, as
  * Keynote's slides are; back among the other apps' windows the moment another app comes forward (⌘Tab), and again
  * when spool does. Its level rather than presentation options (`hideBars`), so the slides cover both even where the
- * presenting module could not be loaded.
+ * presenting module could not be loaded. A window full screen the macOS way needs both: macOS brings the Dock up over
+ * it whatever the options say, and the menu bar comes down with the window's own title bar, which no level covers.
  */
 function presentLevel(showing: BrowserWindow): void {
 	if (showing.isDestroyed()) return;
-	if (presentFilled !== undefined && showing.isFocused()) showing.setAlwaysOnTop(true, "pop-up-menu");
+	const covering = presentFilled !== undefined || presentOver !== undefined;
+	if (covering && showing.isFocused()) showing.setAlwaysOnTop(true, "pop-up-menu");
 	else showing.setAlwaysOnTop(false);
 }
 
@@ -537,16 +544,17 @@ function createWindow(): BrowserWindow {
 	created.on("leave-full-screen", fullscreen);
 	// macOS puts back the options it had before full screen as the window leaves it, and a talk's are gone with them
 	created.on("leave-full-screen", () => {
-		presentBars = undefined;
+		presentOver = undefined;
+		presentLevel(created);
 	});
 	created.webContents.once("did-finish-load", preparePresenting);
 	created.on("focus", () => {
 		updateCanvasMenu();
-		if (presentFilled !== undefined) presentLevel(created);
+		if (presentFilled !== undefined || presentOver !== undefined) presentLevel(created);
 	});
 	created.on("blur", () => {
 		updateCanvasMenu();
-		if (presentFilled !== undefined) presentLevel(created);
+		if (presentFilled !== undefined || presentOver !== undefined) presentLevel(created);
 	});
 	// which daemon the window is on, in the title the Window menu and Mission Control show
 	created.on("page-title-updated", (event, title) => {
@@ -581,7 +589,7 @@ function createWindow(): BrowserWindow {
 		if (created !== window) return;
 		// the presenter view is gone, and the talk with it
 		rooms?.closeAll();
-		presentBarsBack();
+		presentOverBack();
 		presentFilled?.release();
 		presentFilled = undefined;
 		clearTimeout(coverDeadline);
