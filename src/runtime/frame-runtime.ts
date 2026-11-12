@@ -243,8 +243,11 @@ if (play?.shell === true && embedded) {
 /** No authored frame is ever served from one of these, so a throw site here is not the frame's. */
 const EXTENSION_SCRIPT =
 	/^(?:chrome-extension|moz-extension|safari-web-extension|safari-extension|webkit-masked-url):\/\//;
-/** Authored code always executes from a served document or module, so the frame's own throw sites carry these. */
-const SERVED_SCRIPT = /^https?:\/\//;
+/**
+ * Authored code always executes from a served document or module, so the frame's own throw sites carry these; an
+ * exported file's player plays its frames from the document it holds (spool#304).
+ */
+const SERVED_SCRIPT = /^(?:https?:\/\/|about:srcdoc)/;
 
 /**
  * A browser extension's content script runs inside this document and its own
@@ -925,8 +928,15 @@ function bindExternalLinks(): void {
 		}
 		if (url.protocol !== "http:" && url.protocol !== "https:") return;
 		if (play === undefined && !embedded) return;
-		// an exported file is a page of the web like any other: its links leave as links do
-		if (play?.exported !== undefined) return;
+		if (play?.exported !== undefined) {
+			// an exported file is a page of the web like any other: its links leave as links do, and in its player,
+			// whose frame stays where it is, in a tab of their own (spool#304)
+			if (play.shell === true) {
+				event.preventDefault();
+				window.open(url.href, "_blank", "noopener");
+			}
+			return;
+		}
 		url.username = "";
 		url.password = "";
 		event.preventDefault();
