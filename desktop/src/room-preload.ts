@@ -6,6 +6,8 @@ import { contextBridge, ipcRenderer } from "electron";
 // whether it is full screen. The page learns one thing: whether it is a window
 // just now, so it can leave a strip at its top to drag it by, and that it is in
 // the app at all, so it never puts itself full screen as it does in a browser.
+// It says one thing back: that its slide is drawn, which its window waits for
+// before it shows (spool#306).
 
 const WINDOWED = "spool:room-windowed";
 
@@ -18,4 +20,5 @@ contextBridge.exposeInMainWorld("spoolRoomWindow", {
 		ipcRenderer.on(WINDOWED, handler);
 		return () => ipcRenderer.removeListener(WINDOWED, handler);
 	},
+	drawn: () => ipcRenderer.send("spool:room-drawn"),
 });
