@@ -229,6 +229,21 @@ export function writeOpening(root: string, frame: string, bytes: Buffer): Cover 
 	return { hash: cover.hash, opening };
 }
 
+/**
+ * A slide's opening still let go as the slide is edited (spool#319): it is of the slide before the edit, and a talk
+ * flies its cover until the booth has the new one, as before. The cover stays, as a card shows the last picture it has.
+ * The cover it now stands alone as, when it had a still beside it.
+ */
+export function retireOpening(root: string, frame: string): Cover | undefined {
+	const dir = coverDir(root, frame);
+	const cover = coverOf(dir);
+	if (cover?.opening === undefined) return undefined;
+	for (const old of filesIn(dir)) {
+		if (OPENING_NAME.test(old)) rmSync(join(dir, old), { force: true });
+	}
+	return { hash: cover.hash };
+}
+
 const SCHEME_NAME = "scheme";
 /**
  * Beside a still the booth took, the version of the frame it is of

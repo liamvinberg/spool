@@ -173,6 +173,7 @@ import {
 	isCoverHash,
 	readCover,
 	readCoverImage,
+	retireOpening,
 	scanCoverSchemes,
 	scanPaces,
 	scanPreBoothCovers,
@@ -1093,16 +1094,24 @@ export function createDaemonApp({
 			arrived.push(root);
 			const project = basename(root);
 			const owe = (frame: string) => booth.enqueue({ root, project, frame, reason: "edited" });
+			// an edited slide's opening still is of the slide before the edit: a talk flies its cover meanwhile
+			const retire = (frame: string) => {
+				const cover = retireOpening(root, frame);
+				if (cover !== undefined) queueMicrotask(() => hub.publish(root, { kind: "thumb", frame, cover }));
+			};
 			boothWatches.set(
 				root,
 				hub.subscribe(root, (event) => {
 					try {
 						if (event.kind === "frame") {
-							if (frameExists(root, event.frame)) owe(event.frame);
-							else sittings.drop(root, event.frame);
+							if (frameExists(root, event.frame)) {
+								retire(event.frame);
+								owe(event.frame);
+							} else sittings.drop(root, event.frame);
 						} else if (event.kind === "shared") {
 							// the link graph names its readers (#109); a file nobody has
-							// read yet could be under any frame
+							// read yet could be under any frame, and is in no slide yet
+							for (const frame of event.frames ?? []) retire(frame);
 							for (const frame of event.frames ?? frameNames(root) ?? []) owe(frame);
 						} else if (event.kind === "geometry" && frameExists(root, event.frame)) {
 							void resized(root, event.frame).then(

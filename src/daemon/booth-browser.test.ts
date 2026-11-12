@@ -725,9 +725,10 @@ export default function Slide() {
 	await expect.poll(() => project.coverOf("talk/loose"), { timeout: 30_000 }).toBeDefined();
 	expect((await project.coverOf("talk/loose"))?.opening).toBeUndefined();
 
-	// an edit takes both again
-	writeFrame(project.root, "talk/two", frameOf("#1a39f5"));
+	// an edit lets the opening still go at once, as it is of the slide before the edit, and takes both again
 	const was = (await project.coverOf("talk/two"))?.opening;
+	writeFrame(project.root, "talk/two", frameOf("#1a39f5"));
+	await expect.poll(async () => (await project.coverOf("talk/two"))?.opening, { timeout: 30_000 }).toBeUndefined();
 	await expect
 		.poll(async () => (await project.coverOf("talk/two"))?.opening, { timeout: 30_000 })
 		.not.toBeOneOf([undefined, was]);
