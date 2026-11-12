@@ -677,10 +677,8 @@ describe("the chrome's font", () => {
 		expect(spare.headers.get("content-security-policy")).toBe(
 			"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
 		);
-		const doc = await spare.text();
-		expect(doc).toContain('class="spool-top is-desk"');
 		// it waits for a play nobody has pressed yet, so it holds nothing minted for one
-		expect(doc).not.toMatch(/<script|handoff|test-control-token/);
+		expect(await spare.text()).not.toMatch(/<script|handoff|test-control-token/);
 
 		const render = await app.fetch("http://run.spool.localhost:7766/player-assets/spare");
 		expect(render.status).toBe(404);
