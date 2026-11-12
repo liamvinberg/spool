@@ -449,7 +449,6 @@ function exportDocument({
 	importMap: object;
 	poster: string | undefined;
 }): string {
-	const sheets = frameSheets(styles, config.styles, config.styles[config.start]);
 	// the still the frame was last seen as, until the live frame replaces it
 	const still =
 		poster === undefined
@@ -463,10 +462,9 @@ function exportDocument({
 <meta name="generator" content="Spool">
 <title>${escapeHtml(config.start)}</title>
 <link rel="icon" href="data:,">
-<script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(config))})</script>
+${playScript(config)}
 <style>${EXPORT_PAGE_RULES}</style>
-${fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`}${sheets}
-${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</style>\n`}<script type="importmap">${escapeJsonScript(importMap)}</script>
+${frameStyles(styles, config, fonts, transitions)}<script type="importmap">${escapeJsonScript(importMap)}</script>
 </head>
 <body>
 <div id="root">${still}</div>
@@ -507,7 +505,6 @@ async function playerDocument({
 }): Promise<string> {
 	const { project, start, frames } = config;
 	const played = { ...config, shell: true };
-	const sheets = frameSheets(styles, config.styles, config.styles[start]);
 	const chrome = await inline(playerChromeCss().replace(ITALIC_FACES, ""));
 	const { imports, ...map } = importMap as { imports?: Record<string, string> };
 	const others = Object.fromEntries(
@@ -534,10 +531,9 @@ async function playerDocument({
 <div id="root"></div>
 <template id="${PLAYED_TEMPLATE_ID}">
 <title>${escapeHtml(start)}</title>
-<script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(played))})</script>
+${playScript(played)}
 <style>html, body, #root { height: 100%; }</style>
-${fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`}${sheets}
-${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</style>\n`}<div id="root"></div>
+${frameStyles(styles, config, fonts, transitions)}<div id="root"></div>
 <script type="module">${escapeInlineScript(js)}</script>
 </template>
 <script type="module">${escapeInlineScript(await exportShellJs())}</script>
@@ -607,6 +603,23 @@ async function exportShellJs(): Promise<string> {
 const EXPORT_PAGE_RULES = `html, body, #root, .spool-page, .spool-screen { height: 100%; }
 body { margin: 0; background: #0e0e0e linear-gradient(Canvas, Canvas) top center / min(100%, var(--spool-screen-w)) 1px repeat-y; }
 .spool-screen { position: relative; z-index: 0; isolation: isolate; width: 100%; max-width: var(--spool-screen-w); margin: 0 auto; color: CanvasText; view-transition-name: spool-screen; }`;
+
+/** The played document's config, where the runtime reads it. */
+function playScript(config: object): string {
+	return `<script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(config))})</script>`;
+}
+
+/** The frames' own styles, with and without the player alike: the project's fonts, every frame's sheet, the transitions. */
+function frameStyles(
+	styles: ReadonlyMap<string, string>,
+	config: { start: string; styles: Record<string, string> },
+	fonts: string | undefined,
+	transitions: string | undefined,
+): string {
+	const sheets = frameSheets(styles, config.styles, config.styles[config.start]);
+	return `${fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`}${sheets}
+${transitions === undefined ? "" : `<style>${escapeInlineStyle(transitions)}</style>\n`}`;
+}
 
 /** Every frame's sheet, as the runtime finds them; only the one `opening` names applies, the screen on show's. */
 export function frameSheets(
