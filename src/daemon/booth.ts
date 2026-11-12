@@ -8,11 +8,19 @@ import {
 	launchHeadlessShell,
 	MissingHeadlessShellError,
 } from "../headless-shell";
+import type { Census } from "../runtime/frame-shim/census";
 import type { NamedElement } from "../runtime/frame-shim/named-element";
 import { ASSET_PATH } from "./assets";
 import { type BoothQueue, type BoothReason, keyOf, type Sitting } from "./booth-queue";
 import { frameShims } from "./frame-shims";
-import { type CaptureFailure, type FramePace, phrasesOf, SLOW_PER_SECOND } from "./thumbs";
+import {
+	type BeatPace,
+	type CaptureFailure,
+	type FrameCensus,
+	type FramePace,
+	phrasesOf,
+	SLOW_PER_SECOND,
+} from "./thumbs";
 import { VENDOR_REACT_URL } from "./vendor-pins";
 import type { LogEntry } from "./verify-record";
 
@@ -340,6 +348,12 @@ export interface BoothDeps {
 	 * heavy enough to slow a canvas.
 	 */
 	paced?(root: string, frame: string, pace: FramePace | undefined): void;
+	/**
+	 * The beats of a frame that is a slide of a talk, by name, which the booth
+	 * times one by one as each enters after timing the slide at rest (spool#318);
+	 * nothing for any other frame.
+	 */
+	beats?(root: string, frame: string): readonly string[];
 	/** A cover could not be made; the reason, and whose fault it was, ride beside the old one, which stays (#173). */
 	failed(root: string, frame: string, reason: string, kind: CaptureFailure): void;
 	/** A sitting for this frame is over, whatever came of it. */
@@ -453,6 +467,11 @@ type Shot =
 	/** It threw before it drew anything. */
 	| { kind: "threw"; message: string };
 
+/** A frame's document loaded in a tab and settled, or what kept it from that. */
+type Arrival =
+	| { kind: "arrived"; etag: string | undefined; world: number; scheme: ColorScheme }
+	| Extract<Shot, { kind: "answered" | "threw" }>;
+
 /** A wait the booth enforces from outside the page ran out. */
 class TimedOut extends Error {
 	constructor(
@@ -496,16 +515,45 @@ function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
 
 const pause = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
+/** One timing: display frames a second, the longest gap, and the census taken with it. */
+interface Timed {
+	perSecond: number;
+	slowestMs: number;
+	census?: FrameCensus;
+}
+
+/** What a timing has learnt of what the frame does, as soon as it knows, for a timing that runs out its deadline. */
+interface Seen {
+	census?: FrameCensus;
+}
+
+/** What `paceSource` counted. */
+interface Counted {
+	perSecond: number;
+	slowestMs: number;
+	ticks: number;
+}
+
+/**
+ * The fewest display frames with a callback of the frame's own in them that
+ * make a loop, however short the timing: a frame that drew once for its new
+ * size, or ran out a spring, is not looping.
+ */
+const LOOP_LEAST = 3;
+
 /** A pixel density as a pace records it. */
 const rounded = (scale: number) => Math.round(scale * 100) / 100;
 
 /**
  * Counts the document's display frames, run in the booth's own world. A frame
  * whose drawing keeps the renderer or the GPU busy holds every display frame
- * back, its own and this counter's alike. The first few after the density
- * changed are the frame redrawing for its new size, not its pace.
+ * back, its own and this counter's alike. The first `skip` ticks, and those
+ * before `warmMs`, are the frame redrawing for its new size, not its pace.
+ * `step`, when given, runs in the last of those, so the frame's answer to it
+ * (a slide's beat: its render, and the motion that starts) is counted from
+ * there; `during`, in the first counted tick, its own cost left out.
  */
-const paceSource = `(warmMs, windowMs, enough) => new Promise((done) => {
+const paceSource = `(warmMs, windowMs, enough, skip, step, during) => new Promise((done) => {
 	const began = performance.now();
 	let ticks = 0;
 	let start = 0;
@@ -515,22 +563,35 @@ const paceSource = `(warmMs, windowMs, enough) => new Promise((done) => {
 	const tick = () => {
 		const now = performance.now();
 		ticks++;
-		if (ticks <= 3 || now - began < warmMs) {
+		if (ticks <= skip || now - began < warmMs) {
 			start = last = now;
+			if (ticks === skip) step?.();
 			requestAnimationFrame(tick);
 			return;
 		}
 		slowest = Math.max(slowest, now - last);
 		last = now;
 		counted++;
+		if (counted === 1 && during !== undefined) {
+			during();
+			// what that cost the frame is the booth's, not the frame's
+			const cost = performance.now() - now;
+			start += cost;
+			last += cost;
+		}
 		if (counted < enough && now - start < windowMs) {
 			requestAnimationFrame(tick);
 			return;
 		}
-		done({ perSecond: Math.round((counted * 1000) / (now - start)), slowestMs: Math.round(slowest) });
+		done({ perSecond: Math.round((counted * 1000) / (now - start)), slowestMs: Math.round(slowest), ticks });
 	};
 	requestAnimationFrame(tick);
 })`;
+
+/** What puts a slide on a beat, from the booth's world: the frame's world listens for it (frame-runtime). */
+function stepTo(beat: number): string {
+	return `window.dispatchEvent(new CustomEvent("spool:beat", { detail: ${beat} }))`;
+}
 
 /** A frame's document on the render origin, top level, as the canvas's iframe loads it; a slide at a beat of its own. */
 function frameUrl(origin: string, project: string, frame: string, scenario?: string, beat?: number): string {
@@ -581,6 +642,10 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	let closed = false;
 	/** The last timing asked for; the next waits on it (`timedPace`). */
 	let pacing: Promise<unknown> = Promise.resolve();
+	/** Frames being timed, or loaded to be: one at a time, so a timing never holds a tab another one waits on. */
+	let timingNow = 0;
+	/** What a free tab can take: a timing only while none is under way. */
+	const takeable = () => queue.waiting - (timingNow > 0 ? queue.timings : 0);
 	/** Workers in the middle of a sitting or a shot, as against ones about to look for the next. */
 	let occupied = 0;
 	/** Browsers that went away since the last cover landed. */
@@ -624,7 +689,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	/** Hand free tabs their work, launching the browser on the first. */
 	function pump(): void {
 		if (closed) return;
-		const waiting = () => shots.length + (blocked() ? 0 : queue.waiting);
+		const waiting = () => shots.length + (blocked() ? 0 : takeable());
 		// a worker between sittings takes the next one itself; one starts only for
 		// work nobody alive is about to pick up
 		while (slots.size < BOOTH_TABS && slots.size - occupied < waiting()) {
@@ -669,15 +734,20 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			return;
 		}
 		if (queue.waiting > 0) armRetry();
-		for (const [slot, tab] of tabs) {
-			tab.parking = within(tab.page.goto("about:blank"), ANSWER_MS, "parking").catch(() => retire(slot, tab));
-		}
+		for (const slot of tabs.keys()) park(slot);
 		if (linger !== undefined) clearTimeout(linger);
 		linger = setTimeout(() => {
 			linger = undefined;
 			if (slots.size === 0 && running !== undefined) void end(running);
 		}, timing.lingerMs);
 		linger.unref?.();
+	}
+
+	/** The slot's tab back on an empty page, the frame it last sat no longer running in it. */
+	function park(slot: number): void {
+		const tab = tabs.get(slot);
+		if (tab === undefined || tab.parking !== undefined) return;
+		tab.parking = within(tab.page.goto("about:blank"), ANSWER_MS, "parking").catch(() => retire(slot, tab));
 	}
 
 	/**
@@ -923,11 +993,17 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 				continue;
 			}
 			if (blocked()) return;
-			const sitting = queue.take();
-			if (sitting === undefined) return;
+			const sitting = queue.take(timingNow === 0);
+			if (sitting === undefined) {
+				// a frame left running in an idle tab would draw on through another's timing
+				park(slot);
+				return;
+			}
 			occupied++;
+			const timing = sitting.reason === "timing";
+			if (timing) timingNow++;
 			try {
-				await runCover(slot, sitting);
+				await (timing ? runTiming(slot, sitting) : runCover(slot, sitting));
 			} catch (error) {
 				// a daemon shutting down took the browser out from under the sitting
 				if (closed) return;
@@ -951,6 +1027,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 				log(`could not make a cover for "${sitting.frame}": ${describe(error)}`);
 			} finally {
 				occupied--;
+				if (timing) timingNow--;
 				if (queue.release(sitting)) pump();
 				deps.finished?.(sitting.root, sitting.frame);
 			}
@@ -1038,10 +1115,54 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		// through a project for frames nobody touched. A browser drawing in
 		// software times none: a frame that keeps up on any GPU lags in it, and
 		// timing it costs the CPU the agents are using (#225)
-		if (sitting.reason === "edited" && deps.paced !== undefined) {
-			const software = (await tab.live.shell).software;
-			deps.paced(root, frame, software ? undefined : await timedPace(slot, tab, shape));
+		if (sitting.reason !== "edited" || deps.paced === undefined) return;
+		if ((await tab.live.shell).software) return deps.paced(root, frame, undefined);
+		// timed here, already loaded, only while no cover waits for this tab and no
+		// other frame is being timed; otherwise in a sitting of its own after the
+		// covers, so a timing (seconds, for a slide's beats) never holds one back
+		if (timingNow > 0 || queue.waiting - queue.timings > 0) return queue.add({ ...sitting, reason: "timing" });
+		timingNow++;
+		try {
+			const pace = await timedPace(slot, tab, shape, deps.beats?.(root, frame) ?? []);
+			// as in runTiming: a timing of the source before an edit that came meanwhile is not stored
+			const after = await deps.compile(root, frame);
+			if (after.kind === "ok" && after.etag === now.etag) deps.paced(root, frame, pace);
+		} finally {
+			timingNow--;
 		}
+	}
+
+	/**
+	 * A frame owed only its timing: loaded as for its cover, at the source it
+	 * has now, and timed. Nothing is said when it cannot be loaded: its cover's
+	 * own sitting says why, and an edit since owes it another.
+	 */
+	async function runTiming(slot: number, sitting: Sitting): Promise<void> {
+		const { root, frame } = sitting;
+		const origin = deps.origin();
+		if (origin === undefined || deps.paced === undefined) return;
+		const shape = coverShape(deps.geometry(root, frame).w, deps.geometry(root, frame).h);
+		if (shape === undefined) return;
+		const before = await deps.compile(root, frame);
+		if (before.kind !== "ok") return;
+		const tab = await tabFor(slot);
+		tab.covers++;
+		if ((await tab.live.shell).software) return deps.paced(root, frame, undefined);
+		let arrival: Arrival;
+		try {
+			const url = frameUrl(origin, sitting.project, frame);
+			arrival = await underDeadline(slot, tab, timing.sittingMs, "being loaded", arrive(tab, url, shape));
+		} catch (error) {
+			if (closed || error instanceof TimedOut) return;
+			if (await browserGone(tab)) throw new BrowserLost();
+			retire(slot, tab);
+			return;
+		}
+		if (arrival.kind !== "arrived" || (arrival.etag ?? before.etag) !== before.etag) return;
+		const pace = await timedPace(slot, tab, shape, deps.beats?.(root, frame) ?? []);
+		// a timing of the source the frame had before its latest edit would read as newer than that edit; the edit owes another
+		const now = await deps.compile(root, frame);
+		if (now.kind === "ok" && now.etag === before.etag) deps.paced(root, frame, pace);
 	}
 
 	/**
@@ -1050,33 +1171,73 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	 * with whatever the other tabs are drawing, and a slow result is timed once
 	 * more and the faster kept: three frames edited together timed one ordinary
 	 * frame at 50 a second beside that canvas, against 120 on its own.
+	 *
+	 * A slide of a talk is then timed as each beat after its first enters, from
+	 * the beat before (spool#318): a slide's cost is often in its reveals, which
+	 * at rest have all run.
 	 */
-	function timedPace(slot: number, tab: Tab, shape: CoverShape): Promise<FramePace | undefined> {
+	function timedPace(
+		slot: number,
+		tab: Tab,
+		shape: CoverShape,
+		beats: readonly string[],
+	): Promise<FramePace | undefined> {
 		const scale = Math.min(PACE_SCALE, Math.sqrt(PACE_PIXELS / (shape.width * shape.height)));
-		const attempt = async (): Promise<FramePace | undefined> => {
+		const attempt = async (time: (seen: Seen) => Promise<Timed>, ms: number): Promise<Timed | undefined> => {
+			const seen: Seen = {};
 			try {
-				return await underDeadline(slot, tab, PACE_DEADLINE_MS, "being timed", pace(tab, shape, scale));
+				return await underDeadline(slot, tab, ms, "being timed", time(seen));
 			} catch (error) {
 				if (closed) return undefined;
 				// too few display frames to count in the whole deadline: the slowest a
-				// frame can be, and the deadline has closed its tab already
-				if (error instanceof TimedOut) return { perSecond: 0, slowestMs: PACE_DEADLINE_MS, scale: rounded(scale) };
+				// frame can be, and the deadline has closed its tab already. What it was
+				// doing, counted first, is what such a frame most needs said
+				if (error instanceof TimedOut)
+					return {
+						perSecond: 0,
+						slowestMs: PACE_DEADLINE_MS,
+						...(seen.census === undefined ? {} : { census: seen.census }),
+					};
 				// whatever went wrong took the page with it, never the picture already stored
 				retire(slot, tab);
 				return undefined;
 			}
 		};
-		const turn = pacing.then(async () => {
-			const first = await attempt();
+		const fasterOfTwo = async (time: () => Promise<Timed | undefined>) => {
+			const first = await time();
 			if (first === undefined || first.perSecond >= SLOW_PER_SECOND || first.perSecond === 0) return first;
-			const again = await attempt();
+			const again = await time();
 			return again !== undefined && again.perSecond > first.perSecond ? again : first;
+		};
+		const turn = pacing.then(async (): Promise<FramePace | undefined> => {
+			const rest = await fasterOfTwo(() => attempt((seen) => pace(tab, shape, scale, seen), PACE_DEADLINE_MS));
+			if (rest === undefined) return undefined;
+			const timed: FramePace = { ...rest, scale: rounded(scale) };
+			// a timing that ran out its deadline took the tab with it
+			if (rest.perSecond === 0) return timed;
+			const entered: BeatPace[] = [];
+			for (let beat = 1; beat < beats.length; beat++) {
+				const time = async () =>
+					(await putOn(slot, tab, beat - 1))
+						? attempt((seen) => enter(tab, beat, seen), PACE_DEADLINE_MS)
+						: undefined;
+				const result = await fasterOfTwo(time);
+				if (result === undefined) break;
+				entered.push({ beat, name: beats[beat] ?? "", ...result });
+				if (result.perSecond === 0) break;
+			}
+			return entered.length > 0 ? { ...timed, beats: entered } : timed;
 		});
 		pacing = turn;
 		return turn;
 	}
 
-	async function pace(tab: Tab, shape: CoverShape, scale: number): Promise<FramePace> {
+	/**
+	 * The frame at rest at `scale`: how fast it redraws, and what it is doing
+	 * meanwhile, counted before the timing so the timing is of the frame alone,
+	 * and into `seen` as soon as it is known.
+	 */
+	async function pace(tab: Tab, shape: CoverShape, scale: number, seen: Seen): Promise<Timed> {
 		await tab.cdp.send("Emulation.setDeviceMetricsOverride", {
 			width: shape.width,
 			height: shape.height,
@@ -1084,17 +1245,100 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			mobile: false,
 		});
 		const world = await isolatedWorld(tab);
+		const found = (await evaluate(tab, world, `${frameShims.boothProbes}.census()`)) as Census;
+		const before = await frameWork(tab);
+		seen.census = { ...found, webgl: before.webgl, loop: false };
 		const timed = (await evaluate(
 			tab,
 			world,
-			`(${paceSource})(${PACE_WARM_MS}, ${PACE_WINDOW_MS}, ${PACE_FRAMES})`,
-		)) as Omit<FramePace, "scale">;
-		return { ...timed, scale: rounded(scale) };
+			`(${paceSource})(${PACE_WARM_MS}, ${PACE_WINDOW_MS}, ${PACE_FRAMES}, 3)`,
+		)) as Counted;
+		const after = await frameWork(tab);
+		// the frame's own callbacks ran in most of the display frames the booth counted: a loop
+		const loop = after.frames - before.frames >= Math.max(LOOP_LEAST, timed.ticks / 2);
+		return { perSecond: timed.perSecond, slowestMs: timed.slowestMs, census: { ...seen.census, loop } };
+	}
+
+	/**
+	 * The slide put on a beat, its motion finished and left to settle: the beat
+	 * before one the booth times entering. The way back to it is no part of that
+	 * entrance, so the slide is put there, as a jump puts it. False when the tab
+	 * did not answer in time, which takes the tab with it.
+	 */
+	async function putOn(slot: number, tab: Tab, beat: number): Promise<boolean> {
+		const put = async () => {
+			const world = await isolatedWorld(tab);
+			await evaluate(tab, world, `${stepTo(beat)}; ${frameShims.boothProbes}.finishMotion()`);
+			await settled(tab, world);
+		};
+		try {
+			await underDeadline(slot, tab, PACE_DEADLINE_MS + SETTLE_BUDGET_MS, "being put on a beat", put());
+			return true;
+		} catch (error) {
+			if (!(error instanceof TimedOut) && !closed) retire(slot, tab);
+			return false;
+		}
+	}
+
+	/**
+	 * A slide's beat entering from the one before (`putOn`), timed from the
+	 * display frame it is stepped in, as the stage would show it: what the slide
+	 * renders for it and the motion that starts. Its census is taken in the next
+	 * one, once that motion runs, and comes back by itself, so a timing that runs
+	 * out its deadline still says what the slide was doing.
+	 */
+	async function enter(tab: Tab, beat: number, seen: Seen): Promise<Timed> {
+		const world = await isolatedWorld(tab);
+		const { webgl } = await frameWork(tab);
+		const census = evaluate(
+			tab,
+			world,
+			"new Promise((done) => { window.__spoolEntered = undefined; const wait = () => (window.__spoolEntered === undefined ? requestAnimationFrame(wait) : done(window.__spoolEntered)); wait(); })",
+		).then((found) => {
+			seen.census = { ...(found as Census), webgl, loop: false };
+		});
+		census.catch(() => {});
+		const timed = (await evaluate(
+			tab,
+			world,
+			`(() => { const probes = ${frameShims.boothProbes}; window.__spoolEntered = undefined; return (${paceSource})(0, ${PACE_WINDOW_MS}, ${PACE_FRAMES}, 1, () => { ${stepTo(beat)}; }, () => { window.__spoolEntered = probes.census(); }); })()`,
+		)) as Counted;
+		await census;
+		return {
+			perSecond: timed.perSecond,
+			slowestMs: timed.slowestMs,
+			...(seen.census === undefined ? {} : { census: seen.census }),
+		};
+	}
+
+	/** What the frame's own world counts (the shim's `exposeFrameWork`), or nothing counted when it says nothing. */
+	async function frameWork(tab: Tab): Promise<{ frames: number; webgl: number }> {
+		const said = (await evaluate(tab, undefined, "window.__spoolFrameWork?.()")) as
+			| { frames?: unknown; webgl?: unknown }
+			| undefined;
+		const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+		return { frames: count(said?.frames), webgl: count(said?.webgl) };
 	}
 
 	/** Load, settle and photograph one frame for its cover. */
 	async function sitCover(tab: Tab, url: string, shape: CoverShape): Promise<Shot> {
-		const taken = await prepare(tab, shape);
+		const arrival = await arrive(tab, url, shape);
+		if (arrival.kind !== "arrived") return arrival;
+		const { etag, world, scheme: taken } = arrival;
+		const bytes = await screenshot(tab, {
+			format: "jpeg",
+			quality: Math.round(COVER_QUALITY * 100),
+			optimizeForSpeed: true,
+			clip: { x: 0, y: 0, width: shape.width, height: shape.height, scale: 1 },
+		});
+		// what the picture says, read off the same settled document: a frame that will not say is a frame with no words
+		const said = await evaluate(tab, world, "document.getElementById('root')?.innerText ?? ''").catch(() => "");
+		return { kind: "picture", bytes, etag, scheme: taken, words: phrasesOf(typeof said === "string" ? said : "") };
+	}
+
+	/** One frame loaded into a tab, booted and settled, as its cover is taken of it. */
+	async function arrive(tab: Tab, url: string, shape: CoverShape): Promise<Arrival> {
+		const scheme = await prepare(tab, shape);
 		const response = await tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: 0 });
 		if (response === null) return { kind: "answered", status: 0 };
 		if (response.status() !== 200) return { kind: "answered", status: response.status() };
@@ -1106,15 +1350,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const rendered = await booted(tab, world, COVER_BOOT_MS, true);
 		if (!rendered && tab.errors[0] !== undefined) return { kind: "threw", message: describe(tab.errors[0]) };
 		await settled(tab, world);
-		const bytes = await screenshot(tab, {
-			format: "jpeg",
-			quality: Math.round(COVER_QUALITY * 100),
-			optimizeForSpeed: true,
-			clip: { x: 0, y: 0, width: shape.width, height: shape.height, scale: 1 },
-		});
-		// what the picture says, read off the same settled document: a frame that will not say is a frame with no words
-		const said = await evaluate(tab, world, "document.getElementById('root')?.innerText ?? ''").catch(() => "");
-		return { kind: "picture", bytes, etag, scheme: taken, words: phrasesOf(typeof said === "string" ? said : "") };
+		return { kind: "arrived", etag, world, scheme };
 	}
 
 	async function runShot(slot: number, pending: PendingShot): Promise<ShotResult> {
@@ -1459,10 +1695,11 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		return executionContextId;
 	}
 
-	async function evaluate(tab: Tab, contextId: number, expression: string): Promise<unknown> {
+	/** An expression's value, in the booth's world `contextId`, or in the frame's own for none. */
+	async function evaluate(tab: Tab, contextId: number | undefined, expression: string): Promise<unknown> {
 		const evaluated = (await tab.cdp.send("Runtime.evaluate", {
 			expression,
-			contextId,
+			...(contextId === undefined ? {} : { contextId }),
 			awaitPromise: true,
 			returnByValue: true,
 		})) as { result: { value?: unknown } };

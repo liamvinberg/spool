@@ -1,6 +1,6 @@
 import type { Size } from "../../deck/deck-file";
 import { fitIn, STAGE_GROUND } from "../../deck/stage-fit";
-import { DIGITS_FORGET_MS, type KeyCommand, pressedKey, readKey, typingIn } from "../../deck/stage-keys";
+import { DIGITS_FORGET_MS, forHost, type KeyCommand, pressedKey, readKey, typingIn } from "../../deck/stage-keys";
 import type { StageCommand, StageSession, TalkSlide } from "../../deck/stage-session";
 import {
 	type HostMessage,
@@ -379,10 +379,9 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			if (digits !== "") forget = setTimeout(() => (digits = ""), DIGITS_FORGET_MS);
 			const command = read.command;
 			if (command === undefined) return read.taken;
-			const forHost = command.kind === "escape" || command.kind === "swap" || command.kind === "help";
 			if (command.kind === "blur") {
 				if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-			} else if (forHost || mode === "follow") on.command?.(command);
+			} else if (forHost(command) || mode === "follow") on.command?.(command);
 			else current?.post?.({ spool: "stage-command", command });
 			return true;
 		},

@@ -2,7 +2,7 @@
 import "./natives";
 import { guardEdits } from "./edit";
 import { announceFileDrags, receiveFileDrops } from "./files";
-import { gateAnimationFrames, preserveDrawingBuffers } from "./freeze";
+import { exposeFrameWork, gateAnimationFrames, preserveDrawingBuffers } from "./freeze";
 import { relayKeysOut, relayModifierRelease } from "./keys";
 import { answerHost } from "./messages";
 import { relayMiddlePan } from "./pan";
@@ -64,6 +64,7 @@ import { relayWheel } from "./scroll";
 shownDensity();
 preserveDrawingBuffers();
 gateAnimationFrames();
+exposeFrameWork();
 guardEdits();
 answerHost();
 relayWheel();

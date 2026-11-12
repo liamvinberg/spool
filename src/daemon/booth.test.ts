@@ -72,6 +72,34 @@ describe("the booth queue", () => {
 		expect(drain(queue)).toEqual(["checkout:edited"]);
 	});
 
+	it("takes a timing only after every cover, wherever its frame is, and only when one may be taken", () => {
+		const queue = createBoothQueue();
+		queue.add(sitting("timed", "timing"));
+		queue.add(sitting("missing"));
+		queue.view("canvas", { root: ROOT, page: "", frames: ["timed"] });
+		expect(queue.timings).toBe(1);
+		// another timing under way: the cover goes, the timing waits
+		expect(queue.take(false)?.frame).toBe("missing");
+		expect(queue.take(false)).toBeUndefined();
+		queue.add(sitting("aside", "missing", OTHER));
+		// the cover of a frame nobody looks at goes before the timing of one on screen
+		expect(drain(queue)).toEqual(["aside:missing", "timed:timing"]);
+	});
+
+	it("owes a frame a timed cover when a timing meets a picture that would not time it", () => {
+		const queue = createBoothQueue();
+		queue.add(sitting("checkout", "timing"));
+		queue.add(sitting("checkout", "stale"));
+		expect(drain(queue)).toEqual(["checkout:edited"]);
+		queue.add(sitting("cart", "edited"));
+		const inTab = queue.take();
+		// its cover owes a timing it cannot give now, and the canvas changes scheme meanwhile
+		queue.add(sitting("cart", "timing"));
+		queue.add(sitting("cart", "stale"));
+		queue.release(inTab ?? sitting("cart"));
+		expect(drain(queue)).toEqual(["cart:edited"]);
+	});
+
 	it("takes the frames on screen first, then the rest of the open page, then everything else", () => {
 		const queue = createBoothQueue();
 		queue.add(sitting("elsewhere/one", "edited"));

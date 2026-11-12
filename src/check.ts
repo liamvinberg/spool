@@ -190,6 +190,8 @@ export interface CheckReport {
 	unmatched: string[];
 	/** Design paths of `.tsx` files under frames/ that look meant as frames but are none. */
 	strays: string[];
+	/** The sources a checked frame imports, its own entry among them, by absolute path. */
+	sourcesOf(frame: string): string[];
 }
 
 /** Check every HTML frame without registering, compiling, or writing a project. */
@@ -222,6 +224,10 @@ export async function checkProject(root: string, scope?: string[]): Promise<Chec
 			(file) => basename(file) === "frame.tsx" || !checked.closure.has(file),
 		);
 		const alone = new Set(checked.alone.map(({ entry }) => entry));
+		const framesDir = join(designDir, "frames");
+		const entryOf = new Map(
+			[...checked.entries].map(([entry, canonical]) => [frameOfEntry(framesDir, entry), canonical] as const),
+		);
 		return {
 			...report(
 				designDir,
@@ -231,6 +237,7 @@ export async function checkProject(root: string, scope?: string[]): Promise<Chec
 			),
 			ran: checked.batches > 0 || alone.size === 0,
 			batches: checked.batches,
+			sourcesOf: (frame) => reachOf(checked.reads, entryOf.get(frame)),
 			notChecked: checked.alone.map(({ entry, usage }) => overLimit(designDir, entry, usage)),
 		};
 	} catch (error) {
@@ -248,13 +255,31 @@ function report(
 	return {
 		diagnostics,
 		ran: true,
-		frames: selection.entries.map((entry) => relative(framesDir, dirname(entry)).split(sep).join("/")),
+		frames: selection.entries.map((entry) => frameOfEntry(framesDir, entry)),
 		sources,
 		batches: 1,
 		notChecked: [],
 		unmatched: selection.unmatched,
 		strays: selection.strays.map((file) => designPath(designDir, file)),
+		sourcesOf: () => [],
 	};
+}
+
+/** `<frames>/shop/checkout/frame.tsx` → `shop/checkout`. */
+function frameOfEntry(framesDir: string, entry: string): string {
+	return relative(framesDir, dirname(entry)).split(sep).join("/");
+}
+
+/** Every source `start` reads, itself included, through what each reads in turn. */
+function reachOf(reads: ReadonlyMap<string, readonly string[]>, start: string | undefined): string[] {
+	const seen = new Set<string>();
+	const stack = start === undefined ? [] : [start];
+	for (let file = stack.pop(); file !== undefined; file = stack.pop()) {
+		if (seen.has(file)) continue;
+		seen.add(file);
+		stack.push(...(reads.get(file) ?? []));
+	}
+	return [...seen];
 }
 
 /** The one diagnostic for a check that could not start, or the error itself when it is no such case. */
@@ -290,6 +315,9 @@ interface Batched {
 	diagnostics: CheckDiagnostic[];
 	/** Every source some batch read, by canonical path. */
 	closure: Map<string, string>;
+	/** What each source reads into the closure, and where each entry landed, canonical (`SourceClosure`). */
+	reads: Map<string, string[]>;
+	entries: Map<string, string>;
 	batches: number;
 	/** The frames whose own closure is over the limit, which no batch could hold. */
 	alone: { entry: string; usage: Usage }[];
@@ -303,8 +331,8 @@ interface Batched {
  */
 async function checkInBatches(designDir: string, entries: string[]): Promise<Batched> {
 	try {
-		const { diagnostics, closure } = await runCheckDesign(designDir, entries);
-		return { diagnostics, closure, batches: 1, alone: [] };
+		const { diagnostics, closure, reads, entries: landed } = await runCheckDesign(designDir, entries);
+		return { diagnostics, closure, reads, entries: landed, batches: 1, alone: [] };
 	} catch (error) {
 		if (!(error instanceof CheckSourceLimitError && (error.limit === "files" || error.limit === "total-bytes")))
 			throw error;
@@ -312,12 +340,16 @@ async function checkInBatches(designDir: string, entries: string[]): Promise<Bat
 	const { batches, alone } = packBatches(designDir, entries);
 	const diagnostics: CheckDiagnostic[] = [];
 	const closure = new Map<string, string>();
+	const reads = new Map<string, string[]>();
+	const landed = new Map<string, string>();
 	for (const batch of batches) {
 		const checked = await runCheckDesign(designDir, batch);
 		diagnostics.push(...checked.diagnostics);
 		for (const [file, text] of checked.closure) closure.set(file, text);
+		for (const [file, read] of checked.reads) reads.set(file, read);
+		for (const [entry, canonical] of checked.entries) landed.set(entry, canonical);
 	}
-	return { diagnostics: dedupe(diagnostics), closure, batches: batches.length, alone };
+	return { diagnostics: dedupe(diagnostics), closure, reads, entries: landed, batches: batches.length, alone };
 }
 
 /**
@@ -338,17 +370,7 @@ function packBatches(designDir: string, entries: string[]): { batches: string[][
 	const base = counter.usage;
 	const whole = readClosure(designDir, entries, counter);
 	const bytesOf = (file: string): number => counter.bytesOf(file) ?? 0;
-	const reach = (entry: string): Set<string> => {
-		const seen = new Set<string>();
-		const start = whole.entries.get(entry);
-		const stack = start === undefined ? [] : [start];
-		for (let file = stack.pop(); file !== undefined; file = stack.pop()) {
-			if (seen.has(file)) continue;
-			seen.add(file);
-			stack.push(...(whole.reads.get(file) ?? []));
-		}
-		return seen;
-	};
+	const reach = (entry: string): Set<string> => new Set(reachOf(whole.reads, whole.entries.get(entry)));
 	const fits = (usage: Usage): boolean =>
 		base.files + usage.files <= checkSourceLimits.maxFiles &&
 		base.bytes + usage.bytes <= checkSourceLimits.maxTotalBytes;
@@ -397,12 +419,24 @@ function overLimit(designDir: string, entry: string, usage: Usage): string {
 async function runCheckDesign(
 	designDir: string,
 	entries: string[],
-): Promise<{ diagnostics: CheckDiagnostic[]; sources: number; closure: Map<string, string> }> {
+): Promise<{
+	diagnostics: CheckDiagnostic[];
+	sources: number;
+	closure: Map<string, string>;
+	reads: Map<string, string[]>;
+	entries: Map<string, string>;
+}> {
 	const sourceBudget = new CheckSourceBudget();
 	const importMap = readImportMap(designDir, sourceBudget);
 	const sourceClosure = readClosure(designDir, entries, sourceBudget);
 	const diagnostics = await typecheckClosure(designDir, entries, sourceBudget, importMap, sourceClosure);
-	return { diagnostics, sources: sourceClosure.sources.size, closure: sourceClosure.sources };
+	return {
+		diagnostics,
+		sources: sourceClosure.sources.size,
+		closure: sourceClosure.sources,
+		reads: sourceClosure.reads,
+		entries: sourceClosure.entries,
+	};
 }
 
 async function typecheckClosure(

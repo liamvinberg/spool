@@ -171,7 +171,7 @@ export function parseSession(value: unknown): StageSession | undefined {
 
 const MOVES = new Set(["next", "back", "next-slide", "previous-slide", "first", "last", "restart"]);
 const TOGGLES = new Set(["black", "freeze", "keys"]);
-const HOSTS = new Set(["escape", "swap", "help", "blur"]);
+const HOSTS = new Set(["escape", "swap", "help", "show-pointer", "blur"]);
 
 export function parseCommand(value: unknown): StageCommand | undefined {
 	if (!isRecord(value) || typeof value.kind !== "string") return undefined;

@@ -17,11 +17,41 @@ export function preserveDrawingBuffers(): void {
 		attributes?: unknown,
 	) {
 		let given = attributes;
-		if (type === "webgl" || type === "webgl2" || type === "experimental-webgl") {
-			given = { ...(given as object | undefined), preserveDrawingBuffer: true };
-		}
-		return Reflect.apply(nativeGetContext, this, [type, given]);
+		const webgl = type === "webgl" || type === "webgl2" || type === "experimental-webgl";
+		if (webgl) given = { ...(given as object | undefined), preserveDrawingBuffer: true };
+		const context = Reflect.apply(nativeGetContext, this, [type, given]);
+		if (webgl && context !== null) webglCanvases.add(this);
+		return context;
 	} as typeof nativeGetContext;
+}
+
+/** Canvases the frame made a WebGL context on. */
+const webglCanvases = new WeakSet<HTMLCanvasElement>();
+/** Display frames so far in which the frame's own requestAnimationFrame callbacks ran, and the last one's time. */
+let delivered = 0;
+let deliveredAt = -1;
+const counted = (time: number) => {
+	if (time === deliveredAt) return;
+	deliveredAt = time;
+	delivered++;
+};
+
+/**
+ * What the photo booth's census (census.ts) cannot see from its own world
+ * (spool#318): in how many display frames the frame's code had a rAF callback, which the booth
+ * reads either side of a timing to tell a loop that runs while nothing moves,
+ * and how many canvases in the document hold a WebGL context. The booth calls
+ * it in the frame's world; nothing else does.
+ */
+export function exposeFrameWork(): void {
+	Object.defineProperty(window, "__spoolFrameWork", {
+		configurable: true,
+		value: () => {
+			let webgl = 0;
+			for (const canvas of document.querySelectorAll("canvas")) if (webglCanvases.has(canvas)) webgl++;
+			return { frames: delivered, webgl };
+		},
+	});
 }
 
 /**
@@ -77,6 +107,7 @@ export function gateAnimationFrames(): void {
 		if (!frozen) {
 			entry.native = nativeRaf((time) => {
 				rafs.delete(handle);
+				counted(time);
 				callback(time - frozenFor);
 			});
 		}
@@ -103,6 +134,7 @@ function holdFrames(): void {
 
 // Native rAF isolates one callback's throw from the next; the shim's own deliveries do too.
 function deliver(callback: FrameRequestCallback, time: number): void {
+	counted(time);
 	try {
 		callback(time - frozenFor);
 	} catch (error) {
