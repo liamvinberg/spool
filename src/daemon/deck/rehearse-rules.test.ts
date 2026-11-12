@@ -268,6 +268,12 @@ describe("findingsOf", () => {
 		]);
 	});
 
+	it("says a face that came after its slide was shown, but not on the beat the talk opened on, before anyone watches", () => {
+		const font = { kind: "font" as const, name: "Inter", after: 400 };
+		const beats = [beat(0, 0, "talk/one", { late: [font] }), beat(1, 0, "talk/two", { late: [font] })];
+		expect(findingsOf(talk({ beats }))).toEqual([{ kind: "late", place: { slide: 1, beat: 0 }, file: font }]);
+	});
+
 	it("measures words at the edge against the slide's own size, which may not be the talk's", () => {
 		const past = words([{ left: 500, top: 100, right: 700, bottom: 140 }]);
 		const small = beat(1, 0, "talk/two", { size: { w: 640, h: 360 }, words: [past] });

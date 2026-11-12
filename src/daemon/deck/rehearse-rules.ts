@@ -329,9 +329,11 @@ function lookedAt(rehearsal: Rehearsal): Finding[] {
 	const cut = new Set<string>();
 	const webgl = new Map<number, { contexts: number; beat: number }>();
 	let before: BeatAtRest | undefined;
+	// the beat the talk opened on loads as the talk opens, before anyone watches: the stage readies only what comes next
+	const [opened] = rehearsal.beats;
 	for (const beat of rehearsal.beats) {
 		const place: Place = { slide: beat.at.slide, beat: beat.at.beat };
-		for (const file of beat.look.late) {
+		for (const file of beat === opened ? [] : beat.look.late) {
 			const key = `${beat.at.slide}:${file.kind}:${file.name}`;
 			if (late.has(key)) continue;
 			late.add(key);
