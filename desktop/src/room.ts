@@ -115,10 +115,17 @@ export function installRooms(host: RoomsHost): Rooms {
 		});
 	};
 
+	/** the rooms waiting to be shown till their slide is drawn, by their page */
+	const drawing = new Map<Electron.WebContents, () => void>();
+	/** A room's window shown again, unless it still waits for its slide: then it shows by itself, on the slide. */
+	const showAgain = (room: Room) => {
+		if (!room.window.isDestroyed() && !drawing.has(room.window.webContents)) room.window.showInactive();
+	};
+
 	const open = (url: string, talk: string) => {
 		const already = rooms.get(talk);
 		if (already !== undefined && !already.window.isDestroyed()) {
-			already.window.showInactive();
+			showAgain(already);
 			return;
 		}
 		watchDisplays();
@@ -182,8 +189,6 @@ export function installRooms(host: RoomsHost): Rooms {
 		void window.loadURL(url);
 	};
 
-	/** the rooms waiting to be shown till their slide is drawn, by their page */
-	const drawing = new Map<Electron.WebContents, () => void>();
 	ipcMain.on(ROOM_DRAWN, (event) => {
 		if (event.senderFrame === event.sender.mainFrame) drawing.get(event.sender)?.();
 	});
@@ -200,7 +205,7 @@ export function installRooms(host: RoomsHost): Rooms {
 	ipcMain.on("spool:room-show", (event, talk: unknown) => {
 		if (!fromCanvas(event.sender) || typeof talk !== "string") return;
 		const room = rooms.get(talk);
-		if (room !== undefined && !room.window.isDestroyed()) room.window.showInactive();
+		if (room !== undefined) showAgain(room);
 	});
 	ipcMain.on("spool:room-swap", (event, talk: unknown) => {
 		if (!fromCanvas(event.sender) || typeof talk !== "string") return;
