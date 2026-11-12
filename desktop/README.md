@@ -101,9 +101,24 @@ bar says `restored` once with a `reset` beside it. A rect that matches where the
 frame would have opened anyway is not stored, and a rect on a display that has
 since been unplugged is ignored.
 
-Geometry comes from `/api/p/:project/frames`, which is behind the control token,
-so this is the one place the app reads the token out of `daemon.json`. It is
-never logged and never leaves the process except as that request's header.
+The window is on screen at the press, before anything has loaded. The canvas
+hands the frame's size over with the press (the canvas bridge's `play`), so
+nothing is asked of the daemon first. While a canvas is open the app also keeps
+one play window made and hidden on `/player-assets/spare`, a page of the
+daemon's with the play window's dark and its bar's strip and nothing else: a
+press adopts it (placed, titled, shown, then pointed at the play URL), and the
+next is made once that play has revealed its frame. It holds no handoff and no
+token; the play URL mints those for the play, as it does for a window made at
+the press. Without one ready (the app just started, the daemon restarted, a
+remote project) the press makes its window and shows it dark at once.
+`src/play-spare.ts` has the rules. Each play logs its four timing marks in
+`app.log` (`play marks`): window shown, shell painted and frame revealed, in
+milliseconds after the press.
+
+A canvas older than the bridge's `play` opens the play URL as a popup, and the
+app then asks `/api/p/:project/frames` for the size, which is behind the control
+token: this is the one place the app reads the token out of `daemon.json`. It
+is never logged and never leaves the process except as that request's header.
 
 `SPOOL_DIR` and `SPOOL_PORT` are read the way the CLI reads them, which is what
 lets a checkout's app and the daily one stay out of each other's way:
