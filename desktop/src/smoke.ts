@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { app, BrowserWindow, WebContentsView } from "electron";
 import { status } from "./daemon";
 import { buildAppMenu, buildTrayMenu, trayImage } from "./main";
+import { loadPresenting, talkOptions } from "./presenting";
 import { installCanvasDownloads } from "./project-download";
 import { UpdateCover } from "./update-cover";
 import { beginUpdateRestart } from "./update-restart";
@@ -263,9 +264,38 @@ async function checkUpdateCover(): Promise<void> {
 	}
 }
 
+// The presenting module (spool#309) as the app loads it, under this Electron: what
+// would otherwise first be found out on a talk in a signed build.
+function checkPresenting(): void {
+	if (process.platform !== "darwin") return;
+	const native = loadPresenting(join(__dirname, "presenting.node"));
+	if (native === undefined) throw new Error("the presenting module did not load");
+	const options = native.options();
+	assert.equal(native.setOptions(talkOptions(options)), true);
+	assert.equal(native.options(), talkOptions(options));
+	// the menu bar hidden with the Dock shown: AppKit refuses it, and the refusal is an answer, not a crash
+	assert.equal(native.setOptions(1 << 3), false);
+	assert.equal(native.setOptions(options), true);
+	const window = new BrowserWindow({ show: false, width: 400, height: 300 });
+	try {
+		native.immediately(window.getNativeWindowHandle(), () => window.setSize(500, 400));
+		assert.deepEqual(window.getSize(), [500, 400]);
+		assert.throws(
+			() =>
+				native.immediately(window.getNativeWindowHandle(), () => {
+					throw new Error("thrown by the change");
+				}),
+			/thrown by the change/,
+		);
+	} finally {
+		window.destroy();
+	}
+}
+
 async function run(): Promise<void> {
 	const directory = mkdtempSync(join(tmpdir(), "spool-desktop-smoke-"));
 	try {
+		checkPresenting();
 		await checkUpdateCover();
 		await checkProjectOpening(directory);
 		await checkProjectDownloads(directory);
