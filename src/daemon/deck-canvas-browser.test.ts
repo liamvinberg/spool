@@ -236,6 +236,15 @@ it("walks a talk from New presentation through the canvas, the Pages rail and Pr
 	await page.keyboard.press("Escape");
 	await expect.poll(camera).toEqual(out);
 
+	// a key pressed on the way in moves the talk once it is there, as it would inside
+	await page.mouse.dblclick(back.x, back.y);
+	await page.keyboard.press("Shift+ArrowLeft");
+	await page.locator('[data-deck-stage="presentation/live"][data-deck-stage-shown]').waitFor();
+	await page.keyboard.press("Shift+ArrowRight");
+	await page.locator('[data-deck-stage="presentation/number"][data-deck-stage-shown]').waitFor();
+	await page.keyboard.press("Escape");
+	await expect.poll(camera).toEqual(out);
+
 	// inside, ? lists the keys over the canvas with no room's among them, and esc puts the list away, still inside
 	await page.mouse.dblclick(back.x, back.y);
 	await page.locator('[data-deck-stage="presentation/number"][data-deck-stage-shown]').waitFor();

@@ -15,6 +15,12 @@ const FRAMES: Record<string, { colour: Rgb; x: number; y: number }> = {
 };
 const ZOOM = 0.16;
 
+/** A box on screen, from its top left to its bottom right. */
+interface Box {
+	readonly from: { readonly x: number; readonly y: number };
+	readonly to: { readonly x: number; readonly y: number };
+}
+
 /** What a drawn frame of the page shows, as the window samples it each frame. */
 interface Sample {
 	readonly t: number;
@@ -29,9 +35,10 @@ interface Sample {
  * spool#283: the deck holds still. A frame held on a deck page shows one preview while the hand is still or trembles
  * a few pixels, at most two per slide crossed at a steady pace, and pushes a loose frame down only once it is over
  * it; a drop and its undo each settle once, every frame going one way to its place; and no slide's picture blanks
- * on the way. Every drawn frame is sampled in the window, and the screen is read from the browser's own frames.
+ * on the way. Going into a slide and out again (spool#305) starts nothing of it under the flight and never loses its
+ * picture. Every drawn frame is sampled in the window, and the screen is read from the browser's own frames.
  */
-it("drags, drops and undoes on a deck page without a preview flickering, a frame going back or a picture blanking", {
+it("drags, drops, undoes and goes into a slide on a deck page without a preview flickering, a frame going back, a picture blanking or a slide starting under the flight", {
 	timeout: 300_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -235,5 +242,76 @@ it("drags, drops and undoes on a deck page without a preview flickering, a frame
 	// and every frame is drawn where it rests
 	const colours = pixelsOf(await shot(), await Promise.all(Object.keys(FRAMES).map(inside)));
 	expect(Object.values(FRAMES).every((frame, i) => near(colours[i] as Rgb, frame.colour))).toBe(true);
+
+	// spool#305: into b by a person's double-click and out by esc. Nothing of b starts until the camera is there, since a
+	// document starting under the flight holds the window's frames back (on a real GPU; this browser draws every frame of
+	// a zoom too slowly to time one), and b is on screen at every step, its picture and then its stage.
+	// how long the camera flies, in milliseconds, as the canvas reads it
+	const fly = await page.evaluate(() => {
+		const value = getComputedStyle(document.documentElement).getPropertyValue("--motion-deck-fly").trim();
+		return Number.parseFloat(value) * (value.endsWith("ms") ? 1 : 1000);
+	});
+	// when each document of the page started: an iframe added
+	await page.evaluate(() => {
+		const started: number[] = [];
+		(window as unknown as { started: number[] }).started = started;
+		new MutationObserver((changes) => {
+			for (const change of changes)
+				for (const node of change.addedNodes)
+					if (node instanceof Element && (node.matches("iframe") || node.querySelector("iframe") !== null))
+						started.push(performance.now());
+		}).observe(document.body, { childList: true, subtree: true });
+	});
+	const started = () => page.evaluate(() => (window as unknown as { started: number[] }).started);
+	/** where b stands on screen while it is gone into: its stage's place */
+	const placeOfB = async (): Promise<Box> => {
+		const stage = await page.locator('[data-deck-stage="talk/b"]').boundingBox();
+		if (stage === null) throw new Error("b's stage is not on screen");
+		return { from: { x: stage.x, y: stage.y }, to: { x: stage.x + stage.width, y: stage.y + stage.height } };
+	};
+	/**
+	 * A point on b where it stood before a flight and where it stood after is on b at every step between, the camera's
+	 * flight being a straight line: every frame recorded shows b's colour there.
+	 */
+	const stayedOnB = (frames: readonly Buffer[], one: Box, other: Box, what: string) => {
+		const point = {
+			x: Math.round((Math.max(one.from.x, other.from.x) + Math.min(one.to.x, other.to.x)) / 2),
+			y: Math.round((Math.max(one.from.y, other.from.y) + Math.min(one.to.y, other.to.y)) / 2),
+		};
+		const lost = frames.findIndex((png) => !near(pixelsOf(png, [point])[0] as Rgb, FRAMES.b?.colour ?? [0, 0, 0]));
+		expect(lost, `b's picture was gone in frame ${lost} of ${frames.length} ${what}`).toBe(-1);
+	};
+	/** where b stands on screen on the canvas */
+	const onCanvas = async (): Promise<Box> => ({
+		from: await at({ x: 1440, y: 0 }),
+		to: await at({ x: 1440 + 1280, y: 720 }),
+	});
+	const out = await onCanvas();
+	const middleOfB = { x: (out.from.x + out.to.x) / 2, y: (out.from.y + out.to.y) / 2 };
+	const shown = page.locator('[data-deck-stage="talk/b"][data-deck-stage-shown]');
+	// b held a moment starts its document, and let go stops it: held again, it starts afresh
+	const documentOfB = page.locator('[data-frame-shell="talk/b"] iframe');
+	await page.mouse.click(middleOfB.x, middleOfB.y);
+	await documentOfB.waitFor();
+	await page.keyboard.press("Escape");
+	await documentOfB.waitFor({ state: "detached" });
+	const goingIn = await recordScreen(page);
+	const clicked = await now();
+	// the first click selects b, and the second, a moment later, goes in
+	await page.mouse.click(middleOfB.x, middleOfB.y);
+	await page.waitForTimeout(150);
+	const flying = await now();
+	await page.mouse.click(middleOfB.x, middleOfB.y, { clickCount: 2 });
+	await shown.waitFor();
+	const gone = await placeOfB();
+	stayedOnB(await goingIn.stop(), out, gone, "going in");
+	// the camera lands no sooner than a flight after the second click
+	const early = (await started()).filter((t) => t >= clicked && t < flying + fly);
+	expect(early, "a document started before the camera was on b").toEqual([]);
+	const goingOut = await recordScreen(page);
+	await page.keyboard.press("Escape");
+	await page.locator("[data-deck-stage-shown]").waitFor({ state: "detached" });
+	await page.waitForTimeout(300);
+	stayedOnB(await goingOut.stop(), gone, await onCanvas(), "coming out");
 	await page.close();
 });
