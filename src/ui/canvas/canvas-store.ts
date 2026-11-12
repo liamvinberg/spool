@@ -264,6 +264,19 @@ export const pageWorldOf = derived(
 	([frames, pages, waiting, order]): PageWorld => ({ frames, pages, waiting, order }),
 );
 
+/**
+ * The frames a menu verb acts on from the keyboard: the selection, or the frames behind an element pick. Inside an
+ * entered frame there are none: the keys belong to the prototype then, never to the canvas.
+ */
+export const keyboardTargetsOf = (state: {
+	entered: string | null;
+	selected: readonly string[];
+	picked: readonly { frame: string }[];
+}): string[] => {
+	if (state.entered !== null) return [];
+	return state.selected.length > 0 ? [...state.selected] : [...new Set(state.picked.map((pick) => pick.frame))];
+};
+
 /** The tool in hand: Space borrows the Hand for as long as it is held. */
 export const toolOf = (state: Pick<CanvasState, "tool" | "spaceDown">): CanvasTool =>
 	state.spaceDown ? "hand" : state.tool;

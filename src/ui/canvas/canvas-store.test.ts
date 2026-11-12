@@ -2,7 +2,14 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { type CanvasStore, createCanvasStore, setterOf, useCanvasField, useCanvasState } from "./canvas-store";
+import {
+	type CanvasStore,
+	createCanvasStore,
+	keyboardTargetsOf,
+	setterOf,
+	useCanvasField,
+	useCanvasState,
+} from "./canvas-store";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,6 +46,14 @@ describe("the canvas store", () => {
 		setSelected(["a"]);
 		setSelected((current) => [...current, "b"]);
 		expect(store.get().selected).toEqual(["a", "b"]);
+	});
+
+	it("aims the keys at the selection, else the frames behind a pick, and never from inside a frame", () => {
+		const picked = [{ frame: "cart" }, { frame: "cart" }];
+		expect(keyboardTargetsOf({ entered: null, selected: ["home"], picked })).toEqual(["home"]);
+		// P plays the frame an element was picked in, so that is the one readied for it too (spool#325)
+		expect(keyboardTargetsOf({ entered: null, selected: [], picked })).toEqual(["cart"]);
+		expect(keyboardTargetsOf({ entered: "home", selected: ["home"], picked })).toEqual([]);
 	});
 
 	it("renders a reader only when what it reads changes", () => {
