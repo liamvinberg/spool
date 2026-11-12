@@ -153,3 +153,28 @@ export function sameWay(a: Way, b: Way): boolean {
 	if (a.kind === "page" && b.kind === "page") return a.page === b.page;
 	return a.kind === b.kind;
 }
+
+/** How much of the trail shows when the top right's row is short of room (`corner-row.tsx`). */
+export type TrailFold = "full" | "middle" | "cut" | "name";
+
+/** Past this many characters the frame's name is cut in its middle when the row is short… */
+const CUT_OVER = 20;
+/** …keeping this many at each end. */
+const CUT_KEEP = 9;
+
+/**
+ * The trail's words at a fold: the pages between the agent and the frame fold to one `…`, then the frame's name is
+ * cut in its middle, then only the agent's name stays, the whole path then said in its tooltip.
+ */
+export function trailWords(
+	pages: readonly string[],
+	label: string,
+	fold: TrailFold,
+): { pages: readonly string[]; label: string | null } {
+	const cut = label.length > CUT_OVER ? `${label.slice(0, CUT_KEEP)}…${label.slice(-CUT_KEEP)}` : label;
+	if (fold === "name") return { pages: [], label: null };
+	return {
+		pages: pages.length === 0 || fold === "full" ? pages : ["…"],
+		label: fold === "cut" ? cut : label,
+	};
+}
