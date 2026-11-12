@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { stageChange } from "./stage-wire";
+import { type SlideReadiness, stageChange, tooHeavyAhead } from "./stage-wire";
 
 it("takes a new build for a change to the talk's code, reads the talk again for its deck, and ignores the rest", () => {
 	const talk = ["talk/title", "talk/words"];
@@ -20,4 +20,14 @@ it("takes a new build for a change to the talk's code, reads the talk again for 
 			null,
 		].map(heard),
 	).toEqual([undefined, undefined, undefined, undefined, undefined, undefined]);
+});
+
+it("names a slide the room cannot ready ahead beside the one before it, by the WebGL contexts the two draw with", () => {
+	const slides: SlideReadiness[] = [
+		{ frame: "talk/title", status: "ready" },
+		{ frame: "talk/chart", status: "ready", webgl: 4 },
+		{ frame: "talk/map", status: "ready", webgl: 3 },
+		{ frame: "talk/end", status: "loading" },
+	];
+	expect([...tooHeavyAhead(slides, 6)]).toEqual([["talk/map", 3]]);
 });

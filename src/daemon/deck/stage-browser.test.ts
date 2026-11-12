@@ -4,7 +4,14 @@ import type { StageSession } from "../../deck/stage-session";
 import type { SlideReadiness, StageShown } from "../../deck/stage-wire";
 import { testBrowser } from "../../test-browser";
 import { serveProject, writeDesignFile } from "../../test-helpers";
-import { HARD_TALK, readScreen, recordScreen, serveHardTalkFiles, writeHardTalk } from "./stage-browser.test-helpers";
+import {
+	GL_COLOUR,
+	HARD_TALK,
+	readScreen,
+	recordScreen,
+	serveHardTalkFiles,
+	writeHardTalk,
+} from "./stage-browser.test-helpers";
 
 /**
  * The stage (spool#265, spool#269) over the hard talk, in a real browser at its plain play address: what only a browser
@@ -90,6 +97,19 @@ const wholeSlides = (read: readonly { from: string; to: string; mix: number }[])
 	),
 ];
 
+/** The first pixel a WebGL slide put on ahead holds as it waits out of sight; null while it is not waiting. */
+const waitingPixel = (page: Page, frame: string) =>
+	stageFrame(page).evaluate((frame) => {
+		const canvas = document.querySelector<HTMLCanvasElement>(
+			`[data-spool-stage-waiting][data-spool-stage-slide="${frame}"] canvas`,
+		);
+		const gl = canvas?.getContext("webgl");
+		if (gl === null || gl === undefined) return null;
+		const pixel = new Uint8Array(4);
+		gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+		return [...pixel];
+	}, frame);
+
 function stageFrame(page: Page): Frame {
 	const frames = page.frames().filter((frame) => frame !== page.mainFrame());
 	const frame = frames.at(-1);
@@ -170,6 +190,8 @@ it("plays the hard talk end to end: each step ready before its key and on in a f
 		const frame = talk[step.slide] ?? "";
 		// the presenter waits for the slide to be ready, as the presenter view will show it; it gets there on its own
 		if (step.beat === 0) await slideIs(page, frame, frame === "talk/no-compile" ? "broken" : "ready");
+		// the WebGL slide is put on out of sight before its key, its first frame drawn there
+		if (frame === "talk/gl") await expect.poll(() => waitingPixel(page, frame)).toEqual([...GL_COLOUR, 255]);
 		const shown = await nextShown(page, () => page.keyboard.press("ArrowRight"));
 		expect(shown.at).toEqual({ slide: step.slide, beat: step.beat });
 		if (step.broken === undefined) {

@@ -966,18 +966,19 @@ function notifyPlay(): void {
 	if (play?.shell === true) postPlayerState();
 }
 
-/** Activate exactly the stylesheet closure owned by the screen React is about to commit. */
-function activateFrameStyles(frame: string): void {
-	const resource = play?.styles?.[frame];
+/**
+ * Activate exactly the stylesheet closure owned by the screen React is about to commit, and `also`'s with it: a deck's
+ * stage lays a slide out of sight in its own styles beside the one on screen, for as long as one task runs.
+ */
+function activateFrameStyles(frame: string, also?: string): void {
+	const owns = (style: HTMLElement, frame: string) => {
+		const resource = play?.styles?.[frame];
+		return resource === undefined
+			? style.dataset.spoolFrameStyle === frame
+			: style.dataset.spoolStyleResource === resource;
+	};
 	for (const style of document.querySelectorAll<HTMLStyleElement | HTMLLinkElement>("[data-spool-frame-style]")) {
-		style.media =
-			resource === undefined
-				? style.dataset.spoolFrameStyle === frame
-					? ""
-					: "not all"
-				: style.dataset.spoolStyleResource === resource
-					? ""
-					: "not all";
+		style.media = owns(style, frame) || (also !== undefined && owns(style, also)) ? "" : "not all";
 	}
 }
 
