@@ -104,11 +104,11 @@ export function installRooms(host: RoomsHost): Rooms {
 		else uncover(room.window, { x: to.rect.x, y: to.rect.y, width: to.rect.w, height: to.rect.h });
 	};
 
-	/** the rooms waiting to be shown till their slide is drawn, by their page */
+	/** the rooms clear till their slide is drawn, by their page */
 	const drawing = new Map<Electron.WebContents, () => void>();
-	/** A room's window shown again, unless it still waits for its slide: then it shows by itself, on the slide. */
+	/** A room's window shown again; one still clear for its slide shows by itself, on the slide. */
 	const showAgain = (room: Room) => {
-		if (!room.window.isDestroyed() && !drawing.has(room.window.webContents)) room.window.showInactive();
+		if (!room.window.isDestroyed()) room.window.showInactive();
 	};
 
 	const open = (url: string, talk: string) => {
@@ -158,15 +158,20 @@ export function installRooms(host: RoomsHost): Rooms {
 			if (rooms.get(talk) === room) rooms.delete(talk);
 			drawing.delete(page);
 		});
-		// hidden until its slide is drawn, so it opens on the slide and never on the black it loads in (spool#306); a
-		// room that never says so still gets its window: late, not lost
+		// clear until its slide is drawn, so it opens on the slide and never on the black it loads in (spool#306); a
+		// room that never says so still shows: late, not lost. Shown clear from the start, not hidden till then: a window
+		// shown the moment its slide was drawn showed the stage's ground for a frame first, in one start of a few
+		// (spool#308). Shown without the keys, which stay with the presenter view, and letting the pointer through.
+		window.setOpacity(0);
+		window.setIgnoreMouseEvents(true);
+		window.showInactive();
 		const showing = setTimeout(() => reveal(), ROOM_DRAWN_MS);
 		const reveal = () => {
 			clearTimeout(showing);
 			drawing.delete(page);
-			if (window.isDestroyed() || window.isVisible()) return;
-			// shown without the keys: they stay with the presenter view
-			window.showInactive();
+			if (window.isDestroyed()) return;
+			window.setOpacity(1);
+			window.setIgnoreMouseEvents(false);
 		};
 		drawing.set(page, reveal);
 		host.log("room", talk.slice(0, 6), where.kind === "screen" ? `screen ${where.display.label}` : "window");
