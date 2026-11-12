@@ -167,21 +167,25 @@ export default function Slide() {
 `,
 	"calm-9": calm("#3d405b", "Calm nine"),
 	burn: `import { useEffect } from "react";
+import { ui } from "spool";
 
+// it burns its frames on its second beat, on screen: the stage readies a slide before it comes on
 export default function Slide() {
+	const beat = ui.beats(["calm", "burn"]);
 	useEffect(() => {
+		if (beat.index !== 1) return;
 		let alive = true;
-		const end = performance.now() + 2000;
+		let left = 3;
 		const spin = () => {
 			const start = performance.now();
-			while (performance.now() - start < 40) {}
-			if (alive && performance.now() < end) requestAnimationFrame(spin);
+			while (performance.now() - start < 150) {}
+			if (alive && --left > 0) requestAnimationFrame(spin);
 		};
 		requestAnimationFrame(spin);
 		return () => {
 			alive = false;
 		};
-	}, []);
+	}, [beat.index]);
 	return (
 		<div style={{ background: "#81b29a", width: "100%", height: "100%", padding: 80, boxSizing: "border-box" }}>
 			<h1 style={{ margin: 0 }}>Every frame takes long here</h1>
@@ -339,5 +343,6 @@ it("names each fault of a talk at its slide and beat, and nothing of the calm sl
 	expect(stills).toContain(`${String(at("jumps") + 1).padStart(2, "0")}-jumps-2-two.png`);
 	expect(stills.filter((still) => still.startsWith("01-02-move-"))).toEqual([]);
 	expect(stills).toContain("03-04-move-middle.png");
-	expect(outcome.beats).toBe(TALK.length + 3);
+	// three slides of two beats, and the one that burns
+	expect(outcome.beats).toBe(TALK.length + 4);
 });
