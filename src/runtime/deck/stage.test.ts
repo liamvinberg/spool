@@ -364,7 +364,7 @@ function DrawsWithWebgl() {
 	return createElement("canvas", { ref: canvas });
 }
 
-it("keeps only the slides that draw with WebGL nearest the one on screen, so none goes on blank however many the talk has", async () => {
+it("keeps every slide that draws with WebGL ready, only those nearest the one on screen holding contexts, so none goes on blank or late", async () => {
 	const webgl = fakeWebgl();
 	const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
 	const on = await stage(
@@ -376,8 +376,11 @@ it("keeps only the slides that draw with WebGL nearest the one on screen, so non
 		await vi.waitFor(() => expect(on.onScreen()).toBe(`talk/${name}`));
 		expect(webgl.drawing()).toBe(true);
 	}
-	// the one on screen and the one before: the rest are given back, never left for the browser to take
+	// the one on screen and the one before: the rest are given back, never left for the browser to take, and rendered
+	// afresh out of sight, ready again without a context until they go on
 	await vi.waitFor(() => expect(webgl.alive()).toBe(2));
+	await vi.waitFor(() => expect(on.slides().map((slide) => slide.status)).toEqual(names.map(() => "ready")));
+	expect(webgl.alive()).toBe(2);
 
 	// the browser takes the one kept behind all the same: it is rendered afresh before it goes on
 	const behind = document.querySelector<HTMLCanvasElement>('[data-spool-stage-slide="talk/g"] canvas');
@@ -387,9 +390,9 @@ it("keeps only the slides that draw with WebGL nearest the one on screen, so non
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/g"));
 	expect(webgl.drawing()).toBe(true);
 
-	// a jump to one given back waits until it is rendered again, the picture held meanwhile
+	// a jump to one given back goes on at once, and draws
 	on.send({ spool: "stage-command", command: { kind: "first" } });
-	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
-	expect(on.shown().at(-1)).toMatchObject({ at: { slide: 0 }, ready: false });
+	await vi.waitFor(() => expect(on.shown().at(-1)).toMatchObject({ at: { slide: 0 }, ready: true }));
+	expect(on.onScreen()).toBe("talk/a");
 	expect(webgl.drawing()).toBe(true);
 });

@@ -36,7 +36,7 @@ import {
 import { SlideScope, setSlideBeat } from "../slide-beats";
 import { type KeptPicture, keepPicture } from "./stage-keep";
 import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
-import { onWebglMade, releaseWebgl, WEBGL_KEPT, watchWebgl, webglIn } from "./stage-webgl";
+import { releaseWebgl, WEBGL_KEPT, watchWebgl, webglIn } from "./stage-webgl";
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
@@ -160,8 +160,6 @@ interface SlideHeld {
 	learned: string[];
 	/** its fonts and pictures, held for the whole talk so the browser keeps them */
 	warmed?: Warmed;
-	/** the most WebGL contexts one rendering of it has held: what keeping it rendered costs */
-	webgl?: number;
 }
 
 /** One rendering of a slide: a take of it, out of sight or on screen. */
@@ -330,28 +328,26 @@ export function bootStage(runtime: StageRuntime): void {
 	/**
 	 * The copies to keep rendered: the window around the slide wanted, at the takes the talk is on; every other slide
 	 * readied at the take it is on, so a jump to it is on in the next frame too; and once all of those are ready, the
-	 * nearest slide of the rest that has not been, for as long as it takes to ready it. Of the slides that draw with
-	 * WebGL, only those nearest the one wanted whose contexts fit the stage's share: a jump to another waits for it.
+	 * nearest slide of the rest that has not been, for as long as it takes to ready it.
 	 */
 	function wantedCopies(): Copy[] {
 		const at = picture();
 		const target = at.at.slide;
 		const near = (index: number) => index >= target - BEHIND && index <= target + AHEAD;
-		const over = pastWebglShare(target);
 		const out: Copy[] = [];
 		for (let index = target - BEHIND; index <= target + AHEAD; index++) {
 			const slide = slides[index];
-			if (slide === undefined || slide.module !== "in" || over.has(index)) continue;
+			if (slide === undefined || slide.module !== "in") continue;
 			out.push(copyFor(index, takeOf(index, at.takes)));
 		}
 		slides.forEach((_, index) => {
 			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
-			if (!near(index) && !over.has(index) && copy !== undefined && !copy.broken) out.push(copy);
+			if (!near(index) && copy !== undefined && !copy.broken) out.push(copy);
 		});
 		if (out.some((copy) => !copy.broken && !copy.failed && !ready(copy))) return out;
 		for (const index of order(target)) {
 			const key = keyOf(index, takeOf(index, at.takes));
-			if (near(index) || over.has(index) || copies.has(key)) continue;
+			if (near(index) || copies.has(key)) continue;
 			const slide = slides[index];
 			if (slide === undefined || slide.broken !== undefined || slide.module !== "in" || !styled(slide)) continue;
 			out.push(copyFor(index, takeOf(index, at.takes)));
@@ -360,34 +356,29 @@ export function bootStage(runtime: StageRuntime): void {
 		return out;
 	}
 
-	/**
-	 * The slides past this document's share of WebGL contexts: the one wanted and the one on screen hold theirs
-	 * whatever they cost, then the rest nearest first while what they hold fits.
-	 */
-	function pastWebglShare(target: number): Set<number> {
-		const on = shown === null ? undefined : copies.get(shown)?.index;
-		const cost = (index: number | undefined) => (index === undefined ? 0 : (slides[index]?.webgl ?? 0));
-		let left = WEBGL_KEPT - cost(target) - (on === target ? 0 : cost(on));
-		const over = new Set<number>();
-		for (const index of order(target)) {
-			if (index === target || index === on || cost(index) === 0) continue;
-			if (cost(index) <= left) left -= cost(index);
-			else over.add(index);
-		}
-		return over;
-	}
+	/** The WebGL contexts a copy's canvases hold: one rendered out of sight and never shown holds none. */
+	const held = (copy: Copy | undefined) => (copy?.box === undefined ? 0 : webglIn(copy.box));
 
-	/** Set once a slide makes a WebGL context, for the next settle to learn which. */
-	let webglMade = false;
-	onWebglMade(() => {
-		webglMade = true;
-	});
-	function learnWebgl(): void {
-		if (!webglMade) return;
-		webglMade = false;
-		for (const copy of copies.values()) {
-			const slide = slides[copy.index];
-			if (slide !== undefined && copy.box !== undefined) slide.webgl = Math.max(slide.webgl ?? 0, webglIn(copy.box));
+	/**
+	 * The copies out of sight that hold WebGL contexts past this document's share are rendered afresh, holding none,
+	 * so the browser never takes one and every slide stays ready. The one on screen, the one wanted and the one a swap
+	 * just took off keep theirs whatever they cost, then the rest nearest first while what they hold fits.
+	 */
+	function keepWebglShare(): void {
+		const at = picture();
+		const target = at.at.slide;
+		const on = shown === null ? undefined : copies.get(shown);
+		const wanted = copies.get(keyOf(target, takeOf(target, at.takes)));
+		let left = WEBGL_KEPT - held(on) - (wanted === on ? 0 : held(wanted));
+		for (const index of order(target)) {
+			const copy = copies.get(keyOf(index, takeOf(index, at.takes)));
+			if (copy === undefined || copy === on || copy === wanted || copy.key === revealed?.from) continue;
+			const cost = held(copy);
+			if (cost <= left) left -= cost;
+			else {
+				copies.delete(copy.key);
+				copyFor(copy.index, copy.take);
+			}
 		}
 	}
 
@@ -515,7 +506,7 @@ export function bootStage(runtime: StageRuntime): void {
 		settling = true;
 		try {
 			fetchAhead();
-			learnWebgl();
+			keepWebglShare();
 			const want = picture();
 			const target = want.at.slide;
 			const keep = new Set(wantedCopies().map((copy) => copy.key));
@@ -655,7 +646,10 @@ export function bootStage(runtime: StageRuntime): void {
 				return;
 			}
 			requestAnimationFrame(() => {
-				if (revealed?.key === copy.key) revealed = undefined;
+				if (revealed?.key !== copy.key) return;
+				revealed = undefined;
+				// the slide it took off is now one like any other out of sight, its contexts within the share or rendered afresh
+				settle();
 			});
 			done(at, false, copy, from === null);
 		};
