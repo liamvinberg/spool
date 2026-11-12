@@ -173,6 +173,8 @@ export async function openM1(options: {
 			`--remote-debugging-port=${remoteDebugging}`,
 			...["--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--password-store=basic"],
 			...["--test-type", "--hide-crash-restore-bubble", "--disable-search-engine-choice-screen"],
+			// Chrome for Testing's "only for automated testing" bar, which would push the page down under the crop
+			"--disable-infobars",
 			"--disable-features=Translate,MediaRouter,OptimizationHints",
 			// it keeps drawing while other windows cover it, which is what the recorder films
 			...["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"],
