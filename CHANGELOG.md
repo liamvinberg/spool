@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.56.0
+
+### Minor Changes
+
+- 88ab2e2: **Slides make room.** On a deck page a slide you pick up lifts, and the slides around it move apart to open a gap where it will land, the way icons make room in the Mac's Dock. The gap follows your hand, stays put while your hand rests, and turns round smoothly when you change your mind; let go and the slide lands in it once. Nothing of the slide in your hand starts until it has landed, so the drag never stutters. A frame dropped onto a slide no longer swaps the two: it goes in at the gap. A long talk stays on one line. Fitting a deck page shows at least five slides across but never draws a slide narrower than 120 pixels, and holding a slide near the side of the window scrolls the talk under it. A slide picked in Pages or with the arrow keys comes into view.
+- 30bc5db: **Present full screen.** On one display, Present now plays the talk at once: the slide grows from its card to fill the screen, and flies back to it when you end (experiment `deck`). → or a click steps, a bar at the foot wakes when you move the pointer, with your notes and End, and ? lists the keys. The caret beside Present picks the other way, the presenter view with the slides in their own window, and Present keeps the way you picked. With two displays, Present opens the presenter view as before, and the caret's Full screen plays the slides here and in the room's window. A slide held a moment, or the pointer on its way to Present, readies the talk, so the press does not wait for it to load.
+
+### Patch Changes
+
+- f99d13c: When another app already holds the port spool wants, the Mac app moves to a free one nearby and keeps it. A port you set yourself stays yours: then the app says at once that it is taken and where to pick another, instead of waiting thirty seconds and pointing at a log.
+- 91d0c24: Decks hold still while you drag (experiment `deck`). A hand resting or trembling over a slide no longer flips the preview back and forth, a loose frame moves out of the way only once the frame you hold is over it, and a drop or an undo settles in one glide instead of jumping to its place, back, and on again. Undoing a change of the talk's size puts the slides straight back where they belong.
+- f7719ec: In the Mac app, slides that fill the screen are no longer covered by the Dock or the menu bar. The slide sets off sooner after you press Present. The room's window opens on its slide, not black (experiment `deck`).
+- f80fe76: With a second display, the room's screen goes straight to the slide when you present in the Mac app (experiment `deck`). It no longer shows the desktop and slides across first. When the talk ends it shows the desktop again from the slide, with no black in between. X still swaps the two displays.
+- 389ddca: Going into a slide on a deck no longer stutters (experiment `deck`). The zoom used to freeze for about a fifth of a second and then jump, most of all just after the app started. The slide now starts only once the camera is on it, so the zoom runs smoothly from the first frame to the last.
+- 1d33306: `spool init --team` in a git worktree no longer names the team project after the worktree's folder: at the top of a checkout it takes the repo's name, and where the team already has the repo's project it joins it, fetching its canvas and uploading nothing. `--name` names a project otherwise, and `spool move --team` names a project moved in the same way.
+
 ## 0.55.0
 
 ### Minor Changes

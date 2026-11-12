@@ -16,6 +16,7 @@ import { deckMotion, easing } from "./deck-motion";
 import { insideBox, insideCamera, outCamera } from "./inside-camera";
 import { KeyList } from "./key-list";
 import { usePresentAsk } from "./present";
+import { afterStill, SETTLE_MS } from "./settle";
 import { talkSource } from "./talk-source";
 
 /**
@@ -55,6 +56,8 @@ export interface DeckInside {
 	 * talk was not presented from inside a slide of this page, and the canvas brings the slide into view its own way.
 	 */
 	ended(frame: string): boolean;
+	/** The camera flies into a slide or back out of it: nothing may start meanwhile (spool#299). */
+	readonly flying: boolean;
 	/** ? was pressed inside: the keys are listed over the canvas until esc or ? again. */
 	readonly help: boolean;
 	closeHelp(): void;
@@ -87,12 +90,6 @@ interface Inside {
 const stillness = () =>
 	typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/**
- * How long a slide held stands before it settles, its own document starting and the stage resting on it: longer than a
- * double-click, whose first click selects the slide the second goes into, so that click starts nothing under the flight.
- */
-const SETTLE_MS = 500;
-
 /** Where a key pressed while the camera flies into a slide lands: the slide's own talk, fresh, played in place. */
 const arriving = (event: KeyboardEvent) => ({
 	typing: typingIn(event.target),
@@ -121,6 +118,7 @@ export function useDeckInside({
 	select,
 	present,
 	carrying,
+	inHand,
 }: {
 	project: string;
 	/** the page in front */
@@ -137,6 +135,8 @@ export function useDeckInside({
 	present: (first: boolean) => boolean;
 	/** a frame of the page is in the hand or landing: no slide settles meanwhile (spool#299) */
 	carrying: boolean;
+	/** a frame of the page is in the hand now, read when called: `carrying` says so only once the hand's frame is drawn */
+	inHand: () => boolean;
 }): DeckInside {
 	const [inside, setInside] = useState<Inside | null>(null);
 	const [element, hold] = useState<HTMLDivElement | null>(null);
@@ -345,9 +345,9 @@ export function useDeckInside({
 	const [settled, setSettled] = useState<string | null>(null);
 	useEffect(() => {
 		if (heldSlide === null || inside !== null || carrying) return;
-		const settle = setTimeout(() => setSettled(heldSlide), SETTLE_MS);
-		return () => clearTimeout(settle);
-	}, [heldSlide, inside, carrying]);
+		const settle = afterStill(SETTLE_MS, inHand, () => setSettled(heldSlide));
+		return () => settle.stop();
+	}, [heldSlide, inside, carrying, inHand]);
 	useEffect(() => () => setSettled((was) => (was === heldSlide ? null : was)), [heldSlide]);
 	const flying = inside?.phase === "in" && !inside.flown;
 	useEffect(() => {
@@ -459,7 +459,7 @@ export function useDeckInside({
 		hold,
 	};
 	const closeHelp = useCallback(() => setHelp(false), []);
-	return { slide, chip, enter, leave, on, ended, help, closeHelp, view };
+	return { slide, chip, enter, leave, on, ended, flying: flying || inside?.phase === "out", help, closeHelp, view };
 }
 
 /** The keys ? lists inside a slide, over the canvas: a press on it only ever closes it, never comes out of the slide. */

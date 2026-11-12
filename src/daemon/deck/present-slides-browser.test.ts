@@ -445,3 +445,78 @@ it("waits on its card while the window grows to cover the screen, and sets off o
 	await view.setViewportSize(screen);
 	await expect.poll(() => phaseOf(view)).toMatch(/^(in|on)$/);
 });
+
+it("hands over from a slide's picture to the live slide only once its entrance has played, so it never shows twice", {
+	timeout: 120_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir, experiments: { deck: true } });
+	// a slide whose box rises into place as it starts, as every slide of a new presentation does
+	const json = (value: unknown) => `${JSON.stringify(value, null, "\t")}\n`;
+	const hex = (colour: Rgb) => `#${colour.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+	writeDesignFile(project.root, "frames/talk/deck.json", json({ version: 1, w: W, h: H, slides: ["rise", "two"] }));
+	writeDesignFile(
+		project.root,
+		"frames/talk/rise/frame.tsx",
+		`export default function Slide() {
+	return (
+		<div style={{ position: "absolute", inset: 0, background: "${hex(ONE)}" }}>
+			<style>{"@keyframes rise { from { opacity: 0; transform: translateY(80px) } }"}</style>
+			<div style={{ position: "absolute", left: 340, top: 160, width: 600, height: 400, background: "${hex(PICTURE)}", animation: "rise 900ms ease-out both" }} />
+		</div>
+	);
+}
+`,
+	);
+	writeDesignFile(project.root, "frames/talk/rise/frame.json", json({ x: 0, y: 0, w: W, h: H }));
+	writeDesignFile(
+		project.root,
+		"frames/talk/two/frame.tsx",
+		`export default function Slide() {
+	return <div style={{ position: "absolute", inset: 0, background: "${hex(TWO)}" }} />;
+}
+`,
+	);
+	writeDesignFile(project.root, "frames/talk/two/frame.json", json({ x: 1440, y: 0, w: W, h: H }));
+	writeDesignFile(
+		project.root,
+		".spool/state.json",
+		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.08 } } }),
+	);
+	const context = await browser.newContext({ viewport: { width: W, height: H } });
+	await fullScreenAsABrowserGivesIt(context);
+	const view = await context.newPage();
+	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
+	await expect.poll(async () => boxOf(await view.screenshot(), PICTURE), { timeout: 30_000 }).not.toBeNull();
+
+	// presented cold, nothing readied: the slide flies as its picture, and the live slide takes over in place
+	const screen = await recordScreen(view);
+	await view.keyboard.press("ControlOrMeta+Shift+Enter");
+	await expect.poll(() => phaseOf(view)).toBe("on");
+	await expect
+		.poll(() =>
+			view.evaluate(() => (document.querySelector("[data-present-live]") as HTMLElement | null)?.style.opacity),
+		)
+		.toBe("1");
+	await view.waitForTimeout(400);
+	const frames = await screen.stop();
+
+	// from the frame it fills the screen, the slide stands whole and at rest in every frame: its box in place and
+	// solid, never risen half way under its picture nor dimmed as one hands over to the other
+	const filled = frames.findIndex((png) => same(boxOf(png, ONE), FULL, 0));
+	expect(filled).toBeGreaterThan(-1);
+	const points = [
+		{ x: 160, y: 360 },
+		{ x: 640, y: 170 },
+		{ x: 640, y: 360 },
+	];
+	for (const [at, png] of frames.slice(filled).entries()) {
+		const [ground, top, middle] = pixelsOf(png, points);
+		expect(
+			[ground, top, middle].map((seen, which) => near(seen, which === 0 ? ONE : PICTURE, 10)),
+			`frame ${filled + at}`,
+		).toEqual([true, true, true]);
+	}
+});
