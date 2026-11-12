@@ -4,7 +4,7 @@ import type { Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, pagePointOf, serveProject, writeDesignFile } from "../test-helpers";
-import { SETTLE_MS } from "../ui/deck/inside-camera";
+import { SETTLE_MS } from "../ui/deck/settle";
 import { pixelsOf, recordScreen } from "./deck/stage-browser.test-helpers";
 
 type Rgb = readonly [number, number, number];
@@ -35,6 +35,13 @@ interface Sample {
 
 const ZOOM = 0.16;
 const STRIDE = 1440;
+/** What the page saw of its documents starting and of the hand, in the page's time. */
+interface Seen {
+	readonly started: { readonly t: number; readonly src: string }[];
+	/** when the hand pressed, and when it first moved after */
+	readonly hand: number[];
+}
+
 const near = (colour: Rgb, want: Rgb) => colour.every((channel, i) => Math.abs(channel - (want[i] ?? 0)) <= 12);
 
 /**
@@ -247,16 +254,23 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	const rest = (await samples(0)).at(-1)?.labels ?? {};
 	expect(Object.keys(rest).sort()).toEqual(Object.keys(frames).sort());
 	const restOf = (name: string) => rest[name]?.[0] ?? Number.NaN;
-	// when each document of the page started: an iframe added
+	// when each document of the page started (an iframe added, and what it holds), and when the hand pressed and first
+	// moved
 	await page.evaluate(() => {
-		const started: number[] = [];
-		(window as unknown as { started: number[] }).started = started;
+		const seen = { started: [] as { t: number; src: string }[], hand: [] as number[] };
+		(window as unknown as { seen: typeof seen }).seen = seen;
 		new MutationObserver((changes) => {
 			for (const change of changes)
-				for (const node of change.addedNodes)
-					if (node instanceof Element && (node.matches("iframe") || node.querySelector("iframe") !== null))
-						started.push(performance.now());
+				for (const node of change.addedNodes) {
+					const frame =
+						node instanceof Element ? (node.matches("iframe") ? node : node.querySelector("iframe")) : null;
+					if (frame instanceof HTMLIFrameElement) seen.started.push({ t: performance.now(), src: frame.src });
+				}
 		}).observe(document.body, { childList: true, subtree: true });
+		window.addEventListener("pointerdown", () => seen.hand.push(performance.now()), { capture: true });
+		window.addEventListener("pointermove", () => seen.hand.length === 1 && seen.hand.push(performance.now()), {
+			capture: true,
+		});
 	});
 
 	// a lifted and carried right a step of two pixels a frame: b starts to make room once a is about a quarter over it
@@ -266,10 +280,6 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	await glide({ x: deck.pointer().x + 4, y: deck.pointer().y }, 1);
 	await glide(await at({ x: middle("a").x + 0.45 * STRIDE, y: 360 }), Math.round((0.45 * stride) / 2));
 	const carried = await samples(carrying);
-	// when the hand took a: a slide pressed and held still settles, its document starting, so what starts before the
-	// lift is the press's and not the carry's, however long a busy machine takes between the two
-	const lifted = carried.find((sample) => Math.abs((sample.labels.a?.[0] ?? 0) - restOf("a")) >= 0.5)?.t;
-	expect(lifted, "a was never lifted").toBeDefined();
 	const moved = carried.findIndex((sample) => Math.abs((sample.labels.b?.[0] ?? 0) - restOf("b")) >= 0.5);
 	expect(moved, "b never made room").toBeGreaterThan(0);
 	const covered = ((carried[moved]?.labels.a?.[0] ?? 0) - restOf("a")) / stride;
@@ -315,9 +325,15 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	await answered;
 	await settled();
 	const drop = await samples(dropped);
-	// nothing of a started while it was in the hand, a document starting holding the window's frames back
-	const started = await page.evaluate(() => (window as unknown as { started: number[] }).started);
-	expect(started.filter((t) => t >= (lifted ?? carrying) && t < dropped)).toEqual([]);
+	// nothing started while a was in the hand, a document starting holding the window's frames back. A press that stood
+	// still for the settle before the hand moved (on a machine too busy to move it sooner, as under a person who held it
+	// that long) has settled a, and its own document and the talk readied to present from it are that press's
+	const { started, hand } = await page.evaluate(() => (window as unknown as { seen: Seen }).seen);
+	const [pressed = Number.NaN, lifted = Number.NaN] = hand;
+	const pressSettled = lifted - pressed >= SETTLE_MS;
+	const ofThePress = (src: string) => src.endsWith("/frames/talk%2Fa") || src.includes("shell=1");
+	const inTheHand = started.filter(({ t, src }) => t >= pressed && t < dropped && !(pressSettled && ofThePress(src)));
+	expect(inTheHand).toEqual([]);
 	expect(drop.at(-1)?.numbers).toEqual({ b: 1, a: 2, c: 3 });
 	expect(deck.talk()).toEqual(["b", "a", "c"]);
 	for (const name of ["a", "b", "c", "x"]) {
