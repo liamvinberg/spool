@@ -101,12 +101,14 @@ import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import type { AgentDeck } from "./agent-stream";
 import type { AgentTile } from "./agent-transcript";
 import { arrange } from "./arrange";
+import { BackToFrames } from "./back-to-frames";
 import { BootCurtain } from "./boot-screen";
 import { frameScheme, framesOnScreen } from "./booth-view";
 import { BrokenFrame, brokenAsk } from "./broken-frame";
 import {
 	type Box,
 	boundsOf,
+	cameraPath,
 	centerOn,
 	entryCamera,
 	fitBand,
@@ -1716,7 +1718,11 @@ function CanvasField({
 		const viewport = viewportRef.current;
 		const boxes = fieldBoxes();
 		if (viewport === null || boxes.length === 0) return;
-		camera.fly(pageFit(boxes, viewport.clientWidth, viewport.clientHeight));
+		const from = camera.get();
+		const to = pageFit(boxes, viewport.clientWidth, viewport.clientHeight);
+		// from far off, the fit zooms out on the way, so the frames are seen coming rather than streaking in
+		if (from === null) camera.fly(to);
+		else camera.flyAlong(cameraPath(from, to, viewport.clientWidth, viewport.clientHeight));
 	}, [fieldBoxes, camera, pageFit]);
 
 	const resetZoom = useCallback(() => {
@@ -5633,6 +5639,11 @@ function CanvasField({
 		(pageTree.get(activePage) ?? []).length === 0 &&
 		!navigatorFrames.some((frame) => pageOf(frame) === activePage) &&
 		!placeholders.some((one) => (one.page ?? ROOT_PAGE) === activePage);
+	/** what Back to frames asks again on, besides the camera: the page and what is on it */
+	const backField = useMemo(
+		() => [activePage, visibleFrames, visiblePlaceholders],
+		[activePage, visibleFrames, visiblePlaceholders],
+	);
 	/** the path: the page's chain from the project, then a ghost of where ⌘↓ goes */
 	const carryingFrames = peeking.carrying?.kind === "frame";
 	const pathSegs = useMemo((): PathSeg[] => {
@@ -6627,6 +6638,15 @@ function CanvasField({
 								an agent writes frames/{activePage}/&lt;name&gt;/frame.tsx
 							</p>
 						</div>
+					)}
+					{loaded && !projectEmpty && !pageEmpty && !listing && (
+						<BackToFrames
+							camera={camera}
+							viewport={viewportRef}
+							boxes={fieldBoxes}
+							field={backField}
+							onBack={zoomFit}
+						/>
 					)}
 					{/* nothing to arrange, nothing to walk: the tools arrive with the first frame, and a
 				    list of pages has nothing to use them on */}

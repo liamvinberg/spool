@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	type Box,
+	cameraPath,
 	entryCamera,
 	fitBand,
 	fitCamera,
 	moveCamera,
+	noneOnScreen,
 	nudgeCamera,
 	revealCamera,
 	SMALL_PAGE_FLOOR,
@@ -210,5 +212,50 @@ describe("a deck page fitted (spool#299)", () => {
 		const above = nudgeCamera({ ...camera, y: -500 }, { x: 1440, y: 0, ...talk }, 1200, 800, 48);
 		expect(above.y).toBe(48);
 		expect(above.x).toBe(36);
+	});
+});
+
+describe("noneOnScreen", () => {
+	const boxes: Box[] = [
+		{ x: 0, y: 0, w: 400, h: 300 },
+		{ x: 2000, y: 0, w: 400, h: 300 },
+	];
+
+	it("is true only once every box is off the view, and never for an empty page", () => {
+		expect(noneOnScreen({ x: 0, y: 0, k: 1 }, boxes, VW, VH)).toBe(false);
+		// a sliver of the second frame at the right edge still counts as in view
+		expect(noneOnScreen({ x: -1000, y: 0, k: 1 }, boxes, VW, VH)).toBe(false);
+		expect(noneOnScreen({ x: 0, y: -5000, k: 1 }, boxes, VW, VH)).toBe(true);
+		expect(noneOnScreen({ x: 0, y: -5000, k: 1 }, [], VW, VH)).toBe(false);
+	});
+});
+
+describe("cameraPath", () => {
+	it("leaves from where the camera is, lands exactly where it was aimed, and zooms out on the way across", () => {
+		const from = { x: -6000, y: -3000, k: 0.6 };
+		const to = { x: 200, y: 100, k: 0.6 };
+		const path = cameraPath(from, to, VW, VH);
+		const start = path.at(0);
+		expect(start.x).toBeCloseTo(from.x);
+		expect(start.y).toBeCloseTo(from.y);
+		expect(start.k).toBeCloseTo(from.k);
+		expect(path.at(1)).toBe(to);
+		expect(path.at(0.5).k).toBeLessThan(0.6 / 2);
+	});
+
+	it("is a pure zoom when the view's middle stays put, as long as the zoom is far", () => {
+		const from = { x: 0, y: 0, k: 1 };
+		const to = { x: VW / 2 - (VW / 2) * 4, y: VH / 2 - (VH / 2) * 4, k: 4 };
+		const path = cameraPath(from, to, VW, VH);
+		expect(path.length).toBeCloseTo(Math.log(4) / Math.SQRT2);
+		expect(path.at(0.5).k).toBeCloseTo(2);
+		expect(path.at(0.5).x).toBeCloseTo(VW / 2 - (VW / 2) * 2);
+	});
+
+	it("is longer the further it goes", () => {
+		const to = { x: 0, y: 0, k: 1 };
+		const near = cameraPath({ x: -1200, y: 0, k: 1 }, to, VW, VH);
+		const far = cameraPath({ x: -12000, y: 0, k: 1 }, to, VW, VH);
+		expect(far.length).toBeGreaterThan(near.length);
 	});
 });
