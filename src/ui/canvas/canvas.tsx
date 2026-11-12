@@ -1958,7 +1958,10 @@ function CanvasField({
 		const timer = setTimeout(() => warmPresent(from), PRESENT_SETTLE_MS);
 		return () => clearTimeout(timer);
 	}, [accelDown, heldSlide, presentFromHeld]);
-	useEffect(() => () => presentCold(), [heldSlide]);
+	useEffect(() => {
+		if (heldSlide === undefined) return;
+		return () => presentCold();
+	}, [heldSlide]);
 	const deckInside = useDeckInside({
 		project,
 		page: activePage,
