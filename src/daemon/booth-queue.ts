@@ -58,8 +58,10 @@ interface BoothView {
 type Place = "on screen" | "on an open page" | "elsewhere";
 
 const PLACE_RANK: Record<Place, number> = { "on screen": 0, "on an open page": 1, elsewhere: 2 };
-/** Where a timing or an opening waits: behind every cover. */
-const PLACE_AFTER_ALL = 3;
+/** Where an opening waits: behind every cover, the open deck's before the rest. */
+const PLACE_OPENINGS = 3;
+/** Where a timing waits: behind every cover and every opening. */
+const PLACE_AFTER_ALL = PLACE_OPENINGS + 3;
 
 export const keyOf = (root: string, frame: string) => `${root}\0${frame}`;
 
@@ -116,11 +118,12 @@ export function createBoothQueue() {
 		let bestPlace = Number.POSITIVE_INFINITY;
 		for (const entry of waiting.values()) {
 			if (!timings && entry.reason === "timing") continue;
-			// a timing or an opening is no cover anyone waits for, wherever its frame is
+			// a timing or an opening is no cover anyone waits for, wherever its frame is; of the openings, those of the deck
+			// somebody is looking at go first, as it is the one Present would fly from
 			const place =
-				entry.reason === "timing" || entry.reason === "opening"
+				entry.reason === "timing"
 					? PLACE_AFTER_ALL
-					: PLACE_RANK[placeOf(entry.root, entry.frame)];
+					: (entry.reason === "opening" ? PLACE_OPENINGS : 0) + PLACE_RANK[placeOf(entry.root, entry.frame)];
 			if (
 				best === undefined ||
 				place < bestPlace ||
