@@ -1155,3 +1155,31 @@ describe("a slide's beats", () => {
 		expect(document.querySelector("#price")?.textContent).toBe("true");
 	});
 });
+
+describe("a frame made with a newer spool", () => {
+	it("says this spool is older than it needs, where a ui member is missing (spool#321)", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+		writeFrame(
+			harness.root,
+			"later",
+			`import { ui } from "spool";
+
+export default function Later() {
+	let said = "";
+	try {
+		(ui as unknown as { cue(): void }).cue();
+	} catch (error) {
+		said = \`\${(error as Error).name}: \${(error as Error).message}\`;
+	}
+	return <output id="said">{said}</output>;
+}
+`,
+		);
+		await loadFrameDocument(harness, "later");
+		await waitForText(
+			"#said",
+			"TypeError: ui.cue is not in this spool. This spool is older than the canvas needs: update it.",
+		);
+	});
+});

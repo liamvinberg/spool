@@ -2165,16 +2165,37 @@ function queryBeat(): number | undefined {
 	}
 }
 
-export const ui: SpoolUi = Object.freeze({
-	state,
-	use: useSpoolState,
-	go,
-	back,
-	copy,
-	knobs,
-	beats: slides.beats,
-	live: slides.live,
-});
+export const ui: SpoolUi = olderThanTheFrame(
+	Object.freeze({
+		state,
+		use: useSpoolState,
+		go,
+		back,
+		copy,
+		knobs,
+		beats: slides.beats,
+		live: slides.live,
+	}),
+);
+
+/** Names a reader asks any object for, which are no member a frame calls. */
+const NOT_MEMBERS = new Set(["then", "toJSON", "$$typeof"]);
+
+/**
+ * `ui` as a frame made with a newer spool meets it (spool#321): the checker
+ * passed the frame against that spool's `ui`, so a member this one lacks means
+ * this spool is older than the canvas, and says so rather than leaving the
+ * frame a TypeError of its own, such as "ui.beats is not a function".
+ */
+function olderThanTheFrame<T extends object>(members: T): T {
+	return new Proxy(members, {
+		get(target, key, receiver) {
+			if (typeof key !== "string" || key in target || NOT_MEMBERS.has(key))
+				return Reflect.get(target, key, receiver);
+			throw new TypeError(`ui.${key} is not in this spool. This spool is older than the canvas needs: update it.`);
+		},
+	});
+}
 
 bindDataGo();
 bindExternalLinks();
