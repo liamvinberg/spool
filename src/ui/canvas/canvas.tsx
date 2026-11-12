@@ -6446,6 +6446,8 @@ function CanvasField({
 							) : undefined
 						}
 					>
+						{/* what of this copy was set aside: a quiet count, first under the row, before load too */}
+						{setAside}
 						{loaded ? (
 							<OutsideLines
 								sessions={outside?.sessions ?? []}
@@ -6466,8 +6468,6 @@ function CanvasField({
 							</OutsideLines>
 						) : null}
 					</CanvasCorner>
-					{/* what of this copy was set aside: a quiet count under your path */}
-					{setAside !== null && <div className="absolute top-12 left-3 z-20">{setAside}</div>}
 
 					{menu !== null && (
 						<ContextMenu

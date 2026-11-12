@@ -104,8 +104,9 @@ it("counts a clash quietly, lists it whole, and each of its three actions works"
 	const count = page.locator("[data-set-aside-count]");
 	await count.getByRole("button", { name: "1 set aside" }).waitFor({ timeout: 30_000 });
 	await page.locator('[data-frame-label="home"]').waitFor();
-	// nothing stands across the canvas
+	// nothing stands across the canvas: the count hangs under who's here, at the top right
 	expect(await page.locator("[data-notices] [data-set-aside]").count()).toBe(0);
+	expect(await page.locator("[data-corner] [data-set-aside-count]").count()).toBe(1);
 
 	await count.getByRole("button", { name: "1 set aside" }).click();
 	const clash = count.locator("[data-set-aside-list] [data-set-aside]");
@@ -115,6 +116,16 @@ it("counts a clash quietly, lists it whole, and each of its three actions works"
 	const line = await clash.getByText(`You and ana both changed ${GO}`).boundingBox();
 	const theirs = await clash.getByRole("button", { name: "Use theirs" }).boundingBox();
 	expect(line !== null && theirs !== null && line.x + line.width <= theirs.x).toBe(true);
+	// in a narrow window the list still opens whole on the canvas, which cuts what crosses it
+	await page.setViewportSize({ width: 560, height: 900 });
+	await expect
+		.poll(async () => {
+			const list = await count.locator("[data-set-aside-list]").boundingBox();
+			const field = await page.locator('[role="application"]').boundingBox();
+			return list !== null && field !== null && list.x >= field.x && list.x + list.width <= field.x + field.width;
+		})
+		.toBe(true);
+	await page.setViewportSize({ width: 1600, height: 900 });
 
 	// nothing has reached the agent; one press is a new thread with both sides
 	expect(told()).not.toContain("clashed");
