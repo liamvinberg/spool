@@ -313,7 +313,8 @@ it("presents on one display: the slide grows from its card into a full screen as
 	await view.locator('[data-present-bar="awake"]').waitFor();
 	await expect.poll(() => cursors(view)).not.toContain("hidden");
 	await view.getByRole("button", { name: "End" }).click();
-	await view.locator("[data-present-slides]").waitFor({ state: "detached" });
+	// home, the slide it ended on is held, and its stage may be readied again out of sight half a second later
+	await view.locator('[data-present-slides]:not([data-present-slides="warm"])').waitFor({ state: "detached" });
 	await view.waitForTimeout(300);
 	const frames = await screen.stop();
 	const ones = frames.map((png) => boxOf(png, ONE));
