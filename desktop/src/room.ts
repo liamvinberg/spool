@@ -16,8 +16,8 @@ import {
 // The canvas opens the room with `window.open` on the deck's play address with
 // `room=<talk>`. In a browser that is a popup the presenter drags to the
 // projector. Here the popup is refused and the window is made: no title bar and
-// no bar of ours, full screen on the display spool's window is not on, or an
-// ordinary window when there is only one display. X in the presenter view swaps
+// no bar of ours, covering the display spool's window is not on, or an ordinary
+// window when there is only one display. X in the presenter view swaps
 // the two screens; unplugging the room's display brings it back as a window. The
 // presenter view is told which screen the room is on, by its real name.
 //
@@ -43,12 +43,10 @@ export interface RoomsHost {
 interface Room {
 	talk: string;
 	window: BrowserWindow;
-	/** the display it is full screen on, or undefined while it is a window */
+	/** the display it covers, or undefined while it is a window */
 	screen: number | undefined;
 	/** the display that was unplugged under it, while it is a window because of that */
 	unplugged: string | undefined;
-	/** each move waits for the last one: full screen comes and goes in animations macOS will not overlap */
-	moving: Promise<void>;
 }
 
 const ROOM_WINDOWED = "spool:room-windowed";
@@ -94,25 +92,14 @@ export function installRooms(host: RoomsHost): Rooms {
 		if (!room.window.isDestroyed()) room.window.webContents.send(ROOM_WINDOWED, room.screen === undefined);
 	};
 
-	/** Put the room full screen on `display`, or a window at `rect`, after whatever move it is in the middle of. */
+	/** Put the room over the whole of `display`, or a window at `rect`, in one step. */
 	const place = (room: Room, to: { display: RoomDisplay } | { rect: WindowRect }) => {
 		room.screen = "display" in to ? to.display.id : undefined;
 		tellWindowed(room);
 		report(room);
-		room.moving = room.moving.then(async () => {
-			const window = room.window;
-			if (window.isDestroyed()) return;
-			if ("display" in to) {
-				await setFullScreen(window, false);
-				window.setBounds(to.display.bounds);
-				await setFullScreen(window, true);
-				// macOS gives the window that went full screen the keys; the talk's are the presenter's
-				refocus(host.canvas());
-			} else {
-				await setFullScreen(window, false);
-				window.setBounds({ x: to.rect.x, y: to.rect.y, width: to.rect.w, height: to.rect.h });
-			}
-		});
+		if (room.window.isDestroyed()) return;
+		if ("display" in to) cover(room.window, to.display.bounds);
+		else uncover(room.window, { x: to.rect.x, y: to.rect.y, width: to.rect.w, height: to.rect.h });
 	};
 
 	/** the rooms waiting to be shown till their slide is drawn, by their page */
@@ -146,11 +133,13 @@ export function installRooms(host: RoomsHost): Rooms {
 			height: rect.h,
 			minWidth: 240,
 			minHeight: 135,
-			// the slide and nothing else: no title bar, no lights, no bar of spool's
+			// the slide and nothing else: no title bar, no lights, no bar of spool's; not even the hidden title bar of a
+			// frameless window, whose corners macOS rounds and whose top it keeps under the menu bar
+			fullscreenable: false,
 			frame: false,
+			roundedCorners: false,
 			show: false,
 			backgroundColor: "#000000",
-			fullscreenable: true,
 			webPreferences: { ...host.webPreferences, preload: join(__dirname, "room-preload.js") },
 		});
 		const room: Room = {
@@ -158,8 +147,8 @@ export function installRooms(host: RoomsHost): Rooms {
 			window,
 			screen: where.kind === "screen" ? where.display.id : undefined,
 			unplugged: undefined,
-			moving: Promise.resolve(),
 		};
+		if (where.kind === "screen") cover(window, where.display.bounds);
 		rooms.set(talk, room);
 		host.guard(window);
 		const page = window.webContents;
@@ -176,12 +165,6 @@ export function installRooms(host: RoomsHost): Rooms {
 			if (window.isDestroyed() || window.isVisible()) return;
 			// shown without the keys: they stay with the presenter view
 			window.showInactive();
-			if (room.screen !== undefined) {
-				room.moving = room.moving.then(async () => {
-					await setFullScreen(window, true);
-					refocus(host.canvas());
-				});
-			}
 		};
 		drawing.set(page, reveal);
 		host.log("room", talk.slice(0, 6), where.kind === "screen" ? `screen ${where.display.label}` : "window");
@@ -281,9 +264,28 @@ async function carry(window: BrowserWindow, from: RoomDisplay, to: RoomDisplay):
 }
 
 /**
+ * The room over the whole of a display, at once (spool#308). Not macOS's full screen, which slides the window into a
+ * Space of its own and showed the audience the wallpaper on the way: the window takes the display's bounds in one
+ * step and stands above the Dock and the menu bar, as Keynote's slides do. Its shadow goes, or it falls on the display
+ * beside it.
+ */
+function cover(window: BrowserWindow, bounds: Electron.Rectangle): void {
+	window.setAlwaysOnTop(true, "pop-up-menu");
+	window.setHasShadow(false);
+	window.setBounds(bounds, false);
+}
+
+/** The room as an ordinary window again, at `bounds`, among the other windows. */
+function uncover(window: BrowserWindow, bounds: Electron.Rectangle): void {
+	window.setAlwaysOnTop(false);
+	window.setHasShadow(true);
+	window.setBounds(bounds, false);
+}
+
+/**
  * Full screen on or off, resolved once macOS has finished the move, or given up on after a moment. The event comes
- * from inside the move, where a frame set on another display is held to this one, so it resolves a task later: the
- * room set there on X stayed on its own screen.
+ * from inside the move, where a frame set on another display is held to this one, so it resolves a task later: a
+ * window set there on X stayed on its own screen.
  */
 function setFullScreen(window: BrowserWindow, on: boolean): Promise<void> {
 	if (window.isDestroyed() || window.isFullScreen() === on) return Promise.resolve();
