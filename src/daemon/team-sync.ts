@@ -585,8 +585,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let burst: string | undefined;
 	/** Paths that changed again while their last save was in flight. */
 	const dirty = new Set<string>();
-	/** Paths whose save was set aside, with the hash it was: the team's version that follows overwrites what is here. */
-	const yielding = new Map<string, string | null>();
+	/**
+	 * Paths whose save was set aside, with the mark it makes: the team's version that follows is merged with what is
+	 * here, or overwrites it and the mark is made then. Until it comes the path sends nothing more.
+	 */
+	const yielding = new Map<string, Omit<SetAsideMark, "id" | "at" | "deleted">>();
 	const changed = new Set<string>();
 	let settle: NodeJS.Timeout | undefined;
 	let watch: TreeWatch | undefined;
@@ -745,10 +748,6 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** The bytes of a regular file at a design-relative path, or nothing for a missing file, a folder or a link. */
 	const readLocal = (path: string): Buffer | undefined =>
 		statOf(path)?.isFile() === true ? readFileSync(join(designDir, ...path.split("/"))) : undefined;
-	const localHash = (path: string): string | null => {
-		const bytes = readLocal(path);
-		return bytes === undefined ? null : digest(bytes);
-	};
 
 	const stays = (path: string) => whyStays(designDir, path);
 
@@ -1107,8 +1106,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (why !== undefined) return hold(path, why);
 		const bytes = readLocal(path);
 		const hash = bytes === undefined ? null : digest(bytes);
-		// the very save the team just set aside: it is kept in its mark, and the team's version is on its way over it
-		if (yielding.has(path) && yielding.get(path) === hash) return;
+		// a save the team just set aside: the team's version is on its way, and what is here then is merged with it
+		if (yielding.has(path)) return;
 		const known = state.files[path];
 		// gone from disk while the team holds it: neither sent nor put back until the folder is quiet and judged whole
 		if (live && !judged && bytes === undefined && known !== undefined && known.hash !== null)
@@ -1354,16 +1353,22 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			return;
 		}
 		// this copy's save was set aside: where the two changed different lines, both stand, and go up as a new save
-		const merged =
-			yielding.delete(path) && here !== incoming
+		const lost = yielding.get(path);
+		yielding.delete(path);
+		const mergedOrTeams =
+			lost !== undefined && here !== incoming
 				? mergedWith(path, state.files[path]?.hash ?? null, local, bytes)
 				: undefined;
+		// a merge that changes nothing of the team's version is the team's version, taken as quietly
+		const merged = mergedOrTeams !== undefined && digest(mergedOrTeams) === incoming ? undefined : mergedOrTeams;
 		restoring.delete(path);
 		// the team's version first, so the watcher reads this write as the team's and never sends it back
 		state.files[path] = { version, hash: incoming };
 		persistSoon();
 		if (bytes !== undefined && incoming !== null) keep(incoming, bytes);
 		if (here === incoming) return;
+		// what is here is kept in the mark, an edit made since the set-aside too, before the team's version replaces it
+		if (lost !== undefined && mergedOrTeams === undefined) mark(lost, local);
 		if (bytes === undefined) {
 			rmSync(target, { force: true });
 			pruneEmpty(designDir, dirname(target));
@@ -1438,17 +1443,21 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			}
 		}
 		if (message.type === "set-aside") {
-			yielding.set(sent.path, sent.hash);
 			const version = typeof message.version === "number" ? message.version : 0;
-			mark({ path: sent.path, kind: "set-aside", version, by: byOf(message.by), batch: sent.batch }, sent.bytes);
+			yielding.set(sent.path, {
+				path: sent.path,
+				kind: "set-aside",
+				version,
+				by: byOf(message.by),
+				batch: sent.batch,
+			});
 		}
 		if (message.type === "refused" && message.reason === "rate_limited" && live)
 			waitForRoom(sent.path, message.retryAfter);
 		else if (message.type === "refused") refused(sent.path, message.reason, message.retryAfter);
-		// a path that changed again while its save was out goes up again, but not the very bytes just set aside: the
-		// watcher can name the file after its save left, and sending those again would only be set aside again
-		if (dirty.delete(sent.path) && !(message.type === "set-aside" && localHash(sent.path) === sent.hash))
-			check(sent.path);
+		// a path that changed again while its save was out goes up again, unless that save was set aside: on the old
+		// version it would only be set aside again, so it waits to be merged with the team's version that follows
+		if (dirty.delete(sent.path) && message.type !== "set-aside") check(sent.path);
 		const restored = restoreWaits.get(message.ref);
 		restoreWaits.delete(message.ref);
 		restored?.answer(message);

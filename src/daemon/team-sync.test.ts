@@ -601,19 +601,23 @@ describe("a collision", () => {
 		writeFrame(ben.root, "home", page("Welcome", "three"));
 		writeFrame(ana.root, "home", page("Home", "four"));
 		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === page("Home", "four"));
+		// the team's version is slow to follow the set-aside answer, and Ben edits again meanwhile: that edit waits
+		// to be merged instead of going up on the old version to be set aside a second time
+		const release = cloud.holdFiles("ben");
 		back();
+		await until(() => cloud.saves("checkout").some((save) => save.by === "ben" && save.outcome === "set_aside"));
+		writeFrame(ben.root, "home", page("Welcome back", "three"));
+		await new Promise((wake) => setTimeout(wake, 300));
+		release();
 		for (const root of [ana.root, ben.root])
-			await until(() => text(root, "frames/home/frame.tsx") === page("Welcome", "four"), 10_000);
-		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe(page("Welcome", "four"));
+			await until(() => text(root, "frames/home/frame.tsx") === page("Welcome back", "four"), 10_000);
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe(page("Welcome back", "four"));
 		expect(
 			cloud
 				.saves("checkout")
-				.filter((save) => save.path === "frames/home/frame.tsx")
-				.slice(-2),
-		).toMatchObject([
-			{ by: "ben", outcome: "set_aside" },
-			{ by: "ben", outcome: "applied" },
-		]);
+				.filter((save) => save.path === "frames/home/frame.tsx" && save.by === "ben")
+				.map((save) => save.outcome),
+		).toEqual(["set_aside", "applied"]);
 		expect(await marks(ben.daemon)).toEqual([]);
 		expect(await marks(ana.daemon)).toEqual([]);
 	});
