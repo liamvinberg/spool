@@ -188,36 +188,45 @@ function startSetupOpen(showing: BrowserWindow): void {
 	else showing.once("show", tell);
 }
 
-/** where spool's window stood before it covered its display for a talk's slides, while it does */
-let presentFilled: Electron.Rectangle | undefined;
+/** spool's window covering its display for a talk's slides: where it stood, whether it could be resized, and where it was pinned on the way */
+let presentFilled: { stood: Electron.Rectangle; resizable: boolean; pinned: Electron.Rectangle } | undefined;
 
 /**
  * Spool's window over its whole display for a talk's slides, at once (spool#298, spool#306): simple full screen, which
  * macOS plays with no Space of its own to slide to, so the slide growing from its card is the only thing that moves.
  *
  * Simple full screen alone falls short of a talk twice. It grows the window in an animation macOS draws no frame of the
- * page through, a dead fifth of a second after the press, so the window is set to its display's bounds first, in one
- * step, and simple full screen finds it there already, with nothing left to animate. And it only tucks the Dock and
- * the menu bar away, to come back over the slides wherever the pointer touches the screen's edge, so the window stands
- * above both while spool is the app in front (`presentLevel`). The lights go too: nothing of the window's own may stand
- * over the slides. It comes back at once, to exactly where it stood, as the slide flies home. A window already full
- * screen is left as it is.
+ * page through, about a fifth of a second after the press. So the window is first set to its display's bounds in one
+ * step; macOS keeps a titled window's top under the menu bar, and one that cannot be resized keeps its size there, so
+ * all simple full screen has left to animate is the menu bar's height. On the way home it is pinned there again first,
+ * leaving it nothing to animate back. And simple full screen only tucks the Dock and the menu bar away, to come back
+ * over the slides wherever the pointer touches the screen's edge, so the window stands above both while spool is the
+ * app in front (`presentLevel`). The lights go too: nothing of the window's own may stand over the slides. It comes back
+ * to exactly where it stood, as the slide lands on its card. A window already full screen is left as it is.
  */
 function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 	if (showing.isDestroyed() || on === (presentFilled !== undefined)) return false;
 	if (on && (showing.isFullScreen() || showing.isSimpleFullScreen())) return false;
-	const stood = presentFilled;
-	presentFilled = on ? showing.getBounds() : undefined;
 	if (process.platform === "darwin") showing.setWindowButtonVisibility(!on);
-	if (presentFilled !== undefined) {
+	if (on) {
+		const stood = showing.getBounds();
+		const resizable = showing.isResizable();
+		presentFilled = { stood, resizable, pinned: stood };
 		presentLevel(showing);
-		showing.setBounds(screen.getDisplayMatching(presentFilled).bounds, false);
+		showing.setResizable(false);
+		showing.setBounds(screen.getDisplayMatching(stood).bounds, false);
+		presentFilled.pinned = showing.getBounds();
 		showing.setSimpleFullScreen(true);
 		return true;
 	}
+	const filled = presentFilled;
+	presentFilled = undefined;
+	if (filled === undefined) return false;
+	showing.setBounds(filled.pinned, false);
 	showing.setSimpleFullScreen(false);
+	showing.setResizable(filled.resizable);
 	presentLevel(showing);
-	if (stood !== undefined) showing.setBounds(stood, false);
+	showing.setBounds(filled.stood, false);
 	return true;
 }
 
