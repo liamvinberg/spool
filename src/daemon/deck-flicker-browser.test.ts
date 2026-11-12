@@ -205,7 +205,8 @@ const firstStepBack = (track: readonly number[]) => {
  * spool#299: a deck page makes room the Dock's way, and holds still doing it. Every drawn frame is sampled in the
  * window, and the screen is read from the browser's own frames: a neighbour starts making room at about a quarter
  * covered; a trembling hand moves nothing; a reversal turns a neighbour round mid-flight with no jump; a drop lands
- * once, and the daemon's answer moves nothing after; Esc puts everything back; and no picture blinks on the way.
+ * once, and the daemon's answer moves nothing after; Esc puts everything back; a fling let go between two frames lands
+ * where the hand let go; and no picture blinks on the way.
  */
 it("makes room as a slide is carried along the talk, holding still under a still hand, and lands once", {
 	timeout: 300_000,
@@ -302,6 +303,33 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	expect(writes).toEqual([]);
 	expect(deck.talk()).toEqual(["b", "a", "c"]);
 	expect((await samples(0)).at(-1)?.labels.c?.[0]).toBeCloseTo(restOf("c"), 0);
+
+	// c lifted, then flung over a and let go before another frame is drawn: it lands where the hand let go
+	await press(middle("c"));
+	await glide(await at({ x: middle("c").x - 200, y: 360 }), 6);
+	await page.evaluate(() => {
+		const draw = window.requestAnimationFrame.bind(window);
+		const waiting: FrameRequestCallback[] = [];
+		let id = 1e6;
+		window.requestAnimationFrame = (callback) => {
+			waiting.push(callback);
+			id += 1;
+			return id;
+		};
+		(window as unknown as { resume: () => void }).resume = () => {
+			window.requestAnimationFrame = draw;
+			for (const callback of waiting.splice(0)) draw(callback);
+		};
+	});
+	// the frame already asked for is drawn, and the next one waits
+	await page.waitForTimeout(100);
+	// over a, second now
+	const flung = await at({ x: STRIDE + 640, y: 360 });
+	await page.mouse.move(flung.x, flung.y);
+	await page.mouse.up();
+	await page.evaluate(() => (window as unknown as { resume: () => void }).resume());
+	await expect.poll(() => deck.talk()).toEqual(["b", "c", "a"]);
+	await settled();
 
 	// no picture blinked: in every frame the browser drew, each frame's colour covers at least a third of what it does
 	// at rest. A frame in the hand is drawn over the rest, so it is always to be seen: from the lift to the drop, the

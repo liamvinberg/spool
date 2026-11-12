@@ -401,6 +401,8 @@ export function useDeckPage({
 		const held = holding.current;
 		if (held === null) return false;
 		holding.current = null;
+		// what the hand did since the last frame was drawn counts: it lands from where the hand let go
+		steer(held);
 		const aimed = held.aim;
 		const deckReads = reads;
 		if (aimed === null || aimed.same || deckReads === null) {
@@ -421,7 +423,7 @@ export function useDeckPage({
 			if (sent.entry !== undefined) hands.current.record(sent.entry);
 		});
 		return true;
-	}, [deckOf, project, reads, land, springs, placesBy]);
+	}, [deckOf, project, reads, land, springs, placesBy, steer]);
 
 	const walk = useCallback(
 		async (entry: DeckEntry, way: "undo" | "redo") => {
