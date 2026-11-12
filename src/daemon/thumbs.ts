@@ -285,6 +285,26 @@ export interface StoredStill {
 	failed: boolean;
 }
 
+/** What a cover the booth made was taken of: the version, and the scheme when its frame follows one. */
+export function stillTaken(
+	root: string,
+	frame: string,
+): { source: string; scheme: ColorScheme | undefined } | undefined {
+	const dir = coverDir(root, frame);
+	const read = (name: string) => {
+		try {
+			return readFileSync(join(dir, name), "utf8").trim();
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
+			return undefined;
+		}
+	};
+	const source = read(SOURCE_NAME);
+	if (read(BOOTH_NAME) === undefined || source === undefined || !SOURCE_HASH.test(source)) return undefined;
+	const scheme = read(SCHEME_NAME);
+	return { source, scheme: scheme === "light" || scheme === "dark" ? scheme : undefined };
+}
+
 /** Every frame's stored still, read without holding the event loop; `failed` is `spool`'s booth's. */
 export async function scanStills(root: string, spool: string): Promise<Map<string, StoredStill>> {
 	const store = coverStoreDir(root);

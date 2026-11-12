@@ -348,6 +348,11 @@ export interface BoothDeps {
 	/** Whether the frame has a cover now, for a missing picture that may have turned up. */
 	covered(root: string, frame: string): boolean;
 	/**
+	 * What the frame's stored cover was taken of, when the booth took it: the version, and the scheme for a frame that
+	 * follows one. A picture owed for the scheme may have been taken again in the right one while it waited.
+	 */
+	taken?(root: string, frame: string): { source: string; scheme: ColorScheme | undefined } | undefined;
+	/**
 	 * Whether the project is still one the daemon keeps. A sitting is only ever
 	 * owed again for one that is: a project that left, or moved and left its name
 	 * to another folder, would otherwise be photographed against a document that
@@ -1159,6 +1164,13 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const before = await deps.compile(root, frame);
 		if (before.kind === "missing") return;
 		if (before.kind === "error") return fail(before.message, "compile");
+		// owed for a scheme the canvas left again, or spoke over before the machine's was shown: a cover of this version in
+		// the scheme now shown is what a sitting would take, so all the frame can still owe is its opening still
+		if (sitting.reason === "stale" && before.source !== undefined) {
+			const taken = deps.taken?.(root, frame);
+			const shown = followsColorScheme(before.document) ? scheme : undefined;
+			if (taken?.source === before.source && taken.scheme === shown) return runOpening(slot, sitting);
+		}
 		const tab = await tabFor(slot);
 		tab.covers++;
 		let shot: Shot;

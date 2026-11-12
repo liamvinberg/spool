@@ -309,6 +309,27 @@ describe("the booth before any browser", () => {
 		expect(deps.launch).not.toHaveBeenCalled();
 	});
 
+	it("does not take again a picture the scheme made stale and then fresh while it waited", async () => {
+		// a canvas showing light on a machine in dark: everything was owed in dark first, then in light again
+		const night = "<style>@media (prefers-color-scheme: dark) { main { color: white } }</style><main></main>";
+		const source = "a".repeat(64);
+		const { booth: made, deps } = booth({
+			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "ok", etag: '"one"', document: night, source })),
+			covered: vi.fn(() => true),
+			taken: vi.fn<NonNullable<BoothDeps["taken"]>>((_root, frame) => ({
+				source,
+				scheme: frame === "dusk" ? "dark" : "light",
+			})),
+		});
+		await made.schemeKnown();
+		made.enqueue(sitting("home", "stale"));
+		await vi.waitFor(() => expect(deps.finished).toHaveBeenCalledWith(ROOT, "home"));
+		expect(deps.launch).not.toHaveBeenCalled();
+		// one still in the other scheme is owed its picture
+		made.enqueue(sitting("dusk", "stale"));
+		await vi.waitFor(() => expect(deps.launch).toHaveBeenCalled());
+	});
+
 	it("keeps a broken compile's reason beside the old cover, and lets only an edit ask again soon", async () => {
 		const { booth: made, deps } = booth({
 			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "error", message: "Unexpected end of file" })),

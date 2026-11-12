@@ -20,6 +20,7 @@ import {
 	scanPreBoothCovers,
 	scanStills,
 	scanWords,
+	stillTaken,
 	writeCaptureError,
 	writeCover,
 	writeOpening,
@@ -280,11 +281,14 @@ describe("the version of the frame a still is of", () => {
 				["cart", { hash: cart.hash, source: undefined, failed: false }],
 			]),
 		);
-		writeCover(root, "home", OTHER_JPEG, undefined, B);
+		writeCover(root, "home", OTHER_JPEG, "dark", B);
 		expect((await scanStills(root, SPOOL)).get("home")?.source).toBe(B);
+		// what the booth reads before it takes a frame again for a scheme: this version, in that scheme
+		expect(stillTaken(root, "home")).toEqual({ source: B, scheme: "dark" });
 		// a still taken without one is of a version nobody can say
 		writeCover(root, "home", JPEG);
 		expect((await scanStills(root, SPOOL)).get("home")?.source).toBeUndefined();
+		expect(stillTaken(root, "home")).toBeUndefined();
 	});
 
 	it("is forgotten when the frame is renamed, since a version names its frame", async () => {

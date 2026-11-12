@@ -176,6 +176,7 @@ import {
 	scanCoverSchemes,
 	scanPaces,
 	scanPreBoothCovers,
+	stillTaken,
 	writeCaptureError,
 	writeCover,
 	writeOpening,
@@ -998,6 +999,7 @@ export function createDaemonApp({
 		},
 		geometry: (root, frame) => frameGeometry(root, frame),
 		covered: (root, frame) => readCover(root, frame) !== undefined,
+		taken: stillTaken,
 		registered: (root) => boothWatches.has(root),
 		store: (root, frame, bytes, scheme, source, words) => {
 			// a frame deleted while it sat has no folder a picture belongs in
