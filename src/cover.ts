@@ -96,4 +96,9 @@ export type ColorScheme = "light" | "dark";
 /** One immutable image, addressed by the hash of its content. */
 export interface Cover {
 	hash: string;
+	/**
+	 * A slide's opening still, when the photo booth has taken one: the slide at the size a talk draws it, on the beat
+	 * the talk opens on, addressed the same way (spool#319).
+	 */
+	opening?: string;
 }
