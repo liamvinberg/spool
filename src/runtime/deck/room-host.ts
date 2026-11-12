@@ -47,10 +47,11 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	const daemon = stageDaemon(config);
 	let size: Size | undefined;
 	/**
-	 * The stage plays on the room's host, in a process of its own, once that host is seen to answer here; where it does
-	 * not, the stage plays on the render host beside the presenter's, as it always did, and holds that share (spool#320).
+	 * The stage plays on the room's host, in a process of its own, once that host is seen to answer here, in a browser
+	 * that gives each site a process; elsewhere the stage plays on the render host beside the presenter's, as it always
+	 * did, and holds that share (spool#320).
 	 */
-	let apart: boolean | undefined;
+	let apart: boolean | undefined = sitesApart() ? undefined : false;
 	/** the newest session the presenter published, and the slide the room's screen shows in it */
 	let newest: { session: StageSession; frame: string } | undefined;
 	let pointer: StagePointer | null = null;
@@ -184,6 +185,12 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 			say({ kind: "command", command: { kind: "next" } });
 	});
 	return host;
+}
+
+/** Whether this browser plays each site in a process of its own, as Chromium does, and so the Mac app. */
+function sitesApart(): boolean {
+	const brands = (navigator as Navigator & { userAgentData?: { brands?: { brand: string }[] } }).userAgentData?.brands;
+	return brands?.some(({ brand }) => brand === "Chromium") === true;
 }
 
 /** Whether a host of the daemon's answers in this browser at all, by the address of a document on it. */
