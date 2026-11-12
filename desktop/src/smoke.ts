@@ -280,6 +280,12 @@ function checkPresenting(): void {
 	try {
 		native.immediately(window.getNativeWindowHandle(), () => window.setSize(500, 400));
 		assert.deepEqual(window.getSize(), [500, 400]);
+		// a handle that names no window still gets its change, as it is
+		let changed = false;
+		native.immediately(Buffer.alloc(8), () => {
+			changed = true;
+		});
+		assert.equal(changed, true);
 		assert.throws(
 			() =>
 				native.immediately(window.getNativeWindowHandle(), () => {

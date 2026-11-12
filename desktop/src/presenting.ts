@@ -15,7 +15,7 @@ export interface PresentingModule {
 	options(): number;
 	/** Sets them, or answers false when AppKit refuses the combination. */
 	setOptions(options: number): boolean;
-	/** Calls `change` with macOS's animation of the frame of the window `handle` names turned off. */
+	/** Calls `change` with macOS's animation of the frame of the window `handle` names turned off, or as it is when it names none. */
 	immediately(handle: Buffer, change: () => void): void;
 }
 
@@ -53,7 +53,7 @@ export function loadPresenting(
 let presenting: PresentingModule | null | undefined;
 
 function loaded(): PresentingModule | undefined {
-	presenting ??= loadPresenting(join(__dirname, "presenting.node")) ?? null;
+	if (presenting === undefined) presenting = loadPresenting(join(__dirname, "presenting.node")) ?? null;
 	return presenting ?? undefined;
 }
 

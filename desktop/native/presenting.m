@@ -2,7 +2,8 @@
 //
 //   options()                    the app's presentation options, NSApplicationPresentationOptions as a number
 //   setOptions(options)          sets them, or answers false when AppKit refuses the combination
-//   immediately(handle, change)  calls change() with macOS's animation of that window's frame turned off
+//   immediately(handle, change)  calls change() with macOS's animation of that window's frame turned off, or as it is
+//                                when the handle names no window
 //
 // The options are how an app hides the menu bar and the Dock while it is the one in front. Electron sets them only for
 // kiosk mode, which also locks ⌘Tab, so a window already full screen the macOS way otherwise lets both come down over
@@ -22,13 +23,13 @@
 #include <node_api.h>
 
 /** The window whose frame changes at once while `immediately` runs, and nil otherwise. */
-static NSWindow *immediate;
+static NSWindow *immediateWindow;
 /** What animationResizeTime: was before `immediately` stood in for it, kept after, for a caller already on its way. */
-static IMP animated;
+static IMP originalResizeTime;
 
 static NSTimeInterval ResizeTime(NSWindow *self, SEL selector, NSRect frame) {
-	if (self == immediate) return 0;
-	return ((NSTimeInterval (*)(NSWindow *, SEL, NSRect))animated)(self, selector, frame);
+	if (self == immediateWindow) return 0;
+	return ((NSTimeInterval (*)(NSWindow *, SEL, NSRect))originalResizeTime)(self, selector, frame);
 }
 
 /** Throws in JavaScript; NULL is how N-API is told an exception is pending. */
@@ -86,27 +87,26 @@ static napi_value Immediately(napi_env env, napi_callback_info info) {
 	napi_valuetype type = napi_undefined;
 	if (napi_get_cb_info(env, info, &count, arguments, NULL, NULL) != napi_ok || count < 2)
 		return Fail(env, "immediately takes a window's native handle and a function");
-	NSWindow *window = WindowOf(env, arguments[0]);
-	if (window == nil) return Fail(env, "immediately takes a window's native handle");
 	if (napi_typeof(env, arguments[1], &type) != napi_ok || type != napi_function)
 		return Fail(env, "immediately takes the change to make as a function");
 
 	napi_value receiver = NULL;
 	napi_value result = NULL;
 	napi_get_undefined(env, &receiver);
-	Method method = class_getInstanceMethod(object_getClass(window), @selector(animationResizeTime:));
-	// a change inside a change is already immediate
-	if (method == NULL || immediate != nil) {
-		napi_call_function(env, receiver, arguments[1], 0, NULL, &result);
-		return result;
+	NSWindow *window = WindowOf(env, arguments[0]);
+	Method method = window == nil ? NULL : class_getInstanceMethod(object_getClass(window), @selector(animationResizeTime:));
+	// a change still happens, animated, for a handle that names no window or inside another window's change
+	if (method == NULL || immediateWindow != nil) {
+		napi_status status = napi_call_function(env, receiver, arguments[1], 0, NULL, &result);
+		return status == napi_ok ? result : NULL;
 	}
-	IMP own = method_getImplementation(method);
-	animated = own;
-	immediate = window;
+	IMP original = method_getImplementation(method);
+	originalResizeTime = original;
+	immediateWindow = window;
 	method_setImplementation(method, (IMP)ResizeTime);
 	napi_status status = napi_call_function(env, receiver, arguments[1], 0, NULL, &result);
-	method_setImplementation(method, own);
-	immediate = nil;
+	method_setImplementation(method, original);
+	immediateWindow = nil;
 	// what change() threw is pending, and goes on to the caller
 	return status == napi_ok ? result : NULL;
 }

@@ -204,11 +204,11 @@ let presentBars: number | undefined;
  * page through, about a fifth of a second after the press. So the window is first set to its display's bounds in one
  * step; macOS keeps a titled window's top under the menu bar, and one that cannot be resized keeps its size there, so
  * all simple full screen has left to animate is the menu bar's height, which the presenting module takes in one step
- * too (`immediately`). On the way home it is pinned there again first, leaving nothing to animate back. And simple full
- * screen only tucks the Dock and the menu bar away, to come back over the slides wherever the pointer touches the
- * screen's edge, so the window stands above both while spool is the app in front (`presentLevel`). The lights go too:
- * nothing of the window's own may stand over the slides. It comes back to exactly where it stood, as the slide lands on
- * its card.
+ * too (`immediately`). On the way home it is pinned there again first, and leaves simple full screen in one step as
+ * well. And simple full screen only tucks the Dock and the menu bar away, to come back over the slides wherever the
+ * pointer touches the screen's edge, so the window stands above both while spool is the app in front (`presentLevel`).
+ * The lights go too: nothing of the window's own may stand over the slides. It comes back to exactly where it stood,
+ * as the slide lands on its card.
  *
  * A window already full screen the macOS way covers its display in a Space of its own, and stays there: leaving it
  * would play macOS's Space animation twice. The menu bar and the Dock, which would come down over the slides at the
@@ -239,7 +239,7 @@ function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 	presentFilled = undefined;
 	if (filled === undefined) return false;
 	showing.setBounds(filled.pinned, false);
-	showing.setSimpleFullScreen(false);
+	immediately(showing, () => showing.setSimpleFullScreen(false));
 	showing.setResizable(filled.resizable);
 	presentLevel(showing);
 	showing.setBounds(filled.stood, false);
