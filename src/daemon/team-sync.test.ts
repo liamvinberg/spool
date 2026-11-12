@@ -756,6 +756,24 @@ describe("a collision", () => {
 		await until(() => existsSync(join(ben.root, "design/.spool/set-aside/marks.json")), 10_000);
 		expect(await marks(ben.daemon)).toMatchObject([{ path, kind: "set-aside" }]);
 		expect(text(ben.root, path)).toBe(json({ ...placed, x: 900 }));
+
+		// Ben's agent rewrites it as a size alone while Ana moves it again: the merge is the team's version, and the
+		// file reconciled leaves no mark standing
+		const again = cloud.offline("ben");
+		writeDesignFile(ana.root, path, json({ ...placed, x: 1200 }));
+		writeDesignFile(ben.root, path, json({ w: 400, h: 300 }));
+		await until(() => cloud.file("checkout", path) === json({ ...placed, x: 1200 }));
+		again();
+		await until(() => text(ben.root, path) === json({ ...placed, x: 1200 }), 10_000);
+		expect(await marks(ben.daemon)).toEqual([]);
+		expect(
+			cloud
+				.saves("checkout")
+				.filter((save) => save.by === "ben" && save.path === path)
+				.at(-1),
+		).toMatchObject({
+			outcome: "set_aside",
+		});
 	});
 
 	it("after a while offline, catches up without overwriting teammates' newer work, as one batch", async () => {

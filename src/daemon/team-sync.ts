@@ -1368,6 +1368,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		state.files[path] = { version, hash: incoming };
 		persistSoon();
 		if (bytes !== undefined && incoming !== null) keep(incoming, bytes);
+		// a set-aside save reconciled, as the team's very bytes or merged with them: no earlier mark on it stands
+		if (lost !== undefined && (here === incoming || mergedOrTeams !== undefined) && forgetMarks(designDir, { path }))
+			options.onMarks?.();
 		if (here === incoming) return;
 		// what is here is kept in the mark, an edit made since the set-aside too, before the team's version replaces it
 		if (lost !== undefined && mergedOrTeams === undefined) mark(lost, local);
@@ -1381,7 +1384,6 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			return;
 		}
 		writeAtomic(target, merged);
-		if (forgetMarks(designDir, { path })) options.onMarks?.();
 		notice(`merged your change to ${path} with a teammate's`);
 		check(path);
 	};
