@@ -66,6 +66,8 @@ const PARTIAL_FROM = 8;
 
 /** A compile in flight for a root, and whether a play may open before it ends. */
 interface Running {
+	/** the frames it composes, as `playerStamp` names them */
+	stamp: string;
 	done: Promise<PlayerCompile>;
 	/**
 	 * The compilation once one has begun, and whether enough of its stylesheets
@@ -110,22 +112,29 @@ export function createPlayerCompiler(
 	/** Bundles a root has served, newest first, so their modules stay answerable. */
 	const served = new Map<string, PlayerBundle[]>();
 	const contexts = new Map<string, PlayerContext>();
-	/** One compile in flight per root: the shell and its iframe ask within the same second. */
+	/**
+	 * One compile in flight per root: the shell and its iframe ask within the same second. One of other frames, as a
+	 * talk's stage asks of its own slides, waits for it rather than share it: the two share the root's build context.
+	 */
 	const inflight = new Map<string, Running>();
 	let closed = false;
 
 	function run(root: string, frames: PlayerFrameRef[]): Running {
+		const stamp = playerStamp(frames);
 		const running = inflight.get(root);
-		if (running !== undefined) return running;
+		if (running?.stamp === stamp) return running;
 		let began: (value: { compilation: PlayerCompilation; cold: boolean } | undefined) => void = () => {};
 		const begun = new Promise<{ compilation: PlayerCompilation; cold: boolean } | undefined>((resolve) => {
 			began = resolve;
 		});
-		const done = compileOrReuse(root, frames, began).finally(() => {
-			began(undefined);
-			inflight.delete(root);
-		});
-		const started = { done, begun };
+		const done = (running?.done ?? Promise.resolve())
+			.catch(() => undefined)
+			.then(() => compileOrReuse(root, frames, began))
+			.finally(() => {
+				began(undefined);
+				if (inflight.get(root) === started) inflight.delete(root);
+			});
+		const started: Running = { stamp, done, begun };
 		inflight.set(root, started);
 		return started;
 	}
