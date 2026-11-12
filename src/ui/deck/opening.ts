@@ -10,8 +10,8 @@ import type { CanvasStore } from "../canvas/canvas-store";
  * whose still is not decoded by then, or not taken yet, flies as its cover, as before.
  */
 
-/** How many decoded pictures are kept: the slide Present would play from, and the few held before it. */
-const KEPT = 4;
+/** How many decoded pictures are kept, each tens of megabytes: the slide Present would play from, and the one before. */
+const KEPT = 2;
 /** the decoded pictures by address, the latest last; each holds its decoded image for as long as it is kept */
 const decoded = new Map<string, HTMLImageElement>();
 const decoding = new Map<string, Promise<HTMLImageElement | null>>();
