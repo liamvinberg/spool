@@ -99,6 +99,7 @@ import {
 	updaterAvailable,
 } from "./updates";
 import { compareVersions, formatVersion, isBeta, parseVersion } from "./version";
+import { installWindowManager, type WindowManager } from "./window-manager";
 
 // Spool, as a Mac app: a window on the canvas the daemon already serves.
 //
@@ -189,8 +190,16 @@ function startSetupOpen(showing: BrowserWindow): void {
 	else showing.once("show", tell);
 }
 
-/** spool's window covering its display for a talk's slides: where it stood, whether it could be resized, and where it was pinned on the way */
-let presentFilled: { stood: Electron.Rectangle; resizable: boolean; pinned: Electron.Rectangle } | undefined;
+/**
+ * spool's window covering its display for a talk's slides: where it stood, whether it could be resized, where it was
+ * pinned on the way, and how to give it back to a tiling window manager
+ */
+let presentFilled:
+	| { stood: Electron.Rectangle; resizable: boolean; pinned: Electron.Rectangle; release: () => void }
+	| undefined;
+
+/** a tiling window manager that needs telling where a talk's windows stand (spool#310) */
+let windowManager: WindowManager | undefined;
 
 /** The app's presentation options from before a talk hid the menu bar and the Dock over a window already full screen */
 let presentBars: number | undefined;
@@ -227,17 +236,26 @@ function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 	if (on) {
 		const stood = showing.getBounds();
 		const resizable = showing.isResizable();
-		presentFilled = { stood, resizable, pinned: stood };
+		const filled = { stood, resizable, pinned: stood, release: () => {} };
+		presentFilled = filled;
 		presentLevel(showing);
 		showing.setResizable(false);
-		showing.setBounds(screen.getDisplayMatching(stood).bounds, false);
-		presentFilled.pinned = showing.getBounds();
+		const display = screen.getDisplayMatching(stood).bounds;
+		showing.setBounds(display, false);
+		filled.pinned = showing.getBounds();
 		immediately(showing, () => showing.setSimpleFullScreen(true));
+		if (windowManager !== undefined) filled.release = windowManager.lift(showing, display).release;
+		if (!refilling) {
+			// heard from the first talk on, since `screen` answers only once the app is ready
+			refilling = true;
+			screen.on("display-removed", refillAfterUnplug);
+		}
 		return true;
 	}
 	const filled = presentFilled;
 	presentFilled = undefined;
 	if (filled === undefined) return false;
+	filled.release();
 	showing.setBounds(filled.pinned, false);
 	immediately(showing, () => showing.setSimpleFullScreen(false));
 	showing.setResizable(filled.resizable);
@@ -251,6 +269,21 @@ function presentBarsBack(): void {
 	if (presentBars === undefined) return;
 	restoreBars(presentBars);
 	presentBars = undefined;
+}
+
+/**
+ * spool's window, covering its display for the slides when that display was unplugged, over the one it is on now. Only
+ * for a tiling window manager, which otherwise keeps it in the gone display's workspace, out of sight: without one,
+ * macOS has moved it already and it stays as it was before spool#310.
+ */
+let refilling = false;
+function refillAfterUnplug(): void {
+	const showing = window;
+	if (presentFilled === undefined || showing === undefined || showing.isDestroyed()) return;
+	if (windowManager === undefined || !windowManager.telling()) return;
+	const display = screen.getDisplayMatching(showing.getBounds()).bounds;
+	showing.setBounds(display, false);
+	windowManager.lift(showing, display);
 }
 
 /**
@@ -543,6 +576,8 @@ function createWindow(): BrowserWindow {
 		// the presenter view is gone, and the talk with it
 		rooms?.closeAll();
 		presentBarsBack();
+		presentFilled?.release();
+		presentFilled = undefined;
 		clearTimeout(coverDeadline);
 		coverDeadline = undefined;
 		cover?.close();
@@ -2419,10 +2454,13 @@ export function boot(): void {
 	}
 
 	installPlayChannels();
+	windowManager = installWindowManager((...words) => log(...words));
 	rooms = installRooms({
 		canvas: () => window,
+		filled: () => presentFilled !== undefined,
 		guard,
 		webPreferences: { spellcheck: false, ...AUTOPLAY },
+		manager: windowManager,
 		log: (...words) => log(...words),
 	});
 	installUpdateChannels();
