@@ -70,6 +70,8 @@ export interface Rehearsed {
 	readonly stills: readonly Still[];
 }
 
+/** How long a move played again to be pictured has to begin before the slide's own entrance is held instead. */
+const CATCH_MS = 1500;
 /** A rehearsal stops when this many steps in a row never showed. */
 const STUCK_IN_A_ROW = 2;
 /** A slide that calls requestAnimationFrame more often than this a second once at rest runs a loop of its own. */
@@ -164,8 +166,6 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 		}
 		return [];
 	};
-	const statusOf = (frame: string) => lastSlides().find((slide) => slide.frame === frame)?.status;
-	const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
 	const shownSince = (mark: number, at: At) =>
 		said
 			.slice(mark)
@@ -176,14 +176,9 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 					heard.data.shown.at.beat === at.beat,
 			);
 	const waitShown = async (mark: number, at: At, ms: number): Promise<Said | undefined> => {
-		const deadline = Date.now() + ms;
-		while (Date.now() < deadline) {
-			await host();
-			const found = shownSince(mark, at);
-			if (found !== undefined) return found;
-			await pause(40);
-		}
-		return undefined;
+		await page.evaluate(`${PROBES}.shown(${mark}, ${at.slide}, ${at.beat}, ${ms})`);
+		await host();
+		return shownSince(mark, at);
 	};
 	/** The stage document showing the talk now: the newest, when a save brought another. */
 	const stage = (): Frame => {
@@ -200,7 +195,8 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 	};
 	const inStage = async <T>(expression: string): Promise<T> => (await stage().evaluate(expression)) as T;
 	const shot = async (name: string) => {
-		stills.push({ name, png: await page.screenshot({ type: "png" }) });
+		// the caret left as it is: hiding it restyles every document of the tab first
+		stills.push({ name, png: await page.screenshot({ type: "png", caret: "initial" }) });
 		return name;
 	};
 
@@ -287,19 +283,7 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 		await press("ArrowRight", next, "forward");
 		if ((await waitShown(again, next, timing.stepMs)) === undefined) throw new Stopped("playing a move again");
 		// the move freezes the moment it begins; one that never did leaves the slide's own entrance to hold
-		const deadline = Date.now() + 1500;
-		for (;;) {
-			const { frozen } = await inStage<{ frozen: boolean }>(`${PROBES}.held()`);
-			if (frozen) break;
-			const { moves: made } = await inStage<{ moves: MoveRecord[] }>(`${PROBES}.since(${pressed - 20})`);
-			const over = made.some((move) => move.failed !== undefined || move.finished !== undefined);
-			if (over || made.length === 0 || Date.now() > deadline) {
-				await inStage(`${PROBES}.holdNow()`);
-				break;
-			}
-			await pause(16);
-		}
-		const { end } = await inStage<{ end: number }>(`${PROBES}.held()`);
+		const end = await inStage<number>(`${PROBES}.caught(${pressed - 20}, ${CATCH_MS})`);
 		const pictures: MoveStills["stills"][number][] = [];
 		if (end > 0) {
 			for (const [label, at] of [
@@ -348,14 +332,11 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 				input.narrate(`slide ${next.slide + 1} of ${to + 1}`);
 				const frame = talk.slides[next.slide]?.frame ?? "";
 				const waitFrom = Date.now();
-				while (statusOf(frame) === "loading" || statusOf(frame) === undefined) {
-					if (Date.now() - waitFrom > timing.pauseMs) {
-						loading = Date.now() - waitFrom;
-						break;
-					}
-					await pause(50);
-					await host();
-				}
+				const ready = (await page.evaluate(
+					`${PROBES}.settled(${JSON.stringify(frame)}, ${timing.pauseMs})`,
+				)) as boolean;
+				await host();
+				if (!ready) loading = Date.now() - waitFrom;
 			}
 			const record = await step("ArrowRight", at, next, "forward", loading);
 			steps.push(record);

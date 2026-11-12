@@ -62,9 +62,9 @@ export function record(): void {
 	const held = window as unknown as Record<symbol, unknown>;
 	if (held[KEY] !== undefined) return;
 	if (isStage()) {
-		held[KEY] = { tap: recordStage(), since, rest, calls, look, arm, holdNow, held: heldNow, seek, release };
+		held[KEY] = { tap: recordStage(), since, rest, calls, look, arm, caught, seek, release };
 	} else if (window.top === window) {
-		held[KEY] = { tap: recordHost(), heard };
+		held[KEY] = { tap: recordHost(), heard, shown, settled };
 	}
 }
 
@@ -240,6 +240,45 @@ function hostTap(): HostTap {
 	const tap = (window as unknown as Record<symbol, { tap: HostTap } | undefined>)[KEY]?.tap;
 	if (tap === undefined) throw new Error("the rehearsal's recorder is not in this document");
 	return tap;
+}
+
+/** Wait here, without a round trip a poll, until `found` says yes of what the host heard, or `ms` went by. */
+function waitHeard(found: (tap: HostTap) => boolean, ms: number): Promise<boolean> {
+	const tap = hostTap();
+	const deadline = performance.now() + ms;
+	return new Promise((done) => {
+		const look = () => {
+			if (found(tap)) done(true);
+			else if (performance.now() > deadline) done(false);
+			else setTimeout(look, 16);
+		};
+		look();
+	});
+}
+
+/** Whether the stage said it showed the beat, from position `from` on, within `ms`. */
+function shown(from: number, slide: number, beat: number, ms: number): Promise<boolean> {
+	return waitHeard(
+		(tap) =>
+			tap.said.slice(from).some(({ data }) => {
+				const said = data as { spool?: unknown; shown?: { at?: { slide?: unknown; beat?: unknown } } };
+				return said.spool === "stage-shown" && said.shown?.at?.slide === slide && said.shown.at.beat === beat;
+			}),
+		ms,
+	);
+}
+
+/** Whether the stage last said the slide is anything but loading, within `ms`. */
+function settled(frame: string, ms: number): Promise<boolean> {
+	return waitHeard((tap) => {
+		for (let at = tap.said.length - 1; at >= 0; at--) {
+			const said = tap.said[at]?.data as { spool?: unknown; slides?: { frame?: unknown; status?: unknown }[] };
+			if (said.spool !== "stage-slides" || !Array.isArray(said.slides)) continue;
+			const status = said.slides.find((slide) => slide.frame === frame)?.status;
+			return status !== undefined && status !== "loading";
+		}
+		return false;
+	}, ms);
 }
 
 /** What the host heard from position `from` on, and how many stage documents connected. */
@@ -609,10 +648,20 @@ function holdNow(): number {
 	return hold.end;
 }
 
-/** Whether the held move began, and how long it runs. */
-function heldNow(): { frozen: boolean; end: number } {
-	const hold = stageTap().hold;
-	return { frozen: hold?.frozen === true, end: hold?.end ?? 0 };
+/**
+ * The armed move caught as it begins, or, when none began within `ms` or one made since `at` (epoch ms) ended or
+ * failed first, the slide's own entrance held instead. Answers how long what it holds runs, in ms; 0 is a cut.
+ */
+async function caught(at: number, ms: number): Promise<number> {
+	const tap = stageTap();
+	const deadline = performance.now() + ms;
+	while (performance.now() < deadline) {
+		if (tap.hold?.frozen === true) return tap.hold.end;
+		const made = tap.moves.filter((move) => move.at >= at);
+		if (made.length === 0 || made.some((move) => move.failed !== undefined || move.finished !== undefined)) break;
+		await frame();
+	}
+	return holdNow();
 }
 
 /** Everything held put `at` ms into its run, and drawn. */
