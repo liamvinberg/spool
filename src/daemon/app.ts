@@ -163,6 +163,7 @@ import {
 	settleMovedOut,
 } from "./team-sync";
 import {
+	clearCaptureError,
 	coverSize,
 	isCoverHash,
 	readCover,
@@ -922,6 +923,7 @@ export function createDaemonApp({
 	// a team project's covers go up to spool.page, the first of each version from whichever Mac shot it
 	const teamCovers = createTeamCovers({
 		spoolDir,
+		spool: version,
 		request: () => ({ ...cloud, origin: originOf(cloud) }),
 		// a frame spool.page has no cover of, and no still here can be sent of, sits for one
 		owe: (root, frame, why) => {
@@ -983,6 +985,7 @@ export function createDaemonApp({
 			// a frame deleted while it sat has no folder a picture belongs in
 			if (!frameExists(root, frame)) return;
 			const cover = writeCover(root, frame, bytes, scheme, source, words);
+			clearCaptureError(root, frame, version);
 			hub.publish(root, { kind: "thumb", frame, cover });
 			if (source !== undefined) teamCovers.stored(root, frame, source, bytes);
 			if (source !== undefined) projectShares.covered(root, frame, source, bytes);
