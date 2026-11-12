@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { openLog } from "./log";
-import { hideBarsOnReturn, loadPresenting, type PresentingModule, talkOptions } from "./presenting";
+import { keepBarsHidden, loadPresenting, type PresentingModule, talkOptions } from "./presenting";
 
 test("a talk hides the menu bar and the Dock in place of auto-hiding them, keeping every other option", () => {
 	// a window full screen the macOS way: full screen, the menu bar and the Dock auto-hidden
@@ -14,9 +14,10 @@ test("a talk hides the menu bar and the Dock in place of auto-hiding them, keepi
 	assert.equal(talkOptions(2048 | 1024 | 4 | 1), 2048 | 1024 | 8 | 2);
 });
 
-test("back in front of its full screen window, a talk hides the bars each time macOS puts the full screen's back, and not before", () => {
+test("a talk keeps the bars hidden, each time macOS puts the full screen's back while spool is in front, and never before", () => {
 	const full = 1024 | 4 | 1;
-	let options = 0;
+	const talk = 1024 | 8 | 2;
+	let options = talk;
 	const set: number[] = [];
 	const native: PresentingModule = {
 		options: () => options,
@@ -28,31 +29,40 @@ test("back in front of its full screen window, a talk hides the bars each time m
 		immediately() {},
 	};
 	const waits: (() => void)[] = [];
-	const later = (next: () => void) => waits.push(next);
 	const look = () => waits.shift()?.();
 	let hiding = true;
-	// spool in front again, in the middle of the Space's slide: options set now would outlast the talk
-	hideBarsOnReturn(() => hiding, native, later);
+	let inFront = true;
+	keepBarsHidden(
+		() => hiding,
+		() => inFront,
+		native,
+		(next) => waits.push(next),
+	);
+	look();
+	assert.deepEqual(set, []);
+	// another app in front: what spool's options read then is not what it gets back
+	inFront = false;
+	options = 1024;
+	look();
+	assert.deepEqual(set, []);
+	// back in front, in the middle of the Space's slide (or in Mission Control): options set now would outlast the talk
+	inFront = true;
+	options = 0;
 	look();
 	assert.deepEqual(set, []);
 	options = full;
 	look();
-	assert.deepEqual(set, [1024 | 8 | 2]);
-	// the slide done, macOS puts them back once more
+	assert.deepEqual(set, [talk]);
+	// macOS puts them back once more as the slide ends
 	options = full;
 	look();
 	look();
-	assert.deepEqual(set, [1024 | 8 | 2, 1024 | 8 | 2]);
-	// and after a while it stops looking
-	for (let turn = 0; turn < 1000 && waits.length > 0; turn++) look();
-	assert.equal(waits.length, 0);
-	// a talk that ends meanwhile wants nothing hidden
-	options = 0;
-	hideBarsOnReturn(() => hiding, native, later);
+	assert.deepEqual(set, [talk, talk]);
+	// the talk over, it stops looking
 	hiding = false;
 	options = full;
 	look();
-	assert.equal(set.length, 2);
+	assert.deepEqual(set, [talk, talk]);
 	assert.equal(waits.length, 0);
 });
 
