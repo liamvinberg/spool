@@ -193,6 +193,15 @@ it("opens in the player with the switch on: sizes the frame for real, walks, and
 	await expect.poll(measured, { timeout: 30_000 }).toBe(390);
 	expect(await inner.locator("#narrow").isVisible()).toBe(true);
 
+	// whatever was picked last, the file opens again As drawn: it remembers nothing for whoever opens it next
+	await size.click();
+	await page.getByRole("menuitemcheckbox", { name: /Window/ }).click();
+	await expect.poll(measured, { timeout: 30_000 }).not.toBe(390);
+	await page.goto(pathToFileURL(file).href);
+	await expect.poll(() => inner.locator("h1").textContent(), { timeout: 30_000 }).toBe("Menu for Cata");
+	await expect.poll(() => size.textContent()).toBe("1440 × 900 · 89%");
+	expect(await measured()).toBe(1440);
+
 	// a link out opens a tab of its own, and the frame stays where it is
 	const away = page.context().waitForEvent("page");
 	await inner.locator("#away").click();

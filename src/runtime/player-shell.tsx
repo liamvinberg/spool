@@ -5,7 +5,7 @@ import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { markPlayAfterPaint } from "./play-marks";
 import { Player, type PlayerController } from "./player-chrome";
-import { heldBox, playRoom, readStart, writeStart } from "./player-fit";
+import { heldBox, playRoom } from "./player-fit";
 import type { DeskWindow } from "./player-page";
 import { createPlayerRecorder, type NotedHands, type PlayerRecorder } from "./player-recorder";
 import type { Held } from "./player-size-model";
@@ -93,6 +93,15 @@ export interface PlayerShellHost {
 	bare?: true;
 	/** Links in the frame may open a tab of their own, outside the sandbox. Absent, the played document opens none. */
 	popups?: true;
+	/** Where a play rests when it opens, and the memory of the last pick. Absent, it opens As drawn and remembers nothing. */
+	start?: PlayerShellStart;
+}
+
+/** As drawn or Window: where a play rests when it opens, as its host remembers it. */
+export interface PlayerShellStart {
+	read(): "drawn" | "window";
+	/** As drawn or Window was picked. */
+	write(at: "drawn" | "window"): void;
 }
 
 /**
@@ -260,11 +269,11 @@ export function createPlayerShell(
 	const record = host.record;
 	let shapedAs: ClipAspect | null = typeof record?.opening === "object" ? record.opening.start : null;
 	/**
-	 * What this play rests at (spool#264): As drawn or Window, as this browser
-	 * last picked, until another size is chosen. A row's own size is read from
+	 * What this play rests at (spool#264): As drawn or Window, as the host
+	 * remembers it, until another size is chosen. A row's own size is read from
 	 * the row, so a pick carries none.
 	 */
-	let held: Held = { id: host.bare === true ? "window" : readStart(), size: { w: 0, h: 0 } };
+	let held: Held = { id: host.bare === true ? "window" : (host.start?.read() ?? "drawn"), size: { w: 0, h: 0 } };
 	/** The box the frame on show is laid out at while the chrome moves it, or null resting at `held`. */
 	let laying: FrameGeometry | null = null;
 	/**
@@ -443,7 +452,7 @@ export function createPlayerShell(
 			},
 			hold: (next) => {
 				held = next;
-				if (next.id === "drawn" || next.id === "window") writeStart(next.id);
+				if (next.id === "drawn" || next.id === "window") host.start?.write(next.id);
 				geometryReplay();
 			},
 			lay: (box) => {

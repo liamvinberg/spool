@@ -1,3 +1,4 @@
+import { readStart, writeStart } from "./player-fit";
 import { deskWindow } from "./player-page";
 import {
 	mountPlayerShell,
@@ -52,6 +53,7 @@ function liveHost(config: ShellConfig): PlayerShellHost {
 	const desk = deskWindow();
 	return {
 		geometry: bridgeGeometry(),
+		start: { read: readStart, write: writeStart },
 		close: () => {
 			window.close();
 			window.setTimeout(() => {
