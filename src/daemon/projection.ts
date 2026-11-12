@@ -418,17 +418,19 @@ interface FrameReads {
 /**
  * Every frame, placed. `seen` decorates each one with whether it has been
  * looked at since it last moved (seen.ts) — the canvas asks, the CLI does not.
+ * `spool` marks each frame that release's booth failed on broken; without it
+ * none is.
  *
  * The placeholders stand on their pages' fields like frames: a new frame stands
  * clear of them, and the frame that lands in one already has its place.
  */
-export function listProjectFrames(root: string, options: { seen?: boolean } = {}): Projection {
+export function listProjectFrames(root: string, options: { seen?: boolean; spool?: string } = {}): Projection {
 	const discovery = discover(root);
 	if (discovery === undefined) return emptyProjection(root);
 	// one sweep of the cover store answers every frame from immutable image names,
 	// so this costs a readdir per frame folder and opens no image
 	const covers = readCovers(root);
-	const broken = readBroken(root);
+	const broken = readBroken(root, options.spool);
 	const sidecars = new Map(
 		discovery.frames.map((frame) => [frame.name, readFrameSidecar(frame.dir, discovery.designDir)]),
 	);
@@ -449,13 +451,13 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
  */
 export async function listProjectFramesAwaited(
 	root: string,
-	options: { seen?: boolean; mirrors?: boolean } = {},
+	options: { seen?: boolean; mirrors?: boolean; spool?: string } = {},
 ): Promise<Projection> {
 	const discovery = await discoverAwaited(root);
 	if (discovery === undefined) return emptyProjection(root);
 	const [covers, broken, sidecars, borns, unseen, mirrors] = await Promise.all([
 		readCoversAwaited(root),
-		readBrokenAwaited(root),
+		readBrokenAwaited(root, options.spool),
 		Promise.all(
 			discovery.frames.map(
 				async (frame) => [frame.name, await readFrameSidecarAwaited(frame.dir, discovery.designDir)] as const,
@@ -660,18 +662,21 @@ function readCovers(root: string): Map<string, Cover> {
 	}
 }
 
-function readBroken(root: string): Map<string, BrokenFrame> {
+/** The frames `spool`'s booth failed on (spool#321); none when no spool is named, for a reader that never shows them. */
+function readBroken(root: string, spool: string | undefined): Map<string, BrokenFrame> {
+	if (spool === undefined) return new Map();
 	try {
-		return scanBrokenFramesSync(root);
+		return scanBrokenFramesSync(root, spool);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return new Map();
 	}
 }
 
-async function readBrokenAwaited(root: string): Promise<Map<string, BrokenFrame>> {
+async function readBrokenAwaited(root: string, spool: string | undefined): Promise<Map<string, BrokenFrame>> {
+	if (spool === undefined) return new Map();
 	try {
-		return await scanBrokenFrames(root);
+		return await scanBrokenFrames(root, spool);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return new Map();

@@ -31,6 +31,8 @@ export type CoverOwed = "missing" | "stale";
 
 export interface TeamCoversOptions {
 	spoolDir: string;
+	/** This daemon's version: whose booth's failures keep a still from going up (spool#321). */
+	spool: string;
 	/** Where spool.page is, the session vault and the fetch: the machine's own unless a test hands in a fake. */
 	request: () => CloudRequestOptions & { origin: string };
 	/** A frame of a team project the cloud has no cover for, and no still here can be sent of: the booth owes it. */
@@ -38,7 +40,13 @@ export interface TeamCoversOptions {
 	log?: (line: string) => void;
 }
 
-export function createTeamCovers({ spoolDir, request, owe = () => {}, log = () => {} }: TeamCoversOptions): TeamCovers {
+export function createTeamCovers({
+	spoolDir,
+	spool,
+	request,
+	owe = () => {},
+	log = () => {},
+}: TeamCoversOptions): TeamCovers {
 	/** One send at a time, in the order the booth stored them: a first pass through a project is hundreds. */
 	let queue: Promise<void> = Promise.resolve();
 	/** The team projects brought level with the cloud since the daemon started, or being brought level now. */
@@ -99,7 +107,7 @@ export function createTeamCovers({ spoolDir, request, owe = () => {}, log = () =
 		let stills: Awaited<ReturnType<typeof scanStills>>;
 		let frames: string[];
 		try {
-			stills = await scanStills(root);
+			stills = await scanStills(root, spool);
 			frames = frameNames(root) ?? [];
 		} catch {
 			// a project whose design folder went strange owes nothing it can be asked

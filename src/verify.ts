@@ -224,7 +224,8 @@ export function formatBatchShot(shot: BatchShot): string {
 	}
 }
 
-export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
+/** `spool` is the version booting, whose booth's failed cover of the frame the answer carries. */
+export async function logsFrame(deps: BootDeps & { spool: string }): Promise<LogsOutcome> {
 	const probe = await probeCompile(deps);
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
@@ -233,7 +234,7 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 	// than folded into either cache: a boot can replay while its cover keeps
 	// failing, and the reason belongs on every answer this returns, not only a
 	// fresh boot's.
-	const captureError = readCaptureError(deps.root, deps.frame);
+	const captureError = readCaptureError(deps.root, deps.frame, deps.spool);
 	if (
 		cached !== undefined &&
 		cached.etag === probe.etag &&

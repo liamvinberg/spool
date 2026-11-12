@@ -93,7 +93,7 @@ it("does not enter from a dragged press", async () => {
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
 });
 
-it("marquee-selects from an empty-canvas drag, now that Select is the resting tool", async () => {
+it("marquee-selects from an empty-canvas drag, now that Select is the resting tool, and readies P's play", async () => {
 	const { host, canvas } = await renderCanvas();
 
 	await act(async () => {
@@ -110,6 +110,12 @@ it("marquee-selects from an empty-canvas drag, now that Select is the resting to
 
 	expect(host.querySelector('[data-frame-label="home"] .text-accent-strong')).not.toBeNull();
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
+
+	// a frame selected alone is what P plays: once the selection settles its project is composed for play, once
+	// (spool#325), as a pointer reaching for play does
+	await until(() => warmPosts() === 1);
+	await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+	expect(warmPosts()).toBe(1);
 });
 
 it("hands the pointer back while Command is held without taking the frame off the screen", async () => {
@@ -456,6 +462,12 @@ it("takes the pointer back on a focused frame's relayed Command key and returns 
 	await until(() => iframe?.style.pointerEvents === "auto");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 });
+
+/** How many times the canvas has asked for its project to be composed for play. */
+function warmPosts(): number {
+	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
+	return calls.filter(([input, init]) => String(input).endsWith("/warm") && init?.method === "POST").length;
+}
 
 /** Every selection the canvas has served, oldest first. */
 function selectionPuts(): { frames?: string[] }[] {

@@ -73,6 +73,45 @@ it.each([0.64, 0.68])("double-clicking a neighboring frame at zoom %s pans into 
 	expect(cameraTransform(host)).toBe(`translate(${600 - 2200 * k}px, ${camera.y}px) scale(${k})`);
 });
 
+it("offers the way back once the camera rests off every frame, and fits them all when taken", async () => {
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL) => {
+			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			if (url.pathname.endsWith("/events")) return openEventStream();
+			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: -5000, y: -5000, k: 1 } });
+			if (url.pathname.endsWith("/frames")) return Response.json({ root: "/project", pages: [], frames });
+			if (url.pathname.endsWith("/flows")) {
+				return Response.json({ frames: frames.map(({ name }) => name), links: [], edges: [], unreadable: [] });
+			}
+			return Response.json({});
+		}),
+	);
+	vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+		callback(performance.now() + 1000);
+		return 1;
+	});
+	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+	vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
+	vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+	await act(async () => root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} })));
+	await until(() => host.querySelector("[data-back-to-frames] button") !== null);
+
+	await act(async () => host.querySelector<HTMLButtonElement>("[data-back-to-frames] button")?.click());
+	// both frames, 280 by 100, fitted into 1200 by 800 at no more than 100%
+	await until(() => cameraTransform(host) === "translate(460px, 350px) scale(1)");
+	await until(() => host.querySelector("[data-back-to-frames]") === null);
+});
+
 describe("canvas keyboard navigation", () => {
 	it("returns from an entered frame, moves spatially, and enters the target without walking", async () => {
 		const requests: string[] = [];

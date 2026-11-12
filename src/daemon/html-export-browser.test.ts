@@ -136,6 +136,15 @@ export function useCounter() { const [n, set] = useState(0); return [n, () => se
 	await expect.poll(() => page.locator("button").textContent(), { timeout: 30_000 }).toBe("Tapped 0");
 	await page.locator("button").click();
 	await expect.poll(() => page.locator("button").textContent()).toBe("Tapped 1");
+
+	// in the player with the web out of reach, whoever was sent the file is told what it needs, and told at once (spool#325)
+	const played = await makeApp(spoolDir).request(`/api/p/${name}/export/html?frame=tally&scope=one&player=1`);
+	const playerFile = join(makeTempDir(), `${name}-tally-player.html`);
+	writeFileSync(playerFile, await played.text());
+	const cut = await offline(await testBrowser(), playerFile);
+	await expect
+		.poll(() => cut.locator(".spool-player-error pre").textContent(), { timeout: 3_000 })
+		.toBe("This prototype needs the internet to load. Connect and reload.");
 }, 120_000);
 
 it("gives the frame the document it has on the canvas: its own scroll box scrolls, in the scheme its root sets", async () => {
