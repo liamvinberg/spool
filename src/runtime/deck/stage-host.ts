@@ -32,6 +32,8 @@ export interface StageHostOptions {
 	alone?: boolean;
 	/** the slides fill this screen, which is the room's (spool#298): B and the period black it, F is nobody's */
 	filling?: boolean;
+	/** its first slide goes on at rest, its entrances played, under a picture of it at rest that the host shows meanwhile */
+	rest?: boolean;
 	/** where it opens: a session, or a slide by its frame (its first beat); the talk's first slide otherwise */
 	session?: StageSession;
 	frame?: string;
@@ -195,6 +197,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				room: options.room,
 				...(options.alone === true ? { alone: true } : {}),
 				...(options.filling === true ? { filling: true } : {}),
+				...(options.rest === true ? { rest: true } : {}),
 				...(session === undefined ? {} : { session }),
 				...(frameOf === undefined ? {} : { frame: frameOf }),
 			});

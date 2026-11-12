@@ -39,9 +39,11 @@ import { talkSource } from "./talk-source";
  * What flies is one layer moved by a transform on one spring, aimed again from wherever it is, so Esc during the way in
  * or Present during the way home turns it round. It flies as the live slide when the stage has already drawn it (the
  * stage is readied while the hand is on its way to Present), else as the canvas's picture of it, when that is the slide
- * as the talk starts it, with the live slide fading in over it once drawn; else it waits, the screen filling, until one
- * of the two is there, rather than fly blank. Once the live slide is on, it stays on: the way home flies it as drawn,
- * and on its card the card is shown under it before it lets go.
+ * as the talk starts it, with the live slide taking over once drawn: fading in over it on the way, in one frame once it
+ * has landed, as a picture stretched to the screen is never what stands there (spool#316); else it waits, the screen
+ * filling, until one of the two is there, rather than fly blank. The stage puts its first slide on at rest, as its
+ * picture shows it, so the two are the same slide. Once the live slide is on, it stays on: the way home flies it as
+ * drawn, and on its card the card is shown under it before it lets go.
  *
  * With two displays, the caret's Full screen plays this way here and the room on the other display, which follows the
  * talk over its channel as it follows the presenter view.
@@ -77,8 +79,6 @@ type Phase =
 
 /** How long a readied stage waits for Present before it is let go. */
 const WARM_MS = 30_000;
-/** The longest the picture waits on the live slide's entrances before handing over all the same. */
-const ENTRANCE_MS = 1000;
 
 export interface PresentSlidesProps {
 	/**
@@ -168,12 +168,6 @@ export function PresentSlides({
 	const liveOn = useRef(false);
 	/** the picture the slide flies as, decoded */
 	const pictured = useRef(false);
-	/**
-	 * when the live slide's entrances have played, as `performance.now()` reads: till then its picture stays up, as the
-	 * picture is the slide at rest and the live slide playing in under it would show twice
-	 */
-	const entered = useRef(0);
-	const waitingEntrance = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	/** where the window's page stands on the screen, so the slide stays put on it while the window moves */
 	const origin = useRef(viewportOrigin());
 	const hands = useRef({ cardOf, pictureOf, onEnded, say, closeRoom, talk, still, timing, pinned, help });
@@ -217,13 +211,7 @@ export function PresentSlides({
 		},
 		[draw, run],
 	);
-	useEffect(
-		() => () => {
-			cancelAnimationFrame(loop.current);
-			clearTimeout(waitingEntrance.current);
-		},
-		[],
-	);
+	useEffect(() => () => cancelAnimationFrame(loop.current), []);
 
 	const landing = useCallback((): Pose => {
 		const { talk: size } = hands.current;
@@ -256,33 +244,33 @@ export function PresentSlides({
 	}, []);
 
 	/**
-	 * the live slide on in the flying layer, fading in over its picture once its entrances have played, or at once when
-	 * `now` (the talk moved on from what the picture shows); never off again this talk
+	 * the live slide on in the flying layer, fading in over its picture while it flies, or at once when `now` (the talk
+	 * moved on from what the picture shows) or once it has landed; never off again this talk
 	 */
-	const showLive = useCallback(
-		(at: "now" | "fade", force = false) => {
-			if (liveOn.current) return;
-			clearTimeout(waitingEntrance.current);
-			const wait = entered.current - performance.now();
-			// it waits out turns round on the way: the talk is the same, and so is its slide
-			if (!force && wait > 0 && pictured.current) {
-				waitingEntrance.current = setTimeout(() => showing.current(at, true), wait);
-				return;
-			}
-			liveOn.current = true;
-			void fade(liveBox.current, 1, at === "now" ? 0 : hands.current.timing.handOver).then(() => {
+	const handOver = useCallback(
+		(ms: number) =>
+			void fade(liveBox.current, 1, ms).then(() => {
 				if (liveOn.current) pictureBox.current?.replaceChildren();
-			});
-		},
+			}),
 		[fade],
+	);
+	const showLive = useCallback(
+		(at: "now" | "fade") => {
+			if (liveOn.current) return;
+			liveOn.current = true;
+			handOver(at === "fade" && phaseRef.current === "in" ? hands.current.timing.handOver : 0);
+		},
+		[handOver],
 	);
 
 	const landed = useCallback(
 		(n: number) => () => {
 			if (trip.current !== n || phaseRef.current !== "in") return;
 			setPhase("on");
+			// a hand-over still fading as the slide lands is done in this frame: a stretched picture never stands there
+			if (liveOn.current) handOver(0);
 		},
-		[setPhase],
+		[handOver, setPhase],
 	);
 
 	/** the slide sets off, as the live slide when the stage has drawn it, else as its picture, else not yet */
@@ -309,7 +297,6 @@ export function PresentSlides({
 		fillScreen(false);
 		cancelAnimationFrame(loop.current);
 		loop.current = 0;
-		clearTimeout(waitingEntrance.current);
 		started.current = null;
 		setPlace(null);
 		setPhase(null);
@@ -420,6 +407,7 @@ export function PresentSlides({
 			mode: "own",
 			room: true,
 			filling: true,
+			rest: true,
 			frame: from.slide,
 			on: {
 				talk: (talk) => {
@@ -432,7 +420,7 @@ export function PresentSlides({
 					// the talk moved on from the slide its picture shows: the live slide takes over at once
 					const on = mounted.talk()[now.at.slide]?.frame;
 					const up = phaseRef.current === "in" || phaseRef.current === "on";
-					if (up && !liveOn.current && (on !== wanted.current || now.at.beat !== 0)) showing.current("now", true);
+					if (up && !liveOn.current && (on !== wanted.current || now.at.beat !== 0)) showing.current("now");
 					const said = room.current;
 					const frame = mounted.talk()[roomPicture(now).at.slide]?.frame;
 					if (said !== null && frame !== undefined) said.say({ kind: "session", session: now, frame });
@@ -440,7 +428,6 @@ export function PresentSlides({
 				shown: (shown) => {
 					drawn.current = shown.at.beat === 0 ? shown.frame : null;
 					if (shown.frame !== wanted.current) return;
-					entered.current = performance.now() + Math.min(shown.entering ?? 0, ENTRANCE_MS);
 					if (phaseRef.current === "waiting") launching.current();
 					else if (phaseRef.current === "in" || phaseRef.current === "on") showing.current("fade");
 				},
@@ -486,8 +473,6 @@ export function PresentSlides({
 		wanted.current = ask.slide;
 		liveOn.current = false;
 		pictured.current = false;
-		entered.current = 0;
-		clearTimeout(waitingEntrance.current);
 		pictureBox.current?.replaceChildren();
 		if (liveBox.current !== null) liveBox.current.style.opacity = "0";
 		cut(host.current, ask.slide);

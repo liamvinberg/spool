@@ -4,7 +4,15 @@ import type { BrowserContext, Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { testBrowser } from "../../test-browser";
 import { builtUi, serveProject, writeDesignFile } from "../../test-helpers";
-import { explainFrame, pixelsOf, recordScreen, stripes } from "./stage-browser.test-helpers";
+import {
+	explainFrame,
+	picturesOf,
+	pixelsOf,
+	recordScreen,
+	stretched,
+	stripes,
+	watchPictures,
+} from "./stage-browser.test-helpers";
 
 /**
  * Present on one display (spool#298): the slide grows from its card until it fills spool's window, made full screen,
@@ -446,7 +454,7 @@ it("waits on its card while the window grows to cover the screen, and sets off o
 	await expect.poll(() => phaseOf(view)).toMatch(/^(in|on)$/);
 });
 
-it("hands over from a slide's picture to the live slide only once its entrance has played, so it never shows twice", {
+it("hands over from a slide's picture to the live slide at rest, so it never shows twice, and never leaves the picture stretched over it", {
 	timeout: 120_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -486,6 +494,7 @@ it("hands over from a slide's picture to the live slide only once its entrance h
 	);
 	const context = await browser.newContext({ viewport: { width: W, height: H } });
 	await fullScreenAsABrowserGivesIt(context);
+	await watchPictures(context);
 	const view = await context.newPage();
 	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
@@ -519,4 +528,9 @@ it("hands over from a slide's picture to the live slide only once its entrance h
 			`frame ${filled + at}`,
 		).toEqual([true, true, true]);
 	}
+	// the picture is the canvas's, made for a card: from the frame the slide fills the screen it stands for the slide
+	// only until the live slide is drawn, and goes then, not once an entrance the live slide has played
+	const read = await picturesOf(view);
+	expect(read.drawn).not.toBeNull();
+	expect(stretched(read)).toEqual([]);
 });

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
 import type { KeyCommand } from "../../deck/stage-keys";
@@ -77,7 +77,22 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 	const window_ = useWindowSize();
 	const layout = presenterLayout(window_, screen);
 	const [session, setSession] = useState<StageSession | undefined>(undefined);
-	const [talk, setTalk] = useState<readonly TalkSlide[]>([]);
+	const [said, setTalk] = useState<readonly TalkSlide[]>([]);
+	/**
+	 * the talk as its stage says it, and as the deck reads until the stage has: the view knows from its first frame what
+	 * comes next, and never names the end of a talk it has not heard yet (spool#316)
+	 */
+	const talk = useMemo<readonly TalkSlide[]>(
+		() =>
+			said.length > 0
+				? said
+				: (deck?.slides ?? []).map((slide) => ({
+						frame: slide.name,
+						beats: Math.max(1, slide.beats.length),
+						live: slide.live,
+					})),
+		[said, deck],
+	);
 	const [ready, setReady] = useState<readonly SlideReadiness[]>([]);
 	const [room, setRoom] = useState<RoomState>("opening");
 	const [help, setHelp] = useState(false);
@@ -152,10 +167,12 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		};
 		const stopScreens = app?.onRoom?.(heard);
 		const placed = () => void app?.roomReport?.(ask.talk).then(heard, () => {});
+		// both stages put their first slide on at rest, as the picture the slide arrives as shows it
 		const host = mountStage(main, {
 			address,
 			mode: "own",
 			room: false,
+			rest: true,
 			frame: ask.slide,
 			on: {
 				talk: setTalk,
@@ -188,7 +205,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			},
 		});
 		// what the next key plays, never touched: what its slides write is the talk's echo, not the talk's
-		const next = mountStage(after, { address, mode: "follow", room: true, frame: ask.slide });
+		const next = mountStage(after, { address, mode: "follow", room: true, rest: true, frame: ask.slide });
 		stage.current = { main: host, next, say };
 
 		let gone: ReturnType<typeof setTimeout> | undefined;

@@ -18,8 +18,10 @@ import { presenterLayout } from "./presenter-layout";
  * own window between Present and End. The chrome falls away around the slide presented from (the window's bar lifts,
  * each side slides out past its edge, the tools sink, the canvas darkens to the presenter's ground) while the slide
  * travels from its place on the canvas to where the presenter view holds it; the rest of the view arrives around it.
- * The slide's picture stays over the presenter's stage until the stage has drawn its own. End plays it back: the slide
- * the talk ended on travels to its place on the canvas, selected there, while the chrome comes back.
+ * The slide's picture stays over the presenter's stage until the stage has drawn its own, and goes in one frame, the
+ * frame the slide lands or the stage draws, whichever is later: the picture is the canvas's, small, and stretched to the
+ * slide's size it is soft, so it never stands over a slide that is ready (spool#316). End plays it back: the slide the
+ * talk ended on travels to its place on the canvas, selected there, while the chrome comes back.
  */
 
 /** A box on the window, in its pixels. */
@@ -33,7 +35,7 @@ interface Rect {
 type Moment =
 	/** Present was pressed: the chrome falls away and the slide travels, from `from` when it was on screen */
 	| { readonly kind: "leave"; readonly talk: string; readonly frame: string; readonly from: Rect | null }
-	/** the presenter view is drawn; the picture that travelled stays until the stage has drawn its own */
+	/** the presenter view is drawn; the picture that travelled stays until the stage has drawn its own, then goes at once */
 	| { readonly kind: "on"; readonly talk: string; readonly frame: string; readonly handed: boolean }
 	/** End: the slide the talk ended on goes back to its place, `to` once the canvas has it there */
 	| { readonly kind: "back"; readonly talk: string; readonly frame: string; readonly to: Rect | null | undefined };
@@ -138,6 +140,11 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 			setMoment((now) => (now === from ? { kind: "on", talk: from.talk, frame: from.frame, handed: false } : now)),
 		[],
 	);
+	// the stage has drawn the slide, and the slide is there: its picture goes before the frame is painted
+	useLayoutEffect(() => {
+		if (moment?.kind !== "on" || moment.handed || !pictured) return;
+		setMoment((now) => (now === moment ? { ...moment, handed: true } : now));
+	}, [moment, pictured]);
 	/** the slide is home: the talk is over, and Present can be pressed again */
 	const done = useCallback((from: Moment) => {
 		setMoment((now) => (now === from ? null : now));
@@ -285,21 +292,15 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 				/>
 			) : null}
 			{moment.kind === "on" && !moment.handed ? (
-				<motion.div
+				<div
 					key={`on-${moment.talk}`}
 					aria-hidden="true"
+					data-deck-travel="on"
 					className="pointer-events-none fixed top-0 left-0 z-50 overflow-hidden rounded-md bg-[black]"
-					style={{ x: big.x, y: big.y, width: big.w, height: big.h }}
-					initial={{ opacity: 1 }}
-					animate={{ opacity: pictured ? 0 : 1 }}
-					// the slide's picture giving way to the stage's own
-					transition={{ duration: still ? 0 : timing.base / 1000, ease: timing.out }}
-					onAnimationComplete={() => {
-						if (pictured) setMoment((now) => (now === moment ? { ...moment, handed: true } : now));
-					}}
+					style={{ left: big.x, top: big.y, width: big.w, height: big.h }}
 				>
 					<Picture src={picture(moment.frame)} />
-				</motion.div>
+				</div>
 			) : null}
 			{moment.kind === "back" && moment.to !== null ? (
 				moment.to === undefined ? (
@@ -328,7 +329,9 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 
 /**
  * The slide on its way: its picture as the canvas has it, fitted on black, from one box to another. Leaving the
- * canvas, it waits a beat for the chrome to start going, then travels.
+ * canvas, it waits a beat for the chrome to start going, then travels, and is done the frame it stands within a
+ * quarter of a pixel of its box: the ease's tail moves it no further one can see, and the picture, stretched there,
+ * would stand soft through it while the live slide waits (spool#316).
  */
 function Travel({
 	timing,
@@ -348,6 +351,12 @@ function Travel({
 	const t = leaving
 		? { duration: timing.leave / 1000, delay: timing.leaveWait / 1000, ease: timing.snap }
 		: { duration: timing.return / 1000, ease: timing.snap };
+	const finished = useRef(false);
+	const finish = () => {
+		if (finished.current) return;
+		finished.current = true;
+		onDone?.();
+	};
 	return (
 		<motion.div
 			aria-hidden="true"
@@ -356,7 +365,13 @@ function Travel({
 			initial={{ x: from.x, y: from.y, width: from.w, height: from.h, borderRadius: leaving ? 3 : 6 }}
 			animate={{ x: to.x, y: to.y, width: to.w, height: to.h, borderRadius: leaving ? 6 : 3 }}
 			transition={t}
-			onAnimationComplete={() => onDone?.()}
+			onUpdate={(at) => {
+				if (!leaving) return;
+				const off = (value: unknown, aim: number) => typeof value !== "number" || Math.abs(value - aim) > 0.25;
+				if (off(at.x, to.x) || off(at.y, to.y) || off(at.width, to.w) || off(at.height, to.h)) return;
+				finish();
+			}}
+			onAnimationComplete={finish}
 		>
 			<Picture src={picture} />
 		</motion.div>

@@ -59,8 +59,6 @@ export interface StageShown {
 	readonly frames: number;
 	/** how long it was held waiting for the slide, in ms */
 	readonly waited: number;
-	/** how long, in ms, the slide's entrances still play as it is shown: its animations that end; absent when none do */
-	readonly entering?: number;
 }
 
 export type StageMode = "own" | "follow";
@@ -86,6 +84,11 @@ export type HostMessage =
 			readonly alone?: true;
 			/** the slides fill the host's screen, which is the room's (spool#298): B and the period black it, F is nobody's */
 			readonly filling?: true;
+			/**
+			 * its first slide goes on at rest, its entrances played: the host shows the slide's picture, at rest, until the
+			 * stage has drawn it, and takes the picture away in the frame it has (spool#316)
+			 */
+			readonly rest?: true;
 			readonly session?: StageSession;
 			readonly frame?: string;
 	  }
@@ -209,6 +212,7 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 			room: value.room,
 			...(value.alone === true ? { alone: true } : {}),
 			...(value.filling === true ? { filling: true } : {}),
+			...(value.rest === true ? { rest: true } : {}),
 			...(session === undefined ? {} : { session }),
 			...(typeof value.frame === "string" ? { frame: value.frame } : {}),
 		};
@@ -276,17 +280,8 @@ function parseShown(value: unknown): StageShown | undefined {
 	if (at === undefined || typeof value.frame !== "string" || !isCount(value.take)) return undefined;
 	if (typeof value.ready !== "boolean" || typeof value.held !== "boolean") return undefined;
 	if (!isCount(value.frames) || typeof value.waited !== "number") return undefined;
-	const { frame, take, ready, held, frames, waited, entering } = value;
-	return {
-		at,
-		frame,
-		take,
-		ready,
-		held,
-		frames,
-		waited,
-		...(typeof entering === "number" && entering > 0 ? { entering } : {}),
-	};
+	const { frame, take, ready, held, frames, waited } = value;
+	return { at, frame, take, ready, held, frames, waited };
 }
 
 /** A stage's word to its host, checked. */

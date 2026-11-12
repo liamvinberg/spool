@@ -53,7 +53,7 @@ export function CanvasCorner({
 	onLand: (name: string) => void;
 	/** Present with its caret, on a deck page with slides */
 	present?: ReactNode;
-	/** what hangs under the row: agents working here from a terminal */
+	/** what hangs under the row: what of this copy was set aside, agents working here from a terminal */
 	children?: ReactNode;
 }) {
 	useRoomDrawn(room);
