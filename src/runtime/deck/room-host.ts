@@ -72,10 +72,14 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 		on: {
 			// a new build took the screen: the newest session, which it may now be able to show
 			talk: () => show(),
-			shown: () => {
+			shown: (shown) => {
 				sayDrawn();
 				dot.draw();
-				say({ kind: "shown", revision: host.session()?.revision ?? -1 });
+				// the step this picture is of: a picture of an older one says nothing of a newer step still coming
+				const session = host.session();
+				const at = session === undefined ? undefined : roomPicture(session).at;
+				if (session !== undefined && at?.slide === shown.at.slide && at.beat === shown.at.beat)
+					say({ kind: "shown", revision: session.revision });
 			},
 			command: (command) => {
 				if (roomPasses(command)) say({ kind: "command", command });
