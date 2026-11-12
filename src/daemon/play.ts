@@ -371,6 +371,13 @@ export function playerChromeCss(fontBase = "/vendor/fonts/"): string {
 	return CHROME_CSS.replaceAll("/vendor/fonts/", fontBase);
 }
 
+/**
+ * The page a player shell draws (`player-shell.tsx`): the window and no more, never scrolled, its played document
+ * filling the screen the chrome sizes. Worn by the daemon's played tab and an exported file's player alike.
+ */
+export const PLAYER_SHELL_PAGE_RULES =
+	"html, body, #root { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } .spool-screen { height: 100%; min-height: 0; } .spool-screen > iframe { display: block; width: 100%; height: 100%; border: 0; }";
+
 const CHROME_CSS = `:root {
 	color-scheme: dark;
 	--color-surface-window: #0e0e0e;

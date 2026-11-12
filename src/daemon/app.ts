@@ -103,7 +103,14 @@ import { watchForMoves } from "./moved-in";
 import { openRoutes } from "./open-routes";
 import { createOutside, outsidePresence } from "./outside";
 import { outsideRoutes } from "./outside-routes";
-import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
+import {
+	assemblePlayerDocument,
+	chromeFontFile,
+	createPlayerCompiler,
+	PLAYER_SHELL_PAGE_RULES,
+	playerChromeCss,
+	playerEtag,
+} from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
 import { withProject } from "./project-route";
@@ -2869,7 +2876,7 @@ export function createDaemonApp({
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${escapeHtml(start)} · ${escapeHtml(project)}</title>
 <style>${escapeInlineStyle(playerChromeCss("/player-assets/fonts/"))}</style>
-<style>html, body, #root { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } .spool-screen { height: 100%; min-height: 0; } .spool-screen > iframe { display: block; width: 100%; height: 100%; border: 0; }</style>
+<style>${PLAYER_SHELL_PAGE_RULES}</style>
 </head>
 <body>
 <div id="root"></div>
