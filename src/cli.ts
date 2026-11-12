@@ -79,9 +79,9 @@ import {
 	readFlows,
 	readSelection,
 	readUntold,
-	tellSetAsideTold,
 	refusalOf,
 	resolveRegisteredProject,
+	tellSetAsideTold,
 } from "./verbs";
 import { batchShotFailure, formatBatchShot, logsFrame, shotFrames } from "./verify";
 
@@ -530,14 +530,17 @@ function warnGoneSource(pid: number): void {
 
 /** Every verb's preamble: the project this cwd is inside, and a live daemon. */
 async function verbContext(
-	/** The verb says this copy's set-aside saves itself (`spool set-aside`), so the preamble doesn't. */
-	setAsideSaid = false,
+	/**
+	 * `said`: the verb prints every one of this copy's set-aside saves itself (`spool set-aside`), so the preamble
+	 * doesn't. `later`: the verb tells what's untold itself once it has done its work (settling a set-aside save).
+	 */
+	untold: "tell" | "said" | "later" = "tell",
 ): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
 	await fetchFirst(process.cwd());
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
 	const { url, controlToken, pid } = await ensureDaemon(spoolDir);
 	warnGoneSource(pid);
-	await tellUntold(url, name, controlToken, setAsideSaid);
+	if (untold !== "later") await tellUntold(url, name, controlToken, untold === "said");
 	return { root, name, daemonUrl: url, controlToken };
 }
 
@@ -707,9 +710,12 @@ program
 		else process.stdout.write(await historyAt(daemon, named, at));
 	});
 
-/** `spool set-aside`'s preamble: a team project's daemon, which has told nothing of the marks the verb says itself. */
-async function setAsideContext() {
-	const { root, name, daemonUrl, controlToken } = await verbContext(true);
+/**
+ * `spool set-aside`'s preamble: a team project's daemon. Listing says every mark itself, so the preamble leaves them
+ * out; settling one tells the rest after it, as any verb does, so the one it settled isn't said first.
+ */
+async function setAsideContext(untold: "said" | "later") {
+	const { root, name, daemonUrl, controlToken } = await verbContext(untold);
 	if (followedLink(root) === undefined)
 		throw new SpoolError("nothing is ever set aside here: collisions happen only in a team project");
 	return { daemonUrl, name, controlToken };
@@ -723,7 +729,7 @@ setAside
 	.command("list", { isDefault: true })
 	.description("print each file whose save from this copy was set aside: whose version stands, where yours is kept")
 	.action(async () => {
-		process.stdout.write(`${await listSetAside(await setAsideContext())}\n`);
+		process.stdout.write(`${await listSetAside(await setAsideContext("said"))}\n`);
 	});
 
 for (const side of ["mine", "theirs"] as const)
@@ -736,7 +742,12 @@ for (const side of ["mine", "theirs"] as const)
 		)
 		.argument("<path>", "the file's path in design/, as frames/<frame>/frame.tsx or shared/<file>")
 		.action(async (path: string) => {
-			process.stdout.write(`${await settleSetAside(await setAsideContext(), path, side)}\n`);
+			const daemon = await setAsideContext("later");
+			try {
+				process.stdout.write(`${await settleSetAside(daemon, path, side)}\n`);
+			} finally {
+				await tellUntold(daemon.daemonUrl, daemon.name, daemon.controlToken);
+			}
 		});
 
 /** Words given as arguments, one space between: quote them to keep line breaks. */
