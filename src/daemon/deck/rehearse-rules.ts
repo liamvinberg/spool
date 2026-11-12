@@ -11,7 +11,7 @@ import type {
 	WordsAtEdge,
 } from "../../deck/rehearsal";
 import type { At } from "../../deck/stage-session";
-import { type SlideReadiness, WEBGL_KEPT } from "../../deck/stage-wire";
+import { PRESENTED_WEBGL, type SlideReadiness, tooHeavyAhead } from "../../deck/stage-wire";
 import { type FrameCensus, type FramePace, SLOW_PER_SECOND } from "../thumbs";
 
 /**
@@ -97,7 +97,14 @@ export type Finding =
 			readonly shift: number;
 			readonly causes: readonly LayoutCause[];
 	  }
-	| { readonly kind: "webgl"; readonly place: Place; readonly contexts: number; readonly kept: number }
+	/** a slide the room cannot ready ahead: its `contexts` and the slide before's pass the `share` the room keeps for both */
+	| {
+			readonly kind: "webgl";
+			readonly place: Place;
+			readonly contexts: number;
+			readonly before: number;
+			readonly share: number;
+	  }
 	/** a step that lagged: its change came `keyMs` after its key, or it drew `missed` frames fewer than its `of` */
 	| {
 			readonly kind: "lag";
@@ -367,8 +374,37 @@ function lookedAt(rehearsal: Rehearsal): Finding[] {
 			webgl.set(beat.at.slide, { contexts: beat.look.webgl, beat: beat.at.beat });
 		before = beat;
 	}
-	for (const [slide, { contexts, beat }] of webgl)
-		if (contexts > WEBGL_KEPT) found.push({ kind: "webgl", place: { slide, beat }, contexts, kept: WEBGL_KEPT });
+	return [...found, ...tooHeavy(rehearsal, webgl)];
+}
+
+/**
+ * The slides the room cannot ready ahead for the WebGL contexts they and the slide before them draw with, as the
+ * presenter view marks them: counted by the stage as it readied them and by the looks at rest, the most of either.
+ */
+function tooHeavy(rehearsal: Rehearsal, peaks: ReadonlyMap<number, { contexts: number; beat: number }>): Finding[] {
+	const counted = new Map<string, number>();
+	for (const step of [{ slides: rehearsal.opened }, ...rehearsal.steps])
+		for (const { frame, webgl = 0 } of step.slides ?? [])
+			counted.set(frame, Math.max(counted.get(frame) ?? 0, webgl));
+	const slides = rehearsal.slides.map((slide, index) => ({
+		frame: slide.frame,
+		status: "ready" as const,
+		webgl: Math.max(counted.get(slide.frame) ?? 0, peaks.get(index)?.contexts ?? 0),
+	}));
+	const found: Finding[] = [];
+	for (const [frame, contexts] of tooHeavyAhead(slides, PRESENTED_WEBGL.room)) {
+		const slide = slides.findIndex((each) => each.frame === frame);
+		if (slide < rehearsal.from || slide > rehearsal.to) continue;
+		const beat = peaks.get(slide)?.beat;
+		const before = slides[slide - 1]?.webgl ?? 0;
+		found.push({
+			kind: "webgl",
+			place: beat === undefined ? { slide } : { slide, beat },
+			contexts,
+			before,
+			share: PRESENTED_WEBGL.room,
+		});
+	}
 	return found;
 }
 

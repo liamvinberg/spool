@@ -287,6 +287,19 @@ describe("findingsOf", () => {
 		expect(findingsOf(talk({ beats }))).toEqual([{ kind: "late", place: { slide: 1, beat: 0 }, file: font }]);
 	});
 
+	it("names a slide the room cannot ready ahead for the WebGL contexts it and the slide before it hold, as the presenter view marks it", () => {
+		const beats = [beat(0, 1, "talk/one", { webgl: 2 }), beat(1, 0, "talk/two", { webgl: 5 })];
+		expect(findingsOf(talk({ beats }))).toEqual([
+			{ kind: "webgl", place: { slide: 1, beat: 0 }, contexts: 5, before: 2, share: 6 },
+		]);
+		// the stage counts a slide it readied that the rehearsal never rested on
+		const readied = [{ frame: "talk/one", status: "ready" as const, webgl: 6 }];
+		const alone = talk({ from: 1, to: 1, beats: [beat(1, 0, "talk/two", { webgl: 1 })], opened: readied });
+		expect(findingsOf(alone)).toEqual([
+			{ kind: "webgl", place: { slide: 1, beat: 0 }, contexts: 1, before: 6, share: 6 },
+		]);
+	});
+
 	it("measures words at the edge against the slide's own size, which may not be the talk's", () => {
 		const past = words([{ left: 500, top: 100, right: 700, bottom: 140 }]);
 		const small = beat(1, 0, "talk/two", { size: { w: 640, h: 360 }, words: [past] });

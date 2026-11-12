@@ -157,8 +157,13 @@ function lineOf(outcome: RehearseOutcome, finding: Finding): string {
 					: `${listed(finding.causes.map((cause) => `${elementOf(cause)} ${cause.what}`))}, and `;
 			return `${path}: ${where(outcome, finding.place)}: its layout moves: ${why}${count(finding.moved, "element")} moved, up to ${finding.shift} px; keep every beat's elements in the layout from the first beat and reveal them with opacity, transform or a clip`;
 		}
-		case "webgl":
-			return `${pathOf(outcome, finding.place)}: ${where(outcome, { slide: finding.place.slide })}: holds ${finding.contexts} WebGL contexts, past the ${finding.kept} the stage shares between the slide on screen and the ones it readies, so the slides around it come on unready; draw on one canvas`;
+		case "webgl": {
+			const held =
+				finding.before === 0
+					? `holds ${finding.contexts} WebGL contexts`
+					: `holds ${finding.contexts} WebGL contexts and the slide before it ${finding.before}`;
+			return `${pathOf(outcome, finding.place)}: ${where(outcome, { slide: finding.place.slide })}: ${held}, past the ${finding.share} the room keeps for a slide and the one before it, so it cannot ready this slide ahead: it compiles as it goes on and can lag there; draw on fewer canvases`;
+		}
 		case "lag": {
 			const subject = finding.move
 				? `the move from ${where(outcome, { slide: finding.place.slide - (finding.place.back ? -1 : 1) })} to ${where(outcome, finding.place)}`

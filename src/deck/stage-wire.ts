@@ -9,13 +9,6 @@ import type { At, RoomPicture, StageCommand, StageSession, TalkSlide } from "./s
  * session itself and gives the stage each new one to show (`follow`).
  */
 
-/**
- * How many WebGL contexts one stage document keeps (`runtime/deck/stage-webgl.ts`): three share a process (the
- * presenter's slide, its next preview and the room), each two for a moment while a new build takes over, so twelve at
- * most, under Chrome's sixteen with some left for the canvas. A rehearsal names a slide that holds more.
- */
-export const WEBGL_KEPT = 2;
-
 /** One slide of the talk as the render document is told it. */
 export interface StageSlideConfig extends TalkSlide {
 	/** the frame's own size; a slide of another shape than the talk is fitted and centred on it */

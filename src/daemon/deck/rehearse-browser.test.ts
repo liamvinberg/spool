@@ -124,15 +124,15 @@ function Scene() {
 		gl?.clearColor(0.9, 0.43, 0.32, 1);
 		gl?.clear(gl.COLOR_BUFFER_BIT);
 	}, []);
-	return <canvas ref={canvas} width={300} height={200} style={{ margin: 20 }} />;
+	return <canvas ref={canvas} width={120} height={80} style={{ margin: 20 }} />;
 }
 
 export default function Slide() {
 	return (
 		<div style={{ background: "#264653", width: "100%", height: "100%" }}>
-			<Scene />
-			<Scene />
-			<Scene />
+			{[1, 2, 3, 4, 5, 6, 7].map((n) => (
+				<Scene key={n} />
+			))}
 		</div>
 	);
 }
@@ -299,7 +299,7 @@ it("names each fault of a talk at its slide and beat, and nothing of the calm sl
 		}),
 	);
 	expect(found).toContainEqual(
-		expect.objectContaining({ kind: "webgl", place: expect.objectContaining({ slide: at("gl") }), contexts: 3 }),
+		expect.objectContaining({ kind: "webgl", place: expect.objectContaining({ slide: at("gl") }), contexts: 7 }),
 	);
 	expect(found).toContainEqual(
 		expect.objectContaining({
