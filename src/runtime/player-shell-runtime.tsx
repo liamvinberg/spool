@@ -21,6 +21,7 @@ import type { ClipAspect } from "./record-protocol";
  */
 
 export interface ShellConfig extends PlayerShellConfig {
+	innerUrl: string;
 	scenario: string;
 	/** Trusted outer-shell capability. Never forwarded to the authored iframe. */
 	controlToken: string;

@@ -80,6 +80,7 @@ export function Player({
 	recorder,
 	shaped,
 	desk,
+	bar: worn = true,
 	said = (frame) => ({ place: project, name: frame }),
 }: {
 	project: string;
@@ -105,6 +106,11 @@ export function Player({
 	 */
 	desk?: DeskWindow | undefined;
 	/**
+	 * Whether the bar is worn. Without it there is no size to choose and no edge to pull: the frame fills the window,
+	 * as an exported file plays on a touch screen (spool#304).
+	 */
+	bar?: boolean;
+	/**
 	 * How the bar and the tab name a frame: in the project by its whole path, unless the one playing it sees less
 	 * of the project (an outsider on a share, spool#230), whose bar says the page holding it at most.
 	 */
@@ -117,7 +123,7 @@ export function Player({
 	const boxed = shaped?.() === true;
 	const recording = recorder?.view().kind === "recording";
 	const viewport = useViewport();
-	const room = playRoom(viewport);
+	const room = playRoom(viewport, worn);
 	// a frame played at a clip's shape has a box of its own, with no size to choose
 	const size = boxed ? undefined : controller.size;
 	const scale = size === undefined ? 1 : fittedScale({ w, h }, room);
@@ -205,10 +211,11 @@ export function Player({
 		</div>
 	);
 
-	const pulled = size !== undefined && !narrow;
+	const pulled = worn && size !== undefined && !narrow;
+	const page = worn ? "spool-page has-bar" : "spool-page";
 	return (
 		<div
-			className={sizing.pulling && pulled ? "spool-page has-bar is-pulling" : "spool-page has-bar"}
+			className={sizing.pulling && pulled ? `${page} is-pulling` : page}
 			style={sizing.pulling && pulled ? { cursor: sizing.cursor } : undefined}
 		>
 			{pulled && <SizeDesk sizing={sizing} drawn={drawn} />}
@@ -236,7 +243,7 @@ export function Player({
 					onOpen={controller.dismissExternal}
 				/>
 			)}
-			{bar}
+			{worn && bar}
 		</div>
 	);
 }

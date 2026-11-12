@@ -51,8 +51,10 @@ export interface PlayerShellConfig {
 	start: string;
 	/** The authored box of every screen, as known at boot. */
 	frames: Record<string, FrameGeometry>;
-	/** The played document: the runtime that mounts the frames and speaks the port. */
-	innerUrl: string;
+	/** The played document, the runtime that mounts the frames and speaks the port, by its address… */
+	innerUrl?: string;
+	/** …or as its own text, played from the page that holds it (an exported file, spool#304). */
+	innerDocument?: string;
 }
 
 interface PlayerState {
@@ -84,6 +86,13 @@ export interface PlayerShellHost {
 	record?: PlayerShellRecording;
 	/** The Mac app's play window, when the shell is its page: the bar is then its title bar. */
 	desk?: DeskWindow;
+	/**
+	 * No bar and no edges to pull: the frame fills the window at the window's size, as an exported file plays on a
+	 * touch screen (spool#304). Absent, the bar is worn.
+	 */
+	bare?: true;
+	/** Links in the frame may open a tab of their own, outside the sandbox. Absent, the played document opens none. */
+	popups?: true;
 }
 
 /**
@@ -255,7 +264,7 @@ export function createPlayerShell(
 	 * last picked, until another size is chosen. A row's own size is read from
 	 * the row, so a pick carries none.
 	 */
-	let held: Held = { id: readStart(), size: { w: 0, h: 0 } };
+	let held: Held = { id: host.bare === true ? "window" : readStart(), size: { w: 0, h: 0 } };
 	/** The box the frame on show is laid out at while the chrome moves it, or null resting at `held`. */
 	let laying: FrameGeometry | null = null;
 	/**
@@ -398,9 +407,11 @@ export function createPlayerShell(
 	 * authored one, and why being 30px out here wedges the reveal shut.
 	 */
 	const playedBox = (name: string, geometry: FrameGeometry): FrameGeometry => {
-		const room = playRoom({ vw: window.innerWidth, vh: window.innerHeight });
+		const room = playRoom({ vw: window.innerWidth, vh: window.innerHeight }, host.bare !== true);
 		// a frame played at a clip's shape lays itself out in that shape (spool#221)
 		if (shapedAs !== null) return shapedBox(shapedAs, room, geometry);
+		// with no bar there is no size to choose: the frame is the window
+		if (host.bare === true) return room;
 		if (laying !== null && name === snapshot.frame) return laying;
 		return heldBox(held, geometry, room);
 	};
@@ -1141,8 +1152,10 @@ export function mountPlayerShell(root: HTMLElement, config: PlayerShellConfig, h
 					id={PLAYED_FRAME_ID}
 					title={config.project}
 					allow="clipboard-write"
-					sandbox="allow-scripts"
-					src={config.innerUrl}
+					sandbox={
+						host.popups === true ? "allow-scripts allow-popups allow-popups-to-escape-sandbox" : "allow-scripts"
+					}
+					{...(config.innerDocument === undefined ? { src: config.innerUrl } : { srcDoc: config.innerDocument })}
 					onLoad={shell.loaded}
 					// Hidden by opacity, never visibility: headed Chromium render-throttles
 					// a visibility-hidden cross-origin iframe, which starves the runtime's
@@ -1165,6 +1178,7 @@ export function mountPlayerShell(root: HTMLElement, config: PlayerShellConfig, h
 			host: createElement(Host),
 			...(shell.recorder === undefined ? {} : { recorder: shell.recorder, shaped: shell.shaped }),
 			...(host.desk === undefined ? {} : { desk: host.desk }),
+			...(host.bare === true ? { bar: false } : {}),
 		});
 	}
 	createRoot(root).render(createElement(Page));
