@@ -146,7 +146,7 @@ function lineOf(outcome: RehearseOutcome, finding: Finding): string {
 		case "cut": {
 			const path =
 				finding.words.source === undefined ? pathOf(outcome, finding.place) : `design/${finding.words.source}`;
-			return `${path}: ${where(outcome, finding.place)}: words cut by the slide's ${finding.edge} edge, ${finding.past} px past it: "${finding.words.text}"; fit them in its ${outcome.size.w} by ${outcome.size.h}`;
+			return `${path}: ${where(outcome, finding.place)}: words cut by the slide's ${finding.edge} edge, ${finding.past} px past it: "${finding.words.text}"; fit them in its ${finding.size.w} by ${finding.size.h}`;
 		}
 		case "layout": {
 			const [first] = finding.causes;

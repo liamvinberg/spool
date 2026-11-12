@@ -73,6 +73,8 @@ export interface LateFile {
 /** The slide on screen once a step came to rest, as the stage document read it. */
 export interface RestLook {
 	readonly frame: string;
+	/** the slide's own box, in its px: a slide may be another size than the talk */
+	readonly size: { readonly w: number; readonly h: number };
 	readonly words: readonly WordsAtEdge[];
 	readonly layout: readonly LaidOut[];
 	readonly names: readonly NamedElement[];

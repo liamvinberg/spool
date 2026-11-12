@@ -116,6 +116,7 @@ describe("unjudgeable", () => {
 describe("findingsOf", () => {
 	const look = (frame: string, more: Partial<RestLook> = {}): RestLook => ({
 		frame,
+		size: SIZE,
 		words: [],
 		layout: [],
 		names: [],
@@ -264,6 +265,14 @@ describe("findingsOf", () => {
 		expect(found.map((finding) => (finding.kind === "move-failed" ? [finding.from, finding.back] : []))).toEqual([
 			[0, undefined],
 			[1, true],
+		]);
+	});
+
+	it("measures words at the edge against the slide's own size, which may not be the talk's", () => {
+		const past = words([{ left: 500, top: 100, right: 700, bottom: 140 }]);
+		const small = beat(1, 0, "talk/two", { size: { w: 640, h: 360 }, words: [past] });
+		expect(findingsOf(talk({ beats: [small] }))).toEqual([
+			expect.objectContaining({ kind: "cut", place: { slide: 1, beat: 0 }, edge: "right", past: 60 }),
 		]);
 	});
 

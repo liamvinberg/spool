@@ -83,6 +83,8 @@ export type Finding =
 	| {
 			readonly kind: "cut";
 			readonly place: Place;
+			/** the slide's own size, which the words run past */
+			readonly size: { readonly w: number; readonly h: number };
 			readonly words: WordsAtEdge;
 			readonly edge: Edge;
 			readonly past: number;
@@ -336,11 +338,11 @@ function lookedAt(rehearsal: Rehearsal): Finding[] {
 			found.push({ kind: "late", place, file });
 		}
 		for (const words of beat.look.words) {
-			const past = cutOf(words, rehearsal.size);
+			const past = cutOf(words, beat.look.size);
 			const key = `${beat.at.slide}:${words.source ?? words.text}`;
 			if (past === undefined || cut.has(key)) continue;
 			cut.add(key);
-			found.push({ kind: "cut", place, words, ...past });
+			found.push({ kind: "cut", place, size: beat.look.size, words, ...past });
 		}
 		// a live slide's prototype lays itself out as it is used: a beat may well move it
 		if (before !== undefined && before.at.slide === beat.at.slide && rehearsal.slides[beat.at.slide]?.live !== true) {

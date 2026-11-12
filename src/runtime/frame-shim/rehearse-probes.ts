@@ -388,6 +388,7 @@ function look(shownAt: number): RestLook | null {
 	const moving = movingIn(box);
 	return {
 		frame,
+		size: { w, h },
 		words: wordsAtEdge(box, { w, h }, local, style, moving),
 		layout: laidOut(tap, box, moving),
 		names: named(box, style),

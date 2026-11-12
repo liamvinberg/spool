@@ -272,7 +272,9 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 		const frame = talk.slides[at.slide]?.frame ?? "";
 		// a slide that broke leaves the room on another's picture, which is none of this slide's to answer for
 		const own =
-			look !== null && look.frame === frame ? look : { frame, words: [], layout: [], names: [], webgl: 0, late: [] };
+			look !== null && look.frame === frame
+				? look
+				: { frame, size: talk.size, words: [], layout: [], names: [], webgl: 0, late: [] };
 		beats.push({ at, look: own, shownAt, loop: (after - before) / seconds > LOOP_PER_SECOND, still });
 	};
 
