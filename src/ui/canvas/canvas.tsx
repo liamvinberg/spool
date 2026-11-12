@@ -107,6 +107,7 @@ import { BrokenFrame, brokenAsk } from "./broken-frame";
 import {
 	type Box,
 	boundsOf,
+	cameraPath,
 	centerOn,
 	entryCamera,
 	fitBand,
@@ -1716,7 +1717,11 @@ function CanvasField({
 		const viewport = viewportRef.current;
 		const boxes = fieldBoxes();
 		if (viewport === null || boxes.length === 0) return;
-		camera.fly(pageFit(boxes, viewport.clientWidth, viewport.clientHeight));
+		const from = camera.get();
+		const to = pageFit(boxes, viewport.clientWidth, viewport.clientHeight);
+		// from far off, the fit zooms out on the way, so the frames are seen coming rather than streaking in
+		if (from === null) camera.fly(to);
+		else camera.flyAlong(cameraPath(from, to, viewport.clientWidth, viewport.clientHeight));
 	}, [fieldBoxes, camera, pageFit]);
 
 	const resetZoom = useCallback(() => {

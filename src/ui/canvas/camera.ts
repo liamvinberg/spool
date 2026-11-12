@@ -222,6 +222,71 @@ export function visibleWorldRect(camera: Camera, vw: number, vh: number, marginF
 	};
 }
 
+/** Not one of the boxes is on screen: the camera has been panned off everything on the page. */
+export function noneOnScreen(camera: Camera, boxes: readonly Box[], vw: number, vh: number): boolean {
+	const view = visibleWorldRect(camera, vw, vh, 0);
+	return boxes.length > 0 && !boxes.some((box) => intersects(box, view));
+}
+
+/**
+ * A flight that zooms out on the way and back in at the end, so a far target
+ * is seen coming instead of streaking across the screen.
+ */
+export interface CameraPath {
+	/** Where the camera stands at `t` of the way, 0 to 1. */
+	at(t: number): Camera;
+	to: Camera;
+	/** How long the path is in zoom-and-pan units: a pure zoom by e is one. */
+	length: number;
+}
+
+/** How much a path zooms out to cover distance: van Wijk and Nuij's ρ, d3's default. */
+const RHO = Math.SQRT2;
+
+/**
+ * van Wijk and Nuij's optimal path ("Smooth and efficient zooming and
+ * panning", 2003; d3's interpolateZoom), between two cameras on a vw×vh
+ * screen. It runs on the view's world centre and world width, so every step is
+ * a zoom and a pan of the same picture, and the length is what a flight's time
+ * can follow.
+ */
+export function cameraPath(from: Camera, to: Camera, vw: number, vh: number): CameraPath {
+	const view = (c: Camera) => ({ x: (vw / 2 - c.x) / c.k, y: (vh / 2 - c.y) / c.k, w: vw / c.k });
+	const camera = (x: number, y: number, w: number): Camera => {
+		const k = vw / w;
+		return { k, x: vw / 2 - x * k, y: vh / 2 - y * k };
+	};
+	const a = view(from);
+	const b = view(to);
+	const dx = b.x - a.x;
+	const dy = b.y - a.y;
+	const d = Math.hypot(dx, dy);
+	if (d * from.k < 1e-6 || vw <= 0) {
+		const length = Math.abs(Math.log(b.w / a.w)) / RHO;
+		return {
+			to,
+			length,
+			at: (t) => (t >= 1 ? to : camera(a.x + dx * t, a.y + dy * t, a.w * (b.w / a.w) ** t)),
+		};
+	}
+	const rho2 = RHO * RHO;
+	const b0 = (b.w * b.w - a.w * a.w + rho2 * rho2 * d * d) / (2 * a.w * rho2 * d);
+	const b1 = (b.w * b.w - a.w * a.w - rho2 * rho2 * d * d) / (2 * b.w * rho2 * d);
+	const r0 = Math.log(Math.sqrt(b0 * b0 + 1) - b0);
+	const r1 = Math.log(Math.sqrt(b1 * b1 + 1) - b1);
+	const length = (r1 - r0) / RHO;
+	return {
+		to,
+		length,
+		at(t) {
+			if (t >= 1) return to;
+			const s = t * length;
+			const u = (a.w / (rho2 * d)) * (Math.cosh(r0) * Math.tanh(RHO * s + r0) - Math.sinh(r0));
+			return camera(a.x + u * dx, a.y + u * dy, (a.w * Math.cosh(r0)) / Math.cosh(RHO * s + r0));
+		},
+	};
+}
+
 /**
  * A frame shell's corner radius, in the frame's own units: twelve screen pixels close
  * up, and never more than 24 of the frame's, so an overview of many reads as
