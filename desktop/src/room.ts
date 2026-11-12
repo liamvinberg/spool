@@ -54,6 +54,8 @@ interface Room {
 	unplugged: string | undefined;
 	/** spool's window given back to a tiling window manager, once X carried it for this talk */
 	giveBack: (() => void) | undefined;
+	/** its latest placing, done: it shows only once that one is */
+	placed: Promise<void>;
 }
 
 const ROOM_WINDOWED = "spool:room-windowed";
@@ -112,15 +114,29 @@ export function installRooms(host: RoomsHost): Rooms {
 		if (window.isDestroyed()) return;
 		const bounds =
 			"display" in to ? to.display.bounds : { x: to.rect.x, y: to.rect.y, width: to.rect.w, height: to.rect.h };
-		// a tiling window manager moves it first, and it is clear till it is where it goes
-		const hide = host.manager.telling() && !drawing.has(window.webContents);
-		if (hide) window.setOpacity(0);
+		// a tiling window manager moves it first, and it is clear till it is where it goes; a room still clear for its
+		// slide waits for the latest placing before it shows
+		if (host.manager.telling() && !drawing.has(window.webContents)) window.setOpacity(0);
 		standOver(window, "display" in to);
 		const { settled } = host.manager.lift(window, bounds);
-		if (hide)
-			void settled.then(() => {
-				if (!window.isDestroyed() && rooms.get(room.talk) === room) window.setOpacity(1);
-			});
+		room.placed = settled;
+		void settled.then(() => {
+			if (window.isDestroyed() || rooms.get(room.talk) !== room || room.placed !== settled) return;
+			if (!drawing.has(window.webContents)) window.setOpacity(1);
+		});
+	};
+	/** Once the room's latest placing is done, however many came while it waited. */
+	const placedAtLast = async (room: Room) => {
+		for (let placing = room.placed; ; placing = room.placed) {
+			await placing;
+			if (room.placed === placing) return;
+		}
+	};
+	/** spool's window given back to the manager, once, however the talk ended. */
+	const giveBack = (room: Room) => {
+		const release = room.giveBack;
+		room.giveBack = undefined;
+		release?.();
 	};
 
 	/** the rooms clear till their slide is drawn, by their page */
@@ -137,8 +153,7 @@ export function installRooms(host: RoomsHost): Rooms {
 	 */
 	const shut = (room: Room) => {
 		if (rooms.get(room.talk) === room) rooms.delete(room.talk);
-		room.giveBack?.();
-		room.giveBack = undefined;
+		giveBack(room);
 		const window = room.window;
 		if (window.isDestroyed()) return;
 		drawing.delete(window.webContents);
@@ -187,6 +202,7 @@ export function installRooms(host: RoomsHost): Rooms {
 			screen: where.kind === "screen" ? where.display.id : undefined,
 			unplugged: undefined,
 			giveBack: undefined,
+			placed: Promise.resolve(),
 		};
 		if (where.kind === "screen") cover(window, where.display.bounds);
 		rooms.set(talk, room);
@@ -195,6 +211,7 @@ export function installRooms(host: RoomsHost): Rooms {
 		window.on("closed", () => {
 			if (rooms.get(talk) === room) rooms.delete(talk);
 			drawing.delete(page);
+			giveBack(room);
 		});
 		// clear until its slide is drawn, so it opens on the slide and never on the black it loads in (spool#306); a
 		// room that never says so still shows: late, not lost. Shown clear from the start, not hidden till then: a window
@@ -205,7 +222,7 @@ export function installRooms(host: RoomsHost): Rooms {
 		window.showInactive();
 		// a tiling window manager takes the room as it shows, clear, and may move it to another display: it is put
 		// back before it is seen
-		const placed = host.manager.lift(window, { x: rect.x, y: rect.y, width: rect.w, height: rect.h }).settled;
+		room.placed = host.manager.lift(window, { x: rect.x, y: rect.y, width: rect.w, height: rect.h }).settled;
 		const showing = setTimeout(() => show(), ROOM_DRAWN_MS);
 		const show = () => {
 			clearTimeout(showing);
@@ -216,7 +233,7 @@ export function installRooms(host: RoomsHost): Rooms {
 			window.setOpacity(1);
 			window.setIgnoreMouseEvents(false);
 		};
-		const reveal = () => void placed.then(show);
+		const reveal = () => void placedAtLast(room).then(show);
 		drawing.set(page, reveal);
 		host.log("room", talk.slice(0, 6), where.kind === "screen" ? `screen ${where.display.label}` : "window");
 		report(room);
@@ -262,10 +279,11 @@ export function installRooms(host: RoomsHost): Rooms {
 		const from = all.find((display) => display.id === here);
 		const to = plan.canvas;
 		if (to !== undefined && from !== undefined)
-			void carry(canvas, from, to, host.manager).then((giveBack) => {
-				if (giveBack === undefined) return;
-				room.giveBack?.();
-				room.giveBack = giveBack;
+			void carry(canvas, from, to, host.manager).then((release) => {
+				// every carry of one talk shares the hold of the first: the manager has the window back once, at the end
+				if (release === undefined) return;
+				if (rooms.get(talk) === room) room.giveBack ??= release;
+				else release();
 			});
 	});
 

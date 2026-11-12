@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { aerospace, aerospaceCandidates, monitorNumber, moved, windowNumber } from "./window-manager";
+import { aerospace, aerospaceCandidates, holds, monitorNumber, moved, windowNumber } from "./window-manager";
 
 const LAPTOP = { x: 0, y: 0, width: 1512, height: 982 };
 const RIGHT = { x: 1512, y: 0, width: 1920, height: 1080 };
@@ -84,4 +84,42 @@ test("a window AeroSpace has not seen yet is asked about again, and given up on 
 	const never = fakeAerospace({});
 	assert.equal(await never.told.lift(7, 1), undefined);
 	assert.ok(!never.said.some((line) => line.startsWith("move-node")));
+});
+
+/** Every command still running, done. */
+const settle = () => new Promise<void>((done) => setTimeout(done, 0));
+
+test("a window held for a talk is given back tiled once, whichever of its lifts lets go, and not after a newer talk took it", async () => {
+	const { said, told, windows } = fakeAerospace({ 7: "tiling" });
+	const held = holds(told);
+	// the presenter view carried by X and carried back: one hold, the second only a move
+	const first = held.lift(7, 2);
+	const second = held.lift(7, 1);
+	assert.equal(await second.seen, true);
+	first.release();
+	second.release();
+	await settle();
+	assert.equal(windows[7], "tiling");
+	assert.equal(said.filter((line) => line.startsWith("layout tiling")).length, 1);
+	assert.equal(said.filter((line) => line.startsWith("layout floating")).length, 1);
+
+	// a talk ended before AeroSpace answered its start, and the next begun: the first's release runs between the two
+	said.length = 0;
+	const ended = held.lift(7, 2);
+	ended.release();
+	const next = held.lift(7, 2);
+	await next.seen;
+	ended.release();
+	await settle();
+	assert.equal(windows[7], "floating");
+	assert.deepEqual(said, [
+		"layout floating --fail-if-noop --window-id 7",
+		"move-node-to-monitor --window-id 7 2",
+		"layout tiling --window-id 7",
+		"layout floating --fail-if-noop --window-id 7",
+		"move-node-to-monitor --window-id 7 2",
+	]);
+	next.release();
+	await settle();
+	assert.equal(windows[7], "tiling");
 });

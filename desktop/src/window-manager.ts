@@ -142,6 +142,61 @@ export function aerospace(
 }
 
 /** AeroSpace's command line, run with a time limit; false for anything but a clean exit. */
+export interface Holds {
+	/**
+	 * `window` taken from the manager's tiling and moved to `monitor`: `seen` once the manager has answered, false when
+	 * it never knew the window. A window held already is only moved, and any of its lifts' releases gives it back to
+	 * the manager as it was, once: tiled only if it was tiled.
+	 */
+	lift(window: number, monitor: number | undefined): { seen: Promise<boolean>; release(): void };
+	/** Moved again, in turn with the rest of the window's commands. */
+	move(window: number, monitor: number): Promise<void>;
+	/** A window that closed, forgotten. */
+	forget(window: number): void;
+}
+
+/** The windows of a talk held from `manager`, each window's commands in turn: a release told before its lift is answered runs after it. */
+export function holds(manager: Aerospace): Holds {
+	const held = new Map<number, { tiled: Promise<boolean | undefined> }>();
+	const queues = new Map<number, Promise<unknown>>();
+	const queued = <T>(window: number, job: () => Promise<T>): Promise<T> => {
+		const next = (queues.get(window) ?? Promise.resolve()).then(job, job);
+		queues.set(window, next);
+		return next;
+	};
+	const move = async (window: number, monitor: number) => {
+		await queued(window, () => manager.move(window, monitor));
+	};
+	return {
+		lift(window, monitor) {
+			let hold = held.get(window);
+			let seen: Promise<boolean>;
+			if (hold === undefined) {
+				const tiled = queued(window, () => manager.lift(window, monitor)).then((result) => result?.tiled);
+				hold = { tiled };
+				held.set(window, hold);
+				seen = tiled.then((result) => result !== undefined);
+			} else seen = monitor === undefined ? Promise.resolve(true) : move(window, monitor).then(() => true);
+			const mine = hold;
+			return {
+				seen,
+				release() {
+					if (held.get(window) !== mine) return;
+					held.delete(window);
+					void queued(window, async () => {
+						if ((await mine.tiled) === true) await manager.tile(window);
+					});
+				},
+			};
+		},
+		move,
+		forget(window) {
+			held.delete(window);
+			queues.delete(window);
+		},
+	};
+}
+
 function runner(cli: string): Run {
 	return (args) =>
 		new Promise((done) => {
@@ -164,8 +219,20 @@ export function installWindowManager(log: (...words: string[]) => void): WindowM
 	};
 	/** each window's latest placing, so the looks of an older one stop */
 	const turns = new WeakMap<BrowserWindow, number>();
-	/** the windows floating in AeroSpace, lifted here and not yet released: lifted again, they are only moved */
-	const floating = new Set<number>();
+	/** the talks' windows held from AeroSpace, once its command line is found */
+	let held: Holds | undefined;
+	const holding = (): Holds | undefined => {
+		const manager = told();
+		if (manager === undefined) return undefined;
+		held ??= holds(manager);
+		return held;
+	};
+	const forgotten = new WeakSet<BrowserWindow>();
+	const forgetOnClose = (window: BrowserWindow, number: number) => {
+		if (forgotten.has(window)) return;
+		forgotten.add(window);
+		window.once("closed", () => held?.forget(number));
+	};
 	const monitorOf = (want: Rectangle) =>
 		monitorNumber(
 			screen.getAllDisplays().map((display) => display.bounds),
@@ -181,7 +248,7 @@ export function installWindowManager(log: (...words: string[]) => void): WindowM
 			// whichever placing it was given by, the window is the caller's again: every look stops
 			const stop = () => turns.set(window, (turns.get(window) ?? 0) + 1);
 			const number = windowNumber(window.getMediaSourceId());
-			const manager = number === undefined ? undefined : told();
+			const manager = number === undefined ? undefined : holding();
 			/** put back at `want` if something moved it, at most twice, the manager told again first */
 			let left = 2;
 			const look = async () => {
@@ -205,27 +272,19 @@ export function installWindowManager(log: (...words: string[]) => void): WindowM
 				looks();
 				return { settled: Promise.resolve(), release: stop };
 			}
-			const monitor = monitorOf(want);
-			const again = async () => {
-				if (monitor !== undefined) await manager.move(number, monitor);
-				return { tiled: false };
-			};
-			const lifting = (floating.has(number) ? again() : manager.lift(number, monitor)).then((result) => {
-				if (result === undefined) log("window manager", "aerospace", "never saw the window");
-				else floating.add(number);
+			forgetOnClose(window, number);
+			const { seen, release } = manager.lift(number, monitorOf(want));
+			const lifting = seen.then((known) => {
+				if (!known) log("window manager", "aerospace", "never saw the window");
 				// moved there by the manager, as near as it puts a floating window: the rest is this app's
 				put();
 				looks();
-				return result;
 			});
 			return {
-				settled: lifting.then(() => {}),
+				settled: lifting,
 				release() {
 					stop();
-					void lifting.then((result) => {
-						floating.delete(number);
-						if (result?.tiled === true) return manager.tile(number);
-					});
+					release();
 				},
 			};
 		},
