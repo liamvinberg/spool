@@ -4,7 +4,7 @@
 - Labels: wayfinder:map
 - Tasks: task 557 (Spool presentations and extension core)
 - Created: 2026-11-10T08:20:58.024Z
-- Updated: 2026-11-10T18:15:36.385Z
+- Updated: 2026-11-11T10:15:14.867Z
 
 ## Destination
 
@@ -36,6 +36,10 @@ Specs ready to hand to builders for a rebuilt spool: a small **core** with an **
 **Sources.** Ticket #129 (the earlier presentations ticket, with code facts in its comments), #216 (image storage). The first comment on this map holds a code map from 2026-11-09.
 
 ## Decisions so far
+
+- The core spec is written (2026-11-11): [spool as a core with extensions, and the new window](https://devobee.tail9e5223.ts.net/spool/tickets/284), with tickets #285 to #294. It builds the SDK and the hosts on all four sides, a new window behind the experiment `new-window`, and moves Pages, Properties, knobs, flows and the deck. Not started: it waits for Liam's go.
+
+- Decks shipped in spool 0.55.0 (2026-11-11) behind the experiment `deck`: spec #265 with #266 to #273 and #275, fixes #277, #278, #281. Proven in the Mac app on the m1, two displays included. Stage 1 of the build order is done; the core spec (#274) is next.
 
 - [The open-ended window and the extensions screen](https://devobee.tail9e5223.ts.net/spool/tickets/258): a plain Extensions page in Settings (switches grouped by what you make, Add extension… copies a folder or .zip into `~/.spool/extensions`, export your own, linking CLI only, no search yet); onboarding's answers are tiles holding their extensions; the notice is a line over the page; each extension keeps a fixed icon in its side's head. Frames under To build in `design/frames/app/`.
 

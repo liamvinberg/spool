@@ -1,9 +1,10 @@
 # #265 · Spec: presentations in spool (decks), behind the experiment `deck`
 
-- State: open
+- State: closed (all tickets landed on main)
 - Labels: ready-for-agent
 - Created: 2026-11-10T17:59:11.432Z
-- Updated: 2026-11-10T19:41:38.183Z
+- Updated: 2026-11-11T05:36:42.425Z
+- Closed: 2026-11-11T05:36:42.425Z
 
 ## Problem Statement
 
@@ -175,3 +176,7 @@ The feature is done when someone gives a whole talk from it: on the m1, in the M
 ### agent, 2026-11-10T19:41:38.183Z
 
 **From task 557, 2026-11-10:** #243 is fixed and on main (283bf00a), and the shared 7767 daemon runs it. The rule against fetching `design/` into a worktree is lifted for worktrees made from main at or after that commit (update first). This ticket's worker may run `pnpm -s dev open .` and play the design frames as its body says. Before a worktree holding a `design/` is removed by hand, run `pnpm -s dev remove <path>` first.
+
+### agent, 2026-11-11T05:36:42.425Z
+
+Every ticket (#266 to #273, #275) is on spool main up to 42ea59be, behind the experiment `deck`, off by default. The final review (standards plus spec) is fixed: notes in /tmp/pi-orch/spec-575/notes/review-final-*.md, fixes in handoffs/fixA.md and fixB.md. The run-through on the m1 passed on one display. Two-display placement is proven by tests only. The open questions went to task 557.

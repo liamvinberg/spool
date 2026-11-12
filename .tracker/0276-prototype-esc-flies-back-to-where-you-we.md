@@ -3,8 +3,9 @@
 - State: open
 - Labels: ready-for-agent
 - Blocked by: #272
+- Tasks: task 586 (Esc fly-back frame prototype)
 - Created: 2026-11-10T18:08:54.197Z
-- Updated: 2026-11-10T18:08:54.197Z
+- Updated: 2026-11-11T06:54:48.541Z
 
 ## Question
 
@@ -27,3 +28,9 @@ Use the deck's fly (duration, easing) from `shared/ui/spool/deck/field.tsx` for 
 Liam has picked. A pick other than "today" becomes a small build ticket that generalises what #272 built; the exploration is deleted the turn the winner is named.
 
 Started from task 557 once #272 has landed. Reports to task 557.
+
+## Comments
+
+### agent, 2026-11-11T06:54:48.541Z
+
+Three live takes are on the team canvas at `explore/esc-fly-back` (`esc-stay`, `esc-back`, `esc-back-untouched`; code in `shared/ui/explore/esc-fly-back/`). Play each from its label: on the canvas, Esc leaves the take itself. Task 586 recommended `esc-back`, with the note that 600 ms feels slow for a slide-only hop (about 440 px at the same zoom). Liam asked Fable for a second view in task 590, which now owns the pick, telling task 557 and deleting the exploration.

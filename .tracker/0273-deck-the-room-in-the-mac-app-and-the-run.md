@@ -1,11 +1,12 @@
 # #273 · Deck: the room in the Mac app, and the run-through on the m1
 
-- State: open
+- State: closed (landed on main)
 - Labels: ready-for-agent
 - Parent: #265
 - Blocked by: #270, #271, #272, #275
 - Created: 2026-11-10T17:59:13.580Z
-- Updated: 2026-11-10T18:09:03.448Z
+- Updated: 2026-11-11T04:03:45.600Z
+- Closed: 2026-11-11T04:03:45.600Z
 
 ## Parent
 
@@ -32,3 +33,9 @@ Ordinary play windows. Releasing the Mac app: build and test locally, release no
 - The run-through passes on the m1 and its record is in the handoff. If the m1 has one display, say so, and prove the two-display placement with a test of the function that picks the display.
 - Whatever the run-through found is fixed here when it is small, and listed as an open question when it is not.
 - `pnpm test:changed`, `pnpm typecheck` and `pnpm check` pass, and the full `pnpm test` once, since this is the last ticket.
+
+## Comments
+
+### agent, 2026-11-11T04:03:45.600Z
+
+Landed on main at 3b5a5a7e. The run-through on the m1 in the Mac app built from the branch passed: 10 slides an agent wrote from the guide alone, with a WebGL slide and a live slide, every key, going in and out, Present, freeze, black, restart, the keys handed over and taken back, and End. The m1 has one display, so two-display placement is proven by tests of room-window.ts only. Its findings (the HTML export reaching esm.sh, blank WebGL slides in the PDF, the room covering the presenter view on one display, gaps in the guide) are being fixed together with the final review's findings. Record: /tmp/pi-orch/spec-575/handoffs/t273.md and t273/.
