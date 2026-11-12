@@ -233,6 +233,8 @@ export function bootStage(runtime: StageRuntime): void {
 	let alone = false;
 	/** the slides fill the host's screen, which is the room's: F is nobody's key */
 	let filling = false;
+	/** a preview: the slide on screen draws once as it goes on or changes, and rests */
+	let still = false;
 	let opened = !embedded;
 	/** the WebGL contexts this document may hold: its share of what the browser keeps alive in its process */
 	let webglShare = WEBGL_SHARE;
@@ -715,6 +717,7 @@ export function bootStage(runtime: StageRuntime): void {
 		const was = pending;
 		if (was === undefined || was.at.slide !== at.slide || was.at.beat !== at.beat) return;
 		pending = undefined;
+		if (still && copy !== undefined && copy.key === shown) drawOnce(copy);
 		const waited = Math.round(performance.now() - was.arrived);
 		unsaid++;
 		const say = (message: StageMessage) => {
@@ -737,6 +740,21 @@ export function bootStage(runtime: StageRuntime): void {
 			};
 			if (first) requestAnimationFrame(() => say(message));
 			else say(message);
+		});
+	}
+
+	/** A still stage's slide on screen draws as it stands now, its entrances played, and then rests again. */
+	function drawOnce(copy: Copy): void {
+		const box = copy.box;
+		if (box === undefined) return;
+		restWebgl(box, false);
+		requestAnimationFrame(() => {
+			atRest(box);
+			requestAnimationFrame(() => {
+				if (copy.key !== shown || copies.get(copy.key) !== copy) return;
+				restWebgl(box, true);
+				for (const media of box.querySelectorAll<HTMLMediaElement>("video, audio")) holdMedia(box, media);
+			});
 		});
 	}
 
@@ -793,7 +811,7 @@ export function bootStage(runtime: StageRuntime): void {
 	 */
 	function swap(copy: Copy, at: At): void {
 		const from = shown;
-		const instant = cut;
+		const instant = cut || still;
 		cut = false;
 		const slide = slides[copy.index];
 		const before = runtime.state.read();
@@ -929,6 +947,7 @@ export function bootStage(runtime: StageRuntime): void {
 			room = message.room;
 			alone = message.alone === true;
 			filling = message.filling === true;
+			still = message.still === true;
 			if (message.webgl !== undefined) webglShare = message.webgl;
 			opened = true;
 			let next = message.session;

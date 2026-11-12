@@ -120,6 +120,11 @@ export type HostMessage =
 			 */
 			readonly rest?: true;
 			/**
+			 * a preview, the presenter's next pane: each slide it shows goes on at once, its entrances played, draws one
+			 * frame and then rests, drawing nothing more until it changes (spool#320)
+			 */
+			readonly still?: true;
+			/**
 			 * the WebGL contexts the stage may hold, the slide on screen's among them: its share of what the browser keeps
 			 * alive in the process it shares with other documents. A slide whose contexts would not fit is not put on ahead.
 			 */
@@ -250,6 +255,7 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 			...(value.alone === true ? { alone: true } : {}),
 			...(value.filling === true ? { filling: true } : {}),
 			...(value.rest === true ? { rest: true } : {}),
+			...(value.still === true ? { still: true } : {}),
 			...(isCount(value.webgl) ? { webgl: value.webgl } : {}),
 			...(session === undefined ? {} : { session }),
 			...(typeof value.frame === "string" ? { frame: value.frame } : {}),
