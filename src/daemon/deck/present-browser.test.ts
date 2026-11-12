@@ -38,14 +38,17 @@ async function tapStages(context: BrowserContext): Promise<void> {
 				if ((event.data as { spool?: unknown } | null)?.spool !== "stage-connect") return;
 				const said: unknown[] = [];
 				heard.push(said);
-				event.ports[0]?.addEventListener("message", (message) => said.push(message.data));
+				// when, by the clock every window shares
+				event.ports[0]?.addEventListener("message", (message) => said.push({ ...message.data, when: Date.now() }));
 			},
 			true,
 		);
 	});
 }
 
-type Said = { spool: "stage-shown"; shown: StageShown } | { spool: "stage-session"; session: StageSession };
+type Said = ({ spool: "stage-shown"; shown: StageShown } | { spool: "stage-session"; session: StageSession }) & {
+	when: number;
+};
 
 const said = (page: Page) =>
 	page.evaluate(() => ((window as unknown as { __stage?: unknown[][] }).__stage ?? []) as Said[][]);
@@ -66,6 +69,19 @@ async function room(page: Page): Promise<StageShown | undefined> {
 }
 
 const same = (a: At | undefined, b: At | undefined) => a !== undefined && b?.slide === a.slide && b.beat === a.beat;
+
+/** When the newest document of each stage last put a picture on its screen: the presenter's slide, the next pane, the room. */
+async function lastShown(view: Page, audience: Page): Promise<{ slide: number; next: number; room: number }> {
+	const shownWhen = (document: Said[] | undefined) =>
+		(document ?? []).flatMap((one) => (one.spool === "stage-shown" ? [one.when] : [])).at(-1) ?? 0;
+	const own = await said(view);
+	const owns = (document: Said[]) => document.some((one) => one.spool === "stage-session");
+	return {
+		slide: shownWhen(own.filter(owns).at(-1)),
+		next: shownWhen(own.filter((document) => !owns(document)).at(-1)),
+		room: shownWhen((await said(audience)).at(-1)),
+	};
+}
 
 /** Both windows on the slide and beat the room should show, and still there a moment later. */
 async function together(view: Page, audience: Page): Promise<At> {
@@ -166,6 +182,21 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	// the walk went through the beats of a slide, and onto the slide that throws on its second
 	expect(seen).toContain("2.1");
 	expect(seen).toContain("7.1");
+
+	// the next pane moves only once the step is on the presenter's slide and the room's screen: nothing it starts lands
+	// on the key
+	await view.keyboard.press("Home");
+	await together(view, audience);
+	for (let step = 0; step < 3; step++) {
+		const before = (await lastShown(view, audience)).next;
+		await view.keyboard.press("ArrowRight");
+		await together(view, audience);
+		await expect
+			.poll(async () => (await lastShown(view, audience)).next, { timeout: 10_000 })
+			.toBeGreaterThan(before);
+		const when = await lastShown(view, audience);
+		expect(when.next).toBeGreaterThanOrEqual(Math.max(when.slide, when.room));
+	}
 
 	// a segment clicked takes the talk there and leaves the keys with the view: the next key draws no ring on it
 	await view.locator('[aria-label^="words, "]').first().click();
