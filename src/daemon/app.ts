@@ -69,6 +69,7 @@ import { frameBeatAsked, slideBeats } from "./deck/disk";
 import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
 import { runRehearsal, talkOf } from "./deck/rehearse-run";
 import { deckRoutes } from "./deck/routes";
+import type { ShotBeat } from "./deck/slide-source";
 import { createStagePlay, ROOM_QUERY } from "./deck/stage-play";
 import { talkFile } from "./deck/talk-file";
 import { DesignBoundaryError, designRelativePath, realDesignDir } from "./design-path";
@@ -417,6 +418,9 @@ const recordRequest = z.strictObject({
  * its time and a daemon that went away are never the same silence.
  */
 const BOOT_BEAT_MS = 5000;
+
+/** How many times a shot is taken of a frame saved again each time it was being shot, before the last is kept. */
+const SHOT_SITTINGS = 3;
 
 const PLAYER_HANDOFF_TTL_MS = 30_000;
 /** Browser handoffs are deliberately short and bounded: issuing the control document is a public GET. */
@@ -1841,7 +1845,7 @@ export function createDaemonApp({
 				const frame = c.req.param("frame");
 				const { width, height, at, scroll, scenario, beat: asked } = c.req.valid("json");
 				// a slide at a beat of its own (spool#277): the deck experiment's, read from the slide's source
-				let slideBeat: number | undefined;
+				let slideBeat: ShotBeat | undefined;
 				if (asked !== undefined) {
 					if (!deckOn()) {
 						return c.text(
@@ -1850,7 +1854,7 @@ export function createDaemonApp({
 						);
 					}
 					const found = frameBeatAsked(project.root, frame, asked);
-					if (typeof found === "object") return c.text(found.message, 400);
+					if (found !== undefined && "message" in found) return c.text(found.message, 400);
 					slideBeat = found;
 				}
 				c.header("content-type", "application/x-ndjson; charset=utf-8");
@@ -1858,12 +1862,12 @@ export function createDaemonApp({
 				return stream(c, async (out) => {
 					const write = (line: BootLine) => out.write(`${JSON.stringify(line)}\n`);
 					const boot = async (): Promise<BootLine> => {
-						const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
+						let doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
 						if (doc.kind === "missing") return { outcome: { kind: "missing", message: doc.message } };
 						if (doc.kind === "error") return { outcome: { kind: "broken", message: doc.message } };
 						const plan = planShot(width, height);
-						try {
-							const shot = await booth.shoot(
+						const sit = (beat: ShotBeat | undefined) =>
+							booth.shoot(
 								{
 									project: name,
 									frame,
@@ -1874,10 +1878,37 @@ export function createDaemonApp({
 									at: at === undefined ? undefined : [...new Set(at)].sort((a, b) => a - b),
 									scroll,
 									scenario,
-									beat: slideBeat,
+									beat: beat?.index,
 								},
 								(line) => void write({ narrate: line }).catch(() => {}),
 							);
+						try {
+							let shot = await sit(slideBeat);
+							// a save that landed while the shot waited or sat (spool#323): the picture is of the source
+							// as it stands when the shot comes back, or the shot is taken again, a few times at most
+							for (let sat = 1; shot.kind === "booted"; sat++) {
+								const now = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
+								if (now.kind === "missing") return { outcome: { kind: "missing", message: now.message } };
+								if (now.kind === "error") return { outcome: { kind: "broken", message: now.message } };
+								doc = now;
+								if (shot.etag === undefined || shot.etag === now.etag) break;
+								if (sat === SHOT_SITTINGS) {
+									const message = `${frame} was saved again each of the ${SHOT_SITTINGS} times it was shot: shoot it once its saves stop`;
+									return { outcome: { kind: "failed", message } };
+								}
+								if (asked !== undefined) {
+									// the beat asked for, by its name or number, in the source as saved now
+									const found = frameBeatAsked(project.root, frame, asked);
+									if (found === undefined)
+										return { outcome: { kind: "missing", message: `no frame "${frame}"` } };
+									if ("message" in found) return { outcome: { kind: "failed", message: found.message } };
+									slideBeat = found;
+								}
+								void write({ narrate: `${frame} was saved while it was shot: shooting it again` }).catch(
+									() => {},
+								);
+								shot = await sit(slideBeat);
+							}
 							if (shot.kind === "unserved") {
 								// the source broke between the compile and the load: its text, verbatim
 								const again = await compiler.getDocument(project.root, frame, frameAuthority(project.root));

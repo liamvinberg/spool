@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import type { ColorScheme } from "../cover";
+import type { ShotBeat } from "./deck/slide-source";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
@@ -70,15 +71,16 @@ export type BootLine = { beat: true } | { narrate: string } | { outcome: BootOut
  * its own file (`checkout@1500.png`), so a series never overwrites itself, and
  * a frame too tall for one image is numbered slices (`checkout.1.png`, …). An
  * offset asked of `--scroll` names its own too (`checkout.scroll1200.png`,
- * `checkout.scroll1200@1500.png`), so the top of the frame is never overwritten. A slide's beat asked of `--beat`, from
- * 1, names its own as well (`title.beat2.png`), so each beat of a reveal can be looked at beside the others.
+ * `checkout.scroll1200@1500.png`), so the top of the frame is never overwritten. A slide's beat asked of `--beat` names
+ * its own as well, by the beat's name (`title.beat-price.png`, `beatLabel`), so each beat of a reveal can be looked at
+ * beside the others.
  */
 export function shotFile(
 	root: string,
 	frame: string,
-	options: { at?: number; scroll?: number; beat?: number; tile?: number } = {},
+	options: { at?: number; scroll?: number; beat?: string; tile?: number } = {},
 ): string {
-	const beat = options.beat === undefined ? "" : `.beat${options.beat}`;
+	const beat = options.beat === undefined ? "" : `.beat-${options.beat}`;
 	const offset = options.scroll === undefined ? "" : `.scroll${options.scroll}`;
 	const time = options.at === undefined ? "" : `@${options.at}`;
 	const tile = options.tile === undefined ? "" : `.${options.tile}`;
@@ -145,8 +147,8 @@ export function recordBoot(
 		tiles: ReadonlyArray<{ y: number; height: number }>;
 		/** The `--scroll` offset the shots were taken at, if one was asked. */
 		scroll?: number;
-		/** The slide's beat, from 0, the shots show, if `--beat` asked for one. */
-		beat?: number;
+		/** The slide's beat the shots show, from 0, and what its files are named after, if `--beat` asked for one. */
+		beat?: ShotBeat;
 		shots: ReadonlyArray<{ at?: number; pngs: readonly Buffer[] }>;
 		entries: readonly LogEntry[];
 	},
@@ -157,9 +159,9 @@ export function recordBoot(
 		for (const [index, png] of shot.pngs.entries()) {
 			const at = shot.at === undefined ? {} : { at: shot.at };
 			const scroll = boot.scroll === undefined ? {} : { scroll: boot.scroll };
-			const beat = boot.beat === undefined ? {} : { beat: boot.beat + 1 };
+			const beat = boot.beat === undefined ? {} : { beat: boot.beat.index + 1 };
 			const file = shotFile(root, frame, {
-				...beat,
+				...(boot.beat === undefined ? {} : { beat: boot.beat.label }),
 				...scroll,
 				...at,
 				...(shot.pngs.length === 1 ? {} : { tile: index + 1 }),
@@ -169,7 +171,7 @@ export function recordBoot(
 			kept.push(file);
 			files.push({ file, y: tile.y, height: tile.height, ...at, ...scroll, ...beat });
 		}
-		sweepShotFiles(root, frame, { at: shot.at, scroll: boot.scroll, beat: boot.beat }, kept);
+		sweepShotFiles(root, frame, { at: shot.at, scroll: boot.scroll, beat: boot.beat?.label }, kept);
 	}
 	sweepEncoded(root, frame);
 	const { etag, scenario, scheme, entries } = boot;
@@ -178,6 +180,25 @@ export function recordBoot(
 		`${JSON.stringify({ etag, scenario, scheme, at: new Date().toISOString(), entries }, null, "\t")}\n`,
 	);
 	return files;
+}
+
+/**
+ * Every file a shot is about to write, gone before it is asked: a shot that then
+ * fails, or never reaches the daemon, leaves no picture of an older source where
+ * the agent will look for this one (spool#323).
+ */
+export function clearShot(
+	root: string,
+	frame: string,
+	variant: { at?: readonly number[] | undefined; scroll?: number | undefined; beat?: string | undefined },
+	/** The folder `--out` copies them to, cleared of them as well. */
+	out?: string,
+): void {
+	for (const at of variant.at ?? [undefined]) {
+		const files = { at, scroll: variant.scroll, beat: variant.beat };
+		sweepShotFiles(root, frame, files, []);
+		if (out !== undefined) sweepShotFiles(root, frame, files, [], out);
+	}
 }
 
 /** Machine-written cache: anything malformed reads as no cache. */
@@ -214,23 +235,25 @@ export function readLogsCache(
 function sweepShotFiles(
 	root: string,
 	frame: string,
-	variant: { at: number | undefined; scroll: number | undefined; beat: number | undefined },
+	variant: { at: number | undefined; scroll: number | undefined; beat: string | undefined },
 	kept: string[],
+	/** Another folder than the frame's own under verify/ the files are in, by the same names. */
+	elsewhere?: string,
 ): void {
 	const plain = shotFile(root, frame, {
 		...(variant.at === undefined ? {} : { at: variant.at }),
 		...(variant.scroll === undefined ? {} : { scroll: variant.scroll }),
-		...(variant.beat === undefined ? {} : { beat: variant.beat + 1 }),
+		...(variant.beat === undefined ? {} : { beat: variant.beat }),
 	});
-	const dir = dirname(plain);
-	const keep = new Set(kept.map((file) => file.slice(dir.length + 1)));
+	const dir = elsewhere ?? dirname(plain);
+	const keep = new Set(kept.map((file) => basename(file)));
 	let names: string[];
 	try {
 		names = readdirSync(dir);
 	} catch {
 		return;
 	}
-	const stem = plain.slice(dir.length + 1, -".png".length);
+	const stem = basename(plain, ".png");
 	for (const name of names) {
 		if (!name.startsWith(`${stem}.`) || keep.has(name)) continue;
 		if (/^(\d+\.)?png$/.test(name.slice(stem.length + 1))) rmSync(join(dir, name), { force: true });

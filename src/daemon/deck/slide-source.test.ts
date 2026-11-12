@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beatAsked, readSlideSource } from "./slide-source";
+import { beatAsked, beatLabel, readSlideSource } from "./slide-source";
 
 const slide = (body: string, imports = 'import { ui } from "spool";') =>
 	`${imports}\nexport default function Slide() {\n${body}\n\treturn <p />;\n}\n`;
@@ -43,12 +43,22 @@ describe("a slide's source, read without running it", () => {
 		]);
 	});
 
+	it("names a beat's shot by the beat where a file name can carry it, and by its number where not, never twice", () => {
+		const read = readSlideSource(slide('\tui.beats(["2", "price total", "close"]);'));
+		expect([0, 1, 2].map((index) => beatLabel(read, index))).toEqual(["1", "2", "close"]);
+	});
+
 	it("finds the beat a shot asks for by its name or its number from 1, and says what there is when it is not one", () => {
 		const read = readSlideSource(slide('\tui.beats(["title", "price", "close"]);'));
 		expect(beatAsked("talk/a", read, "price")).toBe(1);
 		expect(beatAsked("talk/a", read, "3")).toBe(2);
 		expect(beatAsked("talk/a", read, "4")).toEqual({
-			message: 'talk/a has no beat "4": its beats are "title", "price", "close", or 1 to 3',
+			message:
+				'talk/a has no beat "4": its beats are "title", "price", "close", or 1 to 3 counted from 1 (beat.index counts from 0)',
+		});
+		expect(beatAsked("talk/a", read, "0")).toMatchObject({ message: expect.stringContaining("counted from 1") });
+		expect(beatAsked("talk/a", read, "closing")).toEqual({
+			message: 'talk/a has no beat "closing": its beats are "title", "price", "close", or 1 to 3',
 		});
 		// a slide that names none has one beat, its whole self
 		expect(beatAsked("talk/b", readSlideSource(slide("")), "1")).toBe(0);

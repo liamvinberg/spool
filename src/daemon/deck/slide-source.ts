@@ -166,5 +166,22 @@ export function beatAsked(frame: string, source: SlideSource, asked: string): nu
 	if (number >= 1 && number <= Math.max(1, beats.length)) return number - 1;
 	if (beats.length === 0) return { message: `${frame} names no beats with ui.beats: it has one beat, its last` };
 	const list = beats.map((beat) => `"${beat}"`).join(", ");
-	return { message: `${frame} has no beat "${asked}": its beats are ${list}, or 1 to ${beats.length}` };
+	// a number is a person's count, from 1, never beat.index, which counts from 0
+	const counted = Number.isNaN(number) ? "" : " counted from 1 (beat.index counts from 0)";
+	return { message: `${frame} has no beat "${asked}": its beats are ${list}, or 1 to ${beats.length}${counted}` };
+}
+
+/** A beat a shot asks a slide for: its index from 0, and what its files are named after (`beatLabel`). */
+export interface ShotBeat {
+	readonly index: number;
+	readonly label: string;
+}
+
+/**
+ * What a shot of a slide at one of its beats is named after: the beat's own name, where a file name can carry it and
+ * it starts with a letter, else its number from 1. A name never reads as a number, so no two beats share a file.
+ */
+export function beatLabel(source: SlideSource, index: number): string {
+	const name = source.beats[index];
+	return name !== undefined && /^[A-Za-z][\w-]*$/.test(name) ? name : String(index + 1);
 }

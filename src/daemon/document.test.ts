@@ -5,6 +5,7 @@ import {
 	captureWorkerCsp,
 	captureWorkerDocument,
 	errorDocument,
+	hoistCssImports,
 	layeredProjectCss,
 	mergeImportMap,
 } from "./document";
@@ -148,5 +149,17 @@ describe("layeredProjectCss", () => {
 	it("does not read a rule whose selector holds a semicolon as a statement", () => {
 		const wrapped = layeredProjectCss('@media (min-width: 40px) { .byline { content: ";" } }');
 		expect(wrapped.startsWith("@layer project {\n@media")).toBe(true);
+	});
+});
+
+describe("hoistCssImports", () => {
+	it("lifts an import Tailwind put after its rules, where a browser would drop it, to the head", () => {
+		// what `@import "tailwindcss"; @import url(…)` compiles to: the font's import after every layer
+		const css =
+			'@layer theme, base;\n@layer base { a { content: "@import x;" } }\n@import url("https://fonts.example/a.css");\n.b { color: red }\n';
+		expect(hoistCssImports(css)).toEqual({
+			imports: '@import url("https://fonts.example/a.css");\n',
+			rest: '@layer theme, base;\n@layer base { a { content: "@import x;" } }\n\n.b { color: red }\n',
+		});
 	});
 });

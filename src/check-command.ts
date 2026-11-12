@@ -3,6 +3,7 @@ import { dirname, extname, join, relative, resolve } from "node:path";
 import { checkProject } from "./check";
 import { altReaders, describeAltReader } from "./check-alt";
 import { describeSlowFrame, slowFrames } from "./check-pace";
+import { checkStylesheets } from "./check-stylesheets";
 import { checkDecks, type DeckCheck, type Talk, talksOf } from "./daemon/deck/check";
 import { realDesignDir } from "./daemon/design-path";
 import { followedLink, OUTSIDE_LAYOUT, staysOnThisMac, TOO_BIG } from "./daemon/team-sync";
@@ -82,6 +83,10 @@ export async function runCheck(
 	for (const found of decks.errors) stderr.push(`${found.path}:${found.line}:${found.column} deck: ${found.message}`);
 	for (const found of decks.warnings)
 		stderr.push(`${found.path}:${found.line}:${found.column} deck warning: ${found.message}`);
+	// what the stylesheet compile will refuse, which the typecheck never reads (spool#323)
+	const stylesheets = report.ran ? checkStylesheets(designDir, report.frames, report.stylesheetsOf) : [];
+	for (const found of stylesheets)
+		stderr.push(`${found.path}:${found.line}:${found.column} stylesheet: ${found.message}`);
 	stderr.push(...report.notChecked);
 	for (const stray of report.strays) {
 		stderr.push(
@@ -125,7 +130,7 @@ export async function runCheck(
 	}
 	// a note, never a failure: a frame may mean to keep ⌥ for itself
 	if (report.ran) for (const reader of altReaders(root, report.frames)) stderr.push(describeAltReader(reader));
-	const errors = report.diagnostics.length + decks.errors.length;
+	const errors = report.diagnostics.length + decks.errors.length + stylesheets.length;
 	if (!report.ran) return { stderr, stdout: [`not checked: ${count(errors, "error")} stopped it`], ok: false };
 	// what the canvas shows broken, which a typecheck can not see all of (a frame
 	// that throws as it starts) and an agent should hear of in the same answer.

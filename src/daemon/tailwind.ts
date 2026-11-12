@@ -5,7 +5,13 @@ import { type ClassScanner, scanCandidates } from "./class-scanner";
 import { designPathResolver, designRelativePath } from "./design-boundary";
 import type { DesignFiles } from "./design-files";
 import { contentDigest, readDesignBytes } from "./design-reads";
-import { frameTheme, rebaseThemeUrls } from "./themes";
+import {
+	frameTheme,
+	rebaseThemeUrls,
+	stylesheetImportKind,
+	unpinnedStylesheetImport,
+	unsupportedStylesheetImport,
+} from "./themes";
 
 /**
  * Serve-time Tailwind (#15): frames receive finished CSS, compiled with the
@@ -101,17 +107,14 @@ export function designStylesheets(
 
 	function pinned(id: string, name: string): { path: string; base: string; content: string } {
 		const content = name.startsWith("../") ? undefined : tailwind(name);
-		if (content === undefined)
-			throw new Error(`tailwindcss import "${id}" is not a stylesheet of Spool's pinned Tailwind`);
+		if (content === undefined) throw new Error(unpinnedStylesheetImport(id));
 		return { path: `${TAILWIND_BASE}/${name}`, base: TAILWIND_BASE, content };
 	}
 
 	async function loadStylesheet(id: string, base: string): Promise<{ path: string; base: string; content: string }> {
 		if (id === "tailwindcss") return pinned(id, "index.css");
 		if (id.startsWith("tailwindcss/")) return pinned(id, posix.normalize(id.slice("tailwindcss/".length)));
-		if (!id.startsWith("./") && !id.startsWith("../")) {
-			throw new Error(`unsupported import "${id}" — only tailwindcss and relative stylesheets resolve in ${entry}`);
-		}
+		if (stylesheetImportKind(id) === "unsupported") throw new Error(unsupportedStylesheetImport(id, entry));
 		// Spool's pinned Tailwind is the only non-design stylesheet root
 		if (base === TAILWIND_BASE) return pinned(id, posix.normalize(id));
 		const file = resolvePath(resolve(base, id), id);

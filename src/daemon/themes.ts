@@ -16,6 +16,28 @@ export function isThemeStylesheet(css: string): boolean {
 }
 
 /**
+ * What an `@import` in a stylesheet Tailwind compiles (tokens.css, a theme, what
+ * either imports) comes to: one the browser fetches as it stands (a `url()`, a
+ * remote or data address), Spool's pinned Tailwind, a stylesheet beside it, or
+ * one this daemon refuses. `spool check` asks the same (spool#323).
+ */
+export function stylesheetImportKind(id: string): "fetched" | "tailwind" | "relative" | "unsupported" {
+	if (/^(?:data:|https?:\/\/)/.test(id)) return "fetched";
+	if (id === "tailwindcss" || id.startsWith("tailwindcss/")) return "tailwind";
+	return id.startsWith("./") || id.startsWith("../") ? "relative" : "unsupported";
+}
+
+/** The refusal of an `@import` of Spool's Tailwind that names no stylesheet of it. */
+export function unpinnedStylesheetImport(id: string): string {
+	return `tailwindcss import "${id}" is not a stylesheet of Spool's pinned Tailwind`;
+}
+
+/** The refusal of an `@import` that `stylesheetImportKind` calls unsupported, in the stylesheet `entry` compiles from. */
+export function unsupportedStylesheetImport(id: string, entry: string): string {
+	return `unsupported import "${id}" — only tailwindcss and relative stylesheets resolve in ${entry}`;
+}
+
+/**
  * The one theme a frame's source closure reaches, or none. Two different
  * themes are a frame that cannot choose its look, and fail its compile.
  */

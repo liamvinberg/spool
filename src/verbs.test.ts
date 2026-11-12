@@ -5,7 +5,7 @@ import { readDaemonState } from "./daemon/lifecycle";
 import { RefusedError, SpoolError } from "./errors";
 import { skillText, skillTopics } from "./skill";
 import { makeProject, makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
-import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
+import { mintPlayerUrl, mintRawUrl, mintTalkUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
 
 function controlToken(spoolDir: string): string {
 	const token = readDaemonState(spoolDir)?.controlToken;
@@ -174,6 +174,18 @@ describe("url", () => {
 		// the leaf alone names no frame on a page
 		await expect(mintRawUrl(url, name, "paged", root)).rejects.toThrow('no frame "paged"');
 		await expect(mintPlayerUrl(url, name, "paged", token)).rejects.toThrow('no frame "paged"');
+	});
+
+	it("gives a deck page the address that plays its talk", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, "frames/talks/pitch/deck.json", "{}\n");
+		writeDesignFile(root, "frames/talks/pitch/title/frame.tsx", plainTsx);
+
+		const daemon = "http://127.0.0.1:7767";
+		expect(mintTalkUrl(daemon, "kaffe", "talks/pitch", root, true)).toBe(`${daemon}/play/kaffe?deck=talks%2Fpitch`);
+		// a slide is a frame of its own, and nothing plays a deck with the experiment off
+		expect(mintTalkUrl(daemon, "kaffe", "talks/pitch/title", root, true)).toBeUndefined();
+		expect(() => mintTalkUrl(daemon, "kaffe", "talks/pitch", root, false)).toThrow("spool experiments on deck");
 	});
 
 	it("mints a raw URL without materializing missing geometry", async () => {
