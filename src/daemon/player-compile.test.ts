@@ -94,4 +94,19 @@ describe("the player's cache", () => {
 		expect(second.text).toContain("after the edit");
 		expect(third.cache).toBe("hit");
 	});
+
+	it("composes each set of frames asked for at once, never handing one the other's", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "one", "export default function One() { return <p>frame one words</p>; }\n");
+		writeFrame(root, "two", "export default function Two() { return <p>frame two words</p>; }\n");
+		const player = createPlayerCompiler("0.0.0-test");
+		const frames = listProjectFrames(root).frames;
+		const only = (name: string) => frames.filter((ref) => ref.name === name);
+
+		// two talks of one project, their stages asking within the same moment
+		const [one, two] = await Promise.all([player.getBundle(root, only("one")), player.getBundle(root, only("two"))]);
+
+		expect(served(one).text).toContain("frame one words");
+		expect(served(two).text).toContain("frame two words");
+	});
 });
