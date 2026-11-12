@@ -91,8 +91,10 @@ const LINGER_MS = 30_000;
 const SITTING_MS = 20_000;
 
 /**
- * The same for a shot, before any fixed wait `--at` asks for: a boot's own
- * wait for content, its settle, its fonts and every slice.
+ * The same for each step of a shot: its load and boot, its settle, every step
+ * of a seek `--at` asks for, every slice. Never the whole shot: on a machine at
+ * load 150 a seek ran three and a half times slower than the frame's own time,
+ * and a shot that keeps answering is a slow shot, not a failed one (spool#323).
  */
 const SHOT_MS = 45_000;
 
@@ -477,8 +479,15 @@ class TimedOut extends Error {
 	constructor(
 		readonly what: string,
 		readonly ms: number,
+		/** A step of a shot, whose deadline is how long the frame may go without answering. */
+		step = false,
 	) {
-		super(`the frame did not finish ${what} within ${Math.round(ms / 1000)} s`);
+		const seconds = Math.round(ms / 1000);
+		super(
+			step
+				? `the frame did not answer for ${seconds} s while ${what}`
+				: `the frame did not finish ${what} within ${seconds} s`,
+		);
 	}
 }
 
@@ -943,6 +952,38 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		}
 	}
 
+	/**
+	 * Work told of each step it starts, under a deadline per step, enforced from
+	 * the daemon: past `ms` without a new step the tab is closed.
+	 */
+	async function underSteps<T>(
+		slot: number,
+		tab: Tab,
+		ms: number,
+		work: (step: (what: string) => void) => Promise<T>,
+	): Promise<T> {
+		let what = "booting";
+		let timer: NodeJS.Timeout | undefined;
+		let stall: (error: Error) => void = () => {};
+		const stalled = new Promise<never>((_, reject) => {
+			stall = reject;
+		});
+		const step = (next: string) => {
+			what = next;
+			clearTimeout(timer);
+			timer = setTimeout(() => stall(new TimedOut(what, ms, true)), ms);
+		};
+		step(what);
+		try {
+			return await Promise.race([work(step), stalled]);
+		} catch (error) {
+			if (error instanceof TimedOut) await abandon(slot, tab);
+			throw error;
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	/** The work, under one deadline enforced from the daemon. */
 	async function underDeadline<T>(slot: number, tab: Tab, ms: number, what: string, work: Promise<T>): Promise<T> {
 		try {
@@ -1371,12 +1412,10 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		let watch: Disposable | undefined;
 		try {
 			const url = frameUrl(origin, request.project, request.frame, request.scenario, request.beat);
-			const ms = timing.shotMs + Math.max(0, ...(request.at ?? []));
-			const shot = (async () => {
+			return await underSteps(slot, tab, timing.shotMs, async (step) => {
 				watch = await shotOnly(tab);
-				return await sitShot(tab, url, request);
-			})();
-			return await underDeadline(slot, tab, ms, "booting", shot);
+				return await sitShot(tab, url, request, step);
+			});
 		} catch (error) {
 			if (error instanceof LaunchFailure || error instanceof TimedOut) throw error;
 			if (error instanceof BrowserLost || (await browserGone(tab))) {
@@ -1426,7 +1465,12 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	}
 
 	/** One boot for an agent: the shot's slices at each time, the console, and how tall the content ran. */
-	async function sitShot(tab: Tab, url: string, request: ShotRequest): Promise<ShotResult> {
+	async function sitShot(
+		tab: Tab,
+		url: string,
+		request: ShotRequest,
+		begin: (what: string) => void,
+	): Promise<ShotResult> {
 		const taken = await prepare(tab, { width: request.width, height: request.height, scale: request.scale });
 		const { at } = request;
 		if ((at?.length ?? 0) > 0) await stopClocks(tab);
@@ -1449,6 +1493,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			).catch(() => {});
 			const pngs: Buffer[] = [];
 			for (const tile of request.tiles) {
+				begin("being shot");
 				pngs.push(
 					await screenshot(tab, {
 						format: "png",
@@ -1460,16 +1505,18 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		};
 		const shots: Array<{ at?: number; pngs: Buffer[] }> = [];
 		if (times.length === 0) {
+			begin("settling");
 			await settled(tab, world);
 			shots.push({ pngs: await slices() });
 		} else {
 			// each time is a place in the frame's own clock from its commit: the
 			// clock runs on from the last time to the next, and stands still while
 			// each is shot
+			begin("seeking");
 			await seekFrom(tab, world);
 			let ran = 0;
 			for (const time of times) {
-				await seek(tab, world, ran, time);
+				await seek(tab, world, ran, time, () => begin(`seeking to ${time} ms`));
 				ran = Math.max(ran, time);
 				shots.push({ at: time, pngs: await slices() });
 			}
@@ -1610,14 +1657,16 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	 * age. The same frame shot at the same `at` lands on the same picture, to
 	 * within a step of its JavaScript time, however slow the machine.
 	 */
-	async function seek(tab: Tab, world: number, from: number, at: number): Promise<void> {
+	async function seek(tab: Tab, world: number, from: number, at: number, stepped: () => void): Promise<void> {
 		for (let ran = from; ran < at; ) {
+			stepped();
 			const step = Math.min(SEEK_STEP_MS, at - ran);
 			await tab.page.clock.runFor(step);
 			ran += step;
 			await evaluate(tab, world, `spoolTag(${ran})`);
 		}
 		// what the frame shows by now, its images in it, before its animations are set to their ages
+		stepped();
 		await imagesLoaded(tab, world);
 		await evaluate(
 			tab,

@@ -1,9 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
+import { createServer as createTlsServer } from "node:tls";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
+import type { BoothSeams } from "./daemon/booth";
 import { readDaemonState } from "./daemon/lifecycle";
 import { writeCaptureError } from "./daemon/thumbs";
 import { planShot, recordBoot, SHOT_AT_MAX_MS, type ShotFile } from "./daemon/verify-record";
@@ -37,10 +39,10 @@ async function browserAvailable(): Promise<boolean> {
 /** The release booting, whose booth's failures logs reports. */
 const SPOOL = "0.56.0";
 
-async function serveVerifyProject(experiments?: { deck: boolean }) {
+async function serveVerifyProject(experiments?: { deck: boolean }, timing?: BoothSeams["timing"]) {
 	// the scheme a boot renders in is the machine's until a canvas says; this one is held light
 	const { spoolDir, root, name, url } = await serveProject({
-		booth: { systemScheme: async () => "light" },
+		booth: { systemScheme: async () => "light", ...(timing === undefined ? {} : { timing }) },
 		...(experiments === undefined ? {} : { experiments }),
 	});
 	const controlToken = readDaemonState(spoolDir)?.controlToken;
@@ -739,6 +741,38 @@ export default function Clockless() {
 		expect(logs.entries).toContainEqual({ type: "log", text: "fake clock: false" });
 	});
 
+	it("seeks a frame that runs slower than its own time for as long as it keeps answering", {
+		timeout: 120_000,
+	}, async () => {
+		if (!(await browserAvailable())) return;
+
+		// each of the frame's animation frames holds its main thread 150 ms of real
+		// time, as a heavy scene does on a busy machine: 1000 ms of its own time take
+		// over 9 s to seek, past the 5 s a step may take and the 1 s asked for
+		const { root, deps } = await serveVerifyProject(undefined, { shotMs: 5000 });
+		writeFrame(
+			root,
+			"heavy",
+			`import { useEffect, useState } from "react";
+
+export default function Heavy() {
+	const [drawn, setDrawn] = useState(0);
+	useEffect(() => {
+		let frame = requestAnimationFrame(function draw() {
+			${await heldCall(150)}
+			setDrawn((count) => count + 1);
+			frame = requestAnimationFrame(draw);
+		});
+		return () => cancelAnimationFrame(frame);
+	}, []);
+	return <main>{drawn}</main>;
+}
+`,
+		);
+		const shot = await shotFrame(deps("heavy", { viewport: { width: 160, height: 60 }, at: [1000] }));
+		expect(shot).toMatchObject({ kind: "shot", files: [{ at: 1000 }] });
+	});
+
 	it("settles the way a cover does, or runs the frame's timers as far as --at says", {
 		timeout: 120_000,
 	}, async () => {
@@ -919,6 +953,23 @@ export default function Seeded() {
 		expect(await logsFrame(deps("seeded"))).toMatchObject({ kind: "logs", replayed: false });
 	});
 });
+
+/**
+ * A line of frame code that holds its main thread `ms` of real time, whatever
+ * its clocks say: a synchronous call to a server that holds its handshake that
+ * long and refuses it. Frames are https-only, and a stopped clock stops every
+ * wait the frame could measure for itself.
+ */
+async function heldCall(ms: number): Promise<string> {
+	const server = createTlsServer({
+		SNICallback: (_name, refuse) => void setTimeout(() => refuse(new Error("held, never served")), ms),
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
+	const address = server.address();
+	if (address === null || typeof address === "string") throw new Error("the held server has no port");
+	return `const call = new XMLHttpRequest(); call.open("GET", "https://held.localhost:${address.port}/", false); try { call.send(); } catch {}`;
+}
 
 function readPngSize(file: string): { width: number; height: number } {
 	const png = readFileSync(file);
