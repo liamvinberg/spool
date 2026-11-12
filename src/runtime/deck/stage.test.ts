@@ -401,6 +401,7 @@ it("keeps every slide that draws with WebGL ready, only those nearest the one on
 	const behind = document.querySelector<HTMLCanvasElement>('[data-spool-stage-slide="talk/g"] canvas');
 	if (behind === null) throw new Error("the slide behind is not kept");
 	webgl.take(behind);
+	await vi.waitFor(() => expect(statusOf(on, "talk/g")?.status).toBe("ready"));
 	on.send({ spool: "stage-command", command: { kind: "back" } });
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/g"));
 	expect(webgl.drawing()).toBe(true);

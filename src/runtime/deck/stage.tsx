@@ -662,13 +662,14 @@ export function bootStage(runtime: StageRuntime): void {
 			fetchAhead();
 			const want = picture();
 			const target = want.at.slide;
+			// a copy gone blank goes first, so one wanted is rendered afresh in its place now
+			for (const [key, copy] of copies)
+				if (copy.blank && key !== shown && key !== revealed?.from) copies.delete(key);
 			const keep = new Set(wantedCopies().map((copy) => copy.key));
 			if (shown !== null) keep.add(shown);
 			// the slide a swap just took off stays while the one it put on can still be undone
 			if (revealed?.from != null) keep.add(revealed.from);
-			for (const [key, copy] of copies) {
-				if (!keep.has(key) || (copy.blank && key !== shown && key !== revealed?.from)) copies.delete(key);
-			}
+			for (const key of copies.keys()) if (!keep.has(key)) copies.delete(key);
 			arrange();
 			for (const copy of copies.values()) {
 				warm(copy);
