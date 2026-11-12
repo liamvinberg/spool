@@ -749,15 +749,18 @@ export function bootStage(runtime: StageRuntime): void {
 		});
 	}
 
+	/** the still stage's last draw: an earlier one, overtaken, leaves the resting to it */
+	let drawing = 0;
 	/** A still stage's slide on screen draws as it stands now, its entrances played, and then rests again. */
 	function drawOnce(copy: Copy): void {
 		const box = copy.box;
 		if (box === undefined) return;
+		const draw = ++drawing;
 		restWebgl(box, false);
 		requestAnimationFrame(() => {
 			atRest(box);
 			requestAnimationFrame(() => {
-				if (copy.key !== shown || copies.get(copy.key) !== copy) return;
+				if (draw !== drawing || copy.key !== shown || copies.get(copy.key) !== copy) return;
 				restWebgl(box, true);
 				for (const media of box.querySelectorAll<HTMLMediaElement>("video, audio")) holdMedia(box, media);
 			});
