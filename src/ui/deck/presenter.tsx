@@ -137,10 +137,12 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		};
 		const stopScreens = app?.onRoom?.(heard);
 		const placed = () => void app?.roomReport?.(ask.talk).then(heard, () => {});
+		// both stages put their first slide on at rest, as the picture the slide arrives as shows it
 		const host = mountStage(main, {
 			address,
 			mode: "own",
 			room: false,
+			rest: true,
 			frame: ask.slide,
 			on: {
 				talk: setTalk,
@@ -172,7 +174,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			},
 		});
 		// what the next key plays, never touched: what its slides write is the talk's echo, not the talk's
-		const next = mountStage(after, { address, mode: "follow", room: true, frame: ask.slide });
+		const next = mountStage(after, { address, mode: "follow", room: true, rest: true, frame: ask.slide });
 		stage.current = { main: host, next, say };
 
 		let gone: ReturnType<typeof setTimeout> | undefined;
