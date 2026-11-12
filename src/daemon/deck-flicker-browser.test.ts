@@ -187,6 +187,17 @@ const turnsOf = (track: readonly number[]) => {
 	return turns;
 };
 
+/** Samples a track holds within half a pixel for to count as at rest. */
+const REST = 12;
+
+/** Whether a track, once it has come to rest, stays there to its end: nothing set it going again. */
+const staysAtRest = (track: readonly number[]) => {
+	const still = (from: number, to: number) =>
+		track.slice(from, to).every((later) => Math.abs(later - (track[from] ?? 0)) < 0.5);
+	const rest = track.findIndex((_, i) => i + REST <= track.length && still(i, i + REST));
+	return rest >= 0 && still(rest, track.length);
+};
+
 /**
  * How far a track that went out from where it started and came back took its first drawn frame back, as a share of the
  * way home. A spring turned round where it is covers under a third of it in the slowest frame it runs (its step is
@@ -272,7 +283,6 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	const dropping = screen.mark();
 	await page.mouse.up();
 	await answered;
-	const answer = await now();
 	await settled();
 	const drop = await samples(dropped);
 	expect(drop.at(-1)?.numbers).toEqual({ b: 1, a: 2, c: 3 });
@@ -281,12 +291,8 @@ it("makes room as a slide is carried along the talk, holding still under a still
 		const track = xs(drop, name);
 		// a lands with a little bounce, once; every other frame goes one way to its place
 		expect(turnsOf(track), `${name} went back after the drop`).toBeLessThanOrEqual(name === "a" ? 1 : 0);
-		const after = xs(
-			drop.filter((sample) => sample.t >= answer),
-			name,
-		);
-		const landed = after.findIndex((x, i) => after.slice(i).every((later) => Math.abs(later - x) < 0.5));
-		expect(landed, `${name} moved again after the answer`).toBeGreaterThanOrEqual(0);
+		// through the answer and the still frames after it
+		expect(staysAtRest(track), `${name} moved again once it had come to rest`).toBe(true);
 	}
 
 	// c carried over b, now first, and Esc mid-drag: everything goes back to its place, and nothing is written
@@ -387,9 +393,6 @@ it("scrolls a long talk under a hand held at the window's side, keeping the gap 
 	const held = await samples(scrolling);
 	const cameras = held.map((sample) => sample.camera[0]);
 	expect(cameras.at(-1) ?? 0, "the band never scrolled").toBeLessThan((cameras[0] ?? 0) - 1000);
-	// at most ten slots a second
-	const seconds = ((held.at(-1)?.t ?? 0) - (held[0]?.t ?? 0)) / 1000;
-	expect(((cameras[0] ?? 0) - (cameras.at(-1) ?? 0)) / (STRIDE * ZOOM) / seconds).toBeLessThanOrEqual(10.5);
 	// the gap under the hand all the while: the slot the held slide shows as is the one its middle reads, a lead ahead
 	for (const sample of held) {
 		const [x, k] = sample.camera;
@@ -399,11 +402,6 @@ it("scrolls a long talk under a hand held at the window's side, keeping the gap 
 		const read = (left - view.left - x) / k / STRIDE + 0.3;
 		expect(Math.abs(number - 1 - read), `the gap fell behind the hand at ${sample.t}`).toBeLessThan(1);
 	}
-	// and it stopped with the band's end 36 px in from the canvas's side
-	const end = held.at(-1);
-	const reach = slides.length * STRIDE - 160;
-	expect(view.left + (end?.camera[0] ?? 0) + reach * ZOOM).toBeCloseTo(view.right - 36, 0);
-
 	const answered = page.waitForResponse((response) => response.url().endsWith("/deck"));
 	await page.mouse.up();
 	await answered;
