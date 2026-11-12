@@ -36,6 +36,8 @@ import {
 } from "./export-menu";
 import type { CapturedFrame } from "./frame-export";
 
+const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+
 export interface MenuPlacement {
 	x: number;
 	y: number;
@@ -81,11 +83,13 @@ export function ContextMenu({
 	onClose: () => void;
 }) {
 	const [last, setLast] = useRemembered<ExportFormat>("export.format", "png", isExportFormat);
+	const [kept, keep] = useRemembered<boolean>("export.player", true, isBoolean);
 	const [choosing, setChoosing] = useState(false);
 	const exporting = useExportSteps({ finder: desktopWindow()?.onExportDownload !== undefined, onClose });
 	const step = exporting.step?.kind ?? (choosing ? "choice" : "menu");
 	const [format, setFormat] = useState<ExportFormat>(last);
 	const [scope, setScope] = useState<ExportScope>("flow");
+	const [player, setPlayer] = useState(kept);
 	const [plans, setPlans] = useState<ReadonlyMap<string, ExportPlan>>(new Map());
 	const talkExport = useTalkExport(talk, capture, exporting);
 	const frames = exportable ?? [];
@@ -126,10 +130,11 @@ export function ContextMenu({
 	const run = () => {
 		if (frames.length === 0) return;
 		setLast(format);
+		if (format === "html") keep(player);
 		exporting.run(
 			frames.length > 1 && format !== "pdf" ? `${frames.length} files` : exportTarget(project, frames, format),
 			frames.length,
-			(progress) => exportFrames({ project, frames, format, scope }, capture, progress),
+			(progress) => exportFrames({ project, frames, format, scope, player }, capture, progress),
 		);
 	};
 
@@ -173,6 +178,7 @@ export function ContextMenu({
 							meta={last}
 							onClick={() => {
 								setFormat(last);
+								setPlayer(kept);
 								setChoosing(true);
 							}}
 						/>
@@ -199,6 +205,8 @@ export function ContextMenu({
 						scope={scope}
 						onScope={setScope}
 						reach={reach}
+						player={player}
+						onPlayer={setPlayer}
 						target={exportTarget(project, frames, format)}
 						onExport={run}
 					/>

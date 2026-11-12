@@ -48,6 +48,12 @@ export interface PlayerConfig {
 	frames: Record<string, { w: number; h: number }>;
 	/** The control-origin shell mounts this composed document in a native iframe. */
 	shell?: true;
+	/**
+	 * The scenario's seed, read when the document was served (spool#303), so the
+	 * first screen waits on no fetch of its own. Absent when the scenario does not
+	 * read: the runtime then asks for it, and says why it failed.
+	 */
+	seed?: { state: Record<string, unknown> };
 }
 
 export type PlayerCompile =
@@ -373,6 +379,13 @@ export function chromeFontFile(name: string): string | undefined {
 export function playerChromeCss(fontBase = "/vendor/fonts/"): string {
 	return CHROME_CSS.replaceAll("/vendor/fonts/", fontBase);
 }
+
+/**
+ * The page a player shell draws (`player-shell.tsx`): the window and no more, never scrolled, its played document
+ * filling the screen the chrome sizes. Worn by the daemon's played tab and an exported file's player alike.
+ */
+export const PLAYER_SHELL_PAGE_RULES =
+	"html, body, #root { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } .spool-screen { height: 100%; min-height: 0; } .spool-screen > iframe { display: block; width: 100%; height: 100%; border: 0; }";
 
 const CHROME_CSS = `:root {
 	color-scheme: dark;

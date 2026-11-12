@@ -20,6 +20,7 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { parseKnobsDeclared } from "../../runtime/knob-protocol";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
+import { playMarkName } from "../../runtime/play-marks";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { SETTINGS } from "../../settings/registry";
 import type { Comment, Presence, PresenceState } from "../../team-sync-protocol";
@@ -51,6 +52,7 @@ import {
 	postSeen,
 	postTrash,
 	postWalk,
+	postWarmPlay,
 	putCanvasState,
 	putCanvasView,
 	putGeometry,
@@ -72,6 +74,7 @@ import { Presenting } from "../deck/presenting";
 import { afterStill } from "../deck/settle";
 import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
+import { desktopWindow } from "../desktop-window";
 import { experimentOn } from "../experiments";
 import { isLetGo } from "../gone-projects";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
@@ -1832,14 +1835,23 @@ function CanvasField({
 	 */
 	const playFrame = useCallback(
 		(name: string, record = false) => {
-			window.open(
-				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}${record ? "&record=arm" : ""}`,
-				"_blank",
-				"noopener,noreferrer",
-			);
+			// a played tab's marks are timed from this, on the canvas's own timeline (spool#303)
+			performance.mark(playMarkName("press"));
+			const path = `/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}${record ? "&record=arm" : ""}`;
+			// the Mac app opens its window at the frame's size at the press, so it is handed the size it would ask for
+			const frame = store.get().frames.find((candidate) => candidate.name === name);
+			const desk = desktopWindow();
+			if (desk?.play !== undefined && frame !== undefined) {
+				desk.play(path, { w: Math.round(frame.w), h: Math.round(frame.h) });
+				return;
+			}
+			window.open(path, "_blank", "noopener,noreferrer");
 		},
-		[project],
+		[project, store],
 	);
+
+	/** The pointer has reached play (spool#303): the press finds the project composed, not waiting behind the stills. */
+	const warmPlay = useCallback(() => postWarmPlay(project), [project]);
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
@@ -6230,6 +6242,7 @@ function CanvasField({
 											numberAside={deckPage.numberAside(frame.name)}
 											motion={deckPage.motion}
 											onPlay={deckPage.playOf(frame.name, playFrame)}
+											onPlayIntent={warmPlay}
 											playTitle={deckPage.playTitleOf(frame.name)}
 											live={
 												inSlide

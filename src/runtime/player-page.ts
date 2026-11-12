@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { PlayMark } from "./play-marks";
 
 /**
  * What both of the player's pages do the same way (#227): measure the window
@@ -56,6 +57,8 @@ export interface DeskWindow {
 	restored: boolean;
 	/** Forget that rect and put the window back on the authored size. */
 	reset(): void;
+	/** Hand the app a play timing mark, as a wall-clock time; an app older than the marks takes none. */
+	mark?(mark: PlayMark, at: number): void;
 }
 
 /**
@@ -68,11 +71,12 @@ export function deskWindow(): DeskWindow | null {
 	const bridge = (window as { spoolPlayWindow?: unknown }).spoolPlayWindow;
 	if (typeof bridge !== "object" || bridge === null) return null;
 	const candidate = bridge as Partial<DeskWindow>;
-	const { reset } = candidate;
+	const { reset, mark } = candidate;
 	if (typeof reset !== "function") return null;
 	return {
 		restored: candidate.restored === true,
 		reset: () => reset.call(bridge),
+		...(typeof mark === "function" ? { mark: (name: PlayMark, at: number) => mark.call(bridge, name, at) } : {}),
 	};
 }
 

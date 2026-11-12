@@ -105,7 +105,14 @@ import { watchForMoves } from "./moved-in";
 import { openRoutes } from "./open-routes";
 import { createOutside, outsidePresence } from "./outside";
 import { outsideRoutes } from "./outside-routes";
-import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
+import {
+	assemblePlayerDocument,
+	chromeFontFile,
+	createPlayerCompiler,
+	PLAYER_SHELL_PAGE_RULES,
+	playerChromeCss,
+	playerEtag,
+} from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
 import { withProject } from "./project-route";
@@ -264,6 +271,8 @@ export interface DaemonOptions {
 	movedAskMs?: number;
 	/** How long a team project's copy goes without a connection before its canvas says it is offline: 30 s (#205). */
 	offlineMs?: number;
+	/** How long after the last design/ change an open project is recomposed for play: 1.5 s, unless a test can't wait. */
+	playerWarmMs?: number;
 	/** How long a team project's copy paused for an update first waits to ask again: a minute, doubling (#206). */
 	updateAskMs?: number;
 	/** How this Spool is updated, as a test says it: read off the running CLI otherwise (#206). */
@@ -464,6 +473,7 @@ export function createDaemonApp({
 	leftLookMs,
 	movedAskMs,
 	offlineMs,
+	playerWarmMs = PLAYER_WARM_MS,
 	updateAskMs,
 	updateHow,
 	booth: boothSeams,
@@ -574,18 +584,20 @@ export function createDaemonApp({
 	 * open canvas is waiting on, but no longer than the booth's patience: a
 	 * project with hundreds of frames to picture keeps it busy for minutes. A
 	 * project only a canvas kept warm goes cold when its last canvas closes.
+	 * A pointer reaching for play (spool#303) composes it at once, booth or not:
+	 * the press it is about to make waits on that and not on the stills.
 	 */
-	const playerWarmers = new Map<string, () => void>();
+	const playerWarmers = new Map<string, { stop: () => void; now: () => void }>();
 	const playedRoots = new Set<string>();
 	function keepPlayerWarm(root: string): void {
 		if (playerWarmers.has(root)) return;
 		let timer: NodeJS.Timeout | undefined;
 		/** When the wait for this composition began, so a booth that stays busy cannot defer it for good. */
 		let waitingSince: number | undefined;
-		const composeOnceBoothIdle = () => {
+		const composeOnceBoothIdle = (wanted = false) => {
 			timer = undefined;
 			const boothBusy = sittings.waiting > 0 || sittings.busy > 0;
-			if (boothBusy && Date.now() - (waitingSince ?? 0) < PLAYER_BOOTH_PATIENCE_MS) {
+			if (!wanted && boothBusy && Date.now() - (waitingSince ?? 0) < PLAYER_BOOTH_PATIENCE_MS) {
 				arm();
 				return;
 			}
@@ -595,16 +607,24 @@ export function createDaemonApp({
 		const arm = () => {
 			waitingSince ??= Date.now();
 			if (timer !== undefined) clearTimeout(timer);
-			timer = setTimeout(composeOnceBoothIdle, PLAYER_WARM_MS);
+			timer = setTimeout(composeOnceBoothIdle, playerWarmMs);
 			timer.unref?.();
 		};
 		const unsubscribe = hub.subscribe(root, (event) => {
 			if (event.kind === "frame" || event.kind === "shared") arm();
 		});
 		arm();
-		playerWarmers.set(root, () => {
-			if (timer !== undefined) clearTimeout(timer);
-			unsubscribe();
+		playerWarmers.set(root, {
+			stop: () => {
+				if (timer !== undefined) clearTimeout(timer);
+				unsubscribe();
+			},
+			// only a composition still waiting is started: one composed or composing is left as it is
+			now: () => {
+				if (timer === undefined) return;
+				clearTimeout(timer);
+				composeOnceBoothIdle(true);
+			},
 		});
 	}
 	function letPlayerCool(root: string): void {
@@ -612,7 +632,7 @@ export function createDaemonApp({
 		// no canvas of the project is open, so none presents a talk of it: its stage's composition goes
 		void stageCompiler.forget(root);
 		if (playedRoots.has(root)) return;
-		playerWarmers.get(root)?.();
+		playerWarmers.get(root)?.stop();
 		playerWarmers.delete(root);
 		void playerCompiler.forget(root);
 	}
@@ -2131,12 +2151,14 @@ export function createDaemonApp({
 				const compiled = await playerCompiler.getPlayable(project.root, projection.frames, start);
 				if (compiled.kind === "error") return c.html(playerLoadErrorDocument(compiled.message), 500);
 				keepPlayerWarm(project.root);
+				const seed = scenarioSeed(project.root, playScenario);
 				const config = {
 					project: name,
 					projectCapability: projectCapability(project.root),
 					start,
 					scenario: playScenario,
 					frames,
+					...(seed === undefined ? {} : { seed }),
 					...(shell === "1" ? { shell: true as const } : {}),
 					...(shell !== "1" && recording === "1" ? { recording: true as const } : {}),
 				};
@@ -2171,6 +2193,15 @@ export function createDaemonApp({
 					name.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8",
 				);
 				return c.body(chunk);
+			}),
+		)
+		// A pointer reaching for play on a canvas (spool#303): the composition that
+		// press will open is started now, if it is waiting, rather than after the
+		// booth. Never waited on; a project no canvas keeps warm is left alone.
+		.post("/api/p/:project/warm", (c) =>
+			withProject(c, resolveProject, (root) => {
+				playerWarmers.get(root)?.now();
+				return c.body(null, 204);
 			}),
 		)
 		.options("/api/p/:project/scenarios/:name", (c) => serveProjectDataPreflight(c))
@@ -2288,6 +2319,19 @@ export function createDaemonApp({
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", file.type);
 			return c.body(new Uint8Array(file.bytes));
+		})
+		// The Mac app's warm play window waits on this (spool#301): the play
+		// window's dark and its bar's strip, on the origin a play loads on, so a
+		// press shows a window already drawn and walks it on to the play URL. A
+		// page with nothing in it to run, hold or reach: no script, no token, no
+		// handoff, nothing named for a frame.
+		.get("/player-assets/spare", (c) => {
+			protectControlDocument(c);
+			// what keeps it empty is the policy, not the template: inline styles and
+			// nothing else (the strip draws no text, so no font is ever asked for)
+			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
+			c.header("connection", "close");
+			return c.html(playSpareDocument());
 		})
 		.get("/player-assets/react.js", async (c) => {
 			const etag = `"react-${reactVersion}"`;
@@ -2714,6 +2758,31 @@ export function createDaemonApp({
 		return `${html.slice(0, at)}<html ${attributes}>${html.slice(at)}`;
 	}
 
+	/** A scenario's seed as a played document carries it, or undefined when the scenario does not read. */
+	function scenarioSeed(root: string, name: string): { state: Record<string, unknown> } | undefined {
+		const scenario = readScenario(root, name);
+		if (scenario.kind !== "ok") return undefined;
+		const { state } = JSON.parse(scenario.json) as { state?: Record<string, unknown> };
+		return { state: state ?? {} };
+	}
+
+	/** The spare play window's page: the shell's dark and its 30px strip, drawn by the shell's own rules. */
+	function playSpareDocument(): string {
+		return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spool</title>
+<style>${escapeInlineStyle(playerChromeCss("/player-assets/fonts/"))}</style>
+<style>html, body { height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; }</style>
+</head>
+<body>
+<div class="spool-top is-desk" style="height: 30px"></div>
+</body>
+</html>
+`;
+	}
+
 	function protectControlDocument(c: Context): void {
 		// A foreign page must not turn the authenticated UI into a clickjacking
 		// oracle. This CSP is the modern rule; X-Frame-Options covers older engines.
@@ -2752,8 +2821,8 @@ export function createDaemonApp({
 	const config = window.__SPOOL_SHELL__;
 	const headers = { "${CONTROL_HEADER}": config.controlToken };
 	let geometryRevision = 0;
+	let announcedRevision = 0;
 	let geometryRequest = 0;
-	let geometrySubscribed = false;
 	function retainedGeometry() {
 		return Object.entries(config.frames).map(([name, geometry]) => ({ name, w: geometry.w, h: geometry.h }));
 	}
@@ -2764,20 +2833,27 @@ export function createDaemonApp({
 		return revision;
 	}
 	function announceGeometry(revision, frames) {
+		announcedRevision = revision;
 		window.dispatchEvent(new CustomEvent("spool-player-geometry", { detail: { revision, frames } }));
 	}
 	function replayGeometry() {
 		const revision = pendingGeometry();
 		announceGeometry(revision, latestGeometry);
 	}
-	async function sendGeometry() {
+	function sameGeometry(a, b) {
+		return a.length === b.length && a.every((frame, i) => frame.name === b[i].name && frame.w === b[i].w && frame.h === b[i].h);
+	}
+	// Ask the daemon for its geometry. A change the stream told of is pending
+	// until the answer lands, or a second passes without one, so nothing is
+	// revealed at a box known to be stale. Asking to catch up (the stream has
+	// just opened, or none opens) holds nothing back: the played document
+	// reveals on the geometry this document was served with (spool#303), and an
+	// answer that differs lands after, as any live update does.
+	async function sendGeometry(changed) {
 		const request = ++geometryRequest;
-		const revision = pendingGeometry();
-		let settled = false;
+		if (changed) pendingGeometry();
 		const fallback = setTimeout(() => {
-			if (request !== geometryRequest || settled) return;
-			settled = true;
-			announceGeometry(revision, latestGeometry);
+			if (request === geometryRequest && announcedRevision < geometryRevision) announceGeometry(geometryRevision, latestGeometry);
 		}, 1000);
 		try {
 			const response = await fetch("/api/p/" + encodeURIComponent(config.project) + "/frames", { headers });
@@ -2789,30 +2865,28 @@ export function createDaemonApp({
 				.filter((frame) => frame && typeof frame.name === "string" && Number.isInteger(frame.w) && frame.w > 0 && Number.isInteger(frame.h) && frame.h > 0)
 				.map(({ name, w, h }) => ({ name, w, h }));
 			if (frames.length !== listing.frames.length) throw new Error("invalid geometry");
-			latestGeometry = frames;
-			if (settled || revision !== geometryRevision) {
+			if (!sameGeometry(frames, latestGeometry)) {
+				latestGeometry = frames;
 				replayGeometry();
-			} else {
-				settled = true;
-				announceGeometry(revision, latestGeometry);
 			}
 		} catch {
-			if (request === geometryRequest && !settled) {
-				settled = true;
-				announceGeometry(revision, latestGeometry);
-			}
+			// what the bridge holds stands until an answer comes
 		} finally {
 			clearTimeout(fallback);
+			if (request === geometryRequest && announcedRevision < geometryRevision) announceGeometry(geometryRevision, latestGeometry);
 		}
 	}
 	async function followGeometry() {
-		void sendGeometry();
+		let subscribed = false;
 		try {
 			const response = await fetch("/api/p/" + encodeURIComponent(config.project) + "/events", {
 				headers: { ...headers, accept: "text/event-stream" },
 			});
 			if (!response.ok || !response.body) return;
-			geometrySubscribed = true;
+			subscribed = true;
+			// asked once the stream is open, so a change between serving this
+			// document and opening the stream is not missed
+			void sendGeometry(false);
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = "";
@@ -2827,18 +2901,23 @@ export function createDaemonApp({
 					if (!raw) continue;
 					try {
 						const change = JSON.parse(raw);
-						if (change.kind === "geometry") void sendGeometry();
+						if (change.kind === "geometry") void sendGeometry(true);
 					} catch {}
 				}
 			}
+		} catch {
+			// a stream that broke is opened again below, as one that ended is
 		} finally {
-			geometrySubscribed = false;
+			// no stream: the daemon's geometry as of now is the best there is
+			if (!subscribed) void sendGeometry(false);
 			setTimeout(followGeometry, 1000);
 		}
 	}
+	// The played document has connected: it is handed what the bridge holds at
+	// once, and reveals on it, unless a change the stream told of is still on
+	// its way, whose answer it then waits for.
 	addEventListener("spool-player-geometry-request", () => {
-		replayGeometry();
-		if (geometrySubscribed) void sendGeometry();
+		if (announcedRevision === geometryRevision) replayGeometry();
 	});
 	addEventListener("spool-player-walked", (event) => {
 		const walk = event.detail;
@@ -2860,7 +2939,7 @@ export function createDaemonApp({
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${escapeHtml(start)} · ${escapeHtml(project)}</title>
 <style>${escapeInlineStyle(playerChromeCss("/player-assets/fonts/"))}</style>
-<style>html, body, #root { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } .spool-screen { height: 100%; min-height: 0; } .spool-screen > iframe { display: block; width: 100%; height: 100%; border: 0; }</style>
+<style>${PLAYER_SHELL_PAGE_RULES}</style>
 </head>
 <body>
 <div id="root"></div>
@@ -2916,7 +2995,7 @@ export function createDaemonApp({
 			emitAppEvent({ kind: "ui" });
 		},
 		close: async () => {
-			for (const stop of playerWarmers.values()) stop();
+			for (const warmer of playerWarmers.values()) warmer.stop();
 			playerWarmers.clear();
 			const compiled = Promise.all([playerCompiler.close(), stageCompiler.close()]);
 			machineStateWatch.stop();

@@ -24,6 +24,7 @@ import {
 	parseKnobValues,
 } from "./knob-protocol";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
+import { deskWindow } from "./player-page";
 import { createHandsLog } from "./record-hands";
 import { setSlideBeat, slideCalls } from "./slide-beats";
 import type { KnobRead, SpoolUi } from "./spool-public";
@@ -81,6 +82,8 @@ export interface PlayerConfig {
 	 * disk with no daemon behind it, so the scenario rides in it.
 	 */
 	exported?: { state: Record<string, unknown> };
+	/** The scenario's seed, served with the document (spool#303): nothing is fetched before the first screen. */
+	seed?: { state: Record<string, unknown> };
 	/** A deck's talk, played on its stage (spool#265): the document holds the talk's slides and nothing else. */
 	deck?: StageConfig;
 }
@@ -240,8 +243,11 @@ if (play?.shell === true && embedded) {
 /** No authored frame is ever served from one of these, so a throw site here is not the frame's. */
 const EXTENSION_SCRIPT =
 	/^(?:chrome-extension|moz-extension|safari-web-extension|safari-extension|webkit-masked-url):\/\//;
-/** Authored code always executes from a served document or module, so the frame's own throw sites carry these. */
-const SERVED_SCRIPT = /^https?:\/\//;
+/**
+ * Authored code always executes from a served document or module, so the frame's own throw sites carry these; an
+ * exported file's player plays its frames from the document it holds (spool#304).
+ */
+const SERVED_SCRIPT = /^(?:https?:\/\/|about:srcdoc)/;
 
 /**
  * A browser extension's content script runs inside this document and its own
@@ -674,7 +680,7 @@ async function start(): Promise<void> {
 		// the player seeds fresh every load: the URL names the scenario, and
 		// reload is just restart spelled by the browser
 		scenarioName = play.scenario;
-		const scenario = play.exported ?? (await loadScenario(scenarioName));
+		const scenario = play.exported ?? play.seed ?? (await loadScenario(scenarioName));
 		seedState(scenario.state);
 		return;
 	}
@@ -922,8 +928,15 @@ function bindExternalLinks(): void {
 		}
 		if (url.protocol !== "http:" && url.protocol !== "https:") return;
 		if (play === undefined && !embedded) return;
-		// an exported file is a page of the web like any other: its links leave as links do
-		if (play?.exported !== undefined) return;
+		if (play?.exported !== undefined) {
+			// an exported file is a page of the web like any other: its links leave as links do, and in its player,
+			// whose frame stays where it is, in a tab of their own (spool#304)
+			if (play.shell === true) {
+				event.preventDefault();
+				window.open(url.href, "_blank", "noopener");
+			}
+			return;
+		}
 		url.username = "";
 		url.password = "";
 		event.preventDefault();
@@ -1872,7 +1885,12 @@ function mountPlayer(config: PlayerConfig): void {
 			? createElement(ExportedDocument)
 			: config.recording === true
 				? createElement(PlayerDocument)
-				: createElement(Player, { project: config.project, frames: screens, controller: playerController }),
+				: createElement(Player, {
+						project: config.project,
+						frames: screens,
+						controller: playerController,
+						desk: deskWindow() ?? undefined,
+					}),
 	);
 	requestAnimationFrame(() => warmScreens(Object.keys(config.frames)));
 }

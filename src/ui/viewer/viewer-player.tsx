@@ -123,7 +123,7 @@ export function ViewerPlayer({
 		return { authored, boxOf };
 	}, []);
 
-	const controller = useMemo<PlayerController>(() => {
+	const controller = useMemo<PlayerController & { close(): void }>(() => {
 		const set = (next: Partial<Played>) => {
 			played.current = { ...played.current, ...next };
 			version.current += 1;

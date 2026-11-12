@@ -37,9 +37,9 @@ export interface PlayerSize {
 	lay(box: Size | null): void;
 }
 
-/** The room the page gives a frame: the window less the bar both shells wear. */
-export function playRoom(viewport: { vw: number; vh: number }): Size {
-	return { w: viewport.vw, h: Math.max(viewport.vh - DESK_BAR_PX, 1) };
+/** The room the page gives a frame: the window less the bar both shells wear, or the whole window where none is. */
+export function playRoom(viewport: { vw: number; vh: number }, bar = true): Size {
+	return { w: viewport.vw, h: Math.max(viewport.vh - (bar ? DESK_BAR_PX : 0), 1) };
 }
 
 /**

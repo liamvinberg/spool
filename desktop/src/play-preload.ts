@@ -16,6 +16,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const RESTORED = "spool:play-window-restored";
 const RESET = "spool:play-window-reset";
+const MARK = "spool:play-window-mark";
 
 // Asked once, before the page loads, because the bar wants it at first paint: a
 // restore that announces itself a beat late reads as the window twitching.
@@ -25,4 +26,8 @@ const restored = ipcRenderer.sendSync(RESTORED) === true;
 contextBridge.exposeInMainWorld("spoolPlayWindow", {
 	restored,
 	reset: () => ipcRenderer.send(RESET),
+	// the played page's timing marks (spool#301), for the play's line in the app's log
+	mark: (name: unknown, at: unknown) => {
+		if (typeof name === "string" && typeof at === "number") ipcRenderer.send(MARK, name, at);
+	},
 });

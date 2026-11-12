@@ -46,7 +46,7 @@ function daemon(fail: () => boolean = () => false) {
 			const frame = url.searchParams.get("frame") ?? "";
 			if (url.pathname === "/api/p/demo/export/plan") return Response.json(PLANS[frame]);
 			if (url.pathname === "/api/p/demo/export/html") {
-				html.push(`${frame}:${url.searchParams.get("scope")}`);
+				html.push(`${frame}:${url.searchParams.get("scope")}:${url.searchParams.get("player")}`);
 				if (fail()) return Response.json({ error: "card could not compile" }, { status: 500 });
 				return new Response("<!doctype html>", { headers: { "content-type": "text/html" } });
 			}
@@ -139,10 +139,15 @@ describe("the right-click menu's export", () => {
 		expect(row(host, "This frame and the 4 it links to")?.getAttribute("aria-checked")).toBe("true");
 		expect(host.textContent).toContain("demo-checkout.html");
 		await act(async () => row(host, "Only this frame")?.click());
+		// the file opens in the player unless switched off, and the row says what it opens as
+		expect(row(host, "With player")?.getAttribute("aria-checked")).toBe("true");
+		expect(row(host, "With player")?.textContent).toContain("Anyone can resize it in the browser.");
+		await act(async () => row(host, "With player")?.click());
+		expect(row(host, "With player")?.textContent).toContain("Opens as the frame alone.");
 
 		await press(host, "Enter");
 		await settle(() => downloads.length === 1);
-		expect(html).toEqual(["checkout:one"]);
+		expect(html).toEqual(["checkout:one:0"]);
 		expect(downloads).toEqual(["demo-checkout.html"]);
 		expect(host.textContent).toContain("Building demo-checkout.html");
 		await act(async () => {
@@ -160,11 +165,13 @@ describe("the right-click menu's export", () => {
 		expect(revealDownload).toHaveBeenCalledWith("/Users/cata/Downloads/demo-checkout (1).html");
 		expect(onClose).toHaveBeenCalled();
 
-		// the format is remembered, and worn by the menu's Export next time
+		// the format is remembered, and worn by the menu's Export next time, and so is the player
 		unmount?.();
 		unmount = undefined;
 		const again = render(["checkout"]);
 		expect(row(again.host, "Export…")?.textContent).toBe("Export…html");
+		await act(async () => row(again.host, "Export…")?.click());
+		expect(row(again.host, "With player")?.getAttribute("aria-checked")).toBe("false");
 	});
 
 	it("gives several frames one file each, offers no scope where nothing links, and in a browser says Downloaded", async () => {
@@ -177,7 +184,7 @@ describe("the right-click menu's export", () => {
 
 		await act(async () => row(host, "Export")?.click());
 		await settle(() => host.textContent?.includes("Downloaded") === true);
-		expect(html).toEqual(["a:flow", "b:flow"]);
+		expect(html).toEqual(["a:flow:1", "b:flow:1"]);
 		expect(downloads).toEqual(["demo-a.html", "demo-b.html"]);
 		expect(host.textContent).toContain("2 files · 30 B");
 		expect(row(host, "Show in Finder")).toBeUndefined();
@@ -195,7 +202,7 @@ describe("the right-click menu's export", () => {
 		failing = false;
 		await act(async () => row(host, "Try again")?.click());
 		await settle(() => host.textContent?.includes("Downloaded") === true);
-		expect(html).toEqual(["a:flow", "a:flow"]);
+		expect(html).toEqual(["a:flow:1", "a:flow:1"]);
 		expect(downloads).toEqual(["demo-a.html"]);
 	});
 });
