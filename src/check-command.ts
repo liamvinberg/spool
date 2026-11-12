@@ -3,7 +3,7 @@ import { dirname, extname, join, relative, resolve } from "node:path";
 import { checkProject } from "./check";
 import { altReaders, describeAltReader } from "./check-alt";
 import { describeSlowFrame, slowFrames } from "./check-pace";
-import { checkDecks, type DeckCheck } from "./daemon/deck/check";
+import { checkDecks, type DeckCheck, type Talk, talksOf } from "./daemon/deck/check";
 import { realDesignDir } from "./daemon/design-path";
 import { followedLink, OUTSIDE_LAYOUT, staysOnThisMac, TOO_BIG } from "./daemon/team-sync";
 import { scanBrokenFrames } from "./daemon/thumbs";
@@ -98,9 +98,23 @@ export async function runCheck(
 		}),
 	);
 	const checked = new Set(report.frames);
-	const slow = slowFrames(root).filter((frame) => checked.has(frameName(frame.path)));
-	for (const frame of slow) if (named.has(frameName(frame.path))) stderr.push(describeSlowFrame(frame));
-	const unnamed = slow.filter((frame) => !named.has(frameName(frame.path))).map((frame) => frameName(frame.path));
+	const slow = slowFrames(root, report.sourcesOf).filter((frame) => checked.has(frame.frame));
+	// a slide of a talk is said whole, by its place in the talk, whether it or its talk is checked: a talk is
+	// meant to run smoothly, and a slide that lags is the question asked of it (spool#318)
+	const talks: Talk[] = on("deck") ? talksOf(root) : [];
+	const slides = new Map(talks.flatMap((talk) => talk.slides.map((slide, at) => [slide, at + 1] as const)));
+	const slowSlides = new Map<string, number>();
+	for (const talk of talks) {
+		for (const frame of slow) {
+			const at = talk.slides.indexOf(frame.frame);
+			if (at < 0) continue;
+			stderr.push(describeSlowFrame(frame, at + 1));
+			slowSlides.set(talk.page, (slowSlides.get(talk.page) ?? 0) + 1);
+		}
+	}
+	const others = slow.filter((frame) => !slides.has(frame.frame));
+	for (const frame of others) if (named.has(frame.frame)) stderr.push(describeSlowFrame(frame));
+	const unnamed = others.filter((frame) => !named.has(frame.frame)).map((frame) => frame.frame);
 	if (unnamed.length > 0) {
 		const listed =
 			unnamed.length > 5 ? `${unnamed.slice(0, 5).join(", ")} and ${unnamed.length - 5} more` : unnamed.join(", ");
@@ -134,10 +148,17 @@ export async function runCheck(
 		staying.length > 0
 			? `; ${count(staying.length, "file")} ${staying.length === 1 ? "stays" : "stay"} on this Mac`
 			: "";
+	const lagging = talks
+		.filter((talk) => slowSlides.has(talk.page))
+		.map(
+			(talk) =>
+				`; ${slowSlides.get(talk.page)} of the ${count(talk.slides.length, "slide")} in ${talk.page} timed slow`,
+		)
+		.join("");
 	return {
 		stderr,
 		stdout: [
-			`checked ${count(report.frames.length, "frame")} (${count(report.sources, "source file")})${batches}, ${count(errors, "error")}${shown}${stays}`,
+			`checked ${count(report.frames.length, "frame")} (${count(report.sources, "source file")})${batches}, ${count(errors, "error")}${shown}${stays}${lagging}`,
 		],
 		ok: errors === 0 && report.notChecked.length === 0 && staying.length === 0,
 		...(staying.length > 0 ? { staying: staying.map(({ path }) => path) } : {}),
@@ -150,11 +171,6 @@ function fixOf(why: string): string {
 		return "; move it under frames/ or shared/ if the design uses it, or out of design/ if it is scratch (a screenshot, a script)";
 	if (why === TOO_BIG) return "; shrink it on this Mac (spool skill team says how)";
 	return "; put the file itself there instead";
-}
-
-/** `design/frames/shop/checkout/frame.tsx` → `shop/checkout`. */
-function frameName(path: string): string {
-	return path.replace(/^design\/frames\//u, "").replace(/\/frame\.tsx$/u, "");
 }
 
 function count(n: number, noun: string): string {

@@ -64,7 +64,7 @@ import { commentRoutes, teamPeople } from "./comment-routes";
 import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
 import { deckFollowsMoves, deckFollowsTrash } from "./deck/change";
-import { frameBeatAsked } from "./deck/disk";
+import { frameBeatAsked, slideBeats } from "./deck/disk";
 import { createDeckKeeper, watchDeckSwitch } from "./deck/keeper";
 import { deckRoutes } from "./deck/routes";
 import { createStagePlay, ROOM_QUERY } from "./deck/stage-play";
@@ -975,6 +975,7 @@ export function createDaemonApp({
 		paced: (root, frame, pace) => {
 			if (frameExists(root, frame)) writePace(root, frame, pace);
 		},
+		beats: (root, frame) => slideBeats(root, frame),
 		reactDev: vendorReactDevJs,
 		// The booth compiles every frame of every registered project, where the
 		// canvas only ever compiled the page it showed, and a compiled document

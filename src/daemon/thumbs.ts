@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import { type Dirent, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import type { ColorScheme, Cover } from "../cover";
 import { frameSegment, segmentFrame } from "../page-path";
+import type { Census } from "../runtime/frame-shim/census";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 const COVER_FORMATS = [
@@ -331,6 +333,25 @@ export async function scanCoverSchemes(root: string): Promise<Map<string, ColorS
 
 const CAPTURE_ERROR_NAME = "error.json";
 
+/** What a frame was doing while it was timed (spool#318): the booth's census, and the two the frame's world counts. */
+export interface FrameCensus extends Census {
+	/** Canvases holding a WebGL context. */
+	webgl: number;
+	/** Whether the frame's own requestAnimationFrame callbacks kept running while nothing was asked of it. */
+	loop: boolean;
+}
+
+/** How fast a slide redrew while one of its beats entered, from the beat before. */
+export interface BeatPace {
+	/** The beat, from 0. */
+	beat: number;
+	/** Its name, as the slide's `ui.beats` lists it. */
+	name: string;
+	perSecond: number;
+	slowestMs: number;
+	census?: FrameCensus | undefined;
+}
+
 /** How fast a frame redrew when the booth last timed it (booth.ts), beside its cover. */
 export interface FramePace {
 	/** Display frames a second the frame let through while it ran. */
@@ -339,6 +360,10 @@ export interface FramePace {
 	slowestMs: number;
 	/** The pixel density it was timed at. */
 	scale: number;
+	/** What it was doing at rest while it was timed. */
+	census?: FrameCensus | undefined;
+	/** A slide of a talk's beats after its first, each timed as it entered. */
+	beats?: BeatPace[] | undefined;
 }
 
 /**
@@ -356,6 +381,37 @@ export interface TimedPace extends FramePace {
 
 const PACE_NAME = "pace.json";
 
+const DRAWN = z.object({ width: z.number(), height: z.number(), drawnWidth: z.number(), drawnHeight: z.number() });
+const CENSUS = z.object({
+	elements: z.number(),
+	animations: z.array(z.object({ properties: z.array(z.string()), elements: z.number(), endless: z.boolean() })),
+	canvasCount: z.number(),
+	canvases: z.array(DRAWN),
+	videos: z.number(),
+	oversized: z.array(DRAWN.extend({ count: z.number() })),
+	webgl: z.number(),
+	loop: z.boolean(),
+});
+/** A pace file as the booth writes it; a census it cannot read is left out rather than the timing lost. */
+const PACE_FILE = z.object({
+	perSecond: z.number(),
+	slowestMs: z.number(),
+	scale: z.number(),
+	census: CENSUS.optional().catch(undefined),
+	beats: z
+		.array(
+			z.object({
+				beat: z.number(),
+				name: z.string(),
+				perSecond: z.number(),
+				slowestMs: z.number(),
+				census: CENSUS.optional().catch(undefined),
+			}),
+		)
+		.optional()
+		.catch(undefined),
+});
+
 /** Record a frame's pace, or forget the last one when it could not be timed again. */
 export function writePace(root: string, frame: string, pace: FramePace | undefined): void {
 	const file = join(coverDir(root, frame), PACE_NAME);
@@ -370,10 +426,9 @@ export function scanPaces(root: string): Map<string, TimedPace> {
 	for (const { frame, folder } of framesIn(store)) {
 		const file = join(store, folder, PACE_NAME);
 		try {
-			const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<FramePace>;
-			const { perSecond, slowestMs, scale } = parsed;
-			if (typeof perSecond !== "number" || typeof slowestMs !== "number" || typeof scale !== "number") continue;
-			paces.set(frame, { perSecond, slowestMs, scale, timedAt: statSync(file).mtimeMs });
+			const parsed = PACE_FILE.safeParse(JSON.parse(readFileSync(file, "utf8")));
+			if (!parsed.success) continue;
+			paces.set(frame, { ...parsed.data, timedAt: statSync(file).mtimeMs });
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
 		}

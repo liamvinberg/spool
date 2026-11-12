@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkSourceLimits } from "./check-budget";
@@ -188,6 +188,55 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		// a frame outside what was checked is not mentioned at all
 		expect((await runCheck(root, root, ["design/frames/deck"])).stderr).toEqual([
 			"1 frame timed slow (deck/reel); name one, as in spool check design/frames/deck/reel, to see why",
+		]);
+	});
+
+	it("says a talk's slow slides whole, by their place in it, and counts them; a shared file's edit dates their timing", async () => {
+		const root = project();
+		writeDesignFile(root, "frames/talk/deck.json", '{ "version": 1, "slides": ["intro", "chart", "end"] }\n');
+		writeDesignFile(root, "shared/bars.tsx", "export const Bars = () => <div />;\n");
+		writePageFrame(root, "talk", "intro", FRAME);
+		writePageFrame(
+			root,
+			"talk",
+			"chart",
+			'import { Bars } from "../../../shared/bars";\nexport default function Chart() { return <Bars />; }\n',
+		);
+		writePageFrame(root, "talk", "end", FRAME);
+		const census = {
+			elements: 300,
+			animations: [{ properties: ["height"], elements: 120, endless: false }],
+			canvasCount: 0,
+			canvases: [],
+			videos: 0,
+			oversized: [],
+			webgl: 0,
+			loop: false,
+		};
+		writePace(root, "talk/chart", {
+			perSecond: 60,
+			slowestMs: 17,
+			scale: 2,
+			beats: [{ beat: 1, name: "bars", perSecond: 12, slowestMs: 150, census }],
+		});
+		writePace(root, "talk/end", { perSecond: 60, slowestMs: 17, scale: 2 });
+		const at = (file: string, seconds: number) => utimesSync(join(root, "design", file), seconds, seconds);
+		for (const file of ["frames/talk/chart/frame.tsx", "shared/bars.tsx"]) at(file, 1000);
+		at(".spool/thumbs/talk%2Fchart/pace.json", 2000);
+		const note = [
+			'design/frames/talk/chart/frame.tsx: slide 2, slow while beat 2 ("bars") enters: drew 12 frames a second at Retina density when last timed (smooth is 60; its longest took 150 ms).',
+			"  animates height on 120 elements: these re-lay the page out every frame; move and size with transform",
+		].join("\n");
+
+		expect(await runCheck(root, root, ["design/frames/talk"], () => true)).toEqual({
+			stderr: [note],
+			stdout: ["checked 3 frames (4 source files), 0 errors; 1 of the 3 slides in talk timed slow"],
+			ok: true,
+		});
+		// the slide named on its own says the same, and the shared component it draws, fixed, dates the timing
+		at("shared/bars.tsx", 3000);
+		expect((await runCheck(root, root, ["talk/chart"], () => true)).stderr).toEqual([
+			note.replace("150 ms).", "150 ms). Timed before its latest edit."),
 		]);
 	});
 

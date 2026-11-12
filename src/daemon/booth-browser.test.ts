@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer as createTlsServer } from "node:tls";
+import { crc32, deflateSync } from "node:zlib";
 import { chromium } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
+import { runCheck } from "../check-command";
 import { type HeadlessShell, headlessShellArgs, launchHeadlessShell } from "../headless-shell";
 import { initProject } from "../init";
 import { removeProject } from "../remove";
@@ -511,4 +513,158 @@ it("owes a project that left nothing more, even when another folder now answers 
 	// the picture of the old source is owed again only while its project is kept
 	await new Promise((done) => setTimeout(done, 6000));
 	expect(elsewhere).toBeLessThanOrEqual(1);
+});
+
+/** A PNG of one colour, `width` by `height`: a picture far larger than any slide draws it, in a few bytes. */
+function flatPng(width: number, height: number): Buffer {
+	const chunk = (type: string, data: Buffer) => {
+		const length = Buffer.alloc(4);
+		length.writeUInt32BE(data.length);
+		const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+		const crc = Buffer.alloc(4);
+		crc.writeUInt32BE(crc32(body));
+		return Buffer.concat([length, body, crc]);
+	};
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(width, 0);
+	header.writeUInt32BE(height, 4);
+	header.set([8, 2, 0, 0, 0], 8);
+	const row = Buffer.alloc(1 + width * 3, 0x60);
+	row[0] = 0;
+	const rows = Buffer.concat(Array.from({ length: height }, () => row));
+	return Buffer.concat([
+		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+		chunk("IHDR", header),
+		chunk("IDAT", deflateSync(rows)),
+		chunk("IEND", Buffer.alloc(0)),
+	]);
+}
+
+/**
+ * A talk of five slides, each slow in its own way but the first: what `spool
+ * check` names for each once the booth has timed them (spool#318).
+ */
+/**
+ * Work that holds the slide's thread 60 ms every 16, from a timer rather than
+ * a frame callback: slow on any machine, and invisible to the census, so what
+ * check names is what the slide does besides.
+ */
+const heavy = (while_ = "true", forMs = "Infinity") => `useEffect(() => {
+		if (!(${while_})) return;
+		const until = performance.now() + ${forMs};
+		const id = setInterval(() => {
+			if (performance.now() > until) return clearInterval(id);
+			const end = performance.now() + 60;
+			while (performance.now() < end) {}
+		}, 16);
+		return () => clearInterval(id);
+	}, [${while_ === "true" ? "" : while_}]);`;
+
+const TALK: Record<string, string> = {
+	clean: `export default function Clean() {
+	return (
+		<main style={{ height: "100%", background: "#111", color: "#eee", padding: 64 }}>
+			<h1>Clean</h1>
+		</main>
+	);
+}
+`,
+	layout: `import { useEffect } from "react";
+const BOXES = Array.from({ length: 1500 }, (_, i) => i);
+export default function Layout() {
+	${heavy()}
+	return (
+		<main style={{ height: "100%", position: "relative", overflow: "hidden" }}>
+			<style>{"@keyframes slide { from { left: 0; width: 4px } to { left: 900px; width: 300px } }"}</style>
+			{BOXES.map((i) => (
+				<div key={i} style={{ position: "absolute", top: (i % 140) * 5, height: 4, background: "#345", animation: "slide 900ms infinite alternate" }} />
+			))}
+		</main>
+	);
+}
+`,
+	endless: `import { useEffect } from "react";
+export default function Endless() {
+	${heavy()}
+	return (
+		<main className="endless" style={{ height: "100%" }}>
+			<style>{"@property --t { syntax: '<number>'; inherits: true; initial-value: 0; } @keyframes swell { to { --t: 1 } } .endless { animation: swell 900ms infinite alternate }"}</style>
+		</main>
+	);
+}
+`,
+	picture: `import { useEffect } from "react";
+import big from "./big.png";
+const PICTURES = Array.from({ length: 12 }, (_, i) => i);
+export default function Picture() {
+	${heavy()}
+	return (
+		<main style={{ height: "100%", display: "flex", flexWrap: "wrap" }}>
+			{PICTURES.map((i) => <img key={i} src={big} alt="" style={{ width: 300, height: 200 }} />)}
+		</main>
+	);
+}
+`,
+	reveal: `import { useEffect } from "react";
+import { ui } from "spool";
+const BOXES = Array.from({ length: 1000 }, (_, i) => i);
+export default function Reveal() {
+	const beat = ui.beats(["title", "claim", "detail"]);
+	const detail = beat.reached("detail");
+	${heavy("detail", "1500")}
+	return (
+		<main style={{ height: "100%", position: "relative", overflow: "hidden" }}>
+			<h1 style={{ opacity: beat.reached("claim") ? 1 : 0, transition: "opacity 300ms" }}>Reveal</h1>
+			{BOXES.map((i) => (
+				<div key={i} style={{ position: "absolute", top: (i % 140) * 5, height: 4, background: "#354", left: detail ? 900 : 0, width: detail ? 300 : 4, transition: "left 900ms, width 900ms" }} />
+			))}
+		</main>
+	);
+}
+`,
+};
+
+it("times a talk's slides beat by beat, and check names the slow ones with why", { timeout: 240_000 }, async () => {
+	if (!(await shellAvailable())) return;
+	const { project, pace } = await servedDrawing(false);
+	writeDesignFile(
+		project.root,
+		"frames/talk/deck.json",
+		`${JSON.stringify({ version: 1, w: 1280, h: 720, slides: Object.keys(TALK) }, null, "\t")}\n`,
+	);
+	const pictureDir = join(project.root, "design", "frames", "talk", "picture");
+	mkdirSync(pictureDir, { recursive: true });
+	writeFileSync(join(pictureDir, "big.png"), flatPng(6000, 4000));
+	// written while the project is open, each is an edit, which is what has a frame timed
+	for (const [slide, source] of Object.entries(TALK)) {
+		writeDesignFile(project.root, `frames/talk/${slide}/frame.json`, `${JSON.stringify({ w: 1280, h: 720 })}\n`);
+		writeFrame(project.root, `talk/${slide}`, source);
+	}
+	await project.projection();
+	for (const slide of Object.keys(TALK))
+		await expect.poll(() => pace(`talk/${slide}`), { timeout: 90_000 }).toBeDefined();
+	const reveal = pace("talk/reveal") as { beats?: { beat: number; name: string }[] } | undefined;
+	expect(reveal?.beats?.map(({ beat, name }) => [beat, name])).toEqual([
+		[1, "claim"],
+		[2, "detail"],
+	]);
+
+	const checked = await runCheck(project.root, project.root, ["design/frames/talk"], () => true);
+	const noteOf = (slide: string) =>
+		checked.stderr.find((note) => note.startsWith(`design/frames/talk/${slide}/frame.tsx`)) ?? "";
+	expect(checked.stderr.join("\n")).not.toContain("talk/clean");
+	expect(noteOf("layout")).toMatch(/^design\/frames\/talk\/layout\/frame\.tsx: slide 2, slow: /);
+	expect(noteOf("layout")).toContain(
+		"animates left and width on 1500 elements: these re-lay the page out every frame; move and size with transform",
+	);
+	// an animation of a registered custom property, which names no property a stylesheet would
+	expect(noteOf("endless")).toContain("an animation that never ends keeps the slide drawing while you talk");
+	expect(noteOf("picture")).toContain("12 images of 6000 by 4000 drawn at 300 by 200; make them about 600 by 400");
+	// and what it counted as a beat entered: the transitions that beat started
+	expect(noteOf("reveal")).toContain('slide 5, slow while beat 3 ("detail") enters');
+	expect(noteOf("reveal")).toContain("animates left and width on 1000 elements");
+	expect(checked.stdout).toEqual([
+		"checked 5 frames (5 source files), 0 errors; 4 of the 5 slides in talk timed slow",
+	]);
+	expect(checked.ok).toBe(true);
 });
