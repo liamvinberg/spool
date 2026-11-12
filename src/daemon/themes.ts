@@ -27,6 +27,11 @@ export function stylesheetImportKind(id: string): "fetched" | "tailwind" | "rela
 	return id.startsWith("./") || id.startsWith("../") ? "relative" : "unsupported";
 }
 
+/** The refusal of an `@import` of Spool's Tailwind that names no stylesheet of it. */
+export function unpinnedStylesheetImport(id: string): string {
+	return `tailwindcss import "${id}" is not a stylesheet of Spool's pinned Tailwind`;
+}
+
 /** The refusal of an `@import` that `stylesheetImportKind` calls unsupported, in the stylesheet `entry` compiles from. */
 export function unsupportedStylesheetImport(id: string, entry: string): string {
 	return `unsupported import "${id}" — only tailwindcss and relative stylesheets resolve in ${entry}`;

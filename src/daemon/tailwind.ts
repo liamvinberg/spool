@@ -5,7 +5,13 @@ import { type ClassScanner, scanCandidates } from "./class-scanner";
 import { designPathResolver, designRelativePath } from "./design-boundary";
 import type { DesignFiles } from "./design-files";
 import { contentDigest, readDesignBytes } from "./design-reads";
-import { frameTheme, rebaseThemeUrls, stylesheetImportKind, unsupportedStylesheetImport } from "./themes";
+import {
+	frameTheme,
+	rebaseThemeUrls,
+	stylesheetImportKind,
+	unpinnedStylesheetImport,
+	unsupportedStylesheetImport,
+} from "./themes";
 
 /**
  * Serve-time Tailwind (#15): frames receive finished CSS, compiled with the
@@ -101,8 +107,7 @@ export function designStylesheets(
 
 	function pinned(id: string, name: string): { path: string; base: string; content: string } {
 		const content = name.startsWith("../") ? undefined : tailwind(name);
-		if (content === undefined)
-			throw new Error(`tailwindcss import "${id}" is not a stylesheet of Spool's pinned Tailwind`);
+		if (content === undefined) throw new Error(unpinnedStylesheetImport(id));
 		return { path: `${TAILWIND_BASE}/${name}`, base: TAILWIND_BASE, content };
 	}
 

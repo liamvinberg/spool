@@ -105,8 +105,8 @@ interface SourceClosure {
 	/** What each source reads into the closure, canonical both ways, and where each named entry landed. */
 	reads: Map<string, string[]>;
 	entries: Map<string, string>;
-	/** The stylesheets its sources import, which the typecheck never reads. */
-	stylesheets: Set<string>;
+	/** The stylesheets each source imports, which the typecheck never reads. */
+	stylesheets: Map<string, string[]>;
 }
 
 interface LocalModuleResolution {
@@ -194,8 +194,8 @@ export interface CheckReport {
 	strays: string[];
 	/** The sources a checked frame imports, its own entry among them, by absolute path. */
 	sourcesOf(frame: string): string[];
-	/** The stylesheets the checked sources import, absolute, for the stylesheet rules (`check-stylesheets.ts`). */
-	stylesheets: string[];
+	/** The stylesheets a checked frame's sources import, by absolute path, for the stylesheet rules (`check-stylesheets.ts`). */
+	stylesheetsOf(frame: string): string[];
 }
 
 /** Check every HTML frame without registering, compiling, or writing a project. */
@@ -242,7 +242,11 @@ export async function checkProject(root: string, scope?: string[]): Promise<Chec
 			ran: checked.batches > 0 || alone.size === 0,
 			batches: checked.batches,
 			sourcesOf: (frame) => reachOf(checked.reads, entryOf.get(frame)),
-			stylesheets: [...checked.stylesheets],
+			stylesheetsOf: (frame) => [
+				...new Set(
+					reachOf(checked.reads, entryOf.get(frame)).flatMap((file) => checked.stylesheets.get(file) ?? []),
+				),
+			],
 			notChecked: checked.alone.map(({ entry, usage }) => overLimit(designDir, entry, usage)),
 		};
 	} catch (error) {
@@ -267,7 +271,7 @@ function report(
 		unmatched: selection.unmatched,
 		strays: selection.strays.map((file) => designPath(designDir, file)),
 		sourcesOf: () => [],
-		stylesheets: [],
+		stylesheetsOf: () => [],
 	};
 }
 
@@ -325,7 +329,7 @@ interface Batched {
 	reads: Map<string, string[]>;
 	entries: Map<string, string>;
 	/** Every stylesheet those sources import. */
-	stylesheets: Set<string>;
+	stylesheets: Map<string, string[]>;
 	batches: number;
 	/** The frames whose own closure is over the limit, which no batch could hold. */
 	alone: { entry: string; usage: Usage }[];
@@ -350,14 +354,14 @@ async function checkInBatches(designDir: string, entries: string[]): Promise<Bat
 	const closure = new Map<string, string>();
 	const reads = new Map<string, string[]>();
 	const landed = new Map<string, string>();
-	const stylesheets = new Set<string>();
+	const stylesheets = new Map<string, string[]>();
 	for (const batch of batches) {
 		const checked = await runCheckDesign(designDir, batch);
 		diagnostics.push(...checked.diagnostics);
 		for (const [file, text] of checked.closure) closure.set(file, text);
 		for (const [file, read] of checked.reads) reads.set(file, read);
 		for (const [entry, canonical] of checked.entries) landed.set(entry, canonical);
-		for (const file of checked.stylesheets) stylesheets.add(file);
+		for (const [file, imported] of checked.stylesheets) stylesheets.set(file, imported);
 	}
 	return {
 		diagnostics: dedupe(diagnostics),
@@ -443,7 +447,7 @@ async function runCheckDesign(
 	closure: Map<string, string>;
 	reads: Map<string, string[]>;
 	entries: Map<string, string>;
-	stylesheets: Set<string>;
+	stylesheets: Map<string, string[]>;
 }> {
 	const sourceBudget = new CheckSourceBudget();
 	const importMap = readImportMap(designDir, sourceBudget);
@@ -1618,7 +1622,7 @@ function readClosure(designDir: string, entries: string[], sourceBudget: CheckSo
 	// what each source asked for, by the path it asked with, and what each path came to
 	const asked = new Map<string, string[]>();
 	const canonicalOf = new Map<string, string>();
-	const stylesheets = new Set<string>();
+	const stylesheets = new Map<string, string[]>();
 	for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
 		const canonical = resolveDesignPath(designDir, file, designPath(designDir, file));
 		canonicalOf.set(file, canonical);
@@ -1636,7 +1640,7 @@ function readClosure(designDir: string, entries: string[], sourceBudget: CheckSo
 			const cssDeclaration = resolveLocalCssDeclaration(designDir, dirname(canonical), specifier);
 			if (cssDeclaration !== undefined) queue.push(cssDeclaration);
 			const stylesheet = resolveLocalStylesheet(designDir, dirname(canonical), specifier);
-			if (stylesheet !== undefined) stylesheets.add(stylesheet);
+			if (stylesheet !== undefined) stylesheets.set(canonical, [...(stylesheets.get(canonical) ?? []), stylesheet]);
 			const resolved = resolveLocalClosureSource(designDir, dirname(canonical), specifier);
 			if (resolved !== undefined) queue.push(resolved);
 		}

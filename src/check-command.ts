@@ -84,7 +84,7 @@ export async function runCheck(
 	for (const found of decks.warnings)
 		stderr.push(`${found.path}:${found.line}:${found.column} deck warning: ${found.message}`);
 	// what the stylesheet compile will refuse, which the typecheck never reads (spool#323)
-	const stylesheets = report.ran ? checkStylesheets(designDir, report.stylesheets) : [];
+	const stylesheets = report.ran ? checkStylesheets(designDir, report.frames, report.stylesheetsOf) : [];
 	for (const found of stylesheets)
 		stderr.push(`${found.path}:${found.line}:${found.column} stylesheet: ${found.message}`);
 	stderr.push(...report.notChecked);
