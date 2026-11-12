@@ -1126,22 +1126,21 @@ function ViewerCanvas({
 						place === undefined ? undefined : { ...place, keys: above === "place" ? PATH_KEYS.up() : undefined }
 					}
 					onGo={(next) => next !== page && go({ page: next, frame: null })}
-					// who else is here, after the path, as on the Mac's canvas
-					after={
-						room === undefined ? undefined : (
-							<PresenceFaces
-								room={room}
-								page={page}
-								project={project.project}
-								following={following}
-								onFollow={setFollowing}
-							/>
-						)
-					}
 				/>
 				{/* the top right holds the viewer's own controls, so the words hang from the top's middle */}
 				{followed !== undefined && <FollowMark mate={followed} centre />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
+					{/* who else is here, at the top right as on the Mac's canvas (spool#312) */}
+					{room === undefined ? null : (
+						<PresenceFaces
+							room={room}
+							page={page}
+							project={project.project}
+							following={following}
+							onFollow={setFollowing}
+							align="end"
+						/>
+					)}
 					{project.shared !== undefined && (
 						<SharedLine shared={project.shared} project={project.project} team={project.team} />
 					)}

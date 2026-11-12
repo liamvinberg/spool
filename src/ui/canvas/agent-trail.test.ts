@@ -6,12 +6,17 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import type { ProjectedFrame } from "../api";
 import { createDeckStore } from "./agent-deck";
 import type { AgentDeck } from "./agent-stream";
-import { AgentTrail } from "./agent-trail";
+import { useAgentTrail } from "./agent-trail";
 import type { AgentEntry, AgentTile } from "./agent-transcript";
 import { createCameraStore } from "./camera-store";
 import { createCanvasStore } from "./canvas-store";
 
 /** The agent's trail on the canvas (task 443): what the turn is writing, then what it made, from the rail's own deck. */
+
+/** the trail as the top right's row draws it when it has room */
+function Trail(props: Parameters<typeof useAgentTrail>[0]) {
+	return useAgentTrail(props)?.("full") ?? null;
+}
 
 const frame = (name: string, page: string, x: number, unseen?: "new"): ProjectedFrame =>
 	({ name, page, x, y: 0, w: 240, h: 520, ...(unseen === undefined ? {} : { unseen }) }) as ProjectedFrame;
@@ -83,14 +88,13 @@ it("names the frame being written with its page from another, then counts the tu
 	const draw = () =>
 		act(() =>
 			root.render(
-				createElement(AgentTrail, {
+				createElement(Trail, {
 					deck,
 					store,
 					camera,
 					viewportRef: { current: host },
 					page: "app",
 					project: "kaffe",
-					under: false,
 					teammate: false,
 					onFollow: () => {},
 					toPage: () => {},

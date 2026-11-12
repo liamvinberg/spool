@@ -1,8 +1,9 @@
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, PresenceContext, useReducedMotion } from "motion/react";
 import {
 	type ReactNode,
 	type RefObject,
 	useCallback,
+	useContext,
 	useEffect,
 	useLayoutEffect,
 	useMemo,
@@ -24,6 +25,7 @@ import {
 	sameTrailTurn,
 	sameWay,
 	trailTurnOf,
+	trailWords,
 	type Way,
 	wayTo,
 	writingOf,
@@ -32,11 +34,14 @@ import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { Sep } from "./canvas-path";
 import { type CanvasState, type CanvasStore, navigatorFramesOf, unseenOf, useCanvasState } from "./canvas-store";
+import { type Fold, Measuring } from "./corner-row";
 
 /**
  * The agent's trail (task 443): the agent has a path too, at the canvas's top
  * right, in the page path's mono and chevrons, so your path at the top left and
- * the agent's at the top right read as one row.
+ * the agent's at the top right read as one row. It stands first in the top
+ * right's row (`corner-row.tsx`, spool#312), before who's here and Present, and
+ * folds there when the row is short of room (`trailWords`).
  *
  * - Writing: `claude › receipt--tip` and an arrow that turns as you pan to keep
  *   pointing at the frame, fading once it is in view; `claude › site ›
@@ -66,19 +71,41 @@ interface Spot extends Box {
 	readonly page: string;
 }
 
-export function AgentTrail({
+/** The trail's words at their widest, as the row reads them, and what a press on it does. */
+interface TrailView {
+	readonly agent: string;
+	readonly label: string;
+	readonly done: boolean;
+	readonly reading: boolean;
+	readonly following: boolean;
+	/** the page it writes on, named as your path names it, while it is not this one */
+	readonly elsewhere: readonly string[] | null;
+	readonly way: Way;
+	readonly ink: number | string;
+	readonly open: boolean;
+	readonly made: readonly { name: string; where: readonly string[]; here: boolean; unseen: boolean; way: Way }[];
+	readonly box: RefObject<HTMLDivElement | null>;
+	readonly viewportRef: RefObject<HTMLDivElement | null>;
+	readonly onPress: () => void;
+	readonly onLand: (name: string) => void;
+}
+
+/**
+ * The agent's trail, as the top right's row draws it (`corner-row.tsx`): its words at a fold, or null while no agent
+ * works here or has just finished. The turn, following, the arrow's way and the list are kept here once, however
+ * many folds the row draws to measure.
+ */
+export function useAgentTrail({
 	deck,
 	store,
 	camera,
 	viewportRef,
 	page,
 	project,
-	under,
 	teammate,
 	onFollow,
 	toPage,
 	onLand,
-	children,
 }: {
 	deck: DeckStore;
 	store: CanvasStore;
@@ -88,17 +115,13 @@ export function AgentTrail({
 	page: string;
 	/** what the root page is called where the trail names it */
 	project: string;
-	/** you follow a teammate: `following <name> · esc` hangs from the top right, and the trail stands under it */
-	under: boolean;
 	/** a teammate is being followed, which following the agent lets go of and is let go for */
 	teammate: boolean;
 	/** following the agent starts */
 	onFollow: () => void;
 	toPage: (page: string, arrive: Camera | undefined, then: Camera) => void;
 	onLand: (name: string) => void;
-	/** what stands under the trail in the corner: agents working here from a terminal (task 531) */
-	children?: ReactNode;
-}) {
+}): ((fold: Fold) => ReactNode) | null {
 	const turn = useDeck(deck, trailTurnOf, sameTrailTurn);
 	const frames = useCanvasState(store, navigatorFramesOf);
 	const placeholders = useCanvasState(store, placeholdersOf);
@@ -172,204 +195,272 @@ export function AgentTrail({
 		};
 	}, [open]);
 
-	const t = useMotionScale();
-	const wake = useCornerWake(viewportRef);
-	const agent = turn?.agent ?? "agent";
-	const label = done ? `${made.length} new` : writing === null ? "" : pageName(writing.frame);
-	const ink = done && !open ? `max(${(REST + (1 - REST) * fresh).toFixed(3)}, var(--wake))` : 1;
-	const elsewhere = !done && !following && trailWay.kind === "page" ? trailWay.page : null;
-	const curve = { duration: t.slow, ease: SNAP };
+	if (!shown) return null;
 	const placeName = (where: string) => (where === ROOT_PAGE ? [project] : pageSegments(where));
+	const elsewhere = !done && !following && trailWay.kind === "page" ? placeName(trailWay.page) : null;
+	const view: TrailView = {
+		agent: turn?.agent ?? "agent",
+		label: done ? `${made.length} new` : writing === null ? "" : pageName(writing.frame),
+		done,
+		reading: writing?.reading === true,
+		following,
+		elsewhere,
+		way: trailWay,
+		ink: done && !open ? `max(${(REST + (1 - REST) * fresh).toFixed(3)}, var(--wake))` : 1,
+		open: open && done,
+		made: made.map((name, at) => {
+			const where = spots.get(name)?.page ?? pageParent(name);
+			return {
+				name,
+				where: placeName(where),
+				here: where === page,
+				unseen: unseen.has(name),
+				way: ways[at + 1] ?? { kind: "here" },
+			};
+		}),
+		box,
+		viewportRef,
+		onPress: () => {
+			if (done) setOpen(!open);
+			else if (following) follow(false);
+			else {
+				onFollow();
+				follow(true);
+			}
+		},
+		onLand: (name) => {
+			setOpen(false);
+			onLand(name);
+		},
+	};
+	return (fold) => <TrailPath view={view} fold={fold} />;
+}
 
+/**
+ * The trail at one fold. The row draws it once to be seen and once more per fold out of sight (`Measuring`), where it
+ * keeps no refs, no list and no test hooks.
+ */
+function TrailPath({ view, fold }: { view: TrailView; fold: Fold }) {
+	const measuring = useContext(Measuring);
+	const t = useMotionScale();
+	const wake = useCornerWake(view.viewportRef, !measuring);
+	const { agent, label, done, following, elsewhere, open } = view;
+	const words = trailWords(elsewhere ?? [], label, fold);
+	const whole = [agent, ...(elsewhere ?? []), label].join(" › ");
+	const hook = (value: string) => (measuring ? undefined : value);
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: it only keeps a press from the canvas under it; the trail is a button
 		<div
-			ref={wake}
-			data-agent-trail=""
-			className={cn(
-				"absolute right-3 z-20 flex flex-col items-end gap-1 transition-[top] duration-slow ease-snap",
-				under ? "top-8" : "top-3",
-			)}
+			ref={measuring ? undefined : wake}
+			data-agent-trail={hook("")}
+			className="relative flex h-control-sm items-center"
 			style={{ ["--wake" as string]: 0 }}
-			onPointerDown={(event) => event.stopPropagation()}
-			onDoubleClick={(event) => event.stopPropagation()}
 		>
-			<AnimatePresence>
-				{shown ? (
-					<motion.div
-						ref={box}
-						key={`trail-${turnKey ?? ""}`}
-						className="relative flex items-center"
-						initial={{ opacity: 0, x: 10 }}
-						animate={{ opacity: 1, x: 0 }}
-						exit={{ opacity: 0, x: 10, transition: { duration: t.slower, ease: SNAP } }}
-						transition={curve}
+			<div ref={measuring ? undefined : view.box} className="relative flex items-center">
+				<span className="rounded-xs bg-surface-canvas">
+					<button
+						type="button"
+						tabIndex={measuring ? -1 : undefined}
+						data-agent-trail-button={hook(done ? "done" : following ? "following" : "writing")}
+						aria-pressed={done ? undefined : following}
+						aria-expanded={done ? open : undefined}
+						aria-haspopup={done ? "menu" : undefined}
+						aria-label={
+							done
+								? `${label} from ${agent}, show them`
+								: following
+									? `Following ${agent} on ${label}. Stop following`
+									: `Follow ${agent}: ${label}${elsewhere === null ? "" : ` on ${elsewhere.join(" › ")}`}`
+						}
+						title={fold === "full" ? undefined : whole}
+						onClick={view.onPress}
+						className={cn(
+							"flex h-control-sm items-center whitespace-nowrap rounded-xs px-1 transition-[background-color,opacity] duration-fast ease-out hover:bg-state-hover-raised focus-ring",
+							open && !measuring && "bg-state-selected",
+						)}
+						style={{ opacity: view.ink }}
 					>
-						<span className="rounded-xs bg-surface-canvas">
-							<button
-								type="button"
-								data-agent-trail-button={done ? "done" : following ? "following" : "writing"}
-								aria-pressed={done ? undefined : following}
-								aria-expanded={done ? open : undefined}
-								aria-haspopup={done ? "menu" : undefined}
-								aria-label={
-									done
-										? `${label} from ${agent}, show them`
-										: following
-											? `Following ${agent} on ${label}. Stop following`
-											: `Follow ${agent}: ${label}${elsewhere === null ? "" : ` on ${placeName(elsewhere).join(" › ")}`}`
-								}
-								onClick={() => {
-									if (done) setOpen(!open);
-									else if (following) follow(false);
-									else {
-										onFollow();
-										follow(true);
-									}
-								}}
-								className={cn(
-									"flex h-control-sm items-center whitespace-nowrap rounded-xs px-1 transition-[background-color,opacity] duration-fast ease-out hover:bg-state-hover-raised focus-ring",
-									open && "bg-state-selected",
+						<span className="mr-1.5 flex size-3 items-center justify-center">
+							<AnimatePresence initial={false} mode="popLayout">
+								{done ? (
+									<motion.span
+										key="disc"
+										initial={{ scale: 0.3, opacity: 0 }}
+										animate={{ scale: 1, opacity: 1 }}
+										transition={{ type: "spring", stiffness: 520, damping: 22 }}
+									>
+										<StatusMark status="unseen" aria-hidden="true" />
+									</motion.span>
+								) : (
+									<motion.span key="ring" exit={{ opacity: 0, scale: 0.6, transition: { duration: t.fast } }}>
+										<SpinRing className={cn("size-3", following ? "text-primary" : "text-secondary")} />
+									</motion.span>
 								)}
-								style={{ opacity: ink }}
-							>
-								<motion.span layout="position" className="mr-1.5 flex size-3 items-center justify-center">
-									<AnimatePresence initial={false} mode="popLayout">
-										{done ? (
-											<motion.span
-												key="disc"
-												initial={{ scale: 0.3, opacity: 0 }}
-												animate={{ scale: 1, opacity: 1 }}
-												transition={{ type: "spring", stiffness: 520, damping: 22 }}
-											>
-												<StatusMark status="unseen" aria-hidden="true" />
-											</motion.span>
-										) : (
-											<motion.span
-												key="ring"
-												exit={{ opacity: 0, scale: 0.6, transition: { duration: t.fast } }}
-											>
-												<SpinRing className={cn("size-3", following ? "text-primary" : "text-secondary")} />
-											</motion.span>
-										)}
-									</AnimatePresence>
-								</motion.span>
-								<motion.span
-									layout="position"
-									className={cn(
-										"type-value transition-colors duration-base",
-										following ? "text-primary" : "text-secondary",
-									)}
-								>
-									{agent}
-								</motion.span>
-								<motion.span layout="position" className="flex w-4 justify-center">
+							</AnimatePresence>
+						</span>
+						<span
+							className={cn(
+								"type-value transition-colors duration-base",
+								following ? "text-primary" : "text-secondary",
+							)}
+						>
+							{agent}
+						</span>
+						{words.label === null ? null : (
+							<>
+								<span className="flex w-4 justify-center">
 									<Sep />
-								</motion.span>
-								<AnimatePresence initial={false}>
-									{elsewhere !== null ? (
-										<motion.span
-											key={`page-${elsewhere}`}
-											data-agent-trail-page={elsewhere}
-											className="flex items-center overflow-hidden text-secondary type-value"
-											initial={{ opacity: 0, width: 0 }}
-											animate={{ opacity: 1, width: "auto" }}
-											exit={{ opacity: 0, width: 0 }}
-											transition={curve}
+								</span>
+								{/* the words after the name unroll leftward to their new width, pushing the name along */}
+								<Unroll
+									still={measuring || t.base === 0}
+									words={`${words.pages.join("/")}|${words.label}|${fold}`}
+								>
+									{words.pages.length === 0 ? null : (
+										<span
+											data-agent-trail-page={hook(elsewhere?.join("/") ?? "")}
+											className="flex items-center"
 										>
-											{placeName(elsewhere).map((name) => (
-												<span key={name} className="flex items-center">
+											{words.pages.map((name, at) => (
+												<span
+													// biome-ignore lint/suspicious/noArrayIndexKey: a page's names are a path, its places fixed
+													key={at}
+													className={cn(
+														"flex items-center type-value",
+														name === "…" ? "text-tertiary" : "text-secondary",
+													)}
+												>
 													{name}
 													<span className="flex w-4 justify-center">
 														<Sep />
 													</span>
 												</span>
 											))}
-										</motion.span>
-									) : null}
-								</AnimatePresence>
-								<motion.span layout="position" className="flex items-center">
+										</span>
+									)}
 									<span
-										key={label}
-										data-agent-trail-label=""
+										data-agent-trail-label={hook("")}
 										className={cn(
-											"inline-block animate-step-in type-value transition-colors duration-base motion-reduce:animate-none",
+											"type-value transition-colors duration-base",
 											following || done ? "text-primary" : "text-secondary",
 										)}
 									>
-										{writing?.reading === true ? <span className="text-tertiary">reading </span> : null}
-										{label}
+										{view.reading ? <span className="text-tertiary">reading </span> : null}
+										{words.label}
 									</span>
+									<span className="ml-1.5 flex items-center">
+										<Swing way={view.way} following={following} hidden={elsewhere !== null} />
+									</span>
+								</Unroll>
+							</>
+						)}
+						<AnimatePresence initial={false}>
+							{following ? (
+								<motion.span
+									key="esc"
+									className="overflow-hidden text-tertiary type-detail"
+									initial={{ opacity: 0, width: 0 }}
+									animate={{ opacity: 1, width: "auto" }}
+									exit={{ opacity: 0, width: 0 }}
+									transition={{ duration: t.base, ease: SNAP }}
+								>
+									<span className="pl-1.5">esc</span>
 								</motion.span>
-								<motion.span layout="position" className="ml-1.5 flex items-center">
-									<Swing way={trailWay} following={following} hidden={elsewhere !== null} />
-								</motion.span>
-								<AnimatePresence initial={false}>
-									{following ? (
-										<motion.span
-											key="esc"
-											className="overflow-hidden text-tertiary type-detail"
-											initial={{ opacity: 0, width: 0 }}
-											animate={{ opacity: 1, width: "auto" }}
-											exit={{ opacity: 0, width: 0 }}
-											transition={{ duration: t.base, ease: SNAP }}
-										>
-											<span className="pl-1.5">esc</span>
-										</motion.span>
-									) : null}
-								</AnimatePresence>
-							</button>
-						</span>
-						{open && done ? (
-							<Menu
-								aria-label={`What ${agent} made`}
-								data-agent-trail-list=""
-								className="absolute top-full right-0 mt-1.5 w-[272px]"
-							>
-								{made.map((name, at) => {
-									const where = spots.get(name)?.page ?? pageParent(name);
-									return (
-										<MenuItem
-											key={name}
-											data-agent-trail-row={name}
-											icon={unseen.has(name) ? <StatusMark status="unseen" aria-hidden="true" /> : null}
-											label={
-												<span className="flex min-w-0 items-center type-value">
-													{placeName(where).map((part) => (
-														<span key={part} className="flex items-center">
-															<span className={where === page ? "text-tertiary" : "text-secondary"}>
-																{part}
-															</span>
-															<span className="flex w-4 justify-center">
-																<Sep />
-															</span>
-														</span>
-													))}
-													<span
-														className={cn(
-															"truncate",
-															unseen.has(name) ? "text-primary" : "text-secondary",
-														)}
-													>
-														{pageName(name)}
-													</span>
+							) : null}
+						</AnimatePresence>
+					</button>
+				</span>
+				{open && !measuring ? (
+					<Menu
+						aria-label={`What ${agent} made`}
+						data-agent-trail-list=""
+						className="absolute top-full right-0 mt-1.5 w-[272px]"
+					>
+						{view.made.map((one) => (
+							<MenuItem
+								key={one.name}
+								data-agent-trail-row={one.name}
+								icon={one.unseen ? <StatusMark status="unseen" aria-hidden="true" /> : null}
+								label={
+									<span className="flex min-w-0 items-center type-value">
+										{one.where.map((part) => (
+											<span key={part} className="flex items-center">
+												<span className={one.here ? "text-tertiary" : "text-secondary"}>{part}</span>
+												<span className="flex w-4 justify-center">
+													<Sep />
 												</span>
-											}
-											meta={<RowArrow way={ways[at + 1] ?? { kind: "here" }} />}
-											onClick={() => {
-												setOpen(false);
-												onLand(name);
-											}}
-										/>
-									);
-								})}
-							</Menu>
-						) : null}
-					</motion.div>
+											</span>
+										))}
+										<span className={cn("truncate", one.unseen ? "text-primary" : "text-secondary")}>
+											{pageName(one.name)}
+										</span>
+									</span>
+								}
+								meta={<RowArrow way={one.way} />}
+								onClick={() => view.onLand(one.name)}
+							/>
+						))}
+					</Menu>
 				) : null}
-			</AnimatePresence>
-			{children}
+			</div>
 		</div>
+	);
+}
+
+/** no bounce: the words unroll and roll back, they never spring past */
+const UNROLL = { type: "spring", duration: 0.4, bounce: 0 } as const;
+
+/**
+ * The words after the agent's name: a window onto them, right-aligned, whose width follows theirs on a spring, so a
+ * new frame name, a page put in or a fold opens leftward from the arrow and pushes the name along instead of jumping
+ * it. Out of sight for measuring, it is only the words.
+ */
+function Unroll({ still, words, children }: { still: boolean; words: string; children: ReactNode }) {
+	const inner = useRef<HTMLSpanElement>(null);
+	const [width, setWidth] = useState<number | null>(null);
+	// the first words come in with the trail itself; only later ones fade in on their own
+	const born = useRef(false);
+	useEffect(() => {
+		born.current = true;
+	}, []);
+	const read = useCallback(() => {
+		const el = inner.current;
+		if (el === null) return;
+		const next = el.offsetWidth;
+		setWidth((was) => (was === next ? was : next));
+	}, []);
+	// every commit, before paint: the words change with a render, so their width is read in the same frame
+	useLayoutEffect(read);
+	useEffect(() => {
+		const el = inner.current;
+		if (el === null || still) return;
+		const sizes = new ResizeObserver(read);
+		sizes.observe(el);
+		return () => sizes.disconnect();
+	}, [read, still]);
+	if (still) return <span className="flex items-center">{children}</span>;
+	return (
+		<motion.span
+			className="relative flex h-full items-center justify-end overflow-hidden"
+			initial={false}
+			animate={{ width: width ?? "auto" }}
+			transition={UNROLL}
+		>
+			<span ref={inner} className="flex w-max shrink-0 items-center">
+				{/* new words come in faint while the window opens, so their cut-off start is never read; out of the
+				    row's presence, whose initial={false} would hold every later arrival still */}
+				<PresenceContext.Provider value={null}>
+					<motion.span
+						key={words}
+						className="flex items-center"
+						initial={born.current ? { opacity: 0, x: 6 } : false}
+						animate={{ opacity: 1, x: 0 }}
+						transition={{ duration: 0.26, delay: 0.14, ease: SNAP }}
+					>
+						{children}
+					</motion.span>
+				</PresenceContext.Provider>
+			</span>
+		</motion.span>
 	);
 }
 
@@ -540,13 +631,13 @@ const smoothstep = (a: number, b: number, x: number) => {
  * element runs 0 to 1 as the pointer nears it, eased every frame, so a finished
  * trail that has faded lifts the way the path's names do.
  */
-function useCornerWake(viewportRef: RefObject<HTMLElement | null>) {
+function useCornerWake(viewportRef: RefObject<HTMLElement | null>, on: boolean) {
 	const still = useReducedMotion() === true;
 	const ref = useRef<HTMLDivElement | null>(null);
 	useEffect(() => {
 		const el = ref.current;
 		const viewport = viewportRef.current;
-		if (el === null || viewport === null) return;
+		if (!on || el === null || viewport === null) return;
 		const w = { near: 0, now: 0, raf: 0, last: 0, depth: 0, pending: false };
 		const step = (at: number) => {
 			w.pending = false;
@@ -596,7 +687,7 @@ function useCornerWake(viewportRef: RefObject<HTMLElement | null>) {
 			viewport.removeEventListener("pointermove", sense);
 			viewport.removeEventListener("pointerleave", away);
 		};
-	}, [viewportRef, still]);
+	}, [viewportRef, still, on]);
 	return ref;
 }
 

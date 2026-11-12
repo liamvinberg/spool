@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDeck } from "./agent-stream";
-import { madeOf, type TrailTurn, trailTurnOf, wayTo, writingOf } from "./agent-trail-model";
+import { madeOf, type TrailTurn, trailTurnOf, trailWords, wayTo, writingOf } from "./agent-trail-model";
 import type { AgentEntry, AgentTile } from "./agent-transcript";
 
 /** What the agent's trail says (task 443), read off the open thread's last turn. */
@@ -106,4 +106,13 @@ describe("which way the trail points", () => {
 		expect(below.kind === "angle" && below.angle).toBeCloseTo(Math.PI / 2);
 		expect(wayTo([frame(0, 0, "site")], "app", camera, size)).toEqual({ kind: "page", page: "site" });
 	});
+});
+
+it("folds the trail's pages to one mark, then cuts a long frame name in its middle, then keeps only the agent", () => {
+	const name = "order--gift-note-and-delivery-date";
+	expect(trailWords(["site", "launch"], name, "full")).toEqual({ pages: ["site", "launch"], label: name });
+	expect(trailWords(["site", "launch"], name, "middle")).toEqual({ pages: ["…"], label: name });
+	expect(trailWords(["site", "launch"], name, "cut")).toEqual({ pages: ["…"], label: "order--gi…very-date" });
+	expect(trailWords([], "app-ring", "cut")).toEqual({ pages: [], label: "app-ring" });
+	expect(trailWords(["site"], name, "name")).toEqual({ pages: [], label: null });
 });
