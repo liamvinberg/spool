@@ -312,6 +312,9 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 	let stopped: string | undefined;
 	try {
 		await page.addInitScript({ content: `(${frameShims.rehearseProbes}).record();` });
+		// the tab is no canvas: it plays the talk as it opened, and following the project's changes as a canvas does
+		// would have the daemon compose the whole canvas's player for it, a stylesheet for every frame, ahead of the stage
+		await page.route(`${new URL(input.address).origin}/api/p/*/events`, (route) => route.fulfill({ status: 204 }));
 		const first = talk.slides[from]?.frame;
 		const address =
 			from === 0 || first === undefined ? input.address : `${input.address}&frame=${encodeURIComponent(first)}`;
