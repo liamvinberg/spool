@@ -67,6 +67,8 @@ type Phase =
 
 /** How long a readied stage waits for Present before it is let go. */
 const WARM_MS = 30_000;
+/** The longest the picture waits on the live slide's entrances before handing over all the same. */
+const ENTRANCE_MS = 1000;
 
 export interface PresentSlidesProps {
 	/**
@@ -156,6 +158,12 @@ export function PresentSlides({
 	const liveOn = useRef(false);
 	/** the picture the slide flies as, decoded */
 	const pictured = useRef(false);
+	/**
+	 * when the live slide's entrances have played, as `performance.now()` reads: till then its picture stays up, as the
+	 * picture is the slide at rest and the live slide playing in under it would show twice
+	 */
+	const entered = useRef(0);
+	const waitingEntrance = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	/** where the window's page stands on the screen, so the slide stays put on it while the window moves */
 	const origin = useRef(viewportOrigin());
 	const hands = useRef({ cardOf, pictureOf, onEnded, say, closeRoom, talk, still, timing, pinned, help });
@@ -199,7 +207,13 @@ export function PresentSlides({
 		},
 		[draw, run],
 	);
-	useEffect(() => () => cancelAnimationFrame(loop.current), []);
+	useEffect(
+		() => () => {
+			cancelAnimationFrame(loop.current);
+			clearTimeout(waitingEntrance.current);
+		},
+		[],
+	);
 
 	const landing = useCallback((): Pose => {
 		const { talk: size } = hands.current;
@@ -231,10 +245,20 @@ export function PresentSlides({
 		);
 	}, []);
 
-	/** the live slide on in the flying layer, fading in over its picture; never off again this talk */
+	/**
+	 * the live slide on in the flying layer, fading in over its picture once its entrances have played, or at once when
+	 * `now` (the talk moved on from what the picture shows); never off again this talk
+	 */
 	const showLive = useCallback(
-		(at: "now" | "fade") => {
+		(at: "now" | "fade", force = false) => {
 			if (liveOn.current) return;
+			clearTimeout(waitingEntrance.current);
+			const wait = entered.current - performance.now();
+			// it waits out turns round on the way: the talk is the same, and so is its slide
+			if (!force && wait > 0 && pictured.current) {
+				waitingEntrance.current = setTimeout(() => showing.current(at, true), wait);
+				return;
+			}
 			liveOn.current = true;
 			void fade(liveBox.current, 1, at === "now" ? 0 : hands.current.timing.handOver).then(() => {
 				if (liveOn.current) pictureBox.current?.replaceChildren();
@@ -275,6 +299,7 @@ export function PresentSlides({
 		fillScreen(false);
 		cancelAnimationFrame(loop.current);
 		loop.current = 0;
+		clearTimeout(waitingEntrance.current);
 		started.current = null;
 		setPlace(null);
 		setPhase(null);
@@ -394,6 +419,10 @@ export function PresentSlides({
 				},
 				session: (now) => {
 					setSession(now);
+					// the talk moved on from the slide its picture shows: the live slide takes over at once
+					const on = mounted.talk()[now.at.slide]?.frame;
+					const up = phaseRef.current === "in" || phaseRef.current === "on";
+					if (up && !liveOn.current && (on !== wanted.current || now.at.beat !== 0)) showing.current("now", true);
 					const said = room.current;
 					const frame = mounted.talk()[roomPicture(now).at.slide]?.frame;
 					if (said !== null && frame !== undefined) said.say({ kind: "session", session: now, frame });
@@ -401,6 +430,7 @@ export function PresentSlides({
 				shown: (shown) => {
 					drawn.current = shown.at.beat === 0 ? shown.frame : null;
 					if (shown.frame !== wanted.current) return;
+					entered.current = performance.now() + Math.min(shown.entering ?? 0, ENTRANCE_MS);
 					if (phaseRef.current === "waiting") launching.current();
 					else if (phaseRef.current === "in" || phaseRef.current === "on") showing.current("fade");
 				},
@@ -446,6 +476,8 @@ export function PresentSlides({
 		wanted.current = ask.slide;
 		liveOn.current = false;
 		pictured.current = false;
+		entered.current = 0;
+		clearTimeout(waitingEntrance.current);
 		pictureBox.current?.replaceChildren();
 		if (liveBox.current !== null) liveBox.current.style.opacity = "0";
 		cut(host.current, ask.slide);
@@ -706,7 +738,7 @@ export function PresentSlides({
 				)}
 				style={{ width: talk.w, height: talk.h, opacity: 0 }}
 			>
-				<div ref={pictureBox} className="absolute inset-0" />
+				<div ref={pictureBox} className="pointer-events-none absolute inset-0" />
 				<div ref={liveBox} data-present-live="" className="absolute inset-0" style={{ opacity: 0 }} />
 			</div>
 			{/* over a slide that is not live, a click is the next beat, and the pointer is spool's to hide */}

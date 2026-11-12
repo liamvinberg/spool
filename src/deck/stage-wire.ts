@@ -59,6 +59,8 @@ export interface StageShown {
 	readonly frames: number;
 	/** how long it was held waiting for the slide, in ms */
 	readonly waited: number;
+	/** how long, in ms, the slide's entrances still play as it is shown: its animations that end; absent when none do */
+	readonly entering?: number;
 }
 
 export type StageMode = "own" | "follow";
@@ -274,8 +276,17 @@ function parseShown(value: unknown): StageShown | undefined {
 	if (at === undefined || typeof value.frame !== "string" || !isCount(value.take)) return undefined;
 	if (typeof value.ready !== "boolean" || typeof value.held !== "boolean") return undefined;
 	if (!isCount(value.frames) || typeof value.waited !== "number") return undefined;
-	const { frame, take, ready, held, frames, waited } = value;
-	return { at, frame, take, ready, held, frames, waited };
+	const { frame, take, ready, held, frames, waited, entering } = value;
+	return {
+		at,
+		frame,
+		take,
+		ready,
+		held,
+		frames,
+		waited,
+		...(typeof entering === "number" && entering > 0 ? { entering } : {}),
+	};
 }
 
 /** A stage's word to its host, checked. */

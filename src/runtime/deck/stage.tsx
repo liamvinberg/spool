@@ -570,6 +570,7 @@ export function bootStage(runtime: StageRuntime): void {
 			sayApplied();
 		};
 		requestAnimationFrame(() => {
+			const entering = copy?.box === undefined ? 0 : stillEntering(copy.box);
 			const message: StageMessage = {
 				spool: "stage-shown",
 				shown: {
@@ -580,6 +581,7 @@ export function bootStage(runtime: StageRuntime): void {
 					held: held || copy?.broken === true,
 					frames: was.frames,
 					waited,
+					...(entering > 0 ? { entering: Math.ceil(entering) } : {}),
 				},
 			};
 			if (first) requestAnimationFrame(() => say(message));
@@ -1017,6 +1019,22 @@ function atRest(box: HTMLElement): void {
 		const end = animation.effect?.getComputedTiming().endTime;
 		if (typeof end === "number" && Number.isFinite(end)) animation.finish();
 	}
+}
+
+/**
+ * How long, in ms, the entrances of a slide still play: the longest of its CSS animations and transitions under way that
+ * end. One that repeats for ever is the slide's own motion, not an entrance, and is not waited for.
+ */
+function stillEntering(box: HTMLElement): number {
+	let left = 0;
+	for (const animation of box.getAnimations({ subtree: true })) {
+		if (animation.playState !== "running") continue;
+		const end = animation.effect?.getComputedTiming().endTime;
+		const now = animation.currentTime;
+		if (typeof end !== "number" || !Number.isFinite(end) || typeof now !== "number") continue;
+		left = Math.max(left, (end - now) / Math.abs(animation.playbackRate || 1));
+	}
+	return left;
 }
 
 /**
