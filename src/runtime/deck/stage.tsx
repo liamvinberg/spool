@@ -950,6 +950,11 @@ export function bootStage(runtime: StageRuntime): void {
 			if (mode === "own") command(message.command);
 			return;
 		}
+		if (message.spool === "stage-webgl") {
+			webglShare = message.webgl;
+			settle();
+			return;
+		}
 		if (message.spool === "stage-cursor") {
 			// the slides fill the host's screen and its bar sleeps: the pointer goes, over the slide's document too
 			if (message.hidden) document.documentElement.dataset.spoolStageCursor = "hidden";
