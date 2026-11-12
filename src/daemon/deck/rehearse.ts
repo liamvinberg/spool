@@ -59,6 +59,8 @@ export interface RehearseInput {
 	readonly machine: () => { load: number; cores: number };
 	readonly narrate: (line: string) => void;
 	readonly timing?: Partial<RehearseTiming>;
+	/** aborts when whoever asked for the rehearsal went: it stops at the next key */
+	readonly signal?: AbortSignal;
 }
 
 export interface Still {
@@ -73,6 +75,8 @@ export interface Rehearsed {
 
 /** How long a move played again to be pictured has to begin before the slide's own entrance is held instead. */
 const CATCH_MS = 1500;
+/** How long one picture may take: a slide drawing on several canvases in software, on a busy machine, takes long. */
+const STILL_MS = 120_000;
 /** A rehearsal stops when this many steps in a row never showed. */
 const STUCK_IN_A_ROW = 2;
 /** A slide that calls requestAnimationFrame more often than this a second once at rest runs a loop of its own. */
@@ -96,6 +100,7 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 	const steps: StepRecord[] = [];
 	const visits: Visit[] = [];
 	const press = async (key: "ArrowLeft" | "ArrowRight", to: At, pass: Pass) => {
+		input.signal?.throwIfAborted();
 		visits.push({ at: Date.now(), to, pass });
 		await page.keyboard.press(key);
 	};
@@ -197,7 +202,7 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 	const inStage = async <T>(expression: string): Promise<T> => (await stage().evaluate(expression)) as T;
 	const shot = async (name: string) => {
 		// the caret left as it is: hiding it restyles every document of the tab first
-		stills.push({ name, png: await page.screenshot({ type: "png", caret: "initial" }) });
+		stills.push({ name, png: await page.screenshot({ type: "png", caret: "initial", timeout: STILL_MS }) });
 		return name;
 	};
 
@@ -525,7 +530,7 @@ export async function composeSheets(
 				</style></head><body style="width:${SHEET_W}px"><header>${head}</header><main>${figures}</main></body></html>`,
 				{ waitUntil: "load" },
 			);
-			sheets.push(await page.screenshot({ type: "png", fullPage: true }));
+			sheets.push(await page.screenshot({ type: "png", fullPage: true, timeout: STILL_MS }));
 		}
 		return sheets;
 	} finally {

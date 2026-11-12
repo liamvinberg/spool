@@ -17,7 +17,6 @@ export interface RehearseDeps {
 	/** the project's name */
 	readonly name: string;
 	readonly narrate: (line: string) => void;
-	readonly quietMs?: number;
 }
 
 /** The slides of a talk asked for, by number from 1, both ends included. */
@@ -26,8 +25,11 @@ export interface SlidesAsked {
 	readonly to: number;
 }
 
-/** How long the daemon's answer may go without a line before it is taken for gone. */
-const QUIET_MS = 30_000;
+/**
+ * How long the daemon's answer may go without a line before it is taken for gone. It beats every few seconds, but a
+ * machine short of memory stalls it for longer, and giving up throws away minutes of rehearsal.
+ */
+const QUIET_MS = 120_000;
 
 /** `--slides 3` or `--slides 3-5`. */
 export function parseSlides(value: string): SlidesAsked {
@@ -46,9 +48,8 @@ export function talkNamed(value: string): string {
 
 export async function rehearseTalk(deps: RehearseDeps, talk: string, slides?: SlidesAsked): Promise<RehearseOutcome> {
 	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/rehearse`;
-	const quietMs = deps.quietMs ?? QUIET_MS;
 	const stopped = new AbortController();
-	let quiet = setTimeout(() => stopped.abort(), quietMs);
+	let quiet = setTimeout(() => stopped.abort(), QUIET_MS);
 	try {
 		const res = await fetch(url, {
 			method: "POST",
@@ -63,7 +64,7 @@ export async function rehearseTalk(deps: RehearseDeps, talk: string, slides?: Sl
 		}
 		for await (const line of jsonLines<RehearseLine>(res.body)) {
 			clearTimeout(quiet);
-			quiet = setTimeout(() => stopped.abort(), quietMs);
+			quiet = setTimeout(() => stopped.abort(), QUIET_MS);
 			if ("beat" in line) continue;
 			if ("narrate" in line) {
 				deps.narrate(line.narrate);
@@ -78,7 +79,7 @@ export async function rehearseTalk(deps: RehearseDeps, talk: string, slides?: Sl
 	} catch (error) {
 		if (stopped.signal.aborted)
 			throw new SpoolError(
-				`the daemon said nothing for ${Math.round(quietMs / 1000)} s while it rehearsed "${talk}": \`spool status\` says whether it is still running`,
+				`the daemon said nothing for ${Math.round(QUIET_MS / 1000)} s while it rehearsed "${talk}": \`spool status\` says whether it is still running`,
 			);
 		throw error;
 	} finally {

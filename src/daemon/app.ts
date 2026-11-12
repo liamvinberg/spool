@@ -1950,7 +1950,12 @@ export function createDaemonApp({
 				return stream(c, async (out) => {
 					const write = (line: RehearseLine) => out.write(`${JSON.stringify(line)}\n`);
 					const beat = setInterval(() => void write({ beat: true }).catch(() => {}), BOOT_BEAT_MS);
-					out.onAbort(() => clearInterval(beat));
+					// whoever asked went: the rehearsal stops at its next key and gives its tab back
+					const gone = new AbortController();
+					out.onAbort(() => {
+						clearInterval(beat);
+						gone.abort();
+					});
 					try {
 						const outcome = await runRehearsal(
 							{
@@ -1960,6 +1965,7 @@ export function createDaemonApp({
 								lend: booth.lend,
 								paces: scanPaces,
 								narrate: (line) => void write({ narrate: line }).catch(() => {}),
+								signal: gone.signal,
 								...(boothSeams?.rehearse === undefined ? {} : { timing: boothSeams.rehearse }),
 							},
 							talk,

@@ -78,6 +78,8 @@ export interface RunDeps {
 	readonly paces: (root: string) => ReadonlyMap<string, FramePace>;
 	readonly narrate: (line: string) => void;
 	readonly timing?: Partial<RehearseTiming>;
+	/** aborts when whoever asked went: the tab goes back to the booth and nothing is written */
+	readonly signal?: AbortSignal;
 }
 
 /** Rehearse a talk, write its pictures, and say what it found. */
@@ -101,7 +103,9 @@ export async function runRehearsal(
 				machine: () => ({ load: loadavg()[0] ?? 0, cores: availableParallelism() }),
 				narrate: deps.narrate,
 				...(deps.timing === undefined ? {} : { timing: deps.timing }),
+				...(deps.signal === undefined ? {} : { signal: deps.signal }),
 			});
+			deps.signal?.throwIfAborted();
 			const changed = changedSince(deps.root, talk.page, started);
 			const findings = findingsOf(rehearsed.rehearsal, { changed, paces: deps.paces(deps.root) });
 			deps.narrate("drawing the sheet");
