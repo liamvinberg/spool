@@ -241,6 +241,15 @@ export const SETTINGS = {
 		label: "Present plays",
 		says: "On one display, the slides full screen or the presenter view: the way chosen last from Present's menu.",
 	},
+	// Show pointer (spool#315): the presenter's habit, not the talk's, so a teammate presenting the same deck keeps theirs
+	"present.pointer": {
+		scope: "machine",
+		group: "remembered",
+		shape: { kind: "boolean" },
+		fallback: true,
+		label: "Show pointer",
+		says: "The room sees the presenter's pointer as a dot over a live slide: L, or the room's menu in the presenter view.",
+	},
 	...themeEntries,
 	...experimentEntries,
 } as const satisfies Record<string, SettingEntry>;
