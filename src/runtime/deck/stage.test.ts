@@ -292,12 +292,14 @@ it("keeps every slide it readied ready, so a jump far across the talk is on at o
 	expect(on.shown().at(-1)).toMatchObject({ ready: true, held: false });
 });
 
-it("keeps the room's picture when the slide it dissolves to throws on its new beat before the dissolve begins", async () => {
+it("keeps the room's picture when the slide it dissolves to throws on its new beat before the dissolve begins, and says which way each move went", async () => {
 	// a dissolve's change is made a frame after it is asked for, as a browser's view transition makes it
+	const types: string[][] = [];
 	Object.defineProperty(document, "startViewTransition", {
 		configurable: true,
-		value: (update: () => Promise<void>) => {
-			const changed = new Promise((resolve) => setTimeout(resolve, 20)).then(update);
+		value: (asked: { update: () => Promise<void>; types: string[] }) => {
+			types.push(asked.types);
+			const changed = new Promise((resolve) => setTimeout(resolve, 20)).then(asked.update);
 			return { updateCallbackDone: changed, ready: changed, finished: changed, skipTransition() {} };
 		},
 	});
@@ -319,6 +321,13 @@ it("keeps the room's picture when the slide it dissolves to throws on its new be
 	await vi.waitFor(() => expect(on.shown().at(-1)).toMatchObject({ at: { slide: 2, beat: 1 }, held: true }));
 	await new Promise((resolve) => setTimeout(resolve, 50));
 	expect(on.onScreen()).toBe("talk/a");
+
+	// and each move tells the slides' CSS which way the talk went, as the player's walks do
+	on.send({ spool: "stage-command", command: { kind: "go", slide: 1, beat: 0 } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
+	on.send({ spool: "stage-command", command: { kind: "go", slide: 0, beat: 0 } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
+	expect(types).toEqual([["forward"], ["forward"], ["back"]]);
 });
 
 /** WebGL as a browser gives it: a context per canvas, alive until the page gives it back or the browser takes it. */

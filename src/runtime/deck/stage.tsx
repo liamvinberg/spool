@@ -668,7 +668,17 @@ export function bootStage(runtime: StageRuntime): void {
 			void update().then(after, after);
 			return;
 		}
-		const transition = document.startViewTransition(update);
+		// which way the talk moved, as the player's walks say it (spool#323): a slide's CSS picks its move with
+		// html:active-view-transition-type(forward) or (back)
+		const fromIndex = copies.get(from)?.index ?? copy.index;
+		const types = [copy.index < fromIndex ? "back" : "forward"];
+		let transition: ViewTransition;
+		try {
+			transition = document.startViewTransition({ update, types });
+		} catch {
+			// an engine of the first View Transitions, which takes the change alone
+			transition = document.startViewTransition(update);
+		}
 		transition.updateCallbackDone.then(after, after);
 	}
 
