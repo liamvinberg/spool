@@ -101,19 +101,21 @@ bar says `restored` once with a `reset` beside it. A rect that matches where the
 frame would have opened anyway is not stored, and a rect on a display that has
 since been unplugged is ignored.
 
-The window is on screen at the press, before anything has loaded. The canvas
-hands the frame's size over with the press (the canvas bridge's `play`), so
-nothing is asked of the daemon first. While a canvas is open the app also keeps
-one play window made and hidden on `/player-assets/spare`, a page of the
-daemon's with the play window's dark and its bar's strip and nothing else: a
-press adopts it (placed, titled, shown, then pointed at the play URL), and the
-next is made once that play has revealed its frame. It holds no handoff and no
-token; the play URL mints those for the play, as it does for a window made at
-the press. Without one ready (the app just started, the daemon restarted, a
-remote project) the press makes its window and shows it dark at once.
-`src/play-spare.ts` has the rules. Each play logs its four timing marks in
-`app.log` (`play marks`): window shown, shell painted and frame revealed, in
-milliseconds after the press.
+Play is instant: the window is on screen, dark and with its bar's strip, the
+moment play is pressed, and the frame loads inside it. While a canvas is open
+the app keeps one hidden play window ready for that.
+
+Each play logs where its time went in `app.log` in the state directory, one
+line once the frame is revealed (or when the window closes first):
+
+```
+play  marks  <project>  <frame>  spare window-shown=23ms shell-painted=57ms frame-revealed=80ms
+```
+
+`spare` is a play that took the ready window, `fresh` one that made its own
+(the line at the press says why: no spare yet, the daemon restarted, a remote
+project). Each mark is milliseconds after the press; `-` is one the play never
+reached.
 
 A canvas older than the bridge's `play` opens the play URL as a popup, and the
 app then asks `/api/p/:project/frames` for the size, which is behind the control
