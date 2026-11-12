@@ -8,12 +8,7 @@
 const contexts = new WeakMap<HTMLCanvasElement, WebGLRenderingContext | WebGL2RenderingContext>();
 let made: (() => void) | undefined;
 
-/**
- * How many WebGL contexts one stage document keeps: three share a process (the presenter's slide, its next preview
- * and the room), each two for a moment while a new build takes over, so twelve at most, under Chrome's sixteen with
- * some left for the canvas.
- */
-export const WEBGL_KEPT = 2;
+export { WEBGL_KEPT } from "../../deck/stage-wire";
 
 /**
  * Every WebGL context a slide asks for is known by its canvas, and keeps its drawing buffer, so its last frame can
