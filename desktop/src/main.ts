@@ -255,6 +255,19 @@ function canvasSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): bool
 	return window !== undefined && event.sender === window.webContents && event.senderFrame === event.sender.mainFrame;
 }
 
+/** The control origin of the daemon the window is on: the remote's, through its tunnel, or this Mac's. */
+function controlOrigin(): string | undefined {
+	if (tunnel !== undefined) return remote === undefined ? undefined : `http://127.0.0.1:${remote.port}`;
+	return daemonOrigin;
+}
+
+/** The sender's main frame is a page of the daemon's control origin, which is the only origin a play is asked from. */
+function controlOriginSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): boolean {
+	const frame = event.senderFrame;
+	const origin = controlOrigin();
+	return origin !== undefined && frame !== null && frame === event.sender.mainFrame && frame.origin === origin;
+}
+
 function saveWorkspace(localOnly = false): Promise<void> {
 	if (window === undefined) return Promise.resolve();
 	if (!workspaceReady && !localOnly)
@@ -1348,7 +1361,8 @@ function installPlayChannels(): void {
 	// the press: the one route in the app from a press to a play window that waits on nothing
 	ipcMain.on("spool:play", (event, path: unknown, size: unknown) => {
 		const pressedAt = wallClock();
-		if (!canvasSender(event) || typeof path !== "string" || !isAuthoredSize(size)) return;
+		if (!canvasSender(event) || !controlOriginSender(event)) return;
+		if (typeof path !== "string" || !isAuthoredSize(size)) return;
 		let url: string;
 		try {
 			url = new URL(path, event.sender.getURL()).href;
@@ -1361,7 +1375,8 @@ function installPlayChannels(): void {
 	});
 	ipcMain.on("spool:play-window-mark", (event, mark: unknown, at: unknown) => {
 		const state = played.get(event.sender.id);
-		if (state === undefined || !isPlayMark(mark) || typeof at !== "number") return;
+		if (state === undefined || !controlOriginSender(event)) return;
+		if (!isPlayMark(mark) || typeof at !== "number") return;
 		if (!state.timing.mark(mark, at)) return;
 		logPlayTiming(state.request, state.timing);
 		revealed(event.sender.id);
