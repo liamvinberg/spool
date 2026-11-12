@@ -126,9 +126,18 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 			dot.draw();
 		} else if (message.kind === "end") {
 			channel.close();
-			host.destroy();
-			dot.destroy();
+			// the window goes on the slide it shows: torn down first, it painted its black ground for a few frames before
+			// it closed, and closing paints it too, so the Mac app takes the window off the screen before the page goes
+			// (spool#308); a window the browser keeps open, one no script opened, shows that ground
+			if (app?.close !== undefined) {
+				app.close();
+				return;
+			}
 			window.close();
+			if (!window.closed) {
+				host.destroy();
+				dot.destroy();
+			}
 		}
 	});
 	say({ kind: "ask" });
@@ -169,6 +178,8 @@ interface RoomWindow {
 	onWindowed(listener: (windowed: boolean) => void): () => void;
 	/** the slide is drawn: the window may show; absent in an app from before it waited */
 	drawn?(): void;
+	/** the talk is over: the window goes; absent in an app from before it took the window off the screen first */
+	close?(): void;
 }
 
 function roomWindow(): RoomWindow | undefined {

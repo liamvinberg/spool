@@ -319,10 +319,25 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	});
 	await view.getByText("Studio Display was unplugged · the room is a window").waitFor();
 
-	// reloading spool's window ends a talk and closes its room
+	// reloading spool's window ends a talk, and its room closes itself, on the slide it showed rather than its black
+	// ground, as it does in the Mac app, where spool's window holds no handle on it
 	const ended = left.waitForEvent("close");
+	const closedOn = new Promise<string>((done) =>
+		left.on("console", (message) => {
+			if (message.text().startsWith("closes on ")) done(message.text());
+		}),
+	);
+	await left.evaluate(() => {
+		const close = window.close.bind(window);
+		window.close = () => {
+			const slide = document.querySelector('[data-spool-stage] iframe[style*="opacity: 1"]') !== null;
+			console.log(`closes on ${slide ? "the slide" : "black"}`);
+			close();
+		};
+	});
 	await view.reload();
 	await ended;
+	expect(await closedOn).toBe("closes on the slide");
 	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
 	expect(await view.locator("[data-deck-presenter]").count()).toBe(0);
 });

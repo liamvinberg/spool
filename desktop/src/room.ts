@@ -52,6 +52,8 @@ interface Room {
 const ROOM_WINDOWED = "spool:room-windowed";
 /** the room's page has drawn its slide: its window may show */
 const ROOM_DRAWN = "spool:room-drawn";
+/** the talk is over: the room's window may go */
+const ROOM_CLOSE = "spool:room-close";
 /** The longest a room's window is held hidden for its slide to be drawn. */
 const ROOM_DRAWN_MS = 3_000;
 
@@ -174,6 +176,14 @@ export function installRooms(host: RoomsHost): Rooms {
 
 	ipcMain.on(ROOM_DRAWN, (event) => {
 		if (event.senderFrame === event.sender.mainFrame) drawing.get(event.sender)?.();
+	});
+	// the talk is over: the window goes from the screen before its page is taken down, which painted its ground first
+	ipcMain.on(ROOM_CLOSE, (event) => {
+		if (event.senderFrame !== event.sender.mainFrame) return;
+		const room = [...rooms.values()].find((one) => one.window.webContents === event.sender);
+		if (room === undefined || room.window.isDestroyed()) return;
+		room.window.hide();
+		room.window.close();
 	});
 	ipcMain.on(ROOM_WINDOWED, (event) => {
 		const room = [...rooms.values()].find((one) => one.window.webContents === event.sender);
