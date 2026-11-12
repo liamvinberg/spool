@@ -100,6 +100,22 @@ describe("the booth queue", () => {
 		expect(drain(queue)).toEqual(["cart:edited"]);
 	});
 
+	it("takes a slide's opening still after every cover and before every timing, and owes what both owe in one sitting", () => {
+		const queue = createBoothQueue();
+		queue.add(sitting("talk/timed", "timing"));
+		queue.add(sitting("talk/opens", "opening"));
+		queue.add(sitting("aside", "missing", OTHER));
+		queue.view("canvas", { root: ROOT, page: "talk", frames: ["talk/opens", "talk/timed"] });
+		expect(queue.covers).toBe(1);
+		expect(drain(queue)).toEqual(["aside:missing", "talk/opens:opening", "talk/timed:timing"]);
+		// a timing sitting takes the still first; a cover's sitting takes it after the cover
+		queue.add(sitting("talk/one", "opening"));
+		queue.add(sitting("talk/one", "timing"));
+		queue.add(sitting("talk/two", "opening"));
+		queue.add(sitting("talk/two", "stale"));
+		expect(drain(queue)).toEqual(["talk/two:stale", "talk/one:timing"]);
+	});
+
 	it("takes the frames on screen first, then the rest of the open page, then everything else", () => {
 		const queue = createBoothQueue();
 		queue.add(sitting("elsewhere/one", "edited"));
