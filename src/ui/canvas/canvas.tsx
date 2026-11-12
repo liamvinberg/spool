@@ -1960,11 +1960,13 @@ function CanvasField({
 	const deckOwns = deckPage.owns;
 	const presentKey = deckPage.presentKey;
 	// one slide of a deck page held a moment, or held with ⌘ down: Present is likely next, so the slide it would play is
-	// readied now, out of sight, and let go when the hold moves off the slides (spool#298)
+	// readied now, out of sight, and let go when the hold moves off the slides (spool#298). Nothing is readied while a
+	// frame is in the hand or landing: a slide starting holds the window's frames back (spool#299)
 	const presentFromHeld = deckPage.presentFrom;
 	const heldSlide = deckPage.on && selected.length === 1 ? selected[0] : undefined;
+	const carrying = deckPage.view.carried.size > 0;
 	useEffect(() => {
-		if (heldSlide === undefined || presentTakes() !== "slides") return;
+		if (heldSlide === undefined || carrying || presentTakes() !== "slides") return;
 		const from = presentFromHeld();
 		if (from?.slide !== heldSlide) return;
 		if (accelDown) {
@@ -1973,7 +1975,7 @@ function CanvasField({
 		}
 		const timer = setTimeout(() => warmPresent(from), PRESENT_SETTLE_MS);
 		return () => clearTimeout(timer);
-	}, [accelDown, heldSlide, presentFromHeld]);
+	}, [accelDown, heldSlide, carrying, presentFromHeld]);
 	useEffect(() => {
 		if (heldSlide === undefined) return;
 		return () => presentCold();
@@ -1992,6 +1994,7 @@ function CanvasField({
 			frameAnchor.current = name;
 		},
 		present: presentKey,
+		carrying,
 	});
 	deckIn.current = deckInside;
 	deckBand.current =

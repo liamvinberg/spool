@@ -240,10 +240,23 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	const stride = STRIDE * ZOOM;
 	const rest = (await samples(0)).at(-1)?.labels ?? {};
 	const restOf = (name: string) => rest[name]?.[0] ?? Number.NaN;
+	// when each document of the page started: an iframe added
+	await page.evaluate(() => {
+		const started: number[] = [];
+		(window as unknown as { started: number[] }).started = started;
+		new MutationObserver((changes) => {
+			for (const change of changes)
+				for (const node of change.addedNodes)
+					if (node instanceof Element && (node.matches("iframe") || node.querySelector("iframe") !== null))
+						started.push(performance.now());
+		}).observe(document.body, { childList: true, subtree: true });
+	});
 
 	// a lifted and carried right a step of two pixels a frame: b starts to make room once a is about a quarter over it
-	await press(middle("a"));
 	const carrying = await now();
+	await press(middle("a"));
+	// lifted at once, past the slop
+	await glide({ x: deck.pointer().x + 4, y: deck.pointer().y }, 1);
 	await glide(await at({ x: middle("a").x + 0.45 * STRIDE, y: 360 }), Math.round((0.45 * stride) / 2));
 	const carried = await samples(carrying);
 	const moved = carried.findIndex((sample) => Math.abs((sample.labels.b?.[0] ?? 0) - restOf("b")) >= 0.5);
@@ -291,6 +304,9 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	await answered;
 	await settled();
 	const drop = await samples(dropped);
+	// nothing of a started while it was in the hand, a document starting holding the window's frames back
+	const started = await page.evaluate(() => (window as unknown as { started: number[] }).started);
+	expect(started.filter((t) => t >= carrying && t < dropped)).toEqual([]);
 	expect(drop.at(-1)?.numbers).toEqual({ b: 1, a: 2, c: 3 });
 	expect(deck.talk()).toEqual(["b", "a", "c"]);
 	for (const name of ["a", "b", "c", "x"]) {
