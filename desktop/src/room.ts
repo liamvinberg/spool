@@ -113,6 +113,22 @@ export function installRooms(host: RoomsHost): Rooms {
 		if (!room.window.isDestroyed()) room.window.showInactive();
 	};
 
+	/**
+	 * The room's window gone clear on its slide, and closed a moment later. Closed at once, hidden or not, it showed the
+	 * audience a black frame in one end of a few (spool#308). It is gone from the talks at once: a Present in that moment
+	 * opens a room of its own.
+	 */
+	const shut = (room: Room) => {
+		if (rooms.get(room.talk) === room) rooms.delete(room.talk);
+		const window = room.window;
+		if (window.isDestroyed()) return;
+		drawing.delete(window.webContents);
+		window.setOpacity(0);
+		setTimeout(() => {
+			if (!window.isDestroyed()) window.close();
+		}, ROOM_CLOSE_MS);
+	};
+
 	const open = (url: string, talk: string) => {
 		const already = rooms.get(talk);
 		if (already !== undefined && !already.window.isDestroyed()) {
@@ -170,6 +186,8 @@ export function installRooms(host: RoomsHost): Rooms {
 		const showing = setTimeout(() => reveal(), ROOM_DRAWN_MS);
 		const reveal = () => {
 			clearTimeout(showing);
+			// a room already closing stays clear
+			if (drawing.get(page) !== reveal) return;
 			drawing.delete(page);
 			if (window.isDestroyed()) return;
 			window.setOpacity(1);
@@ -184,19 +202,11 @@ export function installRooms(host: RoomsHost): Rooms {
 	ipcMain.on(ROOM_DRAWN, (event) => {
 		if (event.senderFrame === event.sender.mainFrame) drawing.get(event.sender)?.();
 	});
-	// the talk is over: the window goes clear on its slide, and is closed a moment later. Closed at once, hidden or not,
-	// the audience saw a black frame in one end of a few (spool#308)
+	// the talk is over
 	ipcMain.on(ROOM_CLOSE, (event) => {
 		if (event.senderFrame !== event.sender.mainFrame) return;
 		const room = [...rooms.values()].find((one) => one.window.webContents === event.sender);
-		if (room === undefined || room.window.isDestroyed()) return;
-		// gone from the talks at once: a Present in that moment opens a room of its own
-		rooms.delete(room.talk);
-		const window = room.window;
-		window.setOpacity(0);
-		setTimeout(() => {
-			if (!window.isDestroyed()) window.close();
-		}, ROOM_CLOSE_MS);
+		if (room !== undefined) shut(room);
 	});
 	ipcMain.on(ROOM_WINDOWED, (event) => {
 		const room = [...rooms.values()].find((one) => one.window.webContents === event.sender);
@@ -257,8 +267,7 @@ export function installRooms(host: RoomsHost): Rooms {
 	return {
 		open,
 		closeAll() {
-			for (const room of rooms.values()) if (!room.window.isDestroyed()) room.window.close();
-			rooms.clear();
+			for (const room of [...rooms.values()]) shut(room);
 		},
 	};
 }
