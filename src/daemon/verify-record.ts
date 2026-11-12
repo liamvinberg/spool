@@ -70,15 +70,16 @@ export type BootLine = { beat: true } | { narrate: string } | { outcome: BootOut
  * its own file (`checkout@1500.png`), so a series never overwrites itself, and
  * a frame too tall for one image is numbered slices (`checkout.1.png`, …). An
  * offset asked of `--scroll` names its own too (`checkout.scroll1200.png`,
- * `checkout.scroll1200@1500.png`), so the top of the frame is never overwritten. A slide's beat asked of `--beat`, from
- * 1, names its own as well (`title.beat2.png`), so each beat of a reveal can be looked at beside the others.
+ * `checkout.scroll1200@1500.png`), so the top of the frame is never overwritten. A slide's beat asked of `--beat` names
+ * its own as well, by the beat's name (`title.beat-price.png`, `beatLabel`), so each beat of a reveal can be looked at
+ * beside the others.
  */
 export function shotFile(
 	root: string,
 	frame: string,
-	options: { at?: number; scroll?: number; beat?: number; tile?: number } = {},
+	options: { at?: number; scroll?: number; beat?: string; tile?: number } = {},
 ): string {
-	const beat = options.beat === undefined ? "" : `.beat${options.beat}`;
+	const beat = options.beat === undefined ? "" : `.beat-${options.beat}`;
 	const offset = options.scroll === undefined ? "" : `.scroll${options.scroll}`;
 	const time = options.at === undefined ? "" : `@${options.at}`;
 	const tile = options.tile === undefined ? "" : `.${options.tile}`;
@@ -145,8 +146,8 @@ export function recordBoot(
 		tiles: ReadonlyArray<{ y: number; height: number }>;
 		/** The `--scroll` offset the shots were taken at, if one was asked. */
 		scroll?: number;
-		/** The slide's beat, from 0, the shots show, if `--beat` asked for one. */
-		beat?: number;
+		/** The slide's beat the shots show, from 0, and what its files are named after, if `--beat` asked for one. */
+		beat?: { index: number; label: string };
 		shots: ReadonlyArray<{ at?: number; pngs: readonly Buffer[] }>;
 		entries: readonly LogEntry[];
 	},
@@ -157,9 +158,9 @@ export function recordBoot(
 		for (const [index, png] of shot.pngs.entries()) {
 			const at = shot.at === undefined ? {} : { at: shot.at };
 			const scroll = boot.scroll === undefined ? {} : { scroll: boot.scroll };
-			const beat = boot.beat === undefined ? {} : { beat: boot.beat + 1 };
+			const beat = boot.beat === undefined ? {} : { beat: boot.beat.index + 1 };
 			const file = shotFile(root, frame, {
-				...beat,
+				...(boot.beat === undefined ? {} : { beat: boot.beat.label }),
 				...scroll,
 				...at,
 				...(shot.pngs.length === 1 ? {} : { tile: index + 1 }),
@@ -169,7 +170,7 @@ export function recordBoot(
 			kept.push(file);
 			files.push({ file, y: tile.y, height: tile.height, ...at, ...scroll, ...beat });
 		}
-		sweepShotFiles(root, frame, { at: shot.at, scroll: boot.scroll, beat: boot.beat }, kept);
+		sweepShotFiles(root, frame, { at: shot.at, scroll: boot.scroll, beat: boot.beat?.label }, kept);
 	}
 	sweepEncoded(root, frame);
 	const { etag, scenario, scheme, entries } = boot;
@@ -214,13 +215,13 @@ export function readLogsCache(
 function sweepShotFiles(
 	root: string,
 	frame: string,
-	variant: { at: number | undefined; scroll: number | undefined; beat: number | undefined },
+	variant: { at: number | undefined; scroll: number | undefined; beat: string | undefined },
 	kept: string[],
 ): void {
 	const plain = shotFile(root, frame, {
 		...(variant.at === undefined ? {} : { at: variant.at }),
 		...(variant.scroll === undefined ? {} : { scroll: variant.scroll }),
-		...(variant.beat === undefined ? {} : { beat: variant.beat + 1 }),
+		...(variant.beat === undefined ? {} : { beat: variant.beat }),
 	});
 	const dir = dirname(plain);
 	const keep = new Set(kept.map((file) => file.slice(dir.length + 1)));

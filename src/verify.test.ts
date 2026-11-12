@@ -871,7 +871,7 @@ export default function Late() {
 		expect(firstPixel(join(verify, "bands.scroll5000.png"))).toEqual([0, 0, 255]);
 	});
 
-	it("shoots a slide at the beat --beat names, by its name or number, beside the shot of its last", {
+	it("shoots a slide at the beat --beat names, by its name or number, into a file named by the beat", {
 		timeout: 120_000,
 	}, async () => {
 		if (!(await browserAvailable())) return;
@@ -898,15 +898,16 @@ export default function Reveal() {
 		expect(firstPixel(join(verify, "reveal.png"))).toEqual([0, 0, 255]);
 		const named = await shotFrame(deps("talk/reveal", { viewport, beat: "dark" }));
 		if (named.kind !== "shot") throw new Error("reveal was not shot at its first beat");
-		expect(named.files).toEqual([{ file: join(verify, "reveal.beat1.png"), y: 0, height: 120, beat: 1 }]);
-		expect(firstPixel(join(verify, "reveal.beat1.png"))).toEqual([255, 0, 0]);
+		expect(named.files).toEqual([{ file: join(verify, "reveal.beat-dark.png"), y: 0, height: 120, beat: 1 }]);
+		expect(firstPixel(join(verify, "reveal.beat-dark.png"))).toEqual([255, 0, 0]);
+		// by its number from 1 it is the same beat, and the same file
 		await shotFrame(deps("talk/reveal", { viewport, beat: "2" }));
-		expect(firstPixel(join(verify, "reveal.beat2.png"))).toEqual([0, 255, 0]);
+		expect(firstPixel(join(verify, "reveal.beat-mid.png"))).toEqual([0, 255, 0]);
 		expect(firstPixel(join(verify, "reveal.png"))).toEqual([0, 0, 255]);
 
 		// a beat the slide does not have is said before any boot, with the beats it has
 		await expect(shotFrame(deps("talk/reveal", { viewport, beat: "4" }))).rejects.toThrow(
-			'talk/reveal has no beat "4": its beats are "dark", "mid", "light", or 1 to 3',
+			'talk/reveal has no beat "4": its beats are "dark", "mid", "light", or 1 to 3 counted from 1',
 		);
 	});
 

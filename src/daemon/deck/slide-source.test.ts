@@ -48,7 +48,12 @@ describe("a slide's source, read without running it", () => {
 		expect(beatAsked("talk/a", read, "price")).toBe(1);
 		expect(beatAsked("talk/a", read, "3")).toBe(2);
 		expect(beatAsked("talk/a", read, "4")).toEqual({
-			message: 'talk/a has no beat "4": its beats are "title", "price", "close", or 1 to 3',
+			message:
+				'talk/a has no beat "4": its beats are "title", "price", "close", or 1 to 3 counted from 1 (beat.index counts from 0)',
+		});
+		expect(beatAsked("talk/a", read, "0")).toMatchObject({ message: expect.stringContaining("counted from 1") });
+		expect(beatAsked("talk/a", read, "closing")).toEqual({
+			message: 'talk/a has no beat "closing": its beats are "title", "price", "close", or 1 to 3',
 		});
 		// a slide that names none has one beat, its whole self
 		expect(beatAsked("talk/b", readSlideSource(slide("")), "1")).toBe(0);

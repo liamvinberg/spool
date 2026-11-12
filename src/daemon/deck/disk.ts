@@ -17,7 +17,7 @@ import type { DeckProblem, DeckRead, DeckSlide, UnreadDeck } from "../../deck/wi
 import { isPagePath, isSafeName, pageName, pageParent, pageUnder } from "../../page-path";
 import { realDesignDir, resolveDesignPath } from "../design-path";
 import { parseSidecar } from "../sidecar";
-import { beatAsked, readSlideSource } from "./slide-source";
+import { beatAsked, beatLabel, readSlideSource } from "./slide-source";
 
 /**
  * A deck's page as the disk has it (spool#265), and the one way the daemon writes into it: a file written whole in a
@@ -147,14 +147,15 @@ export function deckReadOf(page: DeckPage): DeckRead | UnreadDeck | undefined {
 }
 
 /**
- * The beat `spool shot --beat` asks of a frame, read from its source as it is on disk: an index from 0, or why not.
+ * The beat `spool shot --beat` asks of a frame, read from its source as it is on disk: an index from 0 and what its files
+ * are named after (`beatLabel`), or why not.
  * Undefined for a frame with no source there, which the boot then says is not found.
  */
 export function frameBeatAsked(
 	root: string,
 	frame: string,
 	asked: string,
-): number | { readonly message: string } | undefined {
+): { readonly index: number; readonly label: string } | { readonly message: string } | undefined {
 	const designDir = realDesignDir(root);
 	let text: string | undefined;
 	try {
@@ -162,7 +163,10 @@ export function frameBeatAsked(
 	} catch {
 		return undefined;
 	}
-	return text === undefined ? undefined : beatAsked(frame, readSlideSource(text), asked);
+	if (text === undefined) return undefined;
+	const source = readSlideSource(text);
+	const index = beatAsked(frame, source, asked);
+	return typeof index === "number" ? { index, label: beatLabel(source, index) } : index;
 }
 
 /**

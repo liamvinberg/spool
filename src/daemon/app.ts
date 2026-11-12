@@ -1832,7 +1832,7 @@ export function createDaemonApp({
 				const frame = c.req.param("frame");
 				const { width, height, at, scroll, scenario, beat: asked } = c.req.valid("json");
 				// a slide at a beat of its own (spool#277): the deck experiment's, read from the slide's source
-				let slideBeat: number | undefined;
+				let slideBeat: { index: number; label: string } | undefined;
 				if (asked !== undefined) {
 					if (!deckOn()) {
 						return c.text(
@@ -1841,7 +1841,7 @@ export function createDaemonApp({
 						);
 					}
 					const found = frameBeatAsked(project.root, frame, asked);
-					if (typeof found === "object") return c.text(found.message, 400);
+					if (found !== undefined && "message" in found) return c.text(found.message, 400);
 					slideBeat = found;
 				}
 				c.header("content-type", "application/x-ndjson; charset=utf-8");
@@ -1865,7 +1865,7 @@ export function createDaemonApp({
 									at: at === undefined ? undefined : [...new Set(at)].sort((a, b) => a - b),
 									scroll,
 									scenario,
-									beat: slideBeat,
+									beat: slideBeat?.index,
 								},
 								(line) => void write({ narrate: line }).catch(() => {}),
 							);
