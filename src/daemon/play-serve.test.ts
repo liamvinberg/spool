@@ -655,7 +655,7 @@ describe("the chrome's font", () => {
 	it("serves the Mac app's spare play window a page with nothing in it to run or reach, on the control origin only", async () => {
 		const app = makeApp(makeTempDir());
 
-		const spare = await app.fetch("/play-spare");
+		const spare = await app.fetch("/player-assets/spare");
 		expect(spare.status).toBe(200);
 		expect(spare.headers.get("cache-control")).toBe("no-store");
 		const doc = await spare.text();
@@ -663,7 +663,7 @@ describe("the chrome's font", () => {
 		// it waits for a play nobody has pressed yet, so it holds nothing minted for one
 		expect(doc).not.toMatch(/<script|handoff|test-control-token/);
 
-		const render = await app.fetch("http://run.spool.localhost:7766/play-spare");
+		const render = await app.fetch("http://run.spool.localhost:7766/player-assets/spare");
 		expect(render.status).toBe(404);
 	});
 

@@ -2229,7 +2229,7 @@ export function createDaemonApp({
 		// press shows a window already drawn and walks it on to the play URL. A
 		// page with nothing in it to run, hold or reach: no script, no token, no
 		// handoff, nothing named for a frame.
-		.get("/play-spare", (c) => {
+		.get("/player-assets/spare", (c) => {
 			protectControlDocument(c);
 			c.header("connection", "close");
 			return c.html(playSpareDocument());
