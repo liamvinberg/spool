@@ -289,6 +289,12 @@ it("drags, drops, undoes and goes into a slide on a deck page without a preview 
 	const out = await onCanvas();
 	const middleOfB = { x: (out.from.x + out.to.x) / 2, y: (out.from.y + out.to.y) / 2 };
 	const shown = page.locator('[data-deck-stage="talk/b"][data-deck-stage-shown]');
+	// b held a moment starts its document, and let go stops it: held again, it starts afresh
+	const documentOfB = page.locator('[data-frame-shell="talk/b"] iframe');
+	await page.mouse.click(middleOfB.x, middleOfB.y);
+	await documentOfB.waitFor();
+	await page.keyboard.press("Escape");
+	await documentOfB.waitFor({ state: "detached" });
 	const goingIn = await recordScreen(page);
 	const clicked = await now();
 	// the first click selects b, and the second, a moment later, goes in

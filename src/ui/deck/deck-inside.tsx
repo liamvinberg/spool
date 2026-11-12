@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Size } from "../../deck/deck-file";
 import { slotBox } from "../../deck/layout";
+import { pressedKey, readKey, typingIn } from "../../deck/stage-keys";
 import { openSession, type StageSession, type TalkSlide } from "../../deck/stage-session";
 import type { StageShown } from "../../deck/stage-wire";
 import type { DeckRead } from "../../deck/wire";
@@ -92,6 +93,16 @@ const stillness = () =>
  */
 const SETTLE_MS = 500;
 
+/** Where a key pressed while the camera flies into a slide lands: the slide's own talk, fresh, played in place. */
+const arriving = (event: KeyboardEvent) => ({
+	typing: typingIn(event.target),
+	live: false,
+	keys: false,
+	black: false,
+	frozen: false,
+	alone: true,
+});
+
 /** A frame's own name, the last part of its path. */
 const leafOf = (name: string) => name.slice(name.lastIndexOf("/") + 1);
 
@@ -139,6 +150,8 @@ export function useDeckInside({
 	helpOpen.current = help;
 	/** the camera has landed on the slide gone into */
 	const flown = useRef(false);
+	/** the talk's keys pressed while the camera flies in, for the slide once the stage has taken it on */
+	const pressed = useRef<KeyboardEvent[]>([]);
 	const trip = useRef(0);
 	const now = useRef(inside);
 	now.current = inside;
@@ -207,7 +220,8 @@ export function useDeckInside({
 	const heard = useCallback(
 		(session: StageSession) => {
 			const going = now.current;
-			if (going === null || going.phase === "out") return;
+			// flying in, the stage is not on the slide yet: what it says is of where it was
+			if (going === null || going.phase === "out" || !flown.current) return;
 			const frame = host.current?.talk()[session.at.slide]?.frame ?? going.slide;
 			if (session.keys !== going.keys) {
 				if (session.keys) host.current?.focus();
@@ -287,24 +301,33 @@ export function useDeckInside({
 			hands.current.select(name);
 			const n = ++trip.current;
 			flown.current = false;
+			pressed.current = [];
 			setInside({ from: name, slide: name, phase: "in", flown: false, keys: false });
 			const slot = slotBox(deck.size, index);
 			const to = insideCamera(slot, view.w, view.h);
-			// the stage takes the slide on once the camera is there, the canvas's picture standing in until it has drawn it
+			// the stage takes the slide on once the camera is there, the canvas's picture standing in until it has drawn it,
+			// and then the keys pressed on the way
 			const landed = () => {
-				if (trip.current !== n) return;
 				flown.current = true;
 				setInside((going) => (going?.phase === "in" ? { ...going, flown: true } : going));
 				stage.apply(openSession(talk, { slide: at, beat: beats - 1 }, stage.session()?.state ?? {}), "own", true);
+				for (const event of pressed.current.splice(0)) stage.key(event);
 				ears.current.reveal();
 			};
 			const { fly, snap } = deckMotion();
 			if (stillness() || fly <= 0) {
 				camera.set(to);
-				queueMicrotask(landed);
+				queueMicrotask(() => trip.current === n && landed());
 			} else {
 				camera.fly(to, fly, easing(snap));
-				setTimeout(landed, fly);
+				// there once the flight's last frame is drawn: its camera is where it was aimed
+				const stop = camera.subscribe(() => {
+					if (trip.current !== n) stop();
+					else if (camera.aim() === camera.get()) {
+						stop();
+						landed();
+					}
+				});
 			}
 			return true;
 		},
@@ -312,7 +335,7 @@ export function useDeckInside({
 	);
 
 	// a slide held settles once its selection has stood longer than a double-click, and the slide the talk is on once
-	// the camera is there
+	// the camera is there; let go, it settles afresh when it is held again
 	const held = useCanvasState(store, (state) => (state.selected.length === 1 ? (state.selected[0] ?? null) : null));
 	const heldSlide = held !== null && read?.slides.some((slide) => slide.name === held) === true ? held : null;
 	const [settled, setSettled] = useState<string | null>(null);
@@ -321,6 +344,7 @@ export function useDeckInside({
 		const settle = setTimeout(() => setSettled(heldSlide), SETTLE_MS);
 		return () => clearTimeout(settle);
 	}, [heldSlide, inside]);
+	useEffect(() => () => setSettled((was) => (was === heldSlide ? null : was)), [heldSlide]);
 	const flying = inside?.phase === "in" && !inside.flown;
 	useEffect(() => {
 		if (inside !== null && !flying) setSettled(inside.slide);
@@ -396,6 +420,17 @@ export function useDeckInside({
 						if (event.key === "Escape" || event.key === "?") setHelp(false);
 						event.preventDefault();
 						return true;
+					}
+					// flying in, the talk's keys wait for the stage to take the slide on; esc and ? act at once
+					if (!flown.current) {
+						const { command, taken } = readKey(pressedKey(event), arriving(event), "");
+						if (taken && command?.kind !== "escape" && command?.kind !== "help") {
+							// as pressed, before the canvas took it
+							const { key, shiftKey, metaKey, ctrlKey, altKey } = event;
+							pressed.current.push(new KeyboardEvent("keydown", { key, shiftKey, metaKey, ctrlKey, altKey }));
+							event.preventDefault();
+							return true;
+						}
 					}
 					// ⌘↵ presents from the slide the talk is on, as the label offers, and ⇧⌘↵ from the first
 					const taken =
