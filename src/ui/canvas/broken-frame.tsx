@@ -6,6 +6,7 @@ import { Button } from "../primitives/actions";
 import { EASE } from "./agent-motion";
 import { type Box, type NearScreen, shellRadius } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
+import { boxDrawn, type FrameMotion } from "./frame-motion";
 import { useStillness } from "./stillness";
 
 /**
@@ -61,10 +62,13 @@ export const BrokenFrame = memo(function BrokenFrame({
 	near,
 	act,
 	onAct,
+	frameMotion,
 }: {
 	name: string;
 	/** the frame, in world units */
 	frame: Box;
+	/** Frames drawn other than where they stand: the mark rides its frame where it is drawn (spool#299). */
+	frameMotion?: FrameMotion | undefined;
 	broken: Broken;
 	camera: CameraStore;
 	near: NearScreen;
@@ -82,6 +86,19 @@ export const BrokenFrame = memo(function BrokenFrame({
 	const [open, setOpen] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const still = useStillness();
+	const outer = useRef<HTMLDivElement | null>(null);
+	// where it is drawn is written here, never rendered, so a render between two frames of motion cannot put it back
+	const place = () => {
+		const element = outer.current;
+		if (element === null) return;
+		const drawn = boxDrawn(frame, frameMotion?.drawn(name));
+		const transform = `translate(${drawn.x}px, ${drawn.y}px) scale(${drawn.w / frame.w})`;
+		if (element.style.transform !== transform) element.style.transform = transform;
+	};
+	const latest = useRef(place);
+	latest.current = place;
+	useLayoutEffect(place);
+	useLayoutEffect(() => frameMotion?.listen(() => latest.current()), [frameMotion]);
 
 	useCameraFollow(
 		camera,
@@ -141,9 +158,10 @@ export const BrokenFrame = memo(function BrokenFrame({
 	const move = still ? { duration: 0 } : { duration: 0.26, ease: EASE.snap };
 	return (
 		<div
+			ref={outer}
 			data-broken-frame={name}
-			className="pointer-events-none absolute"
-			style={{ transform: `translate(${frame.x}px, ${frame.y}px)`, width: frame.w, height: frame.h }}
+			className="pointer-events-none absolute origin-top-left"
+			style={{ width: frame.w, height: frame.h }}
 		>
 			<div ref={edge} className="absolute inset-0 border-danger border-solid bg-surface-canvas/80" />
 			<div className="absolute top-1/2 left-1/2 h-0 w-0">

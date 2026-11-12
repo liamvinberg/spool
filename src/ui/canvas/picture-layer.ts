@@ -1,5 +1,6 @@
 import type { Camera } from "../api";
 import { type Box, shellRadiusOnScreen } from "./camera";
+import { boxDrawn, type FrameMotion } from "./frame-motion";
 import {
 	closeGpu,
 	contextOf,
@@ -220,6 +221,8 @@ export class PictureLayer {
 	private next: number | null = null;
 	private settle = false;
 	private disposed = false;
+	/** Frames drawn other than where they stand, carried or on their way (spool#299). */
+	private motion: FrameMotion | null = null;
 
 	/**
 	 * `drawing` hears whether the layer can draw at all: false with no WebGL2,
@@ -294,6 +297,21 @@ export class PictureLayer {
 		if (claimed) this.claimed.add(name);
 		else this.claimed.delete(name);
 		this.invalidate();
+	}
+
+	/**
+	 * Where frames are drawn while they move by themselves (spool#299): each at its drawn box, a frame drawn on top
+	 * after every other. Drawn again at once, before the paint, whenever the motion moves (`moved`).
+	 */
+	setMotion(motion: FrameMotion | null): void {
+		if (motion === this.motion) return;
+		this.motion = motion;
+		this.invalidate();
+	}
+
+	/** The motion moved frames in this animation frame: drawn now, with the camera last drawn. */
+	moved(): void {
+		this.render();
 	}
 
 	/** Whether a frame's document is booting, which the rest of the page's stills wait out (`StillLoads`). */
@@ -430,20 +448,29 @@ export class PictureLayer {
 	): void {
 		const { k } = camera;
 		const s = this.scale;
-		for (const frame of this.frames) {
-			if (frame.still === undefined) continue;
+		const motion = this.motion;
+		/** frames drawn over every other, after them */
+		const top: PictureFrame[] = [];
+		const one = (frame: PictureFrame, drawn: Box) => {
+			if (frame.still === undefined) return;
 			const box = {
-				x: (frame.x * k + camera.x) * s,
-				y: (frame.y * k + camera.y) * s,
-				w: frame.w * k * s,
-				h: frame.h * k * s,
+				x: (drawn.x * k + camera.x) * s,
+				y: (drawn.y * k + camera.y) * s,
+				w: drawn.w * k * s,
+				h: drawn.h * k * s,
 			};
-			if (box.x > this.width + 1 || box.y > this.height + 1 || box.x + box.w < -1 || box.y + box.h < -1) continue;
+			if (box.x > this.width + 1 || box.y > this.height + 1 || box.x + box.w < -1 || box.y + box.h < -1) return;
 			const pictured = frame as PictureFrame & { still: string };
 			const look = this.look(pictured, box);
 			if (this.claimed.has(frame.name)) claimed?.(pictured, box, look);
 			else visit(pictured, box, look);
+		};
+		for (const frame of this.frames) {
+			const drawn = motion?.drawn(frame.name);
+			if (drawn?.top === true) top.push(frame);
+			else one(frame, boxDrawn(frame, drawn));
 		}
+		for (const frame of top) one(frame, boxDrawn(frame, motion?.drawn(frame.name)));
 	}
 
 	/**

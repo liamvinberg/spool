@@ -3,8 +3,9 @@ import type { Cover } from "../../cover";
 import { pageName } from "../../page-path";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
-import { type Box, type NearScreen, shellRadius } from "./camera";
+import { type Box, type NearScreen, shellRadius, shellRadiusOnScreen } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
+import type { FrameMotion } from "./frame-motion";
 import { bootDensityName, type FrameState } from "./lifecycle";
 import type { PictureClaims } from "./picture-canvas";
 
@@ -96,12 +97,18 @@ export function FrameSlot({
 	name,
 	frame,
 	claims,
+	motion,
+	lift,
 	children,
 }: {
 	name: string;
 	/** where the frame stands, in world units */
 	frame: Box;
 	claims: PictureClaims;
+	/** Frames drawn other than where they stand: a shell in motion is drawn where it is, over the rest (spool#299). */
+	motion?: FrameMotion | undefined;
+	/** The camera, while the frame is lifted in the hand, which casts a shadow over the frames under it. */
+	lift?: CameraStore | undefined;
 	children: ReactNode;
 }) {
 	const slot = useRef<HTMLDivElement | null>(null);
@@ -129,14 +136,76 @@ export function FrameSlot({
 			claims.claim(name, false);
 		};
 	}, [name, claims]);
+	// where it is drawn is written here, never rendered, so a render between two frames of motion cannot put it back
+	const place = () => {
+		const element = slot.current;
+		if (element === null) return;
+		const drawn = motion?.drawn(name);
+		const transform =
+			drawn === undefined
+				? `translate(${frame.x}px, ${frame.y}px)`
+				: `translate(${drawn.x}px, ${drawn.y}px) scale(${drawn.scale})`;
+		if (element.style.transform !== transform) element.style.transform = transform;
+		element.style.transformOrigin = drawn === undefined ? "" : `${drawn.origin.x}px ${drawn.origin.y}px`;
+		element.style.zIndex = drawn?.top === true ? "1" : "";
+	};
+	const latest = useRef(place);
+	latest.current = place;
+	useLayoutEffect(place);
+	useLayoutEffect(() => motion?.listen(() => latest.current()), [motion]);
 	return (
-		<div
-			ref={slot}
-			className="absolute"
-			style={{ transform: `translate(${frame.x}px, ${frame.y}px)`, width: frame.w, height: frame.h }}
-		>
+		<div ref={slot} className="absolute" style={{ width: frame.w, height: frame.h }}>
+			{lift !== undefined && motion !== undefined && (
+				<LiftShade name={name} frame={frame} camera={lift} motion={motion} />
+			)}
 			{children}
 		</div>
+	);
+}
+
+/**
+ * The shadow under a frame lifted in the hand (spool#299): soft and wide, drawn in screen pixels whatever the zoom,
+ * it comes in as the frame lifts and goes as it sets down.
+ */
+function LiftShade({
+	name,
+	frame,
+	camera,
+	motion,
+}: {
+	name: string;
+	frame: Box;
+	camera: CameraStore;
+	motion: FrameMotion;
+}) {
+	const shade = useRef<HTMLDivElement | null>(null);
+	const lift = () => {
+		const el = shade.current;
+		if (el !== null) el.style.opacity = String(Math.min(1, motion.drawn(name)?.lift ?? 0));
+	};
+	const latest = useRef(lift);
+	latest.current = lift;
+	useLayoutEffect(() => motion.listen(() => latest.current()), [motion]);
+	useCameraFollow(
+		camera,
+		(at) => {
+			const el = shade.current;
+			if (el === null) return;
+			el.style.width = `${frame.w * at.k}px`;
+			el.style.height = `${frame.h * at.k}px`;
+			el.style.transform = `scale(${1 / at.k})`;
+			el.style.borderRadius = `${shellRadiusOnScreen(at.k)}px`;
+			latest.current();
+		},
+		[frame.w, frame.h],
+	);
+	return (
+		<div
+			ref={shade}
+			data-frame-lift={name}
+			aria-hidden="true"
+			className="pointer-events-none absolute top-0 left-0 origin-top-left opacity-0 shadow-lift"
+		/>
 	);
 }
 

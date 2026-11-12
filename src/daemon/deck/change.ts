@@ -133,7 +133,7 @@ export function changeDeck(root: string, change: DeckChange): DeckChangeAnswer |
 	// a file only changes when what it says does: a hand's own spelling of it stands until then
 	const same = sameList(slides, now.file.slides) && size.w === result.deck.talk.w && size.h === result.deck.talk.h;
 	const file: DeckFile = { ...now.file, size: result.deck.talk, slides };
-	return write(page, same ? (page.bytes ?? null) : deckFileBytes(file), result.deck, result.swap);
+	return write(page, same ? (page.bytes ?? null) : deckFileBytes(file), result.deck);
 }
 
 /** A page made a deck: the talk is the frames named, in order, and every other frame of the page goes loose. */
@@ -236,24 +236,12 @@ function notes(page: DeckPage, change: Extract<DeckChange, { kind: "notes" }>): 
 }
 
 /**
- * One change's files, written as one transaction: a trade's notes, then every place that moves, then `deck.json`. The
+ * One change's files, written as one transaction: every place that moves, then `deck.json`. The
  * answer's undo and redo carry the files as the change found and left them, each refused once they hold something else.
  */
-function write(
-	page: DeckPage,
-	bytes: string | null,
-	deck: Deck,
-	swap?: readonly [string, string],
-): DeckChangeAnswer | DeckRefusal {
+function write(page: DeckPage, bytes: string | null, deck: Deck): DeckChangeAnswer | DeckRefusal {
 	const before: Files = { deck: page.bytes ?? null, sidecars: {}, notes: {} };
 	const after: Files = { deck: bytes, sidecars: {}, notes: {} };
-	if (swap !== undefined) {
-		const [one, other] = swap;
-		before.notes[one] = notesOf(page, one);
-		before.notes[other] = notesOf(page, other);
-		after.notes[one] = before.notes[other] ?? null;
-		after.notes[other] = before.notes[one] ?? null;
-	}
 	const { frames } = deckFramesOf(page);
 	for (const [folder, box] of placesToWrite(placesOf(deck), frames)) {
 		before.sidecars[folder] = page.frames.find((frame) => frame.folder === folder)?.sidecar ?? null;

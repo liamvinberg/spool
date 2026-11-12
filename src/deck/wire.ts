@@ -177,10 +177,6 @@ export function parseDeckChange(value: unknown): DeckChange | undefined {
 			const frames = folders(value.frames);
 			return frames !== undefined && whole(value.at) ? { kind: "insert", page, frames, at: value.at } : undefined;
 		}
-		case "trade":
-			return folder(value.frame) && folder(value.slide)
-				? { kind: "trade", page, frame: value.frame, slide: value.slide }
-				: undefined;
 		case "place": {
 			const frames = folders(value.frames);
 			const to = value.cell === undefined ? undefined : cell(value.cell);

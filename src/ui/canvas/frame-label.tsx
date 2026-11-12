@@ -1,11 +1,13 @@
-import { memo, type ReactNode, useMemo, useRef } from "react";
+import { memo, type ReactNode, useLayoutEffect, useMemo, useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
+import type { Camera } from "../api";
 import { cn } from "../cn";
 import { bucketOf } from "./bucket";
 import { type Box, type NearScreen, tooSmall } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged, type ViewChanges } from "./camera-store";
 import { type FrameAgent, FrameAgentsMark } from "./frame-agents";
+import { type FrameMotion, placeDrawn } from "./frame-motion";
 import type { SpatialDirection } from "./spatial-navigation";
 import { UnseenMark } from "./unseen-mark";
 
@@ -66,6 +68,8 @@ export const FrameLabel = memo(function FrameLabel({
 	unseen,
 	broken = false,
 	number,
+	numberAside = false,
+	motion,
 	onPlay,
 	playTitle,
 	live,
@@ -106,6 +110,13 @@ export const FrameLabel = memo(function FrameLabel({
 	broken?: boolean | undefined;
 	/** A slide's place in its deck's talk, from 1, said before its name (spool#265). */
 	number?: number | undefined;
+	/**
+	 * The number stands at its slot rather than in the label (spool#299), which keeps its room: a slide carried in
+	 * the hand or landing carries its own, and every other shows its slot's through the room.
+	 */
+	numberAside?: boolean | undefined;
+	/** Frames drawn other than where they stand: the label rides its frame where it is drawn (spool#299). */
+	motion?: FrameMotion | undefined;
 	/** Play this frame, by its name. Offered on the frame pointed at, the selection and the live one. */
 	onPlay?: ((name: string) => void) | undefined;
 	/** What play does, where it is not playing the frame: a slide's presents from it (spool#265). */
@@ -134,37 +145,44 @@ export const FrameLabel = memo(function FrameLabel({
 	// and their visibility restyled in the frame the camera landed, only for
 	// the next move to hide them all again. It is placed, exactly, the frame
 	// a move or a resized view brings it near.
-	useCameraFollow(
-		camera,
-		(at, moving) => {
-			const placed = place.current;
-			const el = label.current;
-			if (placed === null || el === null) return;
-			if (!near(at, frame)) {
-				// left where an earlier zoom put it, it would stand over some other
-				// frame once this zoom moved its own off screen, so it is hidden until
-				// it is placed again
-				if (!offScreen.current) placed.style.visibility = "hidden";
-				offScreen.current = true;
-				return;
-			}
-			const back = offScreen.current;
-			if (back) placed.style.visibility = "";
-			offScreen.current = false;
-			if (changed(at.k, frame.x, frame.y))
-				placed.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
-			const width = `${frame.w * at.k}px`;
-			if (moving) moves.current += 1;
-			if (el.style.width !== width && (!moving || back || exact || (moves.current + turn) % WIDTH_TURNS === 0)) {
-				el.style.width = width;
-				// the verbs on a label go with the furniture round a frame too small
-				// to carry it, while the name truncates away on its own
-				if (tooSmall(frame, at.k)) el.dataset.away = "";
-				else delete el.dataset.away;
-			}
-		},
-		[frame.x, frame.y, frame.w, frame.h, near, exact],
-		view,
+	const follow = (at: Camera, moving: boolean) => {
+		const placed = place.current;
+		const el = label.current;
+		if (placed === null || el === null) return;
+		// where the frame is drawn: a frame in motion carries its label (spool#299)
+		const box = placeDrawn(frame, motion?.drawn(name));
+		if (!near(at, box)) {
+			// left where an earlier zoom put it, it would stand over some other
+			// frame once this zoom moved its own off screen, so it is hidden until
+			// it is placed again
+			if (!offScreen.current) placed.style.visibility = "hidden";
+			offScreen.current = true;
+			return;
+		}
+		const back = offScreen.current;
+		if (back) placed.style.visibility = "";
+		offScreen.current = false;
+		if (changed(at.k, box.x, box.y)) placed.style.transform = `translate(${box.x * at.k}px, ${box.y * at.k}px)`;
+		const width = `${box.w * at.k}px`;
+		if (moving) moves.current += 1;
+		if (el.style.width !== width && (!moving || back || exact || (moves.current + turn) % WIDTH_TURNS === 0)) {
+			el.style.width = width;
+			// the verbs on a label go with the furniture round a frame too small
+			// to carry it, while the name truncates away on its own
+			if (tooSmall(box, at.k)) el.dataset.away = "";
+			else delete el.dataset.away;
+		}
+	};
+	useCameraFollow(camera, follow, [frame.x, frame.y, frame.w, frame.h, near, exact, motion], view);
+	const latest = useRef(follow);
+	latest.current = follow;
+	useLayoutEffect(
+		() =>
+			motion?.listen(() => {
+				const at = camera.get();
+				if (at !== null) latest.current(at, at !== camera.rest());
+			}),
+		[motion, camera],
 	);
 	// the label sits on its own page, which already says where it is (#336)
 	const leaf = pageName(name);
@@ -212,18 +230,20 @@ export const FrameLabel = memo(function FrameLabel({
 							overview === "dim" && "opacity-40",
 						)}
 					>
-						{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
 						{number !== undefined && (
 							<span
 								data-slide-number={number}
 								className={cn(
 									"shrink-0 tabular-nums transition-colors duration-fast ease-out type-value",
 									selected ? "text-accent-strong" : "text-tertiary",
+									// read with the name, and drawn at its slot while the slide stands there
+									numberAside && "opacity-0",
 								)}
 							>
 								{number}
 							</span>
 						)}
+						{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
 						<span
 							className={`min-w-0 truncate transition-colors duration-fast ease-out type-value ${
 								selected || overview === "target"

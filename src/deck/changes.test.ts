@@ -30,13 +30,6 @@ describe("a deck's rules", () => {
 		expect(changed(deck, { kind: "insert", frames: ["x"], at: 99 }).deck.line).toEqual(["a", "b", "c", "x"]);
 	});
 
-	it("trades a loose frame into a slide's place, the slide into the frame's cell, and their notes with them", () => {
-		const traded = changed(deck, { kind: "trade", frame: "y", slide: "b" });
-		expect(traded.deck.line).toEqual(["a", "y", "c"]);
-		expect(traded.deck.loose).toContainEqual({ folder: "b", col: 2, row: 1 });
-		expect(traded.swap).toEqual(["y", "b"]);
-	});
-
 	it("sets frames down a column, pushing what stands there and under it down, and closes the talk", () => {
 		const out = changed(deck, { kind: "place", frames: ["c", "b"], cell: { col: 0, row: 1 } }).deck;
 		expect(out.line).toEqual(["a"]);
@@ -80,10 +73,8 @@ describe("a deck's rules", () => {
 		expect(changed(shaped, { kind: "size", size: { w: 10, h: 99999 } }).deck.talk).toEqual({ w: 240, h: 2160 });
 	});
 
-	it("refuses what names no frame, or a trade that is not a loose frame onto a slide", () => {
+	it("refuses what names no frame", () => {
 		expect(applyRule(deck, { kind: "insert", frames: ["nope"], at: 0 }).kind).toBe("refused");
-		expect(applyRule(deck, { kind: "trade", frame: "a", slide: "b" }).kind).toBe("refused");
-		expect(applyRule(deck, { kind: "trade", frame: "x", slide: "y" }).kind).toBe("refused");
 	});
 
 	it("keeps every frame exactly once, in the talk or in a cell of its own, through any run of changes", () => {
@@ -104,22 +95,12 @@ describe("a deck's rules", () => {
 		);
 		for (let step = 0; step < 500; step++) {
 			const pick = () => all[random(all.length)] as string;
-			const loose = now.loose.map((spot) => spot.folder);
 			const rules: DeckRule[] = [
 				{ kind: "insert", frames: [pick(), pick()], at: random(now.line.length + 2) },
 				{ kind: "place", frames: [pick(), pick()], cell: { col: random(4) - 1, row: random(4) } },
 				{ kind: "place", frames: [pick()] },
 				{ kind: "reorder", frame: now.line[random(now.line.length)] ?? "a", to: random(5) },
 				{ kind: "arrange", slides: [pick(), pick(), pick()] },
-				...(loose.length > 0 && now.line.length > 0
-					? [
-							{
-								kind: "trade" as const,
-								frame: loose[random(loose.length)] as string,
-								slide: now.line[random(now.line.length)] as string,
-							},
-						]
-					: []),
 			];
 			const result = applyRule(now, rules[random(rules.length)] as DeckRule);
 			if (result.kind === "changed") now = result.deck;
