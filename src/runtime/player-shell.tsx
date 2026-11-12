@@ -1,8 +1,9 @@
-import { createElement, useSyncExternalStore } from "react";
+import { createElement, useEffect, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { SPOOL_MARK_PATH } from "../brand";
 import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
+import { markPlayAfterPaint } from "./play-marks";
 import { Player, type PlayerController } from "./player-chrome";
 import { heldBox, playRoom, readStart, writeStart } from "./player-fit";
 import type { DeskWindow } from "./player-page";
@@ -1118,6 +1119,9 @@ export function mountPlayerShell(root: HTMLElement, config: PlayerShellConfig, h
 	function Host() {
 		useSyncExternalStore(shell.controller.subscribe, shell.controller.version);
 		const { hidden, holding, revealed, loadError, loadEscape } = shell.view();
+		useEffect(() => {
+			if (revealed) markPlayAfterPaint("frame-revealed", host.desk?.mark);
+		}, [revealed]);
 		if (loadError !== undefined) {
 			return (
 				<div className="spool-player-error" role="alert">
@@ -1153,6 +1157,7 @@ export function mountPlayerShell(root: HTMLElement, config: PlayerShellConfig, h
 		);
 	}
 	function Page() {
+		useEffect(() => markPlayAfterPaint("shell-painted", host.desk?.mark), []);
 		return createElement(Player, {
 			project: config.project,
 			frames: {},

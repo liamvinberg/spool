@@ -50,4 +50,18 @@ describe("deskWindow — which shell this document is in", () => {
 		vi.stubGlobal("window", { spoolPlayWindow: bridge() });
 		expect(deskWindow()?.restored).toBe(false);
 	});
+
+	it("takes the play marks only from an app that takes them", () => {
+		vi.stubGlobal("window", { spoolPlayWindow: bridge() });
+		expect(deskWindow()?.mark).toBe(undefined);
+		const taken: unknown[] = [];
+		const spoolPlayWindow = bridge({
+			mark(this: unknown, name: string, at: number) {
+				taken.push([this === spoolPlayWindow, name, at]);
+			},
+		});
+		vi.stubGlobal("window", { spoolPlayWindow });
+		deskWindow()?.mark?.("shell-painted", 12);
+		expect(taken).toEqual([[true, "shell-painted", 12]]);
+	});
 });
