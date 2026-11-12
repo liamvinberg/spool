@@ -249,6 +249,24 @@ describe("findingsOf", () => {
 		]);
 	});
 
+	it("says a move back between two slides only when the move forward between them went right", () => {
+		const failed = (at: number) => ({ at, from: "", to: "", failed: "InvalidStateError: aborted" });
+		const found = findingsOf(
+			talk({
+				steps: [
+					step(at(0, 1), at(1), 1000, { move: failed(1000) }),
+					step(at(1), at(2), 2000),
+					step(at(2), at(1), 3000, { pass: "back", move: failed(3000) }),
+					step(at(1), at(0, 1), 4000, { pass: "back", move: failed(4000) }),
+				],
+			}),
+		);
+		expect(found.map((finding) => (finding.kind === "move-failed" ? [finding.from, finding.back] : []))).toEqual([
+			[0, undefined],
+			[1, true],
+		]);
+	});
+
 	it("names a step that lagged on a machine that can tell, and on one that cannot only says so", () => {
 		const slow = step(at(0), at(0, 1), 1000, { shownAt: 1400, frames: [1000, 1100, 1400] });
 		expect(findingsOf(talk({ steps: [slow] }))).toEqual([

@@ -115,11 +115,12 @@ function lineOf(outcome: RehearseOutcome, finding: Finding): string {
 		case "request":
 			return `${pathOf(outcome, finding.place)}: ${where(outcome, finding.place)}: a request failed: ${shortUrl(finding.url)} (${finding.status})`;
 		case "move-failed": {
-			const to = { slide: finding.from + 1 };
 			const [first] = finding.twice;
 			const path =
-				first?.elements[0]?.source === undefined ? pathOf(outcome, to) : `design/${first.elements[0].source}`;
-			const head = `${path}: the move from ${where(outcome, { slide: finding.from })} to ${where(outcome, to)} did not run`;
+				first?.elements[0]?.source === undefined
+					? pathOf(outcome, { slide: finding.from + 1 })
+					: `design/${first.elements[0].source}`;
+			const head = `${path}: ${moveOf(outcome, finding)} did not run`;
 			if (finding.twice.length === 0) return `${head}: ${finding.why}`;
 			const names = finding.twice
 				.map(
@@ -130,7 +131,7 @@ function lineOf(outcome: RehearseOutcome, finding: Finding): string {
 			return `${head}: ${names}; give a name to one element per slide`;
 		}
 		case "move-cut": {
-			const head = `${pathOf(outcome, { slide: finding.from + 1 })}: the move from ${where(outcome, { slide: finding.from })} to ${where(outcome, { slide: finding.from + 1 })}`;
+			const head = `${pathOf(outcome, { slide: finding.from + 1 })}: ${moveOf(outcome, finding)}`;
 			return finding.ran === 0
 				? `${head} was skipped before it began: another move started over it`
 				: `${head} was cut short: it ran ${finding.ran} of its ${finding.runs} ms`;
@@ -215,6 +216,12 @@ function where(outcome: RehearseOutcome, place: Place): string {
 			? ""
 			: `, beat ${place.beat + 1}${beats[place.beat] === undefined ? "" : ` "${beats[place.beat]}"`}`;
 	return `${head}${beat}${place.back ? ", going back" : ""}`;
+}
+
+/** The move between a slide and the next, forward or, when only that went wrong, back. */
+function moveOf(outcome: RehearseOutcome, move: { from: number; back?: true }): string {
+	const [from, to] = move.back ? [move.from + 1, move.from] : [move.from, move.from + 1];
+	return `the move ${move.back ? "back " : ""}from ${where(outcome, { slide: from })} to ${where(outcome, { slide: to })}`;
 }
 
 function pathOf(outcome: RehearseOutcome, place: { slide: number }): string {

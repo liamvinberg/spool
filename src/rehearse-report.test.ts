@@ -69,11 +69,13 @@ it("points a finding at the element's own line when it knows one, and at the sli
 				twice: [{ name: "hero", slide: 2, elements: twins }],
 			},
 			{ kind: "webgl", place: { slide: 2, beat: 0 }, contexts: 3, kept: 2 },
+			{ kind: "move-cut", from: 0, ran: 200, runs: 600, back: true },
 		]),
 	);
 	expect(stderr).toEqual([
 		`design/frames/talk/close/frame.tsx:3:4: the move from slide 2 "steps" to slide 3 "close" did not run: view-transition-name "hero" is on 2 elements of slide 3, h1 at design/frames/talk/close/frame.tsx:3:4 and p at design/frames/talk/close/frame.tsx:4:4; give a name to one element per slide`,
 		`design/frames/talk/close/frame.tsx: slide 3 "close": holds 3 WebGL contexts, past the 2 the stage shares between the slide on screen and the ones it readies, so the slides around it come on unready; draw on one canvas`,
+		`design/frames/talk/steps/frame.tsx: the move back from slide 2 "steps" to slide 1 "open" was cut short: it ran 200 of its 600 ms`,
 	]);
 });
 

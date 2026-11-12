@@ -148,7 +148,9 @@ function markOf(
 	const here = findings.filter((finding) => {
 		if (at.move === true)
 			return (
-				((finding.kind === "move-failed" || finding.kind === "move-cut") && finding.from === at.slide) ||
+				((finding.kind === "move-failed" || finding.kind === "move-cut") &&
+					finding.from === at.slide &&
+					!finding.back) ||
 				(finding.kind === "lag" && finding.move && !finding.place.back && finding.place.slide === at.slide + 1)
 			);
 		if (!("place" in finding) || finding.place.slide !== at.slide || finding.place.back) return false;

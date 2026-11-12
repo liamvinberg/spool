@@ -61,6 +61,8 @@ export type Finding =
 	| {
 			readonly kind: "move-failed";
 			readonly from: number;
+			/** the move back, from the next slide to `from`, when the move forward ran */
+			readonly back?: true;
 			readonly why: string;
 			readonly twice: readonly {
 				readonly name: string;
@@ -69,7 +71,14 @@ export type Finding =
 			}[];
 	  }
 	/** the move ran `ran` ms of its `runs` */
-	| { readonly kind: "move-cut"; readonly from: number; readonly ran: number; readonly runs: number }
+	| {
+			readonly kind: "move-cut";
+			readonly from: number;
+			readonly ran: number;
+			readonly runs: number;
+			/** the move back, from the next slide to `from`, when the move forward ran */
+			readonly back?: true;
+	  }
 	| { readonly kind: "late"; readonly place: Place; readonly file: LateFile }
 	| {
 			readonly kind: "cut";
@@ -269,22 +278,29 @@ const CUT_SHARE = 0.8;
 
 function movesBetween(rehearsal: Rehearsal): Finding[] {
 	const found: Finding[] = [];
-	for (const step of rehearsal.steps) {
-		if (step.pass !== "forward" || step.from.slide === step.to.slide || step.move === undefined) continue;
+	// forward first: a move back says only what the move forward between the same two slides did not
+	const steps = [...rehearsal.steps].sort((a, b) => Number(a.pass === "back") - Number(b.pass === "back"));
+	for (const step of steps) {
+		if (step.from.slide === step.to.slide || step.move === undefined) continue;
 		const { move } = step;
-		const from = step.from.slide;
+		const from = Math.min(step.from.slide, step.to.slide);
+		const back = step.pass === "back" ? { back: true as const } : {};
+		const said = (kind: "move-failed" | "move-cut") =>
+			found.some((finding) => finding.kind === kind && finding.from === from);
 		if (move.failed !== undefined) {
 			if (/^AbortError/.test(move.failed)) {
-				found.push({ kind: "move-cut", from, ran: 0, runs: move.runs ?? 0 });
+				if (!said("move-cut")) found.push({ kind: "move-cut", from, ran: 0, runs: move.runs ?? 0, ...back });
 				continue;
 			}
-			found.push({ kind: "move-failed", from, why: move.failed, twice: namedTwice(rehearsal, step) });
+			if (!said("move-failed"))
+				found.push({ kind: "move-failed", from, why: move.failed, twice: namedTwice(rehearsal, step), ...back });
 			continue;
 		}
 		if (move.ready === undefined || move.finished === undefined || move.runs === undefined || move.runs === 0)
 			continue;
 		const ran = Math.round(move.finished - move.ready);
-		if (ran < move.runs * CUT_SHARE) found.push({ kind: "move-cut", from, ran, runs: move.runs });
+		if (ran < move.runs * CUT_SHARE && !said("move-cut"))
+			found.push({ kind: "move-cut", from, ran, runs: move.runs, ...back });
 	}
 	return found;
 }
