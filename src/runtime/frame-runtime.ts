@@ -2131,6 +2131,11 @@ const slides = slideCalls({ frame: () => (play === undefined ? doc.frame : mount
 if (play === undefined) {
 	const asked = queryBeat();
 	if (asked !== undefined) setSlideBeat(doc.frame, asked);
+	// the photo booth steps a slide it times through its beats (spool#318), from a world of its own
+	window.addEventListener("spool:beat", (event) => {
+		const beat = event instanceof CustomEvent ? (event.detail as unknown) : undefined;
+		if (typeof beat === "number") setSlideBeat(doc.frame, beat);
+	});
 }
 
 function queryBeat(): number | undefined {
