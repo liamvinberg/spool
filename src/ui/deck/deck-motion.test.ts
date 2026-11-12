@@ -77,7 +77,7 @@ describe("a deck page's frames on springs", () => {
 			}
 		};
 		const at = (name: string) => store.get().frames.find((one) => one.name === name);
-		return { store, springs, run, at, told: () => told };
+		return { store, springs, run, at, told: () => told, queued: () => queued.length };
 	};
 	const frame = (name: string, x: number, y: number, w = 1280) =>
 		({ name, x, y, w, h: 720 }) as unknown as ProjectedFrame;
@@ -102,6 +102,24 @@ describe("a deck page's frames on springs", () => {
 		expect(Math.abs((track[0] ?? 0) - out)).toBeLessThan(60);
 		expect(Math.max(...track)).toBeGreaterThan(out);
 		expect(track.at(-1)).toBe(0);
+	});
+
+	it("asks for one animation frame at a time while the hand moves its frames each frame", () => {
+		const { springs, run, queued } = setup();
+		let x = 0;
+		springs.steer({
+			frame: () => {
+				x += 10;
+				springs.hold(new Map([["p", { x, y: 0 }]]), { x: 100, y: 50 });
+				springs.place(new Map([["q", { x, y: 1000 }]]), "room");
+			},
+			after: () => {},
+		});
+		for (let t = 0; t < 500; t += 1000 / 60) {
+			run(t);
+			expect(queued()).toBe(1);
+		}
+		expect(springs.drawn("p")?.x).toBe(x);
 	});
 
 	it("lifts a frame in the hand, lands it at the hand's speed over the rest, and then draws it where it stands", () => {
