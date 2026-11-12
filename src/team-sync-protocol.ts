@@ -597,13 +597,19 @@ export function isFrameJson(path: string): boolean {
 
 /** The fields that say where a frame stands: a merge never takes them away. */
 const PLACE_FIELDS = new Set(["x", "y", "w", "h"]);
+/** Each pair of place fields, which a frame.json holds both of or neither. */
+const PLACE_PAIRS = [
+	["x", "y"],
+	["w", "h"],
+] as const;
 
 /**
  * A frame's `frame.json` as it is once a save built on `base` meets the team's version: a field the save changed
  * from a value the base had is taken from the save, so the later move or resize wins; a field the save added that
  * the team's version already has keeps the team's value, so the first placement of a new frame stands; a place
  * field the save removed stays, so a size-only rewrite never unplaces the frame; any other field the save removed
- * goes. The team's very bytes where the merge changes nothing of them. Null where either side isn't a JSON object,
+ * goes. A place field the merge lacks and the save has is the save's, and half a position or half a size is made
+ * whole from the base, so a move that meets a size-only rewrite still stands. The team's very bytes where the merge changes nothing of them. Null where either side isn't a JSON object,
  * which then collides like any other file. A base the team no longer has, or never had, counts as empty.
  */
 export function mergeFrameJson(base: Uint8Array | null, team: Uint8Array, mine: Uint8Array): Uint8Array | null {
@@ -615,6 +621,10 @@ export function mergeFrameJson(base: Uint8Array | null, team: Uint8Array, mine: 
 		if (before === undefined && now !== undefined) return now;
 		return after === undefined && PLACE_FIELDS.has(key) ? now : after;
 	});
+	for (const key of PLACE_FIELDS) if (merged[key] === undefined && ours[key] !== undefined) merged[key] = ours[key];
+	for (const pair of PLACE_PAIRS)
+		for (const [key, other] of [pair, [pair[1], pair[0]]])
+			if (merged[key] === undefined && merged[other] !== undefined && was[key] !== undefined) merged[key] = was[key];
 	if (JSON.stringify(merged) === JSON.stringify(theirs)) return team;
 	return new TextEncoder().encode(`${JSON.stringify(merged, null, "\t")}\n`);
 }

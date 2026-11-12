@@ -360,8 +360,10 @@ describe("a frame's frame.json merged by field (spool#313)", () => {
 		expect(merged(placed, { ...placed, x: 900 }, { ...placed, x: 20 })).toEqual({ ...placed, x: 20 });
 	});
 
-	it("never unplaces a frame for a size-only rewrite, and drops another field the save removed", () => {
+	it("never unplaces a frame for a size-only rewrite, whichever lands first, and drops another field the save removed", () => {
 		expect(merged(placed, { ...placed, x: 900 }, { w: 400, h: 300 })).toBe("team's");
+		expect(merged(placed, { w: 400, h: 300 }, { ...placed, x: 900 })).toEqual({ ...placed, x: 900 });
+		expect(merged(placed, { x: 0, w: 400, h: 300 }, { w: 400, h: 300 })).toEqual(placed);
 		const note = { ...placed, placeholder: { name: "calm" } };
 		expect(merged(note, { ...note, x: 900 }, { w: 400, h: 300 })).toEqual({ ...placed, x: 900 });
 	});
