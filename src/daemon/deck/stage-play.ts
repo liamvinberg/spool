@@ -144,16 +144,19 @@ export function createStagePlay(deps: StagePlayDeps) {
 
 /**
  * The stage's own look, before any slide's: the ground around the talk's screen, the slide on show above the ones rendered
- * out of sight, and the carry and dissolve between slides from the deck's design, which a slide's own styles may
- * override for what it names. The carry and dissolve are in the layer the document declares first, under every layer a
- * slide's sheets are in: unlayered, they beat a slide's own rules whatever those name, short of `!important` (spool#323). The dissolve lays the new slide over the old one, which stays whole beneath it until the
- * new one is: the browser's own cross-fade fades both at once, and when the two fades fall out of step on a busy
- * machine, the room's screen dims between slides.
+ * out of sight, one put on ahead unseen and carrying nothing into a dissolve, and the carry and dissolve between slides
+ * from the deck's design, which a slide's own styles may override for what it names. The carry and dissolve are in the
+ * layer the document declares first, under every layer a slide's sheets are in: unlayered, they beat a slide's own
+ * rules whatever those name, short of `!important` (spool#323). The dissolve lays the new slide over the old one, which
+ * stays whole beneath it until the new one is: the browser's own cross-fade fades both at once, and when the two fades
+ * fall out of step on a busy machine, the room's screen dims between slides.
  */
 export const STAGE_CSS = `html { background: ${STAGE_GROUND}; }
 #root { position: absolute; inset: 0; }
 .spool-stage-slide { position: absolute; left: 0; top: 0; overflow: hidden; transform-origin: 0 0; z-index: 0; }
 .spool-stage-slide[data-spool-stage-shown] { z-index: 1; }
+.spool-stage-slide[data-spool-stage-waiting] { opacity: 0; }
+.spool-stage-slide[data-spool-stage-waiting] * { view-transition-name: none !important; }
 .spool-stage-kept { display: contents; }
 .spool-stage-black { position: absolute; inset: 0; z-index: 2; background: #000; }
 html[data-spool-stage-cursor="hidden"], html[data-spool-stage-cursor="hidden"] * { cursor: none !important; }

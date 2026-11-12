@@ -22,6 +22,8 @@ export type TalkMessage =
 	| { readonly kind: "end" }
 	/** room → presenter: the newest session, please; the room has opened */
 	| { readonly kind: "ask" }
+	/** room → presenter: the room's screen shows a new picture, of the session at this revision or a newer one */
+	| { readonly kind: "shown"; readonly revision: number }
 	/** room → presenter: a key pressed or a click in the room's window, for the presenter to carry out */
 	| { readonly kind: "command"; readonly command: KeyCommand }
 	/** room → presenter: the room's window is going, closed or reloading */
@@ -72,6 +74,8 @@ export function parseTalkMessage(value: unknown): TalkMessage | undefined {
 			const command = parseKeyCommand(value.command);
 			return command === undefined ? undefined : { kind: "command", command };
 		}
+		case "shown":
+			return typeof value.revision === "number" ? { kind: "shown", revision: value.revision } : undefined;
 		case "end":
 		case "ask":
 		case "gone":

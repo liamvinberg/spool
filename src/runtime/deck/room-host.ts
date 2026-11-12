@@ -2,7 +2,7 @@ import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
 import { fitIn, STAGE_GROUND } from "../../deck/stage-fit";
 import { roomPicture, type StageSession } from "../../deck/stage-session";
-import type { StagePointer } from "../../deck/stage-wire";
+import { PRESENTED_WEBGL, type StagePointer } from "../../deck/stage-wire";
 import { stageDaemon } from "./stage-daemon";
 import { mountStage, type StageHost } from "./stage-host";
 
@@ -67,13 +67,19 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 		},
 		mode: "follow",
 		room: true,
+		webgl: PRESENTED_WEBGL.room,
 		...(config.frame === undefined ? {} : { frame: config.frame }),
 		on: {
 			// a new build took the screen: the newest session, which it may now be able to show
 			talk: () => show(),
-			shown: () => {
+			shown: (shown) => {
 				sayDrawn();
 				dot.draw();
+				// the step this picture is of: a picture of an older one says nothing of a newer step still coming
+				const session = host.session();
+				const at = session === undefined ? undefined : roomPicture(session).at;
+				if (session !== undefined && at?.slide === shown.at.slide && at.beat === shown.at.beat)
+					say({ kind: "shown", revision: session.revision });
 			},
 			command: (command) => {
 				if (roomPasses(command)) say({ kind: "command", command });

@@ -34,6 +34,8 @@ export interface StageHostOptions {
 	filling?: boolean;
 	/** its first slide goes on at rest, its entrances played, under a picture of it at rest that the host shows meanwhile */
 	rest?: boolean;
+	/** the WebGL contexts its stage may hold, as its share of the process it runs in; the stage's own share otherwise */
+	webgl?: number;
 	/** where it opens: a session, or a slide by its frame (its first beat); the talk's first slide otherwise */
 	session?: StageSession;
 	frame?: string;
@@ -198,6 +200,7 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				...(options.alone === true ? { alone: true } : {}),
 				...(options.filling === true ? { filling: true } : {}),
 				...(options.rest === true ? { rest: true } : {}),
+				...(options.webgl === undefined ? {} : { webgl: options.webgl }),
 				...(session === undefined ? {} : { session }),
 				...(frameOf === undefined ? {} : { frame: frameOf }),
 			});

@@ -50,6 +50,8 @@ export interface SlideReadiness {
 	 * its WebGL canvases drew, which a copy cannot read back once a frame has shown.
 	 */
 	readonly kept?: "picture" | "picture-without-webgl";
+	/** the most WebGL contexts it was seen to draw with, once it drew with any: what readying it ahead costs (spool#320) */
+	readonly webgl?: number;
 }
 
 /** What the stage put on screen, after a command or a session asked for it. */
@@ -69,6 +71,28 @@ export interface StageShown {
 }
 
 export type StageMode = "own" | "follow";
+
+/**
+ * The WebGL contexts each stage of a talk presented from the presenter view may hold (spool#320), the slide on screen's
+ * among them: shares of the sixteen Chrome keeps alive in one process, where the room's stage, the presenter's slide
+ * and the next pane all play. The room's screen comes first; the next pane keeps nothing but the slide it shows. With
+ * slides of up to five contexts the three stay within sixteen: the room six or its slide's own, the presenter's slide
+ * two or its own, the next pane its slide's.
+ */
+export const PRESENTED_WEBGL = { room: 6, slide: 2, next: 0 } as const;
+
+/**
+ * The slides a stage holding `share` WebGL contexts cannot ready ahead beside the one before them, by the contexts each
+ * draws with: such a slide makes them, and compiles its shaders, as it goes on, as late as its own cost makes it.
+ */
+export function tooHeavyAhead(slides: readonly SlideReadiness[], share: number): Map<string, number> {
+	const heavy = new Map<string, number>();
+	slides.forEach((slide, index) => {
+		const own = slide.webgl ?? 0;
+		if (own > 0 && own + (slides[index - 1]?.webgl ?? 0) > share) heavy.set(slide.frame, own);
+	});
+	return heavy;
+}
 
 /** Where the pointer stands over a live slide, on the talk's screen: from 0 to 1 across and down. */
 export interface StagePointer {
@@ -96,6 +120,11 @@ export type HostMessage =
 			 * stage has drawn it, and takes the picture away in the frame it has (spool#316)
 			 */
 			readonly rest?: true;
+			/**
+			 * the WebGL contexts the stage may hold, the slide on screen's among them: its share of what the browser keeps
+			 * alive in the process it shares with other documents. A slide whose contexts would not fit is not put on ahead.
+			 */
+			readonly webgl?: number;
 			readonly session?: StageSession;
 			readonly frame?: string;
 	  }
@@ -220,6 +249,7 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 			...(value.alone === true ? { alone: true } : {}),
 			...(value.filling === true ? { filling: true } : {}),
 			...(value.rest === true ? { rest: true } : {}),
+			...(typeof value.webgl === "number" && value.webgl >= 0 ? { webgl: value.webgl } : {}),
 			...(session === undefined ? {} : { session }),
 			...(typeof value.frame === "string" ? { frame: value.frame } : {}),
 		};
@@ -276,6 +306,7 @@ function parseReadiness(value: unknown): SlideReadiness[] | undefined {
 			...(typeof slide.why === "string" ? { why: slide.why } : {}),
 			...(WHENS.has(String(slide.when)) ? { when: slide.when as NonNullable<SlideReadiness["when"]> } : {}),
 			...(KEPT.has(String(slide.kept)) ? { kept: slide.kept as NonNullable<SlideReadiness["kept"]> } : {}),
+			...(isCount(slide.webgl) ? { webgl: slide.webgl } : {}),
 		});
 	}
 	return slides;

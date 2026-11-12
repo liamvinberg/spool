@@ -4,7 +4,7 @@ import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
 import type { KeyCommand } from "../../deck/stage-keys";
 import { type At, nextAt, roomPicture, type StageSession, type TalkSlide } from "../../deck/stage-session";
-import type { SlideReadiness, StagePointer } from "../../deck/stage-wire";
+import { PRESENTED_WEBGL, type SlideReadiness, type StagePointer, tooHeavyAhead } from "../../deck/stage-wire";
 import type { DeckRead } from "../../deck/wire";
 import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
 import { cn } from "../cn";
@@ -49,6 +49,8 @@ const ROOM_GONE_MS = 1500;
 const ROOM_PATIENCE_MS = 10_000;
 /** How long L's cue says what it did. */
 const POINTER_SAID_MS = 1800;
+/** How long the next pane waits for a step to be on the presenter's slide and the room's screen before it follows. */
+const PANE_WAITS_MS = 1500;
 
 export interface PresenterProps {
 	readonly ask: PresentAsk;
@@ -111,6 +113,8 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 	/** where the pointer is over the live slide, whatever the room is told */
 	const pointedAt = useRef<StagePointer | null>(null);
 	const roomWindow = useRef(ask.room);
+	const roomOpen = useRef(false);
+	roomOpen.current = room === "open";
 	const stage = useRef<{ main: StageHost; next: StageHost; say: (message: TalkMessage) => void } | null>(null);
 
 	// the two stages and the channel to the room: for the talk's whole life
@@ -137,6 +141,42 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			if (now.keys) return now;
 			const at = nextAt(host.talk(), now.at);
 			return { ...now, at, keys: false, black: false, frozen: null };
+		};
+		/**
+		 * What the next key plays, owed to the next pane until the step is on the presenter's slide and, while a room is
+		 * open, on the room's screen: the pane shares their thread and the GPU, and nothing it starts may land on the key
+		 * (spool#320). The talk's first session, and a change that moves neither picture (a slide writing `ui.state`),
+		 * reach it at once.
+		 */
+		let owed: { session: StageSession; slide: At | undefined; room: number | undefined } | undefined;
+		let owedTimer: ReturnType<typeof setTimeout> | undefined;
+		let before: StageSession | undefined;
+		const pay = () => {
+			clearTimeout(owedTimer);
+			if (owed !== undefined) next.apply(owed.session);
+			owed = undefined;
+		};
+		const paid = () => {
+			if (owed?.slide === undefined && owed?.room === undefined) pay();
+		};
+		const where = (picture: { at: At; takes: StageSession["takes"] }) => JSON.stringify([picture.at, picture.takes]);
+		const follow = (now: StageSession) => {
+			const was = before;
+			before = now;
+			const slideMoves = was !== undefined && where(was) !== where(now);
+			const roomMoves = was !== undefined && where(roomPicture(was)) !== where(roomPicture(now));
+			if (!slideMoves && !(roomMoves && roomOpen.current)) {
+				if (owed === undefined) next.apply(ahead(now));
+				else owed.session = ahead(now);
+				return;
+			}
+			owed = {
+				session: ahead(now),
+				slide: slideMoves ? now.at : undefined,
+				room: roomMoves && roomOpen.current ? now.revision : undefined,
+			};
+			clearTimeout(owedTimer);
+			owedTimer = setTimeout(pay, PANE_WAITS_MS);
 		};
 		const app = desktopWindow();
 		const carry = (command: KeyCommand) => {
@@ -173,13 +213,14 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			mode: "own",
 			room: false,
 			rest: true,
+			webgl: PRESENTED_WEBGL.slide,
 			frame: ask.slide,
 			on: {
 				talk: setTalk,
 				session: (now) => {
 					setSession(now);
 					publish();
-					next.apply(ahead(now));
+					follow(now);
 					// a live slide given the keys hears them in its own document, and gives them back to the view
 					if (now.keys !== keys) {
 						keys = now.keys;
@@ -188,7 +229,15 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					}
 				},
 				slides: setReady,
-				shown: () => {
+				shown: (shown) => {
+					if (
+						owed?.slide !== undefined &&
+						owed.slide.slide === shown.at.slide &&
+						owed.slide.beat === shown.at.beat
+					) {
+						owed.slide = undefined;
+						paid();
+					}
 					if (pictured) return;
 					pictured = true;
 					hands.current.onPicture();
@@ -205,7 +254,14 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			},
 		});
 		// what the next key plays, never touched: what its slides write is the talk's echo, not the talk's
-		const next = mountStage(after, { address, mode: "follow", room: true, rest: true, frame: ask.slide });
+		const next = mountStage(after, {
+			address,
+			mode: "follow",
+			room: true,
+			rest: true,
+			webgl: PRESENTED_WEBGL.next,
+			frame: ask.slide,
+		});
 		stage.current = { main: host, next, say };
 
 		let gone: ReturnType<typeof setTimeout> | undefined;
@@ -221,6 +277,11 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			} else if (message.kind === "gone") {
 				clearTimeout(gone);
 				gone = setTimeout(() => setRoom("closed"), ROOM_GONE_MS);
+			} else if (message.kind === "shown") {
+				if (owed?.room !== undefined && message.revision >= owed.room) {
+					owed.room = undefined;
+					paid();
+				}
 			} else if (message.kind === "command" && roomPasses(message.command)) carry(message.command);
 		});
 		// the window the browser handed over says itself when it closes, and sooner than its last word
@@ -243,6 +304,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			stopHearing();
 			clearTimeout(gone);
 			clearTimeout(opening);
+			clearTimeout(owedTimer);
 			clearInterval(watch);
 			say({ kind: "end" });
 			channel.close();
@@ -601,6 +663,7 @@ function TalkLine({
 }) {
 	// a click here moves the talk and leaves the focus, and the keys, where they were
 	const keepFocus = (event: MouseEvent) => event.preventDefault();
+	const heavy = tooHeavyAhead(ready, PRESENTED_WEBGL.room);
 	return (
 		<div className="flex w-full gap-4">
 			{talk.map((slide, index) => {
@@ -611,6 +674,7 @@ function TalkLine({
 				);
 				const here = index === at.slide;
 				const state = ready.find((one) => one.frame === slide.frame)?.status;
+				const contexts = heavy.get(slide.frame);
 				return (
 					<div key={slide.frame} className="flex min-w-0 flex-col gap-2" style={{ flex: beats.length + 1 }}>
 						<button
@@ -632,6 +696,13 @@ function TalkLine({
 								<span className="shrink-0 text-danger-strong type-detail">broken</span>
 							) : state === "loading" ? (
 								<span className="shrink-0 text-tertiary type-detail">loading</span>
+							) : contexts !== undefined ? (
+								<span
+									className="shrink-0 text-tertiary type-detail"
+									title={`Draws with ${contexts} WebGL contexts, too many beside the slide before for the room to ready it ahead: it starts drawing as it goes on, and can lag`}
+								>
+									heavy
+								</span>
 							) : null}
 						</button>
 						<div className="flex gap-1">
