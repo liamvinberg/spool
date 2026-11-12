@@ -1424,6 +1424,52 @@ it("reveals the preflight geometry while the first live geometry request hangs",
 	});
 });
 
+it("reveals on the geometry it holds, asking nothing more once the played document connects", {
+	timeout: 60_000,
+}, async () => {
+	const browser = await testBrowser();
+	const project = await serveProject();
+	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
+	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+
+	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => page.close());
+	// the bridge's one-second fallback would reveal on what it holds anyway: held, only an answer reveals
+	await page.addInitScript(() => {
+		if (window.top !== window) return;
+		const setTimeout = window.setTimeout;
+		window.setTimeout = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) =>
+			String(handler).includes("announceGeometry")
+				? 0
+				: setTimeout(handler, timeout, ...rest)) as typeof window.setTimeout;
+	});
+	// the bridge asks once its stream is open; every ask after that hangs (spool#303)
+	let asked = 0;
+	await page.route(`**/api/p/${project.name}/frames`, async (route) => {
+		asked += 1;
+		if (asked === 1) await route.continue();
+	});
+	const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/frames"));
+	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}?*`, async (route) => {
+		await answered;
+		await route.continue();
+	});
+
+	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
+	const inner = page.frameLocator("#spool-player");
+	await inner.locator("#start").waitFor({ state: "attached" });
+	await page.waitForFunction(
+		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
+		undefined,
+		{ timeout: 10_000 },
+	);
+	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
+		width: 390,
+		height: 844,
+	});
+	expect(asked).toBe(1);
+});
+
 it("replays geometry emitted before the shell runtime connects without SSE", { timeout: 60_000 }, async () => {
 	const browser = await testBrowser();
 	const project = await serveProject();
