@@ -50,6 +50,30 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		]);
 	});
 
+	it("refuses a stylesheet import the compile will refuse, in the themes the checked frames reach", async () => {
+		const root = project();
+		writeDesignFile(root, "shared/tokens.css", "@theme { --color-ink: #111; }\n");
+		// written the way a frame's own imports may be, from design/: a theme's must be relative
+		writeDesignFile(
+			root,
+			"shared/ui/look/theme.css",
+			'@import "tailwindcss";\n/* @import "shared/old.css"; */\n@import url("https://fonts.example/a.css");\n@import "shared/tokens.css";\n@import "./parts.css";\n',
+		);
+		writeDesignFile(root, "shared/ui/look/parts.css", '@import "../gone.css";\n');
+		writeFrame(root, "themed", 'import "shared/ui/look/theme.css";\n' + FRAME);
+		writeFrame(root, "plain", FRAME);
+
+		const themed = await runCheck(root, root, ["themed"]);
+		expect(themed.stderr).toEqual([
+			'design/shared/ui/look/theme.css:4:1 stylesheet: unsupported import "shared/tokens.css" — only tailwindcss and relative stylesheets resolve in design/shared/ui/look/theme.css; write it "../../tokens.css"',
+			"design/shared/ui/look/parts.css:1:1 stylesheet: no stylesheet at design/shared/ui/gone.css",
+		]);
+		expect(themed.stdout).toEqual(["checked 1 frame (1 source file), 2 errors"]);
+		expect(themed.ok).toBe(false);
+		// a frame that reaches no theme is not told of one
+		expect((await runCheck(root, root, ["plain"])).ok).toBe(true);
+	});
+
 	it("refuses a path that names no frame before checking anything", async () => {
 		const root = project();
 		writeFrame(root, "home", FRAME);
