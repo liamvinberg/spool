@@ -100,6 +100,8 @@ let sendToHost: ((message: StageMessage) => void) | undefined;
 let hostListener: ((data: unknown) => void) | undefined;
 const heldFromHost: unknown[] = [];
 let windowError: ((error: unknown) => void) | undefined;
+/** Chrome's and Firefox's notice, and Chrome's older one, sent as an error event with no error */
+const RESIZE_NOTICE = /^ResizeObserver loop (completed with undelivered notifications|limit exceeded)/;
 
 /**
  * Before any slide's module runs: the private port to the host, made and handed over once with its methods bound, so
@@ -123,7 +125,11 @@ if (deck !== undefined) {
 		start();
 		window.parent.postMessage({ spool: "stage-connect" }, "*", [channel.port2]);
 	}
-	addEventListener("error", (event) => windowError?.(event.error ?? event.message));
+	addEventListener("error", (event) => {
+		// the browser's word that a ResizeObserver will hear the rest of a change next frame: nothing threw
+		if (event.error == null && RESIZE_NOTICE.test(event.message)) return;
+		windowError?.(event.error ?? event.message);
+	});
 	addEventListener("unhandledrejection", (event) => windowError?.(event.reason));
 }
 
@@ -233,6 +239,8 @@ export function bootStage(runtime: StageRuntime): void {
 	let alone = false;
 	/** the slides fill the host's screen, which is the room's: F is nobody's key */
 	let filling = false;
+	/** a preview: the slide on screen draws once as it goes on or changes, and rests */
+	let still = false;
 	let opened = !embedded;
 	/** the WebGL contexts this document may hold: its share of what the browser keeps alive in its process */
 	let webglShare = WEBGL_SHARE;
@@ -715,6 +723,7 @@ export function bootStage(runtime: StageRuntime): void {
 		const was = pending;
 		if (was === undefined || was.at.slide !== at.slide || was.at.beat !== at.beat) return;
 		pending = undefined;
+		if (still && copy !== undefined && copy.key === shown) drawOnce(copy);
 		const waited = Math.round(performance.now() - was.arrived);
 		unsaid++;
 		const say = (message: StageMessage) => {
@@ -737,6 +746,24 @@ export function bootStage(runtime: StageRuntime): void {
 			};
 			if (first) requestAnimationFrame(() => say(message));
 			else say(message);
+		});
+	}
+
+	/** the still stage's last draw: an earlier one, overtaken, leaves the resting to it */
+	let drawing = 0;
+	/** A still stage's slide on screen draws as it stands now, its entrances played, and then rests again. */
+	function drawOnce(copy: Copy): void {
+		const box = copy.box;
+		if (box === undefined) return;
+		const draw = ++drawing;
+		restWebgl(box, false);
+		requestAnimationFrame(() => {
+			atRest(box);
+			requestAnimationFrame(() => {
+				if (draw !== drawing || copy.key !== shown || copies.get(copy.key) !== copy) return;
+				restWebgl(box, true);
+				for (const media of box.querySelectorAll<HTMLMediaElement>("video, audio")) holdMedia(box, media);
+			});
 		});
 	}
 
@@ -793,7 +820,7 @@ export function bootStage(runtime: StageRuntime): void {
 	 */
 	function swap(copy: Copy, at: At): void {
 		const from = shown;
-		const instant = cut;
+		const instant = cut || still;
 		cut = false;
 		const slide = slides[copy.index];
 		const before = runtime.state.read();
@@ -929,6 +956,7 @@ export function bootStage(runtime: StageRuntime): void {
 			room = message.room;
 			alone = message.alone === true;
 			filling = message.filling === true;
+			still = message.still === true;
 			if (message.webgl !== undefined) webglShare = message.webgl;
 			opened = true;
 			let next = message.session;
@@ -1143,8 +1171,9 @@ export function bootStage(runtime: StageRuntime): void {
 			};
 			element.addEventListener("play", played, true);
 			// and the CSS animations and transitions it starts, at their start
-			const started = () => {
-				if (element.hasAttribute("data-spool-stage-waiting")) holdStill(element);
+			const started = (event: Event) => {
+				if (element.hasAttribute("data-spool-stage-waiting") && event.target instanceof Element)
+					holdRunning(element, event.target);
 			};
 			element.addEventListener("animationstart", started, true);
 			element.addEventListener("transitionrun", started, true);
@@ -1249,12 +1278,14 @@ const heldStill = new WeakMap<Element, Set<Animation | HTMLMediaElement>>();
  * goes on, and its video and sound paused. Media a slide plays while it waits is paused as it starts.
  */
 function holdStill(box: HTMLElement): void {
-	for (const element of [box, ...box.querySelectorAll("*")]) {
-		for (const animation of element.getAnimations?.() ?? []) {
-			if (animation.playState === "running") holdAnimation(box, animation);
-		}
-	}
+	holdRunning(box, box);
 	for (const media of box.querySelectorAll<HTMLMediaElement>("video, audio")) holdMedia(box, media);
+}
+
+/** What runs in an element of a waiting slide and under it, its pseudo-elements' too, asked of the browser at once. */
+function holdRunning(box: Element, under: Element): void {
+	for (const animation of under.getAnimations?.({ subtree: true }) ?? [])
+		if (animation.playState === "running") holdAnimation(box, animation);
 }
 
 function holdAnimation(box: Element, animation: Animation): void {

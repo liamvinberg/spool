@@ -267,6 +267,8 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			mode: "follow",
 			room: true,
 			rest: true,
+			// a preview, which costs the talk no frames: drawn once as each step leaves it
+			still: true,
 			webgl: PRESENTED_WEBGL.next,
 			frame: ask.slide,
 		});

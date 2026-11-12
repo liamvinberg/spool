@@ -57,7 +57,7 @@ const writeState = (next: StageState) => {
 
 async function stage(
 	slides: readonly Slide[],
-	open: { mode: "own" | "follow"; room: boolean; session?: StageSession; webgl?: number },
+	open: { mode: "own" | "follow"; room: boolean; session?: StageSession; webgl?: number; still?: true },
 	loadStyle: (frame: string) => Promise<void> = async () => {},
 ): Promise<Stage> {
 	vi.resetModules();
@@ -227,7 +227,7 @@ it("waits for a picture a slide's effect reaches for before it goes on, and read
 	expect(on.shown().at(-1)?.ready).toBe(true);
 });
 
-it("stops a slide that throws from a handler where it stands, its last picture kept, and the talk moves on", async () => {
+it("stops a slide that throws from a handler where it stands, its last picture kept, and the talk moves on, but plays on through the browser's notices", async () => {
 	function Ticking() {
 		const [count, setCount] = useState(0);
 		useEffect(() => {
@@ -244,6 +244,14 @@ it("stops a slide that throws from a handler where it stands, its last picture k
 		{ mode: "own", room: true },
 	);
 	await vi.waitFor(() => expect(Number(document.querySelector(".count")?.textContent)).toBeGreaterThan(2));
+
+	// what a ResizeObserver could not deliver in one frame comes in the next: nothing threw
+	window.dispatchEvent(
+		new ErrorEvent("error", { message: "ResizeObserver loop completed with undelivered notifications." }),
+	);
+	const ticked = Number(document.querySelector(".count")?.textContent);
+	await vi.waitFor(() => expect(Number(document.querySelector(".count")?.textContent)).toBeGreaterThan(ticked + 2));
+	expect(statusOf(on, "talk/a")?.status).toBe("ready");
 
 	window.dispatchEvent(new ErrorEvent("error", { error: new Error("a handler threw") }));
 	await vi.waitFor(() =>
@@ -507,6 +515,58 @@ it("holds a slide waiting out of sight still after its first frame: its WebGL, f
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
 	await vi.waitFor(() => expect(webgl.drawn("talk/b")).toBeGreaterThan(waited + 2));
 	expect([entrance?.playState, later?.playState, sound?.paused]).toEqual(["running", "running", false]);
+});
+
+it("draws each slide a still stage shows once, its entrances played, and then no more: the presenter's next pane", async () => {
+	const webgl = fakeWebgl();
+	const frames = new Map<string, number>();
+	const entrances = new Map<string, Animation | undefined>();
+	const spins = (name: string): ComponentType =>
+		function Spins() {
+			const canvas = useRef<HTMLCanvasElement>(null);
+			const words = useRef<HTMLParagraphElement>(null);
+			useEffect(() => {
+				const gl = canvas.current?.getContext("webgl2");
+				let frame = 0;
+				const draw = () => {
+					frames.set(name, (frames.get(name) ?? 0) + 1);
+					gl?.drawArrays(4, 0, 3);
+					frame = requestAnimationFrame(draw);
+				};
+				draw();
+				entrances.set(name, words.current?.animate([{ opacity: 0 }, { opacity: 1 }], 400));
+				return () => cancelAnimationFrame(frame);
+			}, []);
+			return createElement(
+				"div",
+				null,
+				createElement("canvas", { ref: canvas }),
+				createElement("p", { ref: words }, name),
+			);
+		};
+	const on = await stage(
+		["a", "b"].map((name) => ({ frame: `talk/${name}`, screen: spins(name) })),
+		{ mode: "own", room: true, still: true },
+	);
+	const resting = async (name: string) => {
+		await vi.waitFor(() => expect(webgl.drawn(`talk/${name}`)).toBeGreaterThan(0));
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		const drawn = [webgl.drawn(`talk/${name}`), frames.get(name)];
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		expect([webgl.drawn(`talk/${name}`), frames.get(name)]).toEqual(drawn);
+		return drawn[0] ?? 0;
+	};
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
+	await resting("a");
+	expect(entrances.get("a")?.playState).toBe("finished");
+	const waited = await resting("b");
+
+	on.send({ spool: "stage-command", command: { kind: "next" } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
+	// on screen it draws again, as it stands now, and then rests as it did out of sight
+	await vi.waitFor(() => expect(webgl.drawn("talk/b")).toBeGreaterThan(waited));
+	await resting("b");
+	expect(entrances.get("b")?.playState).toBe("finished");
 });
 
 it("puts the slide the back key plays on out of sight too, and what it was playing plays again as it goes back on", async () => {
