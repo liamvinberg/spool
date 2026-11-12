@@ -32,6 +32,7 @@ import {
 	tabItem,
 } from "./menu-keys";
 import { userPath } from "./path";
+import { isPlayMark, type PlayTiming, playTiming, wallClock } from "./play-timing";
 import {
 	BAR_PX,
 	fitRect,
@@ -1019,10 +1020,13 @@ function playRequest(candidate: string): PlayRequest | undefined {
 
 /** What each play window remembers by, and what it opened as. */
 interface PlayedWindow {
+	request: PlayRequest;
 	key: string;
 	authored: { w: number; h: number };
 	/** Whether it opened on a remembered rect, which its bar says once. */
 	restored: boolean;
+	/** Where this play's time went, logged once its frame is revealed. */
+	timing: PlayTiming;
 }
 
 const played = new Map<number, PlayedWindow>();
@@ -1038,6 +1042,7 @@ let rooms: Rooms | undefined;
 const UNKNOWN_AUTHORED = { w: 1440, h: 900 };
 
 async function openPlayWindow(url: string, request: PlayRequest): Promise<void> {
+	const timing = playTiming("fresh", wallClock());
 	const authored =
 		daemonControlToken === undefined
 			? undefined
@@ -1079,8 +1084,9 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 		},
 	});
 	const id = window_.webContents.id;
-	played.set(id, { key, authored: size, restored });
+	played.set(id, { request, key, authored: size, restored, timing });
 	guard(window_);
+	window_.once("show", () => timing.mark("window-shown", wallClock()));
 
 	const remember = () => {
 		if (window_.isDestroyed() || window_.isFullScreen() || window_.isMinimized()) return;
@@ -1103,6 +1109,7 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 	window_.on("close", () => {
 		if (settling !== undefined) clearTimeout(settling);
 		remember();
+		logPlayTiming(request, timing);
 	});
 	window_.on("closed", () => played.delete(id));
 
@@ -1117,6 +1124,12 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 
 	log("play", request.project, request.frame ?? "(first)", `${rect.w}x${rect.h}`, restored ? "restored" : "authored");
 	void window_.loadURL(url);
+}
+
+/** A play's marks, once: when its frame is revealed, or as far as it got when it closes first. */
+function logPlayTiming(request: PlayRequest, timing: PlayTiming): void {
+	const line = timing.line();
+	if (line !== undefined) log("play", "marks", request.project, request.frame ?? "(first)", line);
 }
 
 /** Long enough to be the end of a drag rather than a frame of one. */
@@ -1152,6 +1165,11 @@ function areaOf(window_: BrowserWindow): WorkArea {
 function installPlayChannels(): void {
 	ipcMain.on("spool:play-window-restored", (event) => {
 		event.returnValue = played.get(event.sender.id)?.restored === true;
+	});
+	ipcMain.on("spool:play-window-mark", (event, mark: unknown, at: unknown) => {
+		const state = played.get(event.sender.id);
+		if (state === undefined || !isPlayMark(mark) || typeof at !== "number") return;
+		if (state.timing.mark(mark, at)) logPlayTiming(state.request, state.timing);
 	});
 	ipcMain.on("spool:play-window-reset", (event) => {
 		const window_ = BrowserWindow.fromWebContents(event.sender);
