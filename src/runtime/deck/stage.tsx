@@ -5,6 +5,7 @@ import {
 	memo,
 	type ReactNode,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useSyncExternalStore,
 } from "react";
@@ -1156,6 +1157,15 @@ export function bootStage(runtime: StageRuntime): void {
 				releaseWebgl(element);
 			};
 		}, [copy]);
+		// the slide itself, the same element as long as the copy is: going on or off screen draws it no more
+		const content = useMemo(
+			() => (
+				<SlideBoundary box={box} thrown={thrown} onBroken={(error, kept) => brokeCopy(copy.key, error, kept)}>
+					<Screen />
+				</SlideBoundary>
+			),
+			[copy, thrown, Screen],
+		);
 		const same = slide.w === size.w && slide.h === size.h;
 		const fit = same ? undefined : fitIn(slide, size);
 		return (
@@ -1174,9 +1184,7 @@ export function bootStage(runtime: StageRuntime): void {
 			>
 				<SlideScope.Provider value={copy.key}>
 					<Activity mode={visible || awake ? "visible" : "hidden"}>
-						<SlideBoundary box={box} thrown={thrown} onBroken={(error, kept) => brokeCopy(copy.key, error, kept)}>
-							<Screen />
-						</SlideBoundary>
+						{content}
 						<span data-spool-rendered="" hidden />
 					</Activity>
 				</SlideScope.Provider>
