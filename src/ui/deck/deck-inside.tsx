@@ -13,9 +13,10 @@ import { type CameraStore, useCameraFollow, type ViewChanges } from "../canvas/c
 import { type CanvasStore, useCanvasState } from "../canvas/canvas-store";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { deckMotion, easing } from "./deck-motion";
-import { insideBox, insideCamera, outCamera, SETTLE_MS } from "./inside-camera";
+import { insideBox, insideCamera, outCamera } from "./inside-camera";
 import { KeyList } from "./key-list";
 import { usePresentAsk } from "./present";
+import { afterStill, SETTLE_MS } from "./settle";
 import { talkSource } from "./talk-source";
 
 /**
@@ -115,6 +116,7 @@ export function useDeckInside({
 	select,
 	present,
 	carrying,
+	inHand,
 }: {
 	project: string;
 	/** the page in front */
@@ -131,6 +133,8 @@ export function useDeckInside({
 	present: (first: boolean) => boolean;
 	/** a frame of the page is in the hand or landing: no slide settles meanwhile (spool#299) */
 	carrying: boolean;
+	/** a frame of the page is in the hand now, read when called: `carrying` says so only once the hand's frame is drawn */
+	inHand: () => boolean;
 }): DeckInside {
 	const [inside, setInside] = useState<Inside | null>(null);
 	const [element, hold] = useState<HTMLDivElement | null>(null);
@@ -339,9 +343,9 @@ export function useDeckInside({
 	const [settled, setSettled] = useState<string | null>(null);
 	useEffect(() => {
 		if (heldSlide === null || inside !== null || carrying) return;
-		const settle = setTimeout(() => setSettled(heldSlide), SETTLE_MS);
-		return () => clearTimeout(settle);
-	}, [heldSlide, inside, carrying]);
+		const settle = afterStill(SETTLE_MS, inHand, () => setSettled(heldSlide));
+		return () => settle.stop();
+	}, [heldSlide, inside, carrying, inHand]);
 	useEffect(() => () => setSettled((was) => (was === heldSlide ? null : was)), [heldSlide]);
 	const flying = inside?.phase === "in" && !inside.flown;
 	useEffect(() => {

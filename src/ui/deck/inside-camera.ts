@@ -8,12 +8,6 @@ import type { Box } from "../canvas/camera";
  * to the same zoom and height, centred across the slide the talk ended on. The flight's timing is the deck's motion.
  */
 
-/**
- * How long a slide held stands before it settles, its own document starting and the stage resting on it: longer than a
- * double-click, whose first click selects the slide the second goes into, so that click starts nothing under the flight.
- */
-export const SETTLE_MS = 500;
-
 /** Room above a slide gone into, for its label, and around it, in screen pixels. */
 export const ROOM = { top: 40, side: 24, bottom: 24 } as const;
 

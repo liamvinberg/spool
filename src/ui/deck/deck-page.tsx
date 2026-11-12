@@ -118,6 +118,11 @@ export interface DeckPage {
 	/** Whether the page in front is a deck, read when called: for handlers made before the deck was read. */
 	owns(): boolean;
 	/**
+	 * Whether a frame is in the hand, read when called: from the move that lifts it, a frame before `view.carried`
+	 * says so, until it is let go.
+	 */
+	inHand(): boolean;
+	/**
 	 * ⌘↵ (`first` false) or ⇧⌘↵ (`first` true) on the page, and ⌥⌘↵ (`how` "other"): presents from the slide held, or
 	 * the first. False when the key is not the deck's (the page is no deck, or what is held is no one slide), and the
 	 * canvas's own key stands.
@@ -451,6 +456,7 @@ export function useDeckPage({
 		[springs],
 	);
 	const owns = useCallback(() => live.current.on, []);
+	const inHand = useCallback(() => holding.current !== null, []);
 	const presentKey = useCallback(
 		(first: boolean, how: PresentHow = "present") => {
 			const { read: deck, page: on, project: of } = live.current;
@@ -502,6 +508,7 @@ export function useDeckPage({
 		keep,
 		walk,
 		owns,
+		inHand,
 		presentKey,
 		presentFrom,
 		view,

@@ -69,6 +69,7 @@ import { DeckLayer, DeckNumbers, revealOnDeck, useDeckPage } from "../deck/deck-
 import { presentAgain, presentCold, presentTakes, warmPresent } from "../deck/present";
 import { PresentControl } from "../deck/present-controls";
 import { Presenting } from "../deck/presenting";
+import { afterStill } from "../deck/settle";
 import { onCanvas } from "../deck/talk-export";
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
@@ -1965,6 +1966,7 @@ function CanvasField({
 	const presentFromHeld = deckPage.presentFrom;
 	const heldSlide = deckPage.on && selected.length === 1 ? selected[0] : undefined;
 	const carrying = deckPage.view.carried.size > 0;
+	const inHand = deckPage.inHand;
 	useEffect(() => {
 		if (heldSlide === undefined || carrying || presentTakes() !== "slides") return;
 		const from = presentFromHeld();
@@ -1973,9 +1975,9 @@ function CanvasField({
 			warmPresent(from);
 			return;
 		}
-		const timer = setTimeout(() => warmPresent(from), PRESENT_SETTLE_MS);
-		return () => clearTimeout(timer);
-	}, [accelDown, heldSlide, carrying, presentFromHeld]);
+		const timer = afterStill(PRESENT_SETTLE_MS, inHand, () => warmPresent(from));
+		return () => timer.stop();
+	}, [accelDown, heldSlide, carrying, presentFromHeld, inHand]);
 	useEffect(() => {
 		if (heldSlide === undefined) return;
 		return () => presentCold();
@@ -1995,6 +1997,7 @@ function CanvasField({
 		},
 		present: presentKey,
 		carrying,
+		inHand,
 	});
 	deckIn.current = deckInside;
 	deckBand.current =
