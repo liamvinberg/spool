@@ -38,8 +38,10 @@ const STRIDE = 1440;
 /** What the page saw of its documents starting and of the hand, in the page's time. */
 interface Seen {
 	readonly started: { readonly t: number; readonly src: string }[];
-	/** when the hand pressed, and when it first moved after */
-	readonly hand: number[];
+	/** when the hand pressed */
+	pressed?: number;
+	/** when the hand first moved after it pressed */
+	lifted?: number;
 }
 
 const near = (colour: Rgb, want: Rgb) => colour.every((channel, i) => Math.abs(channel - (want[i] ?? 0)) <= 12);
@@ -257,8 +259,8 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	// when each document of the page started (an iframe added, and what it holds), and when the hand pressed and first
 	// moved
 	await page.evaluate(() => {
-		const seen = { started: [] as { t: number; src: string }[], hand: [] as number[] };
-		(window as unknown as { seen: typeof seen }).seen = seen;
+		const seen: Seen = { started: [] };
+		(window as unknown as { seen: Seen }).seen = seen;
 		new MutationObserver((changes) => {
 			for (const change of changes)
 				for (const node of change.addedNodes) {
@@ -267,10 +269,14 @@ it("makes room as a slide is carried along the talk, holding still under a still
 					if (frame instanceof HTMLIFrameElement) seen.started.push({ t: performance.now(), src: frame.src });
 				}
 		}).observe(document.body, { childList: true, subtree: true });
-		window.addEventListener("pointerdown", () => seen.hand.push(performance.now()), { capture: true });
-		window.addEventListener("pointermove", () => seen.hand.length === 1 && seen.hand.push(performance.now()), {
-			capture: true,
-		});
+		window.addEventListener("pointerdown", () => (seen.pressed ??= performance.now()), { capture: true });
+		window.addEventListener(
+			"pointermove",
+			() => {
+				if (seen.pressed !== undefined) seen.lifted ??= performance.now();
+			},
+			{ capture: true },
+		);
 	});
 
 	// a lifted and carried right a step of two pixels a frame: b starts to make room once a is about a quarter over it
@@ -327,12 +333,20 @@ it("makes room as a slide is carried along the talk, holding still under a still
 	const drop = await samples(dropped);
 	// nothing started while a was in the hand, a document starting holding the window's frames back. A press that stood
 	// still for the settle before the hand moved (on a machine too busy to move it sooner, as under a person who held it
-	// that long) has settled a, and its own document and the talk readied to present from it are that press's
-	const { started, hand } = await page.evaluate(() => (window as unknown as { seen: Seen }).seen);
-	const [pressed = Number.NaN, lifted = Number.NaN] = hand;
+	// that long) has settled a: its own document and the talk readied to present from it start once each, as it lifts
+	const { started, pressed, lifted } = await page.evaluate(() => (window as unknown as { seen: Seen }).seen);
+	if (pressed === undefined || lifted === undefined) throw new Error("the press never reached the page");
 	const pressSettled = lifted - pressed >= SETTLE_MS;
-	const ofThePress = (src: string) => src.endsWith("/frames/talk%2Fa") || src.includes("shell=1");
-	const inTheHand = started.filter(({ t, src }) => t >= pressed && t < dropped && !(pressSettled && ofThePress(src)));
+	const ofThePress = (src: string) =>
+		src.endsWith("/frames/talk%2Fa") ? "document" : src.includes("shell=1") ? "stage" : undefined;
+	const excused = new Set<string>();
+	const inTheHand = started.filter(({ t, src }) => {
+		if (t < pressed || t >= dropped) return false;
+		const own = pressSettled && t < lifted + SETTLE_MS ? ofThePress(src) : undefined;
+		if (own === undefined || excused.has(own)) return true;
+		excused.add(own);
+		return false;
+	});
 	expect(inTheHand).toEqual([]);
 	expect(drop.at(-1)?.numbers).toEqual({ b: 1, a: 2, c: 3 });
 	expect(deck.talk()).toEqual(["b", "a", "c"]);
@@ -523,31 +537,31 @@ it("goes into a slide and out without starting it under the flight or losing its
 	await documentOfB.waitFor();
 	await page.keyboard.press("Escape");
 	await documentOfB.waitFor({ state: "detached" });
-	// when each press reached the page
+	// when the first press and the double-click that goes in reached the page
 	await page.evaluate(() => {
-		const presses: number[] = [];
-		(window as unknown as { presses: number[] }).presses = presses;
-		window.addEventListener("pointerdown", () => presses.push(performance.now()), { capture: true });
+		const hand: { pressed?: number; entered?: number } = {};
+		(window as unknown as { hand: typeof hand }).hand = hand;
+		window.addEventListener("pointerdown", () => (hand.pressed ??= performance.now()), { capture: true });
+		window.addEventListener("dblclick", () => (hand.entered ??= performance.now()), { capture: true });
 	});
 	const goingIn = await recordScreen(page);
 	const clicked = await now();
 	// the first click selects b, and the second, a moment later, goes in
 	await page.mouse.click(middleOfB.x, middleOfB.y);
 	await page.waitForTimeout(150);
-	const flying = await now();
 	await page.mouse.click(middleOfB.x, middleOfB.y, { clickCount: 2 });
 	await shown.waitFor();
 	const gone = await placeOfB();
 	stayedOnB(await goingIn.stop(), out, gone, "going in");
-	// nothing starts from the first click until the camera lands, no sooner than a flight after the second. Only a
-	// machine too busy to put the second click within a double-click of the first lets the selection settle between
-	// the two, as it would under a person who held a slide that long, and that start is the selection's own
-	const [first, second] = (await page.evaluate(() => (window as unknown as { presses: number[] }).presses)).filter(
-		(t) => t >= clicked,
+	// nothing starts from the first click until the camera lands, no sooner than a flight after the double-click. Only
+	// a machine too busy to finish the double-click within the settle of the first press lets the selection settle
+	// before it goes in, as it would under a person who held a slide that long, and that start is the selection's own
+	const { pressed, entered } = await page.evaluate(
+		() => (window as unknown as { hand: { pressed?: number; entered?: number } }).hand,
 	);
-	if (first === undefined || second === undefined) throw new Error("the clicks never reached the page");
-	const settledBetween = (t: number) => second - first > SETTLE_MS && t >= first + SETTLE_MS && t < second;
-	const early = (await started()).filter((t) => t >= clicked && t < flying + fly && !settledBetween(t));
+	if (pressed === undefined || entered === undefined) throw new Error("the clicks never reached the page");
+	const settledBefore = (t: number) => t >= pressed + SETTLE_MS && t < entered;
+	const early = (await started()).filter((t) => t >= clicked && t < entered + fly && !settledBefore(t));
 	expect(early, "a document started before the camera was on b").toEqual([]);
 	const goingOut = await recordScreen(page);
 	await page.keyboard.press("Escape");
