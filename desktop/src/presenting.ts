@@ -6,8 +6,8 @@ import { log } from "./log";
 // scripts/native.sh builds beside this file. Loaded on macOS, in this process only, once the canvas has loaded
 // (`preparePresenting`), so the first press on Present does not wait for it.
 // Without it a talk plays as it did before: the window spends the menu bar's height in macOS's own animation as it
-// fills its display, and a window already full screen the macOS way lets the menu bar and the Dock come down over the
-// slides at the screen's edges.
+// fills its display, and a window already full screen the macOS way lets the menu bar come down over the slides at the
+// screen's top edge.
 
 /** native/presenting.m, as it loads */
 export interface PresentingModule {
@@ -24,12 +24,15 @@ const AUTO_HIDE_DOCK = 1 << 0;
 const HIDE_DOCK = 1 << 1;
 const AUTO_HIDE_MENU_BAR = 1 << 2;
 const HIDE_MENU_BAR = 1 << 3;
+const FULL_SCREEN = 1 << 10;
 
 /**
  * The app's presentation options for a talk: the menu bar and the Dock gone rather than coming down where the pointer
  * meets the screen's edge, and the rest as they were (full screen stays full screen). AppKit hides the menu bar only
- * with the Dock, and refuses either hidden and auto-hidden at once. They hold while spool is the app in front: another
- * app brought forward (⌘Tab) shows its own menu bar, and they come back with spool.
+ * with the Dock, and refuses either hidden and auto-hidden at once, though over a full screen window it brings the Dock
+ * up all the same (main.ts keeps it off the slides with the window's level). They hold while spool is the app in
+ * front: another app brought forward (⌘Tab) shows its own menu bar, and spool back in front gets its full screen's own
+ * options back (`keepBarsHidden`).
  */
 export function talkOptions(options: number): number {
 	return (options & ~(AUTO_HIDE_DOCK | AUTO_HIDE_MENU_BAR)) | HIDE_DOCK | HIDE_MENU_BAR;
@@ -68,6 +71,34 @@ export function hideBars(): number | undefined {
 	if (native === undefined) return undefined;
 	const options = native.options();
 	return native.setOptions(talkOptions(options)) ? options : undefined;
+}
+
+/** How often `keepBarsHidden` looks: sooner than the menu bar comes down for a pointer at the screen's edge. */
+const KEEP_LOOK_MS = 100;
+
+/**
+ * Keeps the talk's options, and so the menu bar hidden, for as long as `hiding` says the talk wants them. macOS puts
+ * the full screen's own options back, with no word to the app, each time spool comes back to its full screen window:
+ * after ⌘Tab, after Mission Control, sometimes twice as the Space slides into place. So it looks, and puts the talk's
+ * back each time the full screen's appear while spool is the app in front (`inFront`). Never before they do: options
+ * set in the middle of the slide, or while another app is in front, stand in for the full screen's own and outlast the
+ * talk.
+ */
+export function keepBarsHidden(
+	hiding: () => boolean,
+	inFront: () => boolean,
+	native: PresentingModule | undefined = loaded(),
+	later: (next: () => void) => void = (next) => void setTimeout(next, KEEP_LOOK_MS),
+): void {
+	if (native === undefined) return;
+	const look = () => {
+		if (!hiding()) return;
+		const options = native.options();
+		const talk = talkOptions(options);
+		if (inFront() && (options & FULL_SCREEN) !== 0 && options !== talk) native.setOptions(talk);
+		later(look);
+	};
+	later(look);
 }
 
 /** The app's presentation options as `hideBars` found them. */
