@@ -336,12 +336,15 @@ it("keeps the room's picture when the slide it dissolves to throws on its new be
 function fakeWebgl() {
 	const lost = new Map<HTMLCanvasElement, boolean>();
 	const draws = new Map<HTMLCanvasElement, number>();
+	const alive = () => [...lost.values()].filter((gone) => !gone).length;
+	let most = 0;
 	const take = (canvas: HTMLCanvasElement) => {
 		lost.set(canvas, true);
 		canvas.dispatchEvent(new Event("webglcontextlost"));
 	};
 	vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
 		if (!lost.has(this)) lost.set(this, false);
+		most = Math.max(most, alive());
 		return {
 			isContextLost: () => lost.get(this) === true,
 			getExtension: () => ({ loseContext: () => take(this) }),
@@ -350,7 +353,9 @@ function fakeWebgl() {
 		} as never;
 	});
 	return {
-		alive: () => [...lost.values()].filter((gone) => !gone).length,
+		alive,
+		/** the most contexts alive at once */
+		most: () => most,
 		/** how many times the canvases of a slide have drawn */
 		drawn: (frame: string) =>
 			[...document.querySelectorAll<HTMLCanvasElement>(`[data-spool-stage-slide="${frame}"] canvas`)].reduce(
@@ -437,10 +442,11 @@ it("puts the slide the next key plays on out of sight before the key, its effect
 	expect(ran).toEqual(["a on screen", "b out of sight", "c out of sight"]);
 });
 
-it("holds a slide waiting out of sight still after its first frame: its WebGL, entrance and sound wait for it to go on", async () => {
+it("holds a slide waiting out of sight still after its first frame: its WebGL, frames, entrances and sound wait for it to go on", async () => {
 	const webgl = fakeWebgl();
 	let entrance: Animation | undefined;
 	let sound = null as HTMLMediaElement | null;
+	let frames = 0;
 	function Spins() {
 		const canvas = useRef<HTMLCanvasElement>(null);
 		const words = useRef<HTMLParagraphElement>(null);
@@ -449,6 +455,7 @@ it("holds a slide waiting out of sight still after its first frame: its WebGL, e
 			const gl = canvas.current?.getContext("webgl2");
 			let frame = 0;
 			const draw = () => {
+				frames++;
 				gl?.drawArrays(4, 0, 3);
 				frame = requestAnimationFrame(draw);
 			};
@@ -476,8 +483,9 @@ it("holds a slide waiting out of sight still after its first frame: its WebGL, e
 	await vi.waitFor(() => expect(webgl.drawn("talk/b")).toBeGreaterThan(0));
 	await new Promise((resolve) => setTimeout(resolve, 150));
 	const waited = webgl.drawn("talk/b");
+	const ran = frames;
 	await new Promise((resolve) => setTimeout(resolve, 250));
-	expect(webgl.drawn("talk/b")).toBe(waited);
+	expect([webgl.drawn("talk/b"), frames]).toEqual([waited, ran]);
 	expect([entrance?.playState, entrance?.currentTime, sound?.paused]).toEqual(["paused", 0, true]);
 
 	on.send({ spool: "stage-command", command: { kind: "next" } });
@@ -516,6 +524,8 @@ it("puts a slide on ahead only while its WebGL contexts fit the stage's share: o
 	// c is tried ahead once, holds more than is left beside b, and is let go: it is what it costs from now on
 	await vi.waitFor(() => expect(ran).toContain("c out of sight"));
 	await vi.waitFor(() => expect(webgl.alive()).toBeLessThanOrEqual(3));
+	// refused a context past the share as it tried: never were more alive than the share, to learn what it costs
+	expect(webgl.most()).toBeLessThanOrEqual(3);
 	on.send({ spool: "stage-command", command: { kind: "next" } });
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/c"));
 	expect(ran.filter((one) => one.startsWith("c"))).toEqual(["c out of sight", "c on screen"]);

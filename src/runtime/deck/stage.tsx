@@ -37,7 +37,7 @@ import {
 import { SlideScope, setSlideBeat } from "../slide-beats";
 import { type KeptPicture, keepPicture } from "./stage-keep";
 import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
-import { releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn } from "./stage-webgl";
+import { limitWebgl, releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn } from "./stage-webgl";
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
@@ -602,6 +602,19 @@ export function bootStage(runtime: StageRuntime): void {
 		(event) => lost(event.target instanceof Element ? event.target.closest("[data-spool-stage-slide]") : null),
 		true,
 	);
+
+	// a slide out of sight makes a WebGL context only while the document holds fewer than its share: one more, and the
+	// browser could take one from the slide on screen to make it. One refused goes, to be made as it goes on, its own cost
+	limitWebgl((canvas) => {
+		const box = canvas.closest("[data-spool-stage-slide]");
+		const copy = box === null ? undefined : [...copies.values()].find((one) => one.box === box);
+		if (copy === undefined || copy.key === shown || webglIn(document.body) < webglShare) return true;
+		const slide = slides[copy.index];
+		if (slide !== undefined) slide.crowded = true;
+		copy.blank = true;
+		setTimeout(settle);
+		return false;
+	});
 
 	// --- showing -----------------------------------------------------------------------------------------
 
