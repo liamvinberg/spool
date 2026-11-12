@@ -69,7 +69,10 @@ export default function Slide() {
 		<div style={{ background: "#8ab17d", width: "100%", height: "100%" }}>
 			<h1 style={{ margin: 0, padding: 80 }}>A picture comes on the second beat</h1>
 			{beat.reached("picture") ? (
-				<img src="/fixture/late.png" alt="" style={{ position: "absolute", left: 600, top: 300, width: 400, height: 300 }} />
+				<>
+					<img src="/fixture/late.png" alt="" style={{ position: "absolute", left: 600, top: 300, width: 400, height: 300 }} />
+					<div style={{ position: "absolute", left: 100, top: 300, width: 400, height: 300, background: "url(/fixture/late-back.png)" }} />
+				</>
 			) : null}
 		</div>
 	);
@@ -221,6 +224,7 @@ it("names each fault of a talk at its slide and beat, and nothing of the calm sl
 			png: stripes(400, 300, [240, 240, 240], [30, 30, 30]),
 		},
 		"/fixture/late.png": { comes: () => sleep(1500), png: stripes(400, 300, [250, 200, 40], [20, 40, 90]) },
+		"/fixture/late-back.png": { comes: () => sleep(3000), png: stripes(400, 300, [90, 40, 20], [40, 200, 250]) },
 	};
 	const project = await serveProject({
 		experiments: { deck: true },
@@ -258,13 +262,15 @@ it("names each fault of a talk at its slide and beat, and nothing of the calm sl
 		when: "mount",
 	});
 	expect(where).toContain(`loading ${at("slow")}:0`);
-	expect(found).toContainEqual(
-		expect.objectContaining({
-			kind: "late",
-			place: { slide: at("late"), beat: 1 },
-			file: expect.objectContaining({ kind: "picture" }),
-		}),
-	);
+	// an <img> and a background alike: a background says nothing of itself as it loads
+	for (const picture of ["late.png", "late-back.png"])
+		expect(found).toContainEqual(
+			expect.objectContaining({
+				kind: "late",
+				place: { slide: at("late"), beat: 1 },
+				file: expect.objectContaining({ kind: "picture", name: expect.stringMatching(`/fixture/${picture}$`) }),
+			}),
+		);
 	expect(found).toContainEqual(
 		expect.objectContaining({
 			kind: "move-failed",

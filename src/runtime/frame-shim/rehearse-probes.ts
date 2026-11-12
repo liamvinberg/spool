@@ -323,12 +323,37 @@ async function rest(budgetMs: number): Promise<{ at: number; rested: boolean; ca
 	try {
 		await Promise.race([document.fonts.ready, new Promise((done) => setTimeout(done, budgetMs))]);
 	} catch {}
-	while (performance.now() < deadline) {
+	let rested = false;
+	while (!rested && performance.now() < deadline) {
 		await frame();
 		if (busy(tap)) quiet = 0;
-		else if (++quiet >= 2) return { at: now(), rested: true, calls: tap.calls };
+		else if (++quiet >= 2) rested = true;
 	}
-	return { at: now(), rested: false, calls: tap.calls };
+	if (rested) rested = await backgroundsIn(deadline);
+	return { at: now(), rested, calls: tap.calls };
+}
+
+/**
+ * Wait, until `deadline`, for the files of the pictures the slide on screen draws as backgrounds: unlike an `<img>`,
+ * a background says nothing of itself as it loads, so its file is what tells.
+ */
+async function backgroundsIn(deadline: number): Promise<boolean> {
+	const box = shownBox();
+	const pending = new Set<string>();
+	if (box !== null)
+		for (const element of box.querySelectorAll("*"))
+			if (element.getClientRects().length > 0)
+				for (const url of backgroundsOf(getComputedStyle(element))) if (!came(url)) pending.add(url);
+	while ([...pending].some((url) => !came(url))) {
+		if (performance.now() >= deadline) return false;
+		await frame();
+	}
+	return true;
+}
+
+/** Whether a file has come: every file the stage document fetched leaves an entry once it is in. */
+function came(url: string): boolean {
+	return performance.getEntriesByName(url, "resource").length > 0;
 }
 
 function busy(tap: StageTap): boolean {
@@ -579,6 +604,18 @@ function named(box: HTMLElement, style: (element: Element) => CSSStyleDeclaratio
 
 const URL_IN_CSS = /url\(\s*(["']?)(.*?)\1\s*\)/g;
 
+/** The files an element draws as its background, as absolute URLs, leaving out pictures written into the page. */
+function backgroundsOf(own: CSSStyleDeclaration): string[] {
+	if (own.backgroundImage === "none") return [];
+	const urls: string[] = [];
+	for (const match of own.backgroundImage.matchAll(URL_IN_CSS)) {
+		const url = match[2];
+		if (url !== undefined && !url.startsWith("data:") && !url.startsWith("blob:"))
+			urls.push(new URL(url, location.href).href);
+	}
+	return urls;
+}
+
 function lateFiles(
 	tap: StageTap,
 	box: HTMLElement,
@@ -591,10 +628,7 @@ function lateFiles(
 		if (element.getClientRects().length === 0) continue;
 		if (element instanceof HTMLImageElement && element.currentSrc !== "") pictures.add(element.currentSrc);
 		const own = style(element);
-		if (own.backgroundImage !== "none")
-			for (const match of own.backgroundImage.matchAll(URL_IN_CSS))
-				if (match[2] !== undefined && !match[2].startsWith("data:"))
-					pictures.add(new URL(match[2], location.href).href);
+		for (const url of backgroundsOf(own)) pictures.add(url);
 		if (element.childNodes.length > 0) for (const family of own.fontFamily.split(",")) families.add(unquoted(family));
 	}
 	const late: LateFile[] = [];
@@ -602,10 +636,11 @@ function lateFiles(
 		if (url.startsWith("data:") || url.startsWith("blob:")) continue;
 		const entry = performance.getEntriesByName(url, "resource")[0];
 		const image = [...box.querySelectorAll("img")].find((img) => img.currentSrc === url);
-		const came = entry === undefined ? undefined : performance.timeOrigin + entry.startTime + entry.duration;
-		if (came !== undefined && came > shownAt + LATE_MS)
-			late.push({ kind: "picture", name: url, after: Math.round(came - shownAt) });
-		else if (image !== undefined && !image.complete)
+		const cameAt = entry === undefined ? undefined : performance.timeOrigin + entry.startTime + entry.duration;
+		if (cameAt !== undefined && cameAt > shownAt + LATE_MS)
+			late.push({ kind: "picture", name: url, after: Math.round(cameAt - shownAt) });
+		// one still on its way: an <img> says so; a background has only its file, not yet in
+		else if (image === undefined ? entry === undefined : !image.complete)
 			late.push({ kind: "picture", name: url, after: Math.round(now() - shownAt) });
 	}
 	for (const face of tap.faces) {
