@@ -599,8 +599,10 @@ export function createDaemonApp({
 		});
 	}
 	function letPlayerCool(root: string): void {
-		if (playedRoots.has(root)) return;
 		for (const view of views.values()) if (view.root === root) return;
+		// no canvas of the project is open, so none presents a talk of it: its stage's composition goes
+		void stageCompiler.forget(root);
+		if (playedRoots.has(root)) return;
 		playerWarmers.get(root)?.();
 		playerWarmers.delete(root);
 		void playerCompiler.forget(root);
