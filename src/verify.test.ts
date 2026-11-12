@@ -931,9 +931,17 @@ export default function Reveal() {
 		if (named.kind !== "shot") throw new Error("reveal was not shot at its first beat");
 		expect(named.files).toEqual([{ file: join(verify, "reveal.beat-dark.png"), y: 0, height: 120, beat: 1 }]);
 		expect(firstPixel(join(verify, "reveal.beat-dark.png"))).toEqual([255, 0, 0]);
-		// by its number from 1 it is the same beat, and the same file
-		await shotFrame(deps("talk/reveal", { viewport, beat: "2" }));
+		// by its number from 1 it is the same beat, and the same file, copied where the agent says
+		const out = join(makeTempDir(), "shots");
+		const copied = await shotFrame(deps("talk/reveal", { viewport, beat: "2", out }));
+		if (copied.kind !== "shot") throw new Error("reveal was not shot at its second beat");
+		expect(copied.files.map(({ file }) => file)).toEqual([join(out, "reveal.beat-mid.png")]);
+		expect(firstPixel(join(out, "reveal.beat-mid.png"))).toEqual([0, 255, 0]);
 		expect(firstPixel(join(verify, "reveal.beat-mid.png"))).toEqual([0, 255, 0]);
+		// two frames that one folder would give one name are refused before either is shot
+		await expect(shotFrames({ ...deps(""), out }, ["talk/reveal", "other/reveal"]).next()).rejects.toThrow(
+			"talk/reveal and other/reveal would both be named reveal",
+		);
 		expect(firstPixel(join(verify, "reveal.png"))).toEqual([0, 0, 255]);
 
 		// a beat the slide does not have is said before any boot, with the beats it has

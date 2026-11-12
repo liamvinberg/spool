@@ -394,6 +394,7 @@ interface VerifyOptions {
 	scroll?: number;
 	scenario?: string;
 	beat?: string;
+	out?: string;
 }
 
 function parseViewport(value: string): { width: number; height: number } {
@@ -591,9 +592,11 @@ program
 		"--beat <beat>",
 		"shoot a slide at this beat, by its name or its number from 1, not its last (deck experiment)",
 	)
+	.option("--out <dir>", "copy each file into this folder as well, by its own name, and print that path")
 	.action(async (frames: string[], options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
 		const names = framesNamed(root, frames);
+		if (options.out !== undefined) options.out = resolvePath(options.out);
 		// one block per frame, in the order named, each with its console errors
 		const failures: string[] = [];
 		let first = true;

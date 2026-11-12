@@ -1,3 +1,5 @@
+import { copyFileSync, mkdirSync } from "node:fs";
+import { basename, join } from "node:path";
 import { frameBeatAsked } from "./daemon/deck/disk";
 import { readFrameGeometry } from "./daemon/projection";
 import { type CaptureError, readCaptureError } from "./daemon/thumbs";
@@ -44,6 +46,11 @@ export interface BootDeps {
 	scenario?: string;
 	/** A slide's beat to shoot it at rather than its last, by its name or its number from 1 (the deck experiment). */
 	beat?: string;
+	/**
+	 * A folder each file is copied to as well, by its own name (`title.png`, `title.beat-price.png`), the path the
+	 * outcome then gives: the shots under design/.spool/verify are the canvas's, where every shot lands.
+	 */
+	out?: string;
 	/** How long the daemon may say nothing at all before the CLI stops waiting; a seam for tests. */
 	quietMs?: number;
 }
@@ -98,7 +105,7 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 	if (boot.kind !== "booted") return boot;
 	return {
 		kind: "shot",
-		files: boot.files,
+		files: deps.out === undefined ? boot.files : copiedTo(deps.out, boot.files),
 		scale: boot.scale,
 		width: size.w,
 		height: size.h,
@@ -124,7 +131,17 @@ function clearOwnShot(deps: BootDeps): void {
 		if (asked === undefined || "message" in asked) return;
 		beat = asked.label;
 	}
-	clearShot(deps.root, deps.frame, { at: deps.at, scroll: deps.scroll, beat });
+	clearShot(deps.root, deps.frame, { at: deps.at, scroll: deps.scroll, beat }, deps.out);
+}
+
+/** Each file copied into `out` by its own name, and where it now is. */
+function copiedTo(out: string, files: ShotFile[]): ShotFile[] {
+	mkdirSync(out, { recursive: true });
+	return files.map((shot) => {
+		const file = join(out, basename(shot.file));
+		copyFileSync(shot.file, file);
+		return { ...shot, file };
+	});
 }
 
 /** One frame of a batched shot: its outcome, or why the CLI could not get one. */
@@ -141,6 +158,20 @@ export interface BatchShot {
  * the one-time browser fetch, is said once.
  */
 export async function* shotFrames(deps: Omit<BootDeps, "frame">, frames: readonly string[]): AsyncGenerator<BatchShot> {
+	if (deps.out !== undefined) {
+		// one folder takes each frame's files by its last name: two of one name would overwrite each other
+		const byName = new Map<string, string[]>();
+		for (const frame of new Set(frames)) {
+			const last = frame.split("/").at(-1) ?? frame;
+			byName.set(last, [...(byName.get(last) ?? []), frame]);
+		}
+		const clash = [...byName.values()].find((named) => named.length > 1);
+		if (clash !== undefined) {
+			throw new SpoolError(
+				`${clash.join(" and ")} would both be named ${clash[0]?.split("/").at(-1)} in ${deps.out}: shoot them with an --out each`,
+			);
+		}
+	}
 	const said = new Set<string>();
 	const narrate = (line: string) => {
 		if (said.has(line)) return;

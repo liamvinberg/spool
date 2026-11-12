@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import type { ColorScheme } from "../cover";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -190,9 +190,13 @@ export function clearShot(
 	root: string,
 	frame: string,
 	variant: { at?: readonly number[] | undefined; scroll?: number | undefined; beat?: string | undefined },
+	/** The folder `--out` copies them to, cleared of them as well. */
+	out?: string,
 ): void {
 	for (const at of variant.at ?? [undefined]) {
-		sweepShotFiles(root, frame, { at, scroll: variant.scroll, beat: variant.beat }, []);
+		const files = { at, scroll: variant.scroll, beat: variant.beat };
+		sweepShotFiles(root, frame, files, []);
+		if (out !== undefined) sweepShotFiles(root, frame, files, [], out);
 	}
 }
 
@@ -232,21 +236,23 @@ function sweepShotFiles(
 	frame: string,
 	variant: { at: number | undefined; scroll: number | undefined; beat: string | undefined },
 	kept: string[],
+	/** Another folder than the frame's own under verify/ the files are in, by the same names. */
+	elsewhere?: string,
 ): void {
 	const plain = shotFile(root, frame, {
 		...(variant.at === undefined ? {} : { at: variant.at }),
 		...(variant.scroll === undefined ? {} : { scroll: variant.scroll }),
 		...(variant.beat === undefined ? {} : { beat: variant.beat }),
 	});
-	const dir = dirname(plain);
-	const keep = new Set(kept.map((file) => file.slice(dir.length + 1)));
+	const dir = elsewhere ?? dirname(plain);
+	const keep = new Set(kept.map((file) => basename(file)));
 	let names: string[];
 	try {
 		names = readdirSync(dir);
 	} catch {
 		return;
 	}
-	const stem = plain.slice(dir.length + 1, -".png".length);
+	const stem = basename(plain, ".png");
 	for (const name of names) {
 		if (!name.startsWith(`${stem}.`) || keep.has(name)) continue;
 		if (/^(\d+\.)?png$/.test(name.slice(stem.length + 1))) rmSync(join(dir, name), { force: true });
