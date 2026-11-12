@@ -261,6 +261,8 @@ export interface DaemonOptions {
 	movedAskMs?: number;
 	/** How long a team project's copy goes without a connection before its canvas says it is offline: 30 s (#205). */
 	offlineMs?: number;
+	/** How long after the last design/ change an open project is recomposed for play: 1.5 s, unless a test can't wait. */
+	playerWarmMs?: number;
 	/** How long a team project's copy paused for an update first waits to ask again: a minute, doubling (#206). */
 	updateAskMs?: number;
 	/** How this Spool is updated, as a test says it: read off the running CLI otherwise (#206). */
@@ -455,6 +457,7 @@ export function createDaemonApp({
 	leftLookMs,
 	movedAskMs,
 	offlineMs,
+	playerWarmMs = PLAYER_WARM_MS,
 	updateAskMs,
 	updateHow,
 	booth: boothSeams,
@@ -559,18 +562,20 @@ export function createDaemonApp({
 	 * open canvas is waiting on, but no longer than the booth's patience: a
 	 * project with hundreds of frames to picture keeps it busy for minutes. A
 	 * project only a canvas kept warm goes cold when its last canvas closes.
+	 * A pointer reaching for play (spool#303) composes it at once, booth or not:
+	 * the press it is about to make waits on that and not on the stills.
 	 */
-	const playerWarmers = new Map<string, () => void>();
+	const playerWarmers = new Map<string, { stop: () => void; now: () => void }>();
 	const playedRoots = new Set<string>();
 	function keepPlayerWarm(root: string): void {
 		if (playerWarmers.has(root)) return;
 		let timer: NodeJS.Timeout | undefined;
 		/** When the wait for this composition began, so a booth that stays busy cannot defer it for good. */
 		let waitingSince: number | undefined;
-		const composeOnceBoothIdle = () => {
+		const composeOnceBoothIdle = (wanted = false) => {
 			timer = undefined;
 			const boothBusy = sittings.waiting > 0 || sittings.busy > 0;
-			if (boothBusy && Date.now() - (waitingSince ?? 0) < PLAYER_BOOTH_PATIENCE_MS) {
+			if (!wanted && boothBusy && Date.now() - (waitingSince ?? 0) < PLAYER_BOOTH_PATIENCE_MS) {
 				arm();
 				return;
 			}
@@ -580,22 +585,30 @@ export function createDaemonApp({
 		const arm = () => {
 			waitingSince ??= Date.now();
 			if (timer !== undefined) clearTimeout(timer);
-			timer = setTimeout(composeOnceBoothIdle, PLAYER_WARM_MS);
+			timer = setTimeout(composeOnceBoothIdle, playerWarmMs);
 			timer.unref?.();
 		};
 		const unsubscribe = hub.subscribe(root, (event) => {
 			if (event.kind === "frame" || event.kind === "shared") arm();
 		});
 		arm();
-		playerWarmers.set(root, () => {
-			if (timer !== undefined) clearTimeout(timer);
-			unsubscribe();
+		playerWarmers.set(root, {
+			stop: () => {
+				if (timer !== undefined) clearTimeout(timer);
+				unsubscribe();
+			},
+			// only a composition still waiting is started: one composed or composing is left as it is
+			now: () => {
+				if (timer === undefined) return;
+				clearTimeout(timer);
+				composeOnceBoothIdle(true);
+			},
 		});
 	}
 	function letPlayerCool(root: string): void {
 		if (playedRoots.has(root)) return;
 		for (const view of views.values()) if (view.root === root) return;
-		playerWarmers.get(root)?.();
+		playerWarmers.get(root)?.stop();
 		playerWarmers.delete(root);
 		void playerCompiler.forget(root);
 	}
@@ -2110,6 +2123,15 @@ export function createDaemonApp({
 				return c.body(chunk);
 			}),
 		)
+		// A pointer reaching for play on a canvas (spool#303): the composition that
+		// press will open is started now, if it is waiting, rather than after the
+		// booth. Never waited on; a project no canvas keeps warm is left alone.
+		.post("/api/p/:project/warm", (c) =>
+			withProject(c, resolveProject, (root) => {
+				playerWarmers.get(root)?.now();
+				return c.body(null, 204);
+			}),
+		)
 		.options("/api/p/:project/scenarios/:name", (c) => serveProjectDataPreflight(c))
 		.get("/api/p/:project/scenarios/:name", (c) => {
 			const project = resolveProjectData(c);
@@ -2903,7 +2925,7 @@ export function createDaemonApp({
 			emitAppEvent({ kind: "ui" });
 		},
 		close: async () => {
-			for (const stop of playerWarmers.values()) stop();
+			for (const warmer of playerWarmers.values()) warmer.stop();
 			playerWarmers.clear();
 			const compiled = playerCompiler.close();
 			machineStateWatch.stop();
