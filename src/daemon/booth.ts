@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import type { BrowserContext, CDPSession, ConsoleMessage, Disposable, Page, Request } from "playwright-core";
+import type {
+	BrowserContext,
+	BrowserContextOptions,
+	CDPSession,
+	ConsoleMessage,
+	Disposable,
+	Page,
+	Request,
+} from "playwright-core";
 import { COVER_QUALITY, type ColorScheme, type CoverShape, coverShape, SETTLE_BUDGET_MS } from "../cover";
 import {
 	fetchHeadlessShell,
@@ -12,6 +20,7 @@ import type { Census } from "../runtime/frame-shim/census";
 import type { NamedElement } from "../runtime/frame-shim/named-element";
 import { ASSET_PATH } from "./assets";
 import { type BoothQueue, type BoothReason, keyOf, type Sitting } from "./booth-queue";
+import type { RehearseTiming } from "./deck/rehearse";
 import { frameShims } from "./frame-shims";
 import {
 	type BeatPace,
@@ -69,6 +78,12 @@ const BOOTH_TABS = 3;
  * peaks are the heaviest frames themselves either way.
  */
 const COVERS_PER_PAGE = 10;
+
+/**
+ * How many tabs the booth lends at once, each in a context of its own, beside the covers: a talk rehearsed
+ * (spool#322) holds one for as long as the talk plays. Agents sharing a daemon past this wait their turn.
+ */
+const LENT_MOST = 2;
 
 /**
  * How long the browser outlives the last sitting, its tabs parked on an empty
@@ -369,13 +384,17 @@ export interface BoothDeps {
 	fetch?(): Promise<void>;
 	/** The scheme to start in until a canvas says; tests hand in their own. */
 	systemScheme?(): Promise<ColorScheme>;
+	/** A context just made for a lend, before it is handed over; tests serve their own files in it. */
+	lent?(context: BrowserContext): Promise<void>;
 	/** Something worth a line in the daemon's log. */
 	log?(line: string): void;
 	timing?: Partial<BoothTiming>;
 }
 
-/** What a test sets for itself: the browser, the scheme the booth starts in, and its waits. */
-export type BoothSeams = Pick<BoothDeps, "launch" | "fetch" | "systemScheme" | "timing">;
+/** What a test sets for itself: the browser, the scheme the booth starts in, and its waits, a rehearsal's too. */
+export type BoothSeams = Pick<BoothDeps, "launch" | "fetch" | "systemScheme" | "timing" | "lent"> & {
+	rehearse?: Partial<RehearseTiming>;
+};
 
 /** What `spool shot` and `spool logs` ask of one boot (#25). */
 interface ShotRequest {
@@ -650,6 +669,11 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	let occupied = 0;
 	/** Browsers that went away since the last cover landed. */
 	let lostInARow = 0;
+	/** Contexts lent out now (`lend`), and the lends waiting for one to come back. */
+	let lent = 0;
+	const lendWaiting: (() => void)[] = [];
+	/** What each lend narrates to, for a first fetch of the browser. */
+	const lenders = new Set<(line: string) => void>();
 
 	// The scheme covers render in: the machine's, until a canvas says which it
 	// shows. A canvas that speaks first wins over the machine's answer, which is
@@ -728,7 +752,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	 * the next sitting before it closes and frees all of its memory.
 	 */
 	function settleIfIdle(): void {
-		if (slots.size > 0 || closed) return;
+		if (slots.size > 0 || lent > 0 || closed) return;
 		if (shots.length > 0 || (queue.waiting > 0 && !blocked())) {
 			pump();
 			return;
@@ -738,7 +762,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		if (linger !== undefined) clearTimeout(linger);
 		linger = setTimeout(() => {
 			linger = undefined;
-			if (slots.size === 0 && running !== undefined) void end(running);
+			if (slots.size === 0 && lent === 0 && running !== undefined) void end(running);
 		}, timing.lingerMs);
 		linger.unref?.();
 	}
@@ -814,10 +838,12 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		// placeholder until it lands.
 		fetching ??= (async () => {
 			for (const pending of [...shots, ...shooting]) pending.narrate(FETCHING_LINE);
+			for (const narrate of lenders) narrate(FETCHING_LINE);
 			log(FETCHING_LINE);
 			try {
 				await fetchShell();
 				for (const pending of [...shots, ...shooting]) pending.narrate(FETCHED_LINE);
+				for (const narrate of lenders) narrate(FETCHED_LINE);
 				log(FETCHED_LINE);
 			} finally {
 				fetching = undefined;
@@ -1706,9 +1732,56 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		return evaluated.result.value;
 	}
 
+	/**
+	 * A tab of the booth's browser in a context of its own, made with `options`, for `work` to drive as long as it
+	 * likes: the browser stays up until it is done, and the context goes with it. At most LENT_MOST at once; past
+	 * that a lend waits, and says so once.
+	 */
+	async function lend<T>(
+		options: BrowserContextOptions,
+		narrate: (line: string) => void,
+		work: (tab: { context: BrowserContext; software: boolean }) => Promise<T>,
+	): Promise<T> {
+		let waited = false;
+		while (lent >= LENT_MOST && !closed) {
+			if (!waited) narrate(`waiting for ${lent === 1 ? "another rehearsal" : `${lent} other rehearsals`} to finish`);
+			waited = true;
+			await new Promise<void>((turn) => lendWaiting.push(turn));
+		}
+		if (closed) throw new Error("the daemon is shutting down");
+		lent++;
+		lenders.add(narrate);
+		if (linger !== undefined) {
+			clearTimeout(linger);
+			linger = undefined;
+		}
+		try {
+			const live = browserNow();
+			let shell: HeadlessShell;
+			try {
+				shell = await live.shell;
+			} catch (error) {
+				throw new Error(describe(error));
+			}
+			const context = await within(shell.browser.newContext(options), ANSWER_MS * 2, "opening a tab");
+			try {
+				await deps.lent?.(context);
+				return await work({ context, software: shell.software });
+			} finally {
+				await within(context.close(), ANSWER_MS, "closing").catch(() => {});
+			}
+		} finally {
+			lenders.delete(narrate);
+			lent--;
+			lendWaiting.shift()?.();
+			settleIfIdle();
+		}
+	}
+
 	return {
 		enqueue,
 		shoot,
+		lend,
 		/**
 		 * A canvas showed a scheme it was not showing before. True when that is a
 		 * change for the booth, so the covers it made stale can be asked for.
@@ -1729,6 +1802,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			if (retry !== undefined) clearTimeout(retry);
 			if (linger !== undefined) clearTimeout(linger);
 			for (const pending of shots.splice(0)) pending.reject(new Error("the daemon is shutting down"));
+			for (const turn of lendWaiting.splice(0)) turn();
 			if (running !== undefined) await end(running);
 		},
 	};
