@@ -223,10 +223,20 @@ export function createFrameSprings(
 		bodies.set(name, made);
 		return made;
 	};
-	const instant = () => still();
 	const aim = (spring: Spring, to: number, t: Tune, v?: number) => {
-		if (instant()) spring.set(to);
+		if (still()) spring.set(to);
 		else if (spring.to !== to || v !== undefined) spring.aim(to, t, v);
+	};
+	/** A frame in the hand let go: it lands on `to` from where the hand left it, at the hand's speed. */
+	const letGo = (one: Body, held: Point, to: Point, velocity: Point) => {
+		const { land, lift } = tunes();
+		one.x.set(held.x);
+		one.y.set(held.y);
+		one.held = null;
+		aim(one.x, to.x, land, velocity.x);
+		aim(one.y, to.y, land, velocity.y);
+		aim(one.s, 1, land);
+		aim(one.up, 0, lift);
 	};
 	const tell = () => {
 		for (const listener of listeners) listener();
@@ -329,7 +339,7 @@ export function createFrameSprings(
 			wake();
 		},
 		settle(next, velocity = { x: 0, y: 0 }, landed) {
-			const { room, land, lift } = tunes();
+			const { room, land } = tunes();
 			const time = now();
 			const from = new Set<string>();
 			for (const [name, goal] of next) {
@@ -337,15 +347,8 @@ export function createFrameSprings(
 				const one = bodyOf(name);
 				if (one === undefined) continue;
 				if (one.held !== null) {
-					// it lands from where the hand left it, at the hand's speed
-					one.x.set(one.held.x);
-					one.y.set(one.held.y);
-					one.held = null;
+					letGo(one, one.held, goal, velocity);
 					from.add(name);
-					aim(one.x, goal.x, land, velocity.x);
-					aim(one.y, goal.y, land, velocity.y);
-					aim(one.s, 1, land);
-					aim(one.up, 0, lift);
 					continue;
 				}
 				const landing = (axis: Spring) => (axis.t === land && !axis.resting ? land : room);
@@ -355,15 +358,8 @@ export function createFrameSprings(
 			// any frame left in the hand that has no place goes back to where it stands
 			for (const [name, one] of bodies) {
 				if (one.held === null) continue;
-				const at = standing(name) ?? one.held;
-				one.x.set(one.held.x);
-				one.y.set(one.held.y);
-				one.held = null;
+				letGo(one, one.held, standing(name) ?? one.held, velocity);
 				from.add(name);
-				aim(one.x, at.x, land, velocity.x);
-				aim(one.y, at.y, land, velocity.y);
-				aim(one.s, 1, land);
-				aim(one.up, 0, lift);
 			}
 			if (landed !== undefined) landing = { names: from, landed };
 			write(next);
