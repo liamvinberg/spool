@@ -1143,8 +1143,9 @@ export function bootStage(runtime: StageRuntime): void {
 			};
 			element.addEventListener("play", played, true);
 			// and the CSS animations and transitions it starts, at their start
-			const started = () => {
-				if (element.hasAttribute("data-spool-stage-waiting")) holdStill(element);
+			const started = (event: Event) => {
+				if (element.hasAttribute("data-spool-stage-waiting") && event.target instanceof Element)
+					holdRunning(element, event.target);
 			};
 			element.addEventListener("animationstart", started, true);
 			element.addEventListener("transitionrun", started, true);
@@ -1249,12 +1250,14 @@ const heldStill = new WeakMap<Element, Set<Animation | HTMLMediaElement>>();
  * goes on, and its video and sound paused. Media a slide plays while it waits is paused as it starts.
  */
 function holdStill(box: HTMLElement): void {
-	for (const element of [box, ...box.querySelectorAll("*")]) {
-		for (const animation of element.getAnimations?.() ?? []) {
-			if (animation.playState === "running") holdAnimation(box, animation);
-		}
-	}
+	holdRunning(box, box);
 	for (const media of box.querySelectorAll<HTMLMediaElement>("video, audio")) holdMedia(box, media);
+}
+
+/** What runs in an element of a waiting slide and under it, its pseudo-elements' too, asked of the browser at once. */
+function holdRunning(box: Element, under: Element): void {
+	for (const animation of under.getAnimations?.({ subtree: true }) ?? [])
+		if (animation.playState === "running") holdAnimation(box, animation);
 }
 
 function holdAnimation(box: Element, animation: Animation): void {
