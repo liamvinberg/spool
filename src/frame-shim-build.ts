@@ -24,6 +24,8 @@ export interface FrameShims {
 	captureWorker: string;
 	/** an expression for the booth's isolated world: `{ contentHeight, settle }` */
 	boothProbes: string;
+	/** an expression for a rehearsal's documents of a talk (spool#322): `{ record, look, rest, … }` */
+	rehearseProbes: string;
 }
 
 /** The shim's source: `src/runtime/frame-shim`. */
@@ -38,6 +40,7 @@ export function buildFrameShims(dir: string): FrameShims {
 		canvasShim: bundle(join(dir, "canvas-shim.ts")),
 		captureWorker: bundle(join(dir, "capture-worker.ts")),
 		boothProbes: `(() => {\n${bundle(join(dir, "booth-probes.ts"), "spoolProbes")}return spoolProbes;\n})()`,
+		rehearseProbes: `(() => {\n${bundle(join(dir, "rehearse-probes.ts"), "spoolRehearse")}return spoolRehearse;\n})()`,
 	};
 }
 
@@ -88,6 +91,7 @@ export const frameShims = {
 	canvasShim: ${JSON.stringify(shims.canvasShim)},
 	captureWorker: ${JSON.stringify(shims.captureWorker)},
 	boothProbes: ${JSON.stringify(shims.boothProbes)},
+	rehearseProbes: ${JSON.stringify(shims.rehearseProbes)},
 };
 `;
 }
