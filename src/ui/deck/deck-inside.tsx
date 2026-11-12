@@ -56,6 +56,8 @@ export interface DeckInside {
 	 * talk was not presented from inside a slide of this page, and the canvas brings the slide into view its own way.
 	 */
 	ended(frame: string): boolean;
+	/** The camera flies into a slide or back out of it: nothing may start meanwhile (spool#299). */
+	readonly flying: boolean;
 	/** ? was pressed inside: the keys are listed over the canvas until esc or ? again. */
 	readonly help: boolean;
 	closeHelp(): void;
@@ -457,7 +459,7 @@ export function useDeckInside({
 		hold,
 	};
 	const closeHelp = useCallback(() => setHelp(false), []);
-	return { slide, chip, enter, leave, on, ended, help, closeHelp, view };
+	return { slide, chip, enter, leave, on, ended, flying: flying || inside?.phase === "out", help, closeHelp, view };
 }
 
 /** The keys ? lists inside a slide, over the canvas: a press on it only ever closes it, never comes out of the slide. */

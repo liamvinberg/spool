@@ -1960,28 +1960,10 @@ function CanvasField({
 	deckKeep.current = deckPage.keep;
 	const deckOwns = deckPage.owns;
 	const presentKey = deckPage.presentKey;
-	// one slide of a deck page held a moment, or held with ⌘ down: Present is likely next, so the slide it would play is
-	// readied now, out of sight, and let go when the hold moves off the slides (spool#298). Nothing is readied while a
-	// frame is in the hand or landing: a slide starting holds the window's frames back (spool#299)
 	const presentFromHeld = deckPage.presentFrom;
 	const heldSlide = deckPage.on && selected.length === 1 ? selected[0] : undefined;
 	const carrying = deckPage.view.carried.size > 0;
 	const inHand = deckPage.inHand;
-	useEffect(() => {
-		if (heldSlide === undefined || carrying || presentTakes() !== "slides") return;
-		const from = presentFromHeld();
-		if (from?.slide !== heldSlide) return;
-		if (accelDown) {
-			warmPresent(from);
-			return;
-		}
-		const timer = afterStill(PRESENT_SETTLE_MS, inHand, () => warmPresent(from));
-		return () => timer.stop();
-	}, [accelDown, heldSlide, carrying, presentFromHeld, inHand]);
-	useEffect(() => {
-		if (heldSlide === undefined) return;
-		return () => presentCold();
-	}, [heldSlide]);
 	const deckInside = useDeckInside({
 		project,
 		page: activePage,
@@ -1999,6 +1981,26 @@ function CanvasField({
 		carrying,
 		inHand,
 	});
+	const flyingInside = deckInside.flying;
+	// one slide of a deck page held a moment, or held with ⌘ down: Present is likely next, so the slide it would play is
+	// readied now, out of sight, and let go when the hold moves off the slides (spool#298). Nothing is readied while a
+	// frame is in the hand or landing, or while the camera flies into a slide or out of it: a slide starting holds the
+	// window's frames back (spool#299)
+	useEffect(() => {
+		if (heldSlide === undefined || carrying || flyingInside || presentTakes() !== "slides") return;
+		const from = presentFromHeld();
+		if (from?.slide !== heldSlide) return;
+		if (accelDown) {
+			warmPresent(from);
+			return;
+		}
+		const timer = afterStill(PRESENT_SETTLE_MS, inHand, () => warmPresent(from));
+		return () => timer.stop();
+	}, [accelDown, heldSlide, carrying, flyingInside, presentFromHeld, inHand]);
+	useEffect(() => {
+		if (heldSlide === undefined) return;
+		return () => presentCold();
+	}, [heldSlide]);
 	deckIn.current = deckInside;
 	deckBand.current =
 		deckPage.read === undefined
