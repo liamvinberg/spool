@@ -612,3 +612,25 @@ export function stretched({ frames, drawn }: { frames: readonly PictureFrame[]; 
 		at > next && frame.landed && frame.pictures.some((picture) => picture.made < picture.drawn - 1) ? [at] : [],
 	);
 }
+
+/**
+ * The frames where a picture stands drawn bigger than it was made, from the first frame on: a slide flown as its opening
+ * still, made at the size a talk draws it, is sharp the whole way (spool#319).
+ */
+export function everStretched({ frames }: { frames: readonly PictureFrame[] }): number[] {
+	return frames.flatMap((frame, at) =>
+		frame.pictures.some((picture) => picture.made < picture.drawn - 1) ? [at] : [],
+	);
+}
+
+/** A frame's cover as a served project lists it: its address, and its opening still's when it is a slide with one. */
+export async function coverOf(
+	project: { url: string; name: string; controlToken: string },
+	frame: string,
+): Promise<{ hash: string; opening?: string } | undefined> {
+	const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frames`, {
+		headers: { "X-Spool-Control": project.controlToken },
+	});
+	const { frames } = (await res.json()) as { frames: { name: string; cover?: { hash: string; opening?: string } }[] };
+	return frames.find((one) => one.name === frame)?.cover;
+}

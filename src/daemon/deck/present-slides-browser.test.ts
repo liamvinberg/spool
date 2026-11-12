@@ -5,6 +5,8 @@ import { expect, it } from "vitest";
 import { testBrowser } from "../../test-browser";
 import { builtUi, serveProject, writeDesignFile } from "../../test-helpers";
 import {
+	coverOf,
+	everStretched,
 	explainFrame,
 	picturesOf,
 	pixelsOf,
@@ -233,7 +235,7 @@ const fullScreenAsked = (view: Page) =>
 const phaseOf = (view: Page) =>
 	view.evaluate(() => document.querySelector("[data-present-slides]")?.getAttribute("data-present-slides") ?? null);
 
-it("presents on one display: the slide grows from its card into a full screen, turns round mid-flight either way, steps, and flies home, with no blank frame, no picture swapped back and no jump", {
+it("presents on one display: the slide grows from its card into a full screen as its opening still, turns round mid-flight either way, steps, and flies home, with no blank frame, no picture swapped back or stretched and no jump", {
 	timeout: 240_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -245,8 +247,11 @@ it("presents on one display: the slide grows from its card into a full screen, t
 		".spool/state.json",
 		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.08 } } }),
 	);
+	// the booth's picture of the first slide at the size a talk draws it, which it flies as
+	await expect.poll(async () => (await coverOf(project, "talk/one"))?.opening, { timeout: 60_000 }).toBeDefined();
 	const context = await browser.newContext({ viewport: { width: W, height: H } });
 	await fullScreenAsABrowserGivesIt(context);
+	await watchPictures(context);
 	// the first slide's picture comes to the window's stage only when the test lets it: the slide boots slowly there,
 	// while the canvas has its own picture of it
 	let release = () => {};
@@ -269,8 +274,8 @@ it("presents on one display: the slide grows from its card into a full screen, t
 	const cards = { one: card, three: boxOf(await view.screenshot(), THREE) };
 
 	const screen = await recordScreen(view);
-	// ⇧⌘↵ presents from the first slide: it sets off as the canvas's picture of it, its live stage still waiting on
-	// its picture; Esc on the way turns it round, and Present on the way home turns it round again
+	// ⇧⌘↵ presents from the first slide: it sets off as its opening still, its live stage still waiting on its picture;
+	// Esc on the way turns it round, and Present on the way home turns it round again
 	await view.keyboard.press("ControlOrMeta+Shift+Enter");
 	await expect.poll(() => phaseOf(view)).toBe("in");
 	await view.waitForTimeout(120);
@@ -331,6 +336,8 @@ it("presents on one display: the slide grows from its card into a full screen, t
 		if (box !== null) expect(oneIn(frames[at] as Buffer, box), `frame ${at}`).toBe(true);
 	}
 	expect(turns(widthsOf(ones.slice(0, filled + 1)))).toEqual([1, -1, 1]);
+	// and as a picture made as big as it fills the screen, never one stretched
+	expect(everStretched(await picturesOf(view))).toEqual([]);
 
 	// filling the screen, the slides: the first whole until it is stepped from, the live slide taking over from its
 	// picture in place, then one slide or two dissolving in every frame, nothing of the canvas and no blank between,
@@ -362,8 +369,7 @@ it("presents on one display: the slide grows from its card into a full screen, t
 	await view.locator('[data-present-slides="warm"]').waitFor({ state: "attached" });
 	await view.keyboard.press("Escape");
 	await view.locator("[data-present-slides]").waitFor({ state: "detached" });
-	// held again, the stage is drawn under Present; a press still reaches Present, and sets off at once from what the
-	// stage drew
+	// held again, the stage is drawn under Present; a press still reaches Present, and sets off at once
 	const home = twos.at(-1);
 	if (home === null || home === undefined) return;
 	await view.mouse.click(home.x + home.w / 2, home.y + home.h / 2);
@@ -454,7 +460,7 @@ it("waits on its card while the window grows to cover the screen, and sets off o
 	await expect.poll(() => phaseOf(view)).toMatch(/^(in|on)$/);
 });
 
-it("hands over from a slide's picture to the live slide at rest, so it never shows twice, and never leaves the picture stretched over it", {
+it("with no opening still to fly, hands over from a slide's cover to the live slide at rest, so it never shows twice, and never leaves the cover stretched over it", {
 	timeout: 120_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -495,12 +501,16 @@ it("hands over from a slide's picture to the live slide at rest, so it never sho
 	const context = await browser.newContext({ viewport: { width: W, height: H } });
 	await fullScreenAsABrowserGivesIt(context);
 	await watchPictures(context);
+	// the booth's opening still of the slide will not load, as one not taken yet is not there: it flies as its cover
+	await expect.poll(async () => (await coverOf(project, "talk/rise"))?.opening, { timeout: 60_000 }).toBeDefined();
+	const opening = (await coverOf(project, "talk/rise"))?.opening ?? "";
+	await context.route(`**/covers/**/${opening}`, (route) => route.abort());
 	const view = await context.newPage();
 	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
 	await expect.poll(async () => boxOf(await view.screenshot(), PICTURE), { timeout: 30_000 }).not.toBeNull();
 
-	// presented cold, nothing readied: the slide flies as its picture, and the live slide takes over in place
+	// presented cold, nothing readied: the slide flies as its cover, and the live slide takes over in place
 	const screen = await recordScreen(view);
 	await view.keyboard.press("ControlOrMeta+Shift+Enter");
 	await expect.poll(() => phaseOf(view)).toBe("on");
@@ -528,9 +538,10 @@ it("hands over from a slide's picture to the live slide at rest, so it never sho
 			`frame ${filled + at}`,
 		).toEqual([true, true, true]);
 	}
-	// the picture is the canvas's, made for a card: from the frame the slide fills the screen it stands for the slide
+	// the cover is the canvas's, made for a card: from the frame the slide fills the screen it stands for the slide
 	// only until the live slide is drawn, and goes then, not once an entrance the live slide has played
 	const read = await picturesOf(view);
 	expect(read.drawn).not.toBeNull();
+	expect(read.frames.some((frame) => frame.pictures.some((picture) => picture.made < picture.drawn - 1))).toBe(true);
 	expect(stretched(read)).toEqual([]);
 });

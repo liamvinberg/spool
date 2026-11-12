@@ -7,6 +7,8 @@ import { builtUi, serveProject, writeDesignFile } from "../../test-helpers";
 import { RENDER_HOST, ROOM_HOST } from "../security";
 import {
 	blackedOut,
+	coverOf,
+	everStretched,
 	explainFrame,
 	HARD_TALK,
 	onGround,
@@ -416,7 +418,7 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	expect(await view.locator("[data-deck-presenter]").count()).toBe(0);
 });
 
-it("opens the presenter view on its slide drawn sharp: the picture it travelled as goes as it lands on a slide the stage has drawn, and the next pane names the next slide from its first frame", {
+it("opens the presenter view on its slide drawn sharp: it travels as its opening still, never stretched, which goes as it lands on a slide the stage has drawn, and the next pane names the next slide from its first frame", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -428,11 +430,15 @@ it("opens the presenter view on its slide drawn sharp: the picture it travelled 
 		"frames/talk/deck.json",
 		json({ version: 1, w: 1280, h: 720, slides: ["one", "two"] }),
 	);
+	// slides of two beats, which the canvas's covers show at their last
 	for (const [index, name] of ["one", "two"].entries()) {
 		writeDesignFile(
 			project.root,
 			`frames/talk/${name}/frame.tsx`,
-			`export default function Slide() {
+			`import { ui } from "spool";
+
+export default function Slide() {
+	ui.beats(["said", "shown"]);
 	return <div style={{ position: "absolute", inset: 0, background: "#1d3557", color: "white", fontSize: 96 }}>${name}</div>;
 }
 `,
@@ -444,15 +450,8 @@ it("opens the presenter view on its slide drawn sharp: the picture it travelled 
 		".spool/state.json",
 		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.2 } } }),
 	);
-	// the canvas's picture of the slide, made for a card, is what travels to the presenter view
-	const covered = async () => {
-		const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frames`, {
-			headers: { "X-Spool-Control": project.controlToken },
-		});
-		const { frames } = (await res.json()) as { frames: { name: string; cover?: unknown }[] };
-		return frames.find((frame) => frame.name === "talk/one")?.cover !== undefined;
-	};
-	await expect.poll(covered, { timeout: 60_000 }).toBe(true);
+	// the booth's picture of the slide as the talk opens on it, made as big as the presenter view draws it
+	await expect.poll(async () => (await coverOf(project, "talk/one"))?.opening, { timeout: 60_000 }).toBeDefined();
 	// a 2x screen, as the Mac's: the card's picture is far smaller than the presenter view draws the slide
 	const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 	await watchPictures(context);
@@ -474,6 +473,7 @@ it("opens the presenter view on its slide drawn sharp: the picture it travelled 
 	await view.waitForTimeout(500);
 	const read = await picturesOf(view);
 	expect(read.frames.some((frame) => frame.pictures.length > 0)).toBe(true);
+	expect(everStretched(read)).toEqual([]);
 	expect(stretched(read)).toEqual([]);
 	// on the first of two slides, what comes next is the second, in every frame the view has been there
 	const words = read.frames.flatMap((frame) => (frame.presenter === null ? [] : [frame.presenter]));
