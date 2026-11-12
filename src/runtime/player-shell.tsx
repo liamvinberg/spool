@@ -47,9 +47,9 @@ export interface NamedGeometry {
 export interface PlayerShellConfig {
 	/** What the bar and the iframe name the composition. */
 	project: string;
-	/** The screen it opens on. */
+	/** The frame it opens on. */
 	start: string;
-	/** The authored box of every screen, as known at boot. */
+	/** The authored box of every frame, as known at boot. */
 	frames: Record<string, FrameGeometry>;
 	/** The played document, the runtime that mounts the frames and speaks the port, by its address… */
 	innerUrl?: string;
