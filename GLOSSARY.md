@@ -170,9 +170,9 @@ _Avoid_: held, blocked, read-only
 
 **Play session**: One run through the flows: name-stack history, state seeded from the scenario. The session is the page, so reloading the tab starts it over.
 
-**Player**: The surface that plays a connected journey as one composed document. Its inner viewport uses the available window height and a width capped at the active frame's authored width; content scrolls without scaling. _Avoid_: preview
+**Player**: The surface that plays a connected journey as one composed document, in a browser tab, the Mac app's play window or an exported HTML file. A frame lays out for real at the size it plays at: as drawn, the window's, a device's, or one pulled from its edges. Where the window is smaller it is scaled down to fit, never up; a page too long to show whole keeps its width's scale and scrolls. A live player opens As drawn or at Window, whichever was last picked; an exported file always opens As drawn. _Avoid_: preview
 
-**Edge bar**: The local player's 30px strip for switching frames, sharing and window controls. In a browser tab it can be hidden and recalled from the top edge; the Mac app keeps it in the native window. _Avoid_: toolbar, HUD, overlay, pill
+**Edge bar**: The player's 30px strip along the top, drawn by the played page and always worn: the frame's name on the left, and in the middle the size it plays at, which opens the list of sizes. In the Mac app's window it is the title bar, with the window's lights inset in it; in a tab it adds copy link and close. An exported file's bar has no Record, copy link or close, and on a touch screen an exported file wears no bar at all and the frame fills the screen. _Avoid_: toolbar, HUD, overlay, pill
 
 **Accel**: The one modifier a platform binds its own commands to: cmd on Apple, ctrl everywhere else, never a hardcoded meta key. Spool's own gestures all live behind it, because spool never takes a plain key from a live frame — every ordinary key belongs to the prototype being used, its own `esc` included.
 
