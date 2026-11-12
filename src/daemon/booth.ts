@@ -417,6 +417,8 @@ type ShotResult =
 			errors: string[];
 			contentHeight: number;
 			scheme: ColorScheme;
+			/** The etag the document came with: which compile of the source the picture is of. */
+			etag?: string | undefined;
 			/** The element `find` named, or null when nothing in the frame matches it; absent when none was asked. */
 			found?: NamedElement | null;
 	  }
@@ -1545,6 +1547,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			errors: [...tab.errors],
 			contentHeight,
 			scheme: taken,
+			etag: response?.headers().etag,
 			...found,
 		};
 	}

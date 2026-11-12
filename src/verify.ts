@@ -1,6 +1,14 @@
+import { frameBeatAsked } from "./daemon/deck/disk";
 import { readFrameGeometry } from "./daemon/projection";
 import { type CaptureError, readCaptureError } from "./daemon/thumbs";
-import { type BootLine, type BootOutcome, type LogEntry, readLogsCache, type ShotFile } from "./daemon/verify-record";
+import {
+	type BootLine,
+	type BootOutcome,
+	clearShot,
+	type LogEntry,
+	readLogsCache,
+	type ShotFile,
+} from "./daemon/verify-record";
 import { RefusedError, SpoolError } from "./errors";
 import { refusalOf } from "./verbs";
 
@@ -81,6 +89,7 @@ export type LogsOutcome =
 	| { kind: "logs"; entries: LogEntry[]; replayed: boolean; captureError?: CaptureError };
 
 export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
+	clearOwnShot(deps);
 	const probe = await probeCompile(deps);
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
@@ -101,6 +110,21 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 		warnings: boot.entries.filter((entry) => entry.type === "spool").map((entry) => `[spool] ${entry.text}`),
 		contentHeight: boot.contentHeight,
 	};
+}
+
+/**
+ * The files this shot is to write, gone before it is asked: one that fails, at
+ * any step, leaves no picture of an older source where the last one was
+ * (spool#323). A beat the slide does not have writes nothing, and clears nothing.
+ */
+function clearOwnShot(deps: BootDeps): void {
+	let beat: string | undefined;
+	if (deps.beat !== undefined) {
+		const asked = frameBeatAsked(deps.root, deps.frame, deps.beat);
+		if (asked === undefined || "message" in asked) return;
+		beat = asked.label;
+	}
+	clearShot(deps.root, deps.frame, { at: deps.at, scroll: deps.scroll, beat });
 }
 
 /** One frame of a batched shot: its outcome, or why the CLI could not get one. */

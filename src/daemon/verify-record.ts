@@ -181,6 +181,21 @@ export function recordBoot(
 	return files;
 }
 
+/**
+ * Every file a shot is about to write, gone before it is asked: a shot that then
+ * fails, or never reaches the daemon, leaves no picture of an older source where
+ * the agent will look for this one (spool#323).
+ */
+export function clearShot(
+	root: string,
+	frame: string,
+	variant: { at?: readonly number[] | undefined; scroll?: number | undefined; beat?: string | undefined },
+): void {
+	for (const at of variant.at ?? [undefined]) {
+		sweepShotFiles(root, frame, { at, scroll: variant.scroll, beat: variant.beat }, []);
+	}
+}
+
 /** Machine-written cache: anything malformed reads as no cache. */
 export function readLogsCache(
 	root: string,

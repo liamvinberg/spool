@@ -780,6 +780,37 @@ export default function Heavy() {
 		]);
 	});
 
+	it("shoots the source as it is saved by the time the shot comes back", { timeout: 120_000 }, async () => {
+		if (!(await browserAvailable())) return;
+
+		// the frame is saved again while its first source is being shot, as an agent's
+		// next edit lands while a shot it asked for still waits or sits
+		const { root, deps } = await serveVerifyProject();
+		const saved = `export default function Saved() {
+	return <main style={{ background: "#00ff00", width: "100vw", height: "100vh" }} />;
+}
+`;
+		const held = await heldCall(1500, () => writeFrame(root, "edited", saved));
+		writeFrame(
+			root,
+			"edited",
+			`${held}
+export default function Before() {
+	return <main style={{ background: "#ff0000", width: "100vw", height: "100vh" }} />;
+}
+`,
+		);
+		const shot = await shotFrame(deps("edited", { viewport: { width: 160, height: 60 } }));
+		if (shot.kind !== "shot") throw new Error(`the shot came back ${shot.kind}`);
+		const file = shot.files[0]?.file ?? "";
+		expect(firstPixel(file)).toEqual([0, 255, 0]);
+
+		// and a source that no longer compiles leaves no picture of the one before it
+		writeFrame(root, "edited", "export default function Broken() { return <main> }\n");
+		expect(await shotFrame(deps("edited", { viewport: { width: 160, height: 60 } }))).toMatchObject({ kind: "broken" });
+		expect(existsSync(file)).toBe(false);
+	});
+
 	it("settles the way a cover does, or runs the frame's timers as far as --at says", {
 		timeout: 120_000,
 	}, async () => {
@@ -966,11 +997,14 @@ export default function Seeded() {
  * A line of frame code that holds its main thread `ms` of real time, whatever
  * its clocks say: a synchronous call to a server that holds its handshake that
  * long and refuses it. Frames are https-only, and a stopped clock stops every
- * wait the frame could measure for itself.
+ * wait the frame could measure for itself. `onHeld` is told each time it holds.
  */
-async function heldCall(ms: number): Promise<string> {
+async function heldCall(ms: number, onHeld?: () => void): Promise<string> {
 	const server = createTlsServer({
-		SNICallback: (_name, refuse) => void setTimeout(() => refuse(new Error("held, never served")), ms),
+		SNICallback: (_name, refuse) => {
+			onHeld?.();
+			setTimeout(() => refuse(new Error("held, never served")), ms);
+		},
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));

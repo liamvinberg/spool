@@ -409,6 +409,9 @@ const recordRequest = z.strictObject({
  */
 const BOOT_BEAT_MS = 5000;
 
+/** How many times a shot is taken of a frame saved again each time it was being shot, before the last is kept. */
+const SHOT_SITTINGS = 3;
+
 const PLAYER_HANDOFF_TTL_MS = 30_000;
 /** Browser handoffs are deliberately short and bounded: issuing the control document is a public GET. */
 const MAX_PLAYER_HANDOFFS = 64;
@@ -1849,12 +1852,12 @@ export function createDaemonApp({
 				return stream(c, async (out) => {
 					const write = (line: BootLine) => out.write(`${JSON.stringify(line)}\n`);
 					const boot = async (): Promise<BootLine> => {
-						const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
+						let doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
 						if (doc.kind === "missing") return { outcome: { kind: "missing", message: doc.message } };
 						if (doc.kind === "error") return { outcome: { kind: "broken", message: doc.message } };
 						const plan = planShot(width, height);
-						try {
-							const shot = await booth.shoot(
+						const sit = () =>
+							booth.shoot(
 								{
 									project: name,
 									frame,
@@ -1869,6 +1872,18 @@ export function createDaemonApp({
 								},
 								(line) => void write({ narrate: line }).catch(() => {}),
 							);
+						try {
+							let shot = await sit();
+							// a save that landed while the shot waited or sat (spool#323): the picture is of the source
+							// as it stands when the shot comes back, or the shot is taken again, a few times at most
+							for (let sat = 1; shot.kind === "booted" && shot.etag !== undefined; sat++) {
+								const now = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
+								if (now.kind !== "ok") break;
+								doc = now;
+								if (shot.etag === now.etag || sat === SHOT_SITTINGS) break;
+								void write({ narrate: `${frame} was saved while it was shot: shooting it again` }).catch(() => {});
+								shot = await sit();
+							}
 							if (shot.kind === "unserved") {
 								// the source broke between the compile and the load: its text, verbatim
 								const again = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
