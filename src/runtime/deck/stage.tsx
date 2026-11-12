@@ -426,7 +426,7 @@ export function bootStage(runtime: StageRuntime): void {
 	}
 
 	/** Nothing is changing on screen: no step waits, no swap or dissolve is under way. */
-	const quiet = () => pending === undefined && !swapping && !dissolving;
+	const quiet = () => pending === undefined && !swapping && dissolve === undefined;
 
 	/** The copy being put on ahead, once the frame the screen is painting has been. */
 	let waking: Copy | undefined;
@@ -648,8 +648,8 @@ export function bootStage(runtime: StageRuntime): void {
 	}
 
 	let swapping = false;
-	/** a dissolve is playing: nothing is put on ahead until it has */
-	let dissolving = false;
+	/** the dissolve playing: nothing is put on ahead until it has */
+	let dissolve: ViewTransition | undefined;
 	let settling = false;
 	/** The copy a swap just put on screen, and the one it took off, while a throw as it mounts can still undo it. */
 	let revealed: { key: string; from: string | null } | undefined;
@@ -845,9 +845,10 @@ export function bootStage(runtime: StageRuntime): void {
 			// an engine of the first View Transitions, which takes the change alone
 			transition = document.startViewTransition(update);
 		}
-		dissolving = true;
+		dissolve = transition;
 		const calm = () => {
-			dissolving = false;
+			// a dissolve skipped by the next says nothing of that one
+			if (dissolve === transition) dissolve = undefined;
 			settle();
 		};
 		transition.updateCallbackDone.then(after, after);
