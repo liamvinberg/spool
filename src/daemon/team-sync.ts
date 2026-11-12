@@ -2994,6 +2994,12 @@ export function followedLink(root: string): ProjectLink | undefined {
 	return named ?? parseProjectLink(record?.project);
 }
 
+/** The account a root's local copy last synced as, which its set-aside marks tell this copy's own saves from. */
+export function copyAccount(root: string): string | undefined {
+	const account = copyRecord(root)?.account;
+	return typeof account === "string" ? account : undefined;
+}
+
 /** What a local copy's record in `design/.spool` says, unchecked, if it has one. */
 function copyRecord(root: string): Partial<CopyState> | undefined {
 	try {
