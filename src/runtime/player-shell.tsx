@@ -82,6 +82,11 @@ export interface PlayerShellHost {
 	repair?: PlayerShellRepair;
 	/** The same prototype without the embedding, offered when the embedded one will not boot. */
 	barePlayer?: string;
+	/**
+	 * What the player says when its played document never connects or never shows, in place of the live player's
+	 * advice about browser extensions and the bare player, which a file sent to someone has neither of (spool#325).
+	 */
+	stalled?: string;
 	/** Record (spool#221). Absent, the bar has no Record. */
 	record?: PlayerShellRecording;
 	/** The Mac app's play window, when the shell is its page: the bar is then its title bar. */
@@ -610,7 +615,7 @@ export function createPlayerShell(
 			// Connected is not revealed: a runtime can hand its port over and then
 			// wedge before player-ready (#185), so the deadline moves to the next leg
 			// instead of standing down.
-			armBootstrapDeadline(BOOTSTRAP_READY_DEADLINE_MS, BOOTSTRAP_UNREVEALED_MESSAGE);
+			armBootstrapDeadline(BOOTSTRAP_READY_DEADLINE_MS, host.stalled ?? BOOTSTRAP_UNREVEALED_MESSAGE);
 			host.repair?.settled();
 			postToRuntime = (outbound) => postMessage(outbound);
 			authoredGeometry = retainedGeometry(frames);
@@ -1058,7 +1063,7 @@ export function createPlayerShell(
 	teardown.push(() => window.removeEventListener("resize", onResize));
 	teardown.push(host.geometry.follow({ pending: geometryPending, applied: geometryApplied }));
 
-	armBootstrapDeadline(BOOTSTRAP_BOOT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE);
+	armBootstrapDeadline(BOOTSTRAP_BOOT_DEADLINE_MS, host.stalled ?? BOOTSTRAP_SILENT_MESSAGE);
 
 	return {
 		controller,
@@ -1071,7 +1076,7 @@ export function createPlayerShell(
 			loadError,
 			loadEscape,
 		}),
-		loaded: () => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE),
+		loaded: () => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, host.stalled ?? BOOTSTRAP_SILENT_MESSAGE),
 		destroy: () => {
 			disarmBootstrapDeadline();
 			for (const undo of teardown.splice(0)) undo();

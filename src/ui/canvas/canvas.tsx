@@ -130,6 +130,7 @@ import { CanvasCorner } from "./canvas-corner";
 import { CanvasPath, PATH_KEYS, type PathSeg, type PathWay } from "./canvas-path";
 import {
 	createCanvasStore,
+	keyboardTargetsOf,
 	navigatorFramesOf,
 	navigatorPagesOf,
 	pageWorldOf,
@@ -1858,6 +1859,16 @@ function CanvasField({
 
 	/** The pointer has reached play (spool#303): the press finds the project composed, not waiting behind the stills. */
 	const warmPlay = useCallback(() => postWarmPlay(project), [project]);
+
+	// the one frame P would play is readied once the selection settles, the way a pointer at play readies it
+	// (spool#325): arrowing or sweeping through frames asks once, where it comes to rest
+	const keyboardTargets = keyboardTargetsOf({ entered, selected, picked });
+	const playable = keyboardTargets.length === 1 ? keyboardTargets[0] : undefined;
+	useEffect(() => {
+		if (playable === undefined) return;
+		const timer = setTimeout(warmPlay, SELECTION_PUT_MS);
+		return () => clearTimeout(timer);
+	}, [playable, warmPlay]);
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
@@ -5113,15 +5124,7 @@ function CanvasField({
 
 	useEffect(() => {
 		const pickTarget = () => [...new Set(store.get().picked.map((pick) => pick.frame))];
-		/**
-		 * The frames a menu verb acts on from the keyboard: the selection, or
-		 * the frames behind an element pick. Inside an entered frame there are
-		 * none — the keys belong to the prototype then, never to the canvas.
-		 */
-		const verbTarget = () => {
-			if (store.get().entered !== null) return [];
-			return store.get().selected.length > 0 ? [...store.get().selected] : pickTarget();
-		};
+		const verbTarget = () => keyboardTargetsOf(store.get());
 		const gestureStill = () => gesture.current.kind === "idle" || gesture.current.kind === "pan";
 		const zoomStep = (event: KeyboardEvent | undefined, factor: number) => {
 			// the accel chords must eat the browser's own page zoom

@@ -534,7 +534,7 @@ async function playerDocument({
 ${playScript(played)}
 <style>html, body, #root { height: 100%; }</style>
 ${frameStyles(styles, config, fonts, transitions)}<div id="root"></div>
-<script type="module">${escapeInlineScript(js)}</script>
+<script type="module" onerror="${UNREACHABLE_REPORT}">${escapeInlineScript(js)}</script>
 </template>
 <script type="module">${escapeInlineScript(await exportShellJs())}</script>
 </body>
@@ -555,6 +555,13 @@ const IMPORT_MAP_SCRIPT = `(() => {
 	script.textContent = JSON.stringify(map);
 	document.currentScript.after(script);
 })();`;
+
+/**
+ * The played document's module failing to load is a package it imports from the web that could not be fetched (React
+ * is the file's own): it tells the shell at once, in words whoever the file was sent to can act on (spool#325).
+ */
+const UNREACHABLE_REPORT =
+	"parent.postMessage({ spool: 'player-load-error', error: 'This prototype needs the internet to load. Connect and reload.' }, '*')";
 
 /** The id of the template holding the played document; the export host's `PLAYED_TEMPLATE_ID`. */
 const PLAYED_TEMPLATE_ID = "spool-played";
