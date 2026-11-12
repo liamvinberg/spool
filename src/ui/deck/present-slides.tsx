@@ -67,8 +67,6 @@ type Phase =
 
 /** How long a readied stage waits for Present before it is let go. */
 const WARM_MS = 30_000;
-/** The longest the slide waits on its card for the window to cover the screen, when it says it will. */
-const FILL_MS = 1200;
 
 export interface PresentSlidesProps {
 	/**
@@ -462,18 +460,12 @@ export function PresentSlides({
 		setHelp(false);
 		setUnfilled(!ask.fillAsked);
 		setPhase("waiting");
-		filling.current = ask.fillAsked && !coversScreen();
-		if (filling.current) {
-			const filled = () => {
-				if (trip.current !== n || !filling.current) return;
-				filling.current = false;
-				launching.current();
-			};
-			void ask.filling.then((on) => {
-				if (!on) filled();
-			});
-			setTimeout(filled, FILL_MS);
-		}
+		filling.current = ask.fillAsked;
+		void ask.filling.then(() => {
+			if (trip.current !== n || !filling.current) return;
+			filling.current = false;
+			launching.current();
+		});
 		// a stage readied on the slide has drawn it already, and it sets off as that
 		if (drawn.current === ask.slide) {
 			launch();
@@ -521,10 +513,6 @@ export function PresentSlides({
 				const card = wanted.current === null ? null : hands.current.cardOf(wanted.current);
 				flight.current.set(card === null ? landing() : onCard(card));
 				draw();
-				if (filling.current && coversScreen()) {
-					filling.current = false;
-					launching.current();
-				}
 			} else if (at === "in") aim(landing(), landed(n));
 			else if (at === "on") aim(landing());
 			else if (at === "home") {
@@ -782,11 +770,6 @@ function cut(stage: StageHost | null, frame: string): void {
 }
 
 /** Where the window's page stands on the screen: the window's place, and below whatever bar the browser draws. */
-/** The window covers its screen: full screen, in the Mac app or a browser. */
-function coversScreen(): boolean {
-	return window.innerWidth >= window.screen.width && window.innerHeight >= window.screen.height;
-}
-
 function viewportOrigin(): { x: number; y: number } {
 	if (typeof window === "undefined") return { x: 0, y: 0 };
 	return { x: window.screenX, y: window.screenY + Math.max(0, window.outerHeight - window.innerHeight) };

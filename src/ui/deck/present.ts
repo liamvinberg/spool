@@ -29,8 +29,8 @@ export interface PresentAsk extends PresentFrom {
 	 * full screen, never both: with the room's window opened, the slides fill the page, and a click makes it full screen.
 	 */
 	readonly fillAsked: boolean;
-	/** whether the window is on its way to cover the screen, as the press asked */
-	readonly filling: Promise<boolean>;
+	/** settles once the window is as big as the press made it: the slide waits on its card till then */
+	readonly filling: Promise<void>;
 	/** the room's window, when the browser let it open and handed it over */
 	readonly room: Window | null;
 }
@@ -52,7 +52,7 @@ export function presentDeck(from: PresentFrom, how: PresentHow = "present"): voi
 	const talk = mintTalk();
 	const room = plan.room ? openRoom(from, talk) : null;
 	const fillAsked = plan.way === "slides" && (!plan.room || desktopWindow() !== undefined);
-	const filling = fillAsked ? fillScreen(true) : Promise.resolve(false);
+	const filling = fillAsked ? fillScreen(true) : Promise.resolve();
 	asked = { ...from, talk, pressed: Date.now(), way: plan.way, roomAsked: plan.room, room, fillAsked, filling };
 	if (plan.remember !== undefined) void writeSetting("present.way", plan.remember);
 	tell();
@@ -80,29 +80,51 @@ function rememberedWay(): PresentWay {
 /**
  * Spool's window made full screen for the slides, or let go of again. The Mac app covers the display at once, with no
  * Space of its own to slide to; a browser takes the page full screen, which only a press may ask, and hands Esc to the
- * page while the talk lasts, so Esc can step back from a live slide and Notes before it ends the talk. Says whether
- * the window is on its way to cover the screen.
+ * page while the talk lasts, so Esc can step back from a live slide and Notes before it ends the talk.
+ *
+ * Settles once the window is as big as the press will make it, as a window changing size draws nothing meanwhile: a
+ * browser says so as it enters full screen, after the page has its new size (or as it refuses); the Mac app's window is
+ * there once the page has the screen's size, or after a moment at most.
  */
-export function fillScreen(on: boolean): Promise<boolean> {
+export function fillScreen(on: boolean): Promise<void> {
 	const app = desktopWindow();
-	if (app?.presentFullScreen !== undefined) return app.presentFullScreen(on).catch(() => false);
-	if (typeof document === "undefined") return Promise.resolve(false);
+	if (app?.presentFullScreen !== undefined) {
+		const going = app.presentFullScreen(on).catch(() => false);
+		return going.then((grows) => (on && grows ? coveringScreen() : undefined));
+	}
+	if (typeof document === "undefined") return Promise.resolve();
 	const keyboard = (navigator as Navigator & { keyboard?: { lock?(keys: string[]): Promise<void>; unlock?(): void } })
 		.keyboard;
 	if (on) {
 		if (document.fullscreenElement !== null || document.documentElement.requestFullscreen === undefined)
-			return Promise.resolve(false);
+			return Promise.resolve();
 		return document.documentElement.requestFullscreen({ navigationUI: "hide" }).then(
-			() => {
-				void keyboard?.lock?.(["Escape"])?.catch(() => {});
-				return true;
-			},
-			() => false,
+			() => void keyboard?.lock?.(["Escape"])?.catch(() => {}),
+			() => {},
 		);
 	}
 	keyboard?.unlock?.();
 	if (document.fullscreenElement !== null) void document.exitFullscreen().catch(() => {});
-	return Promise.resolve(false);
+	return Promise.resolve();
+}
+
+/** The longest the Mac app's window is waited on to cover the screen; past it, the slide sets off as it would anyway. */
+const FILL_MS = 600;
+
+/** Settles at the first frame this window covers its screen, or after `FILL_MS`. */
+function coveringScreen(): Promise<void> {
+	return new Promise((done) => {
+		const by = setTimeout(done, FILL_MS);
+		const look = () => {
+			if (window.innerWidth < window.screen.width || window.innerHeight < window.screen.height) {
+				requestAnimationFrame(look);
+				return;
+			}
+			clearTimeout(by);
+			done();
+		};
+		look();
+	});
 }
 
 /** The room's address: the deck page's plain play address, as the room of `talk`. */

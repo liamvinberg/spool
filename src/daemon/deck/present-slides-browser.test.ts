@@ -179,8 +179,8 @@ const cursors = (view: Page) =>
  * Full screen as a browser gives it, without a headless browser's own idea of the screen's size: asked for only in a
  * press the page has not spent on anything else, and left, each said to the page as the browser says it.
  */
-async function fullScreenAsABrowserGivesIt(context: BrowserContext): Promise<void> {
-	await context.addInitScript(() => {
+async function fullScreenAsABrowserGivesIt(context: BrowserContext, { grows = false } = {}): Promise<void> {
+	await context.addInitScript((grows) => {
 		let full: Element | null = null;
 		const asked: string[] = [];
 		const said = () => document.dispatchEvent(new Event("fullscreenchange"));
@@ -189,9 +189,25 @@ async function fullScreenAsABrowserGivesIt(context: BrowserContext): Promise<voi
 		Element.prototype.requestFullscreen = function (this: Element) {
 			if (!navigator.userActivation.isActive) return Promise.reject(new TypeError("no press"));
 			asked.push("on");
-			full = this;
-			said();
-			return Promise.resolve();
+			const enter = () => {
+				full = this;
+				said();
+			};
+			if (!grows) {
+				enter();
+				return Promise.resolve();
+			}
+			// a window that grows to cover the screen says it is full screen once the page has its new size
+			return new Promise<void>((done) =>
+				addEventListener(
+					"resize",
+					() => {
+						enter();
+						done();
+					},
+					{ once: true },
+				),
+			);
 		};
 		Document.prototype.exitFullscreen = () => {
 			asked.push("off");
@@ -199,7 +215,7 @@ async function fullScreenAsABrowserGivesIt(context: BrowserContext): Promise<voi
 			said();
 			return Promise.resolve();
 		};
-	});
+	}, grows);
 }
 
 /** What the page asked of full screen, in order: "on" and "off". */
@@ -416,7 +432,7 @@ it("waits on its card while the window grows to cover the screen, and sets off o
 	);
 	const screen = { width: W + 160, height: H + 90 };
 	const context = await browser.newContext({ viewport: { width: W, height: H }, screen });
-	await fullScreenAsABrowserGivesIt(context);
+	await fullScreenAsABrowserGivesIt(context, { grows: true });
 	const view = await context.newPage();
 	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
