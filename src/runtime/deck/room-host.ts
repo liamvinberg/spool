@@ -1,6 +1,6 @@
 import type { Size } from "../../deck/deck-file";
 import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../../deck/present-wire";
-import { fitIn } from "../../deck/stage-fit";
+import { fitIn, STAGE_GROUND } from "../../deck/stage-fit";
 import { roomPicture, type StageSession } from "../../deck/stage-session";
 import type { StagePointer } from "../../deck/stage-wire";
 import { stageDaemon } from "./stage-daemon";
@@ -34,6 +34,14 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	const look = document.createElement("style");
 	look.textContent = "html, body, body * { cursor: none !important; }";
 	document.head.append(look);
+	// Chromium holds back a new page's frames until it paints something it counts as content, or half a second passes;
+	// the slide is drawn in a frame of its own, which does not count, so the room stayed black for that half second with
+	// its slide long drawn (spool#306). One character beneath the stage, in its ground's colour, is content enough.
+	const content = document.createElement("span");
+	content.setAttribute("aria-hidden", "true");
+	content.textContent = ".";
+	Object.assign(content.style, { position: "absolute", left: "0", top: "0", color: STAGE_GROUND });
+	root.append(content);
 	const channel = new BroadcastChannel(talkChannel(config.room));
 	const say = (message: TalkMessage) => channel.postMessage(message);
 	const daemon = stageDaemon(config);

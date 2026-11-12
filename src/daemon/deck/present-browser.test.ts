@@ -259,7 +259,7 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 
 	// in the Mac app the presenter view names the room's display as the app reports it, X asks the app to swap, and a
 	// display unplugged under the room is said (the app's half is desktop/src/room-window.test.ts); the room's window,
-	// which the app holds hidden till then, is told once that its slide is drawn
+	// which the app holds hidden till then, is told once that its slide is drawn and can be shown
 	// (a popup keeps the window of the blank page it opens on, so the script cannot ask its address)
 	await context.addInitScript(() => {
 		if (window !== window.top) return;
@@ -269,7 +269,13 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 			spoolRoomWindow: {
 				windowed: true,
 				onWindowed: () => () => {},
-				drawn: () => drawn.push(document.querySelector('[data-spool-stage] iframe[style*="opacity: 1"]') !== null),
+				// the slide is revealed, and the page has painted content of its own: Chromium holds back a new page's
+				// frames till it does or half a second passes, and the slide's own frame does not count
+				drawn: () =>
+					drawn.push(
+						document.querySelector('[data-spool-stage] iframe[style*="opacity: 1"]') !== null &&
+							performance.getEntriesByName("first-contentful-paint").length === 1,
+					),
 			},
 		});
 	});
