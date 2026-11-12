@@ -711,8 +711,8 @@ export default function Slide() {
 	const one = await project.coverOf("talk/one");
 	const still = await project.image("talk/one", one?.opening ?? "");
 	expect(still.type).toBe("image/jpeg");
-	// as wide as the presenter view draws it on a Retina laptop, where the cover is made for a card
-	expect(imageSize(still.bytes)).toEqual({ width: 1920, height: 1080 });
+	// big enough to fill a 4K screen, where the cover is made for a card
+	expect(imageSize(still.bytes)).toEqual({ width: 3840, height: 2160 });
 	expect(imageSize((await project.image("talk/one", one?.hash ?? "")).bytes)).toEqual({ width: 800, height: 450 });
 	const red = await colourOf(still.bytes);
 	expect(red[0]).toBeGreaterThan(200);

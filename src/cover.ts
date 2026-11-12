@@ -74,15 +74,17 @@ export function coverShape(frameWidth: number, frameHeight: number): CoverShape 
 export const COVER_QUALITY = 0.82;
 
 /**
- * How wide a slide's opening still is made at the least (spool#319): about as wide as the presenter view draws a slide
- * on a Retina laptop (974 CSS px at 2x on a 14-inch MacBook Pro), so it flies there as sharp as the slide stands. A talk
- * this wide or wider is taken at its own size.
+ * The screen a slide's opening still is made to fill (spool#319): a 4K one. Full screen on a Retina laptop draws a
+ * slide 3024 device pixels wide and a 4K projector 3840, and a still flies in soft wherever it is drawn bigger than it
+ * was made; the presenter view's slide, about 1950 wide, takes it shrunk, which stays sharp where one made at that
+ * size, resampled on the way, does not.
  */
-export const OPENING_WIDTH = 1920;
+export const OPENING_SCREEN = { width: 3840, height: 2160 } as const;
 
-/** A slide's opening still, worked out from its cover: the same CSS size, photographed at least `OPENING_WIDTH` wide. */
+/** A slide's opening still, worked out from its cover: the same CSS size, photographed to fill `OPENING_SCREEN`. */
 export function openingShape(cover: CoverShape): CoverShape | undefined {
-	const scale = Math.max(1, OPENING_WIDTH / cover.width);
+	const fits = Math.min(OPENING_SCREEN.width / cover.width, OPENING_SCREEN.height / cover.height);
+	const scale = Math.max(1, fits);
 	const raster = captureRasterSize(cover.width, cover.height, scale);
 	return raster === undefined ? undefined : { ...cover, scale, raster };
 }

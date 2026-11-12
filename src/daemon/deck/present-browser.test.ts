@@ -450,7 +450,7 @@ export default function Slide() {
 		".spool/state.json",
 		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.2 } } }),
 	);
-	// the booth's picture of the slide as the talk opens on it, made as big as the presenter view draws it
+	// the booth's picture of the slide as the talk opens on it, made bigger than the presenter view draws it
 	await expect.poll(async () => (await coverOf(project, "talk/one"))?.opening, { timeout: 60_000 }).toBeDefined();
 	// a 2x screen, as the Mac's: the card's picture is far smaller than the presenter view draws the slide
 	const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
