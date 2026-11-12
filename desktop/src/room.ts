@@ -54,6 +54,8 @@ const ROOM_WINDOWED = "spool:room-windowed";
 const ROOM_DRAWN = "spool:room-drawn";
 /** the talk is over: the room's window may go */
 const ROOM_CLOSE = "spool:room-close";
+/** How long a room's window stays, clear, before it is closed. */
+const ROOM_CLOSE_MS = 100;
 /** The longest a room's window is held hidden for its slide to be drawn. */
 const ROOM_DRAWN_MS = 3_000;
 
@@ -182,13 +184,19 @@ export function installRooms(host: RoomsHost): Rooms {
 	ipcMain.on(ROOM_DRAWN, (event) => {
 		if (event.senderFrame === event.sender.mainFrame) drawing.get(event.sender)?.();
 	});
-	// the talk is over: the window goes from the screen before its page is taken down, which painted its ground first
+	// the talk is over: the window goes clear on its slide, and is closed a moment later. Closed at once, hidden or not,
+	// the audience saw a black frame in one end of a few (spool#308)
 	ipcMain.on(ROOM_CLOSE, (event) => {
 		if (event.senderFrame !== event.sender.mainFrame) return;
 		const room = [...rooms.values()].find((one) => one.window.webContents === event.sender);
 		if (room === undefined || room.window.isDestroyed()) return;
-		room.window.hide();
-		room.window.close();
+		// gone from the talks at once: a Present in that moment opens a room of its own
+		rooms.delete(room.talk);
+		const window = room.window;
+		window.setOpacity(0);
+		setTimeout(() => {
+			if (!window.isDestroyed()) window.close();
+		}, ROOM_CLOSE_MS);
 	});
 	ipcMain.on(ROOM_WINDOWED, (event) => {
 		const room = [...rooms.values()].find((one) => one.window.webContents === event.sender);
