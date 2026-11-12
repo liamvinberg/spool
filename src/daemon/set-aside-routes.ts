@@ -153,19 +153,33 @@ export function createSetAside(deps: {
 	/** The marks each root's agent has been told of, by id. */
 	const toldAgent = new Map<string, ReadonlySet<string>>();
 
-	/** A teammate's name by account, from the team's people, remembered a while. */
-	const nameOf = async (team: string, accountId: string): Promise<string | null> => {
-		let known = names.get(team);
-		if (known === undefined || Date.now() - known.at > NAMES_MS || !known.names.has(accountId)) {
-			try {
-				const { members } = await cloudTeams(deps.spoolDir, deps.request).people(team);
-				known = { at: Date.now(), names: new Map(members.map((member) => [member.accountId, personName(member)])) };
-				names.set(team, known);
-			} catch {
-				// unreachable or signed out: the mark says "a teammate" instead
-			}
-		}
-		return known?.names.get(accountId) ?? null;
+	/** Asks of a team's people still out, so the marks of one telling share one. */
+	const asking = new Map<string, Promise<Map<string, string> | undefined>>();
+
+	/**
+	 * A team's people's names by account, from spool.page, remembered a while and asked again when one is missing;
+	 * what was known before when spool.page can't say.
+	 */
+	const namesOf = (team: string, wanted: readonly string[]): Promise<Map<string, string> | undefined> => {
+		const known = names.get(team);
+		if (known !== undefined && Date.now() - known.at <= NAMES_MS && wanted.every((id) => known.names.has(id)))
+			return Promise.resolve(known.names);
+		const out = asking.get(team);
+		if (out !== undefined) return out;
+		const ask = cloudTeams(deps.spoolDir, deps.request)
+			.people(team)
+			.then(
+				({ members }) => {
+					const fresh = new Map(members.map((member) => [member.accountId, personName(member)]));
+					names.set(team, { at: Date.now(), names: fresh });
+					return fresh;
+				},
+				// unreachable or signed out: a mark says "a teammate" instead
+				() => known?.names,
+			)
+			.finally(() => asking.delete(team));
+		asking.set(team, ask);
+		return ask;
 	};
 
 	const framesOf = async (root: string, designDir: string, path: string): Promise<string[]> => {
@@ -176,8 +190,8 @@ export function createSetAside(deps: {
 	};
 
 	/**
-	 * A root's marks as they are told. An agent's command is told them without their frames, which it doesn't need,
-	 * and without waiting long on a name.
+	 * A root's marks as they are told, their teammates' names asked once for all of them. An agent's command is told
+	 * them without their frames, which it doesn't need, and waits on the names no longer than `NAME_WAIT_MS` in all.
 	 */
 	const list = async (root: string, agent = false): Promise<ShownSetAside[]> => {
 		if (!isTeamProject(root)) return [];
@@ -185,11 +199,24 @@ export function createSetAside(deps: {
 		const marks = readMarks(designDir);
 		if (marks.length === 0) return [];
 		const team = readProjectLink(root).team;
+		const account = copyAccount(root);
+		const wanted = [
+			...new Set(
+				marks.flatMap((mark) => (mark.by === null || mark.by.accountId === account ? [] : [mark.by.accountId])),
+			),
+		];
+		const asked = wanted.length === 0 ? undefined : namesOf(team, wanted);
+		const known =
+			asked === undefined
+				? undefined
+				: agent
+					? await within(asked, NAME_WAIT_MS, names.get(team)?.names)
+					: await asked;
 		const look: Look = {
-			account: copyAccount(root),
+			account,
 			machine: await machine(),
 			frames: async (path) => (agent ? [] : framesOf(root, designDir, path)),
-			name: (accountId) => (agent ? within(nameOf(team, accountId), NAME_WAIT_MS, null) : nameOf(team, accountId)),
+			name: async (accountId) => known?.get(accountId) ?? null,
 		};
 		const told: ShownSetAside[] = [];
 		for (const mark of marks) told.push(await shown(root, designDir, mark, look));
@@ -214,6 +241,14 @@ export function createSetAside(deps: {
 			if ("response" in project) return project.response;
 			return c.json({ marks: await list(project.root) });
 		})
+		.post("/:project/set-aside/told", async (c) => {
+			const project = deps.resolve(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { ids } = (await c.req.json().catch(() => ({}))) as { ids?: unknown };
+			const told = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+			untold.told(project.root, told);
+			return c.json({});
+		})
 		.post("/:project/set-aside/:id/put-back", (c) =>
 			withMark(c, (root, designDir, mark) => {
 				const target = resolveDesignPath(designDir, join(designDir, ...mark.path.split("/")), mark.path);
@@ -236,17 +271,27 @@ export function createSetAside(deps: {
 			}),
 		);
 
-	return {
-		routes,
+	const untold = {
 		/**
-		 * What an agent's next command on a root says of its marks: each one it hasn't been told of, once. `said`: the
-		 * command says them itself (`spool check`, `spool set-aside`), so they count as told and nothing is returned.
+		 * What an agent's next command on a root says of its marks: each one it hasn't been told of, by id, with its
+		 * line. `said`: the command prints every mark itself (`spool check`, `spool set-aside`), so none is returned.
+		 * Nothing counts as told until the command says it printed it (`told`): a command that gave up waiting, or
+		 * never got the answer, leaves its marks to be told again.
 		 */
-		async untold(root: string, said = false): Promise<string[]> {
+		async untold(root: string, said = false): Promise<{ id: string; line: string }[]> {
 			const marks = await list(root, true);
 			const before = toldAgent.get(root) ?? new Set();
-			toldAgent.set(root, new Set(marks.map((mark) => mark.id)));
-			return said ? [] : marks.filter((mark) => !before.has(mark.id)).map(setAsideTold);
+			// a mark gone and back is a new mark, told again
+			toldAgent.set(root, new Set(marks.map((mark) => mark.id).filter((id) => before.has(id))));
+			if (said) return [];
+			return marks.filter((mark) => !before.has(mark.id)).map((mark) => ({ id: mark.id, line: setAsideTold(mark) }));
+		},
+		/** An agent's command printed these marks: they are told. */
+		told(root: string, ids: readonly string[]): void {
+			const held = new Set(readMarks(realDesignDir(root)).map((mark) => mark.id));
+			toldAgent.set(root, new Set([...(toldAgent.get(root) ?? []), ...ids.filter((id) => held.has(id))]));
 		},
 	};
+
+	return { routes, ...untold };
 }

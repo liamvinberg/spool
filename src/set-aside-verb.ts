@@ -2,7 +2,7 @@ import { CONTROL_HEADER } from "./daemon/security";
 import { type ShownSetAside, setAsideTold } from "./daemon/set-aside-routes";
 import { SpoolError } from "./errors";
 import { historyPath } from "./history-verb";
-import { refusalOf } from "./verbs";
+import { refusalOf, tellSetAsideTold } from "./verbs";
 
 /**
  * `spool set-aside`: an agent's own saves to a team project that lost a collision in this local copy, listed, and each
@@ -29,10 +29,16 @@ export async function readSetAside(daemon: SetAsideDaemon): Promise<ShownSetAsid
 	return ((await (await ask(daemon, "")).json()) as { marks: ShownSetAside[] }).marks;
 }
 
-/** Every mark, one told line each, or that there are none. */
+/** Every mark, one told line each, or that there are none; the daemon counts them as told. */
 export async function listSetAside(daemon: SetAsideDaemon): Promise<string> {
 	const marks = await readSetAside(daemon);
 	if (marks.length === 0) return "nothing is set aside in this copy";
+	await tellSetAsideTold(
+		daemon.daemonUrl,
+		daemon.name,
+		daemon.controlToken,
+		marks.map((mark) => mark.id),
+	);
 	return marks.map(setAsideTold).join("\n");
 }
 

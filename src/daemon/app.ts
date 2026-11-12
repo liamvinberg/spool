@@ -2425,14 +2425,18 @@ export function createDaemonApp({
 	});
 	/**
 	 * What an agent's next command on a project says of its sync: what didn't travel, a pause and each save of this
-	 * copy's that was set aside, each said once. `?setAside=said`: the command says the set-aside saves itself.
+	 * copy's that was set aside, each said once: `setAside` names the marks among the lines, told once the command
+	 * says it printed them. `?setAside=said`: the command says the set-aside saves itself.
 	 */
 	app.post("/api/p/:project/sync/untold", (c) =>
-		withProject(c, resolveProject, async (root) =>
-			c.json({
-				lines: [...teamSync.untold(root), ...(await setAside.untold(root, c.req.query("setAside") === "said"))],
-			}),
-		),
+		withProject(c, resolveProject, async (root) => {
+			const marks = await setAside.untold(root, c.req.query("setAside") === "said");
+			// the marks count as told only once the command says it printed them (`/set-aside/told`)
+			return c.json({
+				lines: [...teamSync.untold(root), ...marks.map((mark) => mark.line)],
+				setAside: marks.map((mark) => mark.id),
+			});
+		}),
 	);
 	app.route(
 		"/api/p",

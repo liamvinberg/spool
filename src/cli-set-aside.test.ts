@@ -131,10 +131,13 @@ describe("spool set-aside", { timeout: 120_000 }, () => {
 		await until(() => text(ana, RECEIPT) === page("Paid by ben"));
 		expect((await spool("set-aside")).stdout).toBe("nothing is set aside in this copy\n");
 
-		// theirs lets one go; saving the other again settles it as the answer
+		// theirs lets one go, and tells the other as any command would, once; saving it again settles it as the answer
 		await collide({ [RECEIPT]: "Refunded", [MENU]: "Lunch" });
 		const theirs = await spool("set-aside", "theirs", RECEIPT);
 		expect(theirs.stdout).toBe(`kept the team's design/${RECEIPT}; your version is let go\n`);
+		expect(theirs.stderr).toContain(`your change to design/${MENU} was set aside: ana changed the same lines`);
+		expect(theirs.stderr).not.toContain(`your change to design/${RECEIPT}`);
+		expect((await spool("selection")).stderr).not.toContain("set aside");
 		expect(text(ben, RECEIPT)).toBe(page("Refunded by ana"));
 		expect((await spool("set-aside", "theirs", RECEIPT)).stderr).toContain(
 			`nothing is set aside at design/${RECEIPT} in this copy`,

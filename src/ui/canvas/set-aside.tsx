@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { dismissSetAside, fetchSetAside, putSetAsideBack, type ShownSetAside } from "../api";
 import { Button } from "../primitives/actions";
 import { Count } from "../primitives/display";
@@ -148,9 +148,12 @@ export function useSetAside(project: string, fix: SetAsideFix): ReactNode {
 	);
 }
 
+/** px the list keeps from the left edge of what it opens over */
+const EDGE_GUTTER = 12;
+
 /**
- * `n set aside`, after who's here on the path: quiet, and still when a mark arrives. Pressed, it lists each collision
- * on a line of its own, cut short before its actions rather than running under them.
+ * `n set aside`, hung under who's here at the canvas's top right: quiet, and still when a mark arrives. Pressed, it
+ * lists each collision on a line of its own, cut short before its actions rather than running under them.
  */
 export function SetAsideCount({
 	count,
@@ -172,6 +175,30 @@ export function SetAsideCount({
 	const [open, setOpen] = useState(defaultOpen);
 	const root = useRef<HTMLDivElement | null>(null);
 	const button = useRef<HTMLButtonElement | null>(null);
+	// the list opens leftward from the count's right edge, as wide as the canvas and the window leave it
+	const [room, setRoom] = useState<number | null>(null);
+	useLayoutEffect(() => {
+		if (!open) return;
+		const measure = () => {
+			const count = root.current;
+			if (count === null) return;
+			// what the list may not cross: the window, or a box round it that cuts what overflows it (the canvas)
+			let edge = 0;
+			for (let box = count.offsetParent; box instanceof HTMLElement; box = box.offsetParent)
+				if (getComputedStyle(box).overflowX !== "visible") edge = Math.max(edge, box.getBoundingClientRect().left);
+			const right = count.getBoundingClientRect().right;
+			setRoom(right > 0 ? Math.max(0, right - edge - EDGE_GUTTER) : null);
+		};
+		measure();
+		// the canvas the count stands on resizes with the window, and again as a pane folds or opens after it
+		const sizes = new ResizeObserver(measure);
+		for (let box = root.current?.offsetParent; box instanceof HTMLElement; box = box.offsetParent) sizes.observe(box);
+		window.addEventListener("resize", measure);
+		return () => {
+			sizes.disconnect();
+			window.removeEventListener("resize", measure);
+		};
+	}, [open]);
 	useEffect(() => {
 		if (!open) return;
 		const close = (event: PointerEvent) => {
@@ -202,7 +229,7 @@ export function SetAsideCount({
 		};
 	}, []);
 	return (
-		<div ref={root} className="relative ml-1 flex items-center" data-set-aside-count="">
+		<div ref={root} className="relative flex items-center" data-set-aside-count="">
 			<Button
 				ref={button}
 				variant="ghost"
@@ -218,7 +245,8 @@ export function SetAsideCount({
 					pad="sm"
 					aria-label="Set aside"
 					data-set-aside-list=""
-					className="absolute top-full left-0 z-30 mt-1.5 w-[640px]"
+					className="absolute top-full right-0 z-30 mt-1.5 w-[640px]"
+					style={room === null ? undefined : { maxWidth: room }}
 				>
 					<ul className="flex flex-col">
 						{groups.map((group) => {
@@ -228,9 +256,10 @@ export function SetAsideCount({
 								<li
 									key={group.map((mark) => mark.id).join("\n")}
 									data-set-aside=""
-									className="flex h-row items-center gap-3 pl-2"
+									// short of room the actions go under the line rather than past the list's edge
+									className="flex min-h-row flex-wrap items-center justify-end gap-x-3 pl-2"
 								>
-									<span className="min-w-0 grow truncate text-primary type-control" title={says}>
+									<span className="min-w-0 grow basis-32 truncate text-primary type-control" title={says}>
 										{says}
 									</span>
 									<span className="flex shrink-0 items-center">
