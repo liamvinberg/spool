@@ -1,9 +1,9 @@
 ---
-summary: decks: a page that is a talk, deck.json, slides, ui.beats, ui.live, notes
+summary: decks: a page that is a talk, deck.json, slides, ui.beats, ui.live, notes, and spool rehearse, which plays one and says what is wrong
 experiment: deck
 ---
 
-A deck is a page whose top row is a talk: a presentation made of frames. A page is a deck when its folder holds a deck.json. Its slides are ordinary frames on that page, in the order deck.json lists them; every other frame on the page is loose, a draft or a spare that rests in a grid under the talk and plays nowhere. There is no verb: a deck is files.
+A deck is a page whose top row is a talk: a presentation made of frames. A page is a deck when its folder holds a deck.json. Its slides are ordinary frames on that page, in the order deck.json lists them; every other frame on the page is loose, a draft or a spare that rests in a grid under the talk and plays nowhere. A deck is files; one verb plays it to try it, spool rehearse.
 
   frames/<talk>/deck.json             the talk: its size and its slides in order
   frames/<talk>/<slide>/frame.tsx     a slide: a frame like any other, the size of the talk
@@ -66,4 +66,14 @@ Write a slide's words as literal JSX text, as every frame's (topic: frames): a p
 
 A talk plays at 60 frames a second only when its slides keep up, and that is in the slide's code. Move and reveal with transform and opacity, which the screen composites, rather than left, width, top or height, which lay the page out again every frame, or shadows and filters, which repaint it. Let every animation end, unless the slide is about that motion: one that runs for ever keeps the slide drawing while the presenter talks. Give pictures about the pixels they are shown at, twice that for a sharp screen. Draw one canvas or WebGL scene per slide at most, and stop a requestAnimationFrame loop once its motion is done.
 
+The loop for a talk: write it, spool check it, spool rehearse it, read the sheet, fix, and again. A talk is not done until it rehearses clean: check and shot read slides at rest, and only a rehearsal sees the talk play.
+
 spool check, with decks on, refuses a deck.json that does not parse or lists a frame that is not on its page, a ui.beats list that is not written out or names a beat twice, and a frame importing notes.md; it warns of a slide whose size is not the talk's but nearly its shape, and of notes running past a slide's beats. Spool times every slide you edit, at rest and as each beat enters, and check notes the talk's slides that timed slow, by number, with the beat that was worst and what in the slide is likely slowing it; a note never fails check. Run it after writing a deck; `spool check <talk>` checks that page's frames alone. `spool shot` pictures each slide at its last beat, the whole slide; `spool shot <slide> --beat <name or number>` pictures it at an earlier one (`--beat 2`, `--beat price`), so check a reveal beat by beat. Make a reveal right in the code: every beat's elements in the layout from the first, each shown by reached().
+
+`spool rehearse <talk>` plays the talk in the stage the room sees, in spool's headless browser, from its first beat to its last and back, by a presenter's keys, and says, at the slide and beat, what a still cannot show: a slide that threw or was still loading when its key came, console errors and failed requests, a move between slides that did not run (two elements of a slide with one view-transition-name) or was cut short, a picture or a face that came after its slide was shown, words cut by the slide's edge, a beat that moves the layout, more WebGL contexts than the stage keeps ready, and lag, judged only where the machine can tell. Each line opens with the file, and the line in it where it can, to fix:
+
+  design/frames/talk/close/frame.tsx:12:6: the move from slide 7 "price" to slide 8 "close" did not run: view-transition-name "ring" is on 2 elements of slide 8, …; give a name to one element per slide
+  rehearsed talk, 12 slides (19 beats), forward and back in 48 s: 1 broken, 2 notes
+  sheet: design/.spool/rehearse/talk/sheet-1.png, sheet-2.png (…); every picture full size in design/.spool/rehearse/talk/stills/
+
+It exits 1 only for what breaks the talk: a slide that threw or never became ready, a move that cannot run, a rehearsal that could not finish. The sheet is every beat at rest in order, labelled with its slide and beat, and every move between slides at its start, middle and end, a red edge on what broke and an amber one on a note: read every page of it, as a person would watch the talk. Its folder is made new on every rehearsal of the talk; `--out <folder>` copies it where you say. `--slides 4` or `--slides 4-6` rehearses part of the talk, and naming one slide's frame rehearses that slide. A rehearsal takes a few seconds a slide and narrates where it is on stderr: let it finish. Two rehearse at once on a machine; another waits its turn and says so. A save while it plays is named at the end: rehearse again once you are done saving.

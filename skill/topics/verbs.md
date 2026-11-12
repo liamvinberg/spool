@@ -35,6 +35,8 @@ To click, type or reach a state before a shot, drive the frame with spool's own 
 
 Wait for DOMContentLoaded and then a meaningful selector from the frame. Do not wait for networkidle: Spool's live reload connection stays open. On a --raw URL the frame is the page, so use top-level locators. The local player mounts every frame inside a sandboxed `<iframe id="spool-player">`, so its selectors go through `page.frameLocator("#spool-player")`; for a portable website use `page.frameLocator("#website")`. The player's first load after an edit compiles every frame of the project behind a "loading" bar: on a large canvas give that first wait a minute, not Playwright's default 30 s. The played page is never scaled: its viewport width is capped at the frame's authored w, and its height is the window's after the player's chrome, so percentage heights and viewport units answer to that, not frame.json's h. A state you only need to open in is a scenario (topic: scenarios), not a driver.
 
+To see a deck's talk play, rehearse it: spool rehearse plays it by a presenter's keys, moves between slides and all, and pictures every beat and move (topic: deck).
+
 Walks you take in the player flip verified marks on the map's derived edges: `spool flows` shows which a real session confirmed, most valuable on might edges, where a verified one is a branch that actually fired. Reloading the played tab re-reads the scenario, so edit-seed-reload iterates on one URL.
 
 `spool selection` prints what the human points at as one block, the same bytes a spool agent-chat prompt carries, and nothing at all when nothing is selected:
