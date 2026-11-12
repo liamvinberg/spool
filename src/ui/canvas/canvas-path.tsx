@@ -96,7 +96,6 @@ export function CanvasPath({
 	lit = null,
 	peeked = null,
 	place,
-	after,
 	tail,
 	lifted = false,
 	onGo,
@@ -120,8 +119,6 @@ export function CanvasPath({
 	peeked?: string | null;
 	/** where the project lives, first on the path: a browser's alone */
 	place?: PathPlace | undefined;
-	/** what stands right after the path, at full ink whatever the wake: who else is here */
-	after?: ReactNode;
 	/** what ends the row, inside the path so it rides `--wake`: the finder's door (`find-door.tsx`) */
 	tail?: ReactNode;
 	/** the names stand over the finder, which opened under them with its field where the door was */
@@ -290,17 +287,8 @@ export function CanvasPath({
 					);
 				})}
 			</AnimatePresence>
-			{after === undefined || after === null ? null : (
-				<motion.span
-					layout="position"
-					transition={{ duration: dur, ease: EASE }}
-					className="ml-1 flex items-center"
-				>
-					{after}
-				</motion.span>
-			)}
 			{tail === undefined ? null : (
-				// follows the last name and the faces as they come and go, on the same curve
+				// follows the last name as names come and go, on the same curve
 				<motion.span layout="position" transition={{ duration: dur, ease: EASE }} className="flex items-center">
 					{tail}
 				</motion.span>
