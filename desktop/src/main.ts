@@ -43,7 +43,7 @@ import {
 	type WorkArea,
 	writeRect,
 } from "./play-window";
-import { hideBars, immediately, preparePresenting, restoreBars } from "./presenting";
+import { hideBars, hideBarsOnReturn, immediately, preparePresenting, restoreBars } from "./presenting";
 import { type CanvasDownloads, installCanvasDownloads } from "./project-download";
 import {
 	type RemoteConfig,
@@ -212,7 +212,8 @@ let presentBars: number | undefined;
  *
  * A window already full screen the macOS way covers its display in a Space of its own, and stays there: leaving it
  * would play macOS's Space animation twice. The menu bar and the Dock, which would come down over the slides at the
- * screen's edges, are hidden for the talk instead (`hideBars`), and are back as they were when it ends.
+ * screen's edges, are hidden for the talk instead (`hideBars`), again each time spool comes back in front
+ * (`hideBarsOnReturn`), and are back as they were when it ends.
  */
 function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 	if (!on) presentBarsBack();
@@ -504,6 +505,7 @@ function createWindow(): BrowserWindow {
 	created.on("focus", () => {
 		updateCanvasMenu();
 		if (presentFilled !== undefined) presentLevel(created);
+		if (presentBars !== undefined) hideBarsOnReturn(() => presentBars !== undefined);
 	});
 	created.on("blur", () => {
 		updateCanvasMenu();

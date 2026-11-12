@@ -24,12 +24,14 @@ const AUTO_HIDE_DOCK = 1 << 0;
 const HIDE_DOCK = 1 << 1;
 const AUTO_HIDE_MENU_BAR = 1 << 2;
 const HIDE_MENU_BAR = 1 << 3;
+const FULL_SCREEN = 1 << 10;
 
 /**
  * The app's presentation options for a talk: the menu bar and the Dock gone rather than coming down where the pointer
  * meets the screen's edge, and the rest as they were (full screen stays full screen). AppKit hides the menu bar only
  * with the Dock, and refuses either hidden and auto-hidden at once. They hold while spool is the app in front: another
- * app brought forward (⌘Tab) shows its own menu bar, and they come back with spool.
+ * app brought forward (⌘Tab) shows its own menu bar, and spool back in front gets its full screen's own options back
+ * (`hideBarsOnReturn`).
  */
 export function talkOptions(options: number): number {
 	return (options & ~(AUTO_HIDE_DOCK | AUTO_HIDE_MENU_BAR)) | HIDE_DOCK | HIDE_MENU_BAR;
@@ -68,6 +70,34 @@ export function hideBars(): number | undefined {
 	if (native === undefined) return undefined;
 	const options = native.options();
 	return native.setOptions(talkOptions(options)) ? options : undefined;
+}
+
+/** How often, and for how many looks, `hideBarsOnReturn` watches: a Space's slide, and then some. */
+const RETURN_LOOK_MS = 50;
+const RETURN_LOOKS = 40;
+
+/**
+ * Hides the menu bar and the Dock again as spool comes back in front of its full screen window, while `hiding` says
+ * the talk still wants them gone. macOS gives the app its full screen's own options back then, so the bars would come
+ * down at the screen's edges again: as the window is focused or a moment later, and sometimes again as the Space
+ * slides into place. So for a moment the talk's are put back each time the full screen's appear, and never before
+ * they do, as options set then stand in for the full screen's own and outlast the talk.
+ */
+export function hideBarsOnReturn(
+	hiding: () => boolean,
+	native: PresentingModule | undefined = loaded(),
+	later: (next: () => void) => void = (next) => void setTimeout(next, RETURN_LOOK_MS),
+): void {
+	if (native === undefined) return;
+	let looks = 0;
+	const look = () => {
+		if (!hiding()) return;
+		const options = native.options();
+		const talk = talkOptions(options);
+		if ((options & FULL_SCREEN) !== 0 && options !== talk) native.setOptions(talk);
+		if (++looks < RETURN_LOOKS) later(look);
+	};
+	look();
 }
 
 /** The app's presentation options as `hideBars` found them. */
