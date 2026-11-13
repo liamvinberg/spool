@@ -56,8 +56,11 @@ const ROOM_GONE_MS = 1500;
 const ROOM_PATIENCE_MS = 10_000;
 /** How long L's cue says what it did. */
 const POINTER_SAID_MS = 1800;
-/** How long the next pane waits for a step to be on the presenter's slide and the room's screen before it follows. */
-const PANE_WAITS_MS = 1500;
+/**
+ * How long the next pane waits for a step to have played on the presenter's slide and be on the room's screen before it
+ * follows: longer than a dissolve and the two seconds the stage waits for a step's entrances at most.
+ */
+const PANE_WAITS_MS = 2500;
 
 export interface PresenterProps {
 	readonly ask: PresentAsk;
@@ -128,7 +131,7 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 	const roomWindow = useRef(ask.room);
 	const roomOpen = useRef(false);
 	roomOpen.current = room === "open";
-	const stage = useRef<{ main: StageHost; next: StageHost; say: (message: TalkMessage) => void } | null>(null);
+	const stage = useRef<{ main: StageHost; say: (message: TalkMessage) => void } | null>(null);
 
 	// the two stages and the channel to the room: for the talk's whole life
 	useEffect(() => {
@@ -167,15 +170,42 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 		/**
 		 * What the next key plays, in the next pane: a slide drawn with WebGL as the booth's still of that beat, so the pane
 		 * makes no context in the presenter's thread (spool#330), and any other as its stage draws it. The still shows once
-		 * it is decoded, and stays until the stage shows what follows it.
+		 * it is decoded, and stays until the stage shows what follows it. The stage opens the first time a slide is drawn
+		 * there, on that slide: one opened on the talk's first slide under its still would make the contexts it spares.
 		 */
 		let wantedStill: string | null = null;
+		let next: StageHost | undefined;
+		const drawAhead = (session: StageSession) => {
+			wantedStill = null;
+			if (next !== undefined) {
+				next.apply(session);
+				return;
+			}
+			// what the next key plays, never touched: what its slides write is the talk's echo, not the talk's
+			next = mountStage(after, {
+				address,
+				mode: "follow",
+				room: true,
+				rest: true,
+				session,
+				// a preview, which costs the talk no frames: drawn once as each step leaves it
+				still: true,
+				webgl: PRESENTED_WEBGL.next,
+				on: {
+					shown: () => {
+						if (wantedStill === null) setNextStill(null);
+					},
+					applied: () => {
+						if (wantedStill === null) setNextStill(null);
+					},
+				},
+			});
+		};
 		const showAhead = (session: StageSession) => {
 			const frame = host.talk()[session.at.slide]?.frame;
 			const url = frame === undefined ? undefined : hands.current.beatStill?.(frame, session.at.beat);
 			if (url === undefined) {
-				wantedStill = null;
-				next.apply(session);
+				drawAhead(session);
 				return;
 			}
 			wantedStill = url;
@@ -186,9 +216,7 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 					if (wantedStill === url) setNextStill(url);
 				},
 				() => {
-					if (wantedStill !== url) return;
-					wantedStill = null;
-					next.apply(session);
+					if (wantedStill === url) drawAhead(session);
 				},
 			);
 		};
@@ -293,22 +321,7 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 				},
 			},
 		});
-		// what the next key plays, never touched: what its slides write is the talk's echo, not the talk's
-		const next = mountStage(after, {
-			address,
-			mode: "follow",
-			room: true,
-			rest: true,
-			// a preview, which costs the talk no frames: drawn once as each step leaves it
-			still: true,
-			webgl: PRESENTED_WEBGL.next,
-			on: {
-				applied: () => {
-					if (wantedStill === null) setNextStill(null);
-				},
-			},
-		});
-		stage.current = { main: host, next, say };
+		stage.current = { main: host, say };
 
 		let gone: ReturnType<typeof setTimeout> | undefined;
 		const opening = setTimeout(() => setRoom((now) => (now === "opening" ? "closed" : now)), ROOM_PATIENCE_MS);
@@ -343,7 +356,7 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 		}, 500);
 
 		// a saved change to the talk taken in place, by both stages, once the folder is quiet
-		const stopHearing = source.follow(() => [host, next]);
+		const stopHearing = source.follow(() => (next === undefined ? [host] : [host, next]));
 
 		// closing or reloading spool's window ends the talk, and the room's window with it
 		const leave = () => say({ kind: "end" });
@@ -360,7 +373,7 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 			channel.close();
 			roomWindow.current?.close();
 			host.destroy();
-			next.destroy();
+			next?.destroy();
 			stage.current = null;
 		};
 	}, [ask]);
