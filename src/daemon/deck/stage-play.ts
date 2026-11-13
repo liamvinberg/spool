@@ -182,19 +182,28 @@ html[data-spool-stage-cursor="hidden"], html[data-spool-stage-cursor="hidden"] *
 function stageDocument(config: PlayerConfig & { deck: StageConfig }, bundle: PlayerBundle): string {
 	const base = playerChunkBase(config.project);
 	const modules = new Set([bundle.entry]);
-	// each slide's own module names its slide: a rehearsal tells by it whose code said a line or asked for a file
+	// each slide's own module names its slide: a rehearsal tells by it whose code said a line or asked for a file; and
+	// each module names every slide that reaches it, for the stage to tell whose code wrote `ui.state` (spool#332)
 	const owners = new Map<string, string>();
+	const reached = new Map<string, string[]>();
 	for (const slide of config.deck.slides) {
 		const screens = bundle.screens.get(slide.frame) ?? [];
 		const own = screens[0];
 		if (own !== undefined && !owners.has(own)) owners.set(own, slide.frame);
-		for (const name of screens) modules.add(name);
+		for (const name of screens) {
+			modules.add(name);
+			const by = reached.get(name) ?? [];
+			if (!by.includes(slide.frame)) by.push(slide.frame);
+			reached.set(name, by);
+		}
 	}
 	const preload = [...modules]
 		.map((name) => {
 			const owner = owners.get(name);
 			const named = owner === undefined ? "" : ` data-spool-frame="${escapeHtml(owner)}"`;
-			return `<link rel="modulepreload" href="${escapeHtml(base + name)}"${named}>`;
+			const by = reached.get(name);
+			const reach = by === undefined ? "" : ` data-spool-slides="${escapeHtml(JSON.stringify(by))}"`;
+			return `<link rel="modulepreload" href="${escapeHtml(base + name)}"${named}${reach}>`;
 		})
 		.join("\n");
 	const fonts = bundle.fonts === undefined ? "" : `<style>${escapeInlineStyle(bundle.fonts)}</style>\n`;

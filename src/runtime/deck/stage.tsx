@@ -40,6 +40,7 @@ import { SlideScope, setSlideBeat } from "../slide-beats";
 import { type KeptPicture, keepPicture } from "./stage-keep";
 import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
 import { giveBackWhen, limitWebgl, releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn } from "./stage-webgl";
+import { readReach, stackNow, writersOf } from "./stage-writer";
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
@@ -1010,13 +1011,21 @@ export function bootStage(runtime: StageRuntime): void {
 	}
 
 	// what a slide writes to `ui.state` is the talk's when this stage owns the session. One that follows is a mirror
-	// (the room, the slide the next key plays), and so is a room holding its picture, and a slide put on ahead as its
-	// effects run: what a slide writes there on its own is put back before it is drawn, all but a key the talk has
-	// never had, which is the slide's own default.
+	// (the room, the slide the next key plays), and so is a room holding its picture, and a slide waiting out of sight,
+	// as its effects run or whenever later: what a slide writes there on its own is put back before it is drawn, all but
+	// a key the talk has never had, which is the slide's own default.
+	const reach = readReach();
+	/** Code of a slide out of sight made the write being heard, and none of the slide on show's (spool#332). */
+	const unseenWrote = (): boolean => {
+		if (reach.size === 0) return false;
+		const writers = writersOf(stackNow(), reach);
+		const onShow = shownSlide()?.frame;
+		return writers !== undefined && writers.size > 0 && (onShow === undefined || !writers.has(onShow));
+	};
 	runtime.state.subscribe(() => {
 		if (!opened || seeding) return;
 		const state = runtime.state.read();
-		if (mode === "follow" || (room && session.frozen !== null) || wakingNow) {
+		if (mode === "follow" || (room && session.frozen !== null) || wakingNow || unseenWrote()) {
 			const talkState = { ...state, ...picture().state };
 			if (JSON.stringify(talkState) !== JSON.stringify(state)) seed(talkState);
 			return;
