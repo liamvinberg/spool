@@ -44,9 +44,29 @@ export function restWebgl(box: Element, rest: boolean): void {
 		if (rest) resting.add(canvas);
 		else resting.delete(canvas);
 	}
-	if (!rest) unpark((canvases) => canvases.some((canvas) => !resting.has(canvas)));
+	if (!rest)
+		unpark((frame) =>
+			frame.slide === undefined ? frame.canvases.some((canvas) => !resting.has(canvas)) : !rests(frame.slide),
+		);
 	// a loop let go with its slide, never cancelled, is let go here too
-	for (const [id, frame] of parked) if (frame.canvases.every((canvas) => !canvas.isConnected)) parked.delete(id);
+	for (const [id, frame] of parked)
+		if (
+			frame.slide === undefined
+				? frame.canvases.every((canvas) => !canvas.isConnected)
+				: boxesOf(frame.slide).length === 0
+		)
+			parked.delete(id);
+}
+
+/** Every copy of a slide on the stage, by the slide's frame. */
+function boxesOf(slide: string): NodeListOf<Element> {
+	return document.querySelectorAll(`[data-spool-stage-slide="${CSS.escape(slide)}"]`);
+}
+
+/** Whether a slide rests: every copy of it on the stage rests out of sight. */
+function rests(slide: string): boolean {
+	const boxes = boxesOf(slide);
+	return boxes.length > 0 && [...boxes].every((box) => restingBoxes.has(box));
 }
 
 /** Its context draws nothing while its slide rests: its last frame stays in its kept drawing buffer. */
@@ -83,13 +103,18 @@ function holdWhileResting(canvas: HTMLCanvasElement, context: object): void {
 }
 
 /**
- * A slide resting out of sight runs no frames (spool#320). A loop of frames, a callback that asks for itself again,
- * that drew on resting canvases and on nothing else is parked as it asks, and asked for again once one of its canvases
- * draws again. The ids a document's frames are given are its own, so a slide cancels a parked frame as any other.
+ * A slide resting out of sight runs no frames (spool#320, spool#330). A loop of frames, a callback that asks for itself
+ * again, that drew on resting canvases and on nothing else is parked as it asks, and asked for again once one of its
+ * canvases draws again. A frame a resting slide's own module asks for is parked too, and asked for again as the slide
+ * goes on: the stage tells whose it is by the script that asked, which the stage document's preloads name. A frame
+ * asked for by code the slides share (a library, a component of the project's) runs, since it may be another slide's.
+ * The ids a document's frames are given are its own, so a slide cancels a parked frame as any other.
  */
 interface ParkedFrame {
 	readonly callback: FrameRequestCallback;
 	readonly canvases: HTMLCanvasElement[];
+	/** the slide whose own module asked for it */
+	readonly slide?: string;
 }
 const parked = new Map<number, ParkedFrame>();
 /** The browser's id for each frame asked for, by the id given out for it. */
@@ -116,10 +141,10 @@ function ask(id: number, callback: FrameRequestCallback): void {
 	);
 }
 
-/** The parked frames whose canvases `which` picks asked for again. */
-function unpark(which: (canvases: HTMLCanvasElement[]) => boolean): void {
+/** The parked frames `which` picks asked for again. */
+function unpark(which: (frame: ParkedFrame) => boolean): void {
 	for (const [id, frame] of parked) {
-		if (!which(frame.canvases)) continue;
+		if (!which(frame)) continue;
 		parked.delete(id);
 		ask(id, frame.callback);
 	}
@@ -140,6 +165,11 @@ function watchFrames(): void {
 			parked.set(id, { callback, canvases: [...running.resting] });
 			return id;
 		}
+		const slide = restingAsker(new Error().stack ?? "");
+		if (slide !== undefined) {
+			parked.set(id, { callback, canvases: [], slide });
+			return id;
+		}
 		ask(id, callback);
 		return id;
 	};
@@ -152,6 +182,27 @@ function watchFrames(): void {
 	};
 }
 const NATIVE_FRAMES = Symbol.for("spool.stage.frames");
+
+/** Each slide's own module by its address, as the stage document's preloads name them, and how many they were. */
+let ownModules = new Map<string, string>();
+let preloads = -1;
+/**
+ * The slide resting out of sight whose own module asked for a frame, by the stack of the ask: the script of the call
+ * just below the stage's own. Code of spool's asking on a slide's behalf, a library or a stack read another way is no
+ * slide's.
+ */
+function restingAsker(stack: string): string | undefined {
+	const caller = stack.split("\n").filter((line) => /^\s*at /.test(line))[1];
+	const script = caller?.match(/(https?:\/\/[^\s()]+?):\d+:\d+/)?.[1];
+	if (script === undefined) return undefined;
+	const links = document.querySelectorAll<HTMLLinkElement>("link[data-spool-frame]");
+	if (links.length !== preloads) {
+		preloads = links.length;
+		ownModules = new Map([...links].map((link) => [link.href, link.dataset.spoolFrame ?? ""]));
+	}
+	const slide = ownModules.get(script);
+	return slide !== undefined && slide !== "" && rests(slide) ? slide : undefined;
+}
 
 /**
  * Whether a canvas out of sight may make a WebGL context now, as the stage judges it: one it refuses gets none, so the

@@ -144,6 +144,11 @@ export default function Slide() {
 	useEffect(() => {
 		console.error("the noisy slide said this");
 		void fetch("/fixture/missing.json").catch(() => {});
+		// and asks for every frame without end: named on this slide alone, since one out of sight runs none of its frames
+		let frame = requestAnimationFrame(function again() {
+			frame = requestAnimationFrame(again);
+		});
+		return () => cancelAnimationFrame(frame);
 	}, []);
 	return (
 		<div style={{ background: "#b56576", width: "100%", height: "100%", padding: 80, boxSizing: "border-box" }}>
@@ -311,6 +316,7 @@ it("names each fault of a talk at its slide and beat, and nothing of the calm sl
 	expect(found).toContainEqual(
 		expect.objectContaining({ kind: "request", place: { slide: at("noisy"), beat: 0 }, status: 404 }),
 	);
+	expect(found).toContainEqual({ kind: "endless", place: { slide: at("noisy"), beat: 0 } });
 	expect(found).toContainEqual(
 		expect.objectContaining({ kind: "threw", place: { slide: at("beat-throws"), beat: 1 }, when: "later" }),
 	);
