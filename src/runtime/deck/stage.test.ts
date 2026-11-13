@@ -392,15 +392,16 @@ it("keeps every slide that draws with WebGL ready, only those nearest the one on
 	const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
 	const on = await stage(
 		names.map((name) => ({ frame: `talk/${name}`, screen: DrawsWithWebgl })),
-		{ mode: "own", room: true, webgl: 3 },
+		{ mode: "own", room: true, webgl: 4 },
 	);
 	for (const [slide, name] of names.entries()) {
 		if (slide > 0) on.send({ spool: "stage-command", command: { kind: "next" } });
 		await vi.waitFor(() => expect(on.onScreen()).toBe(`talk/${name}`));
 		expect(webgl.drawing()).toBe(true);
 	}
-	// the one on screen and the two before, as many as the share holds, nearest first: the rest are given back, never
-	// left for the browser to take, and rendered afresh out of sight, ready again without a context until they go on
+	// the one on screen and the two before, nearest first, leaving the share room for a slide to make its own as it
+	// goes on: the rest are given back, never left for the browser to take, and rendered afresh out of sight, ready
+	// again without a context until they go on
 	await vi.waitFor(() => expect(webgl.alive()).toBe(3));
 	await vi.waitFor(() => expect(on.slides().map((slide) => slide.status)).toEqual(names.map(() => "ready")));
 	expect(webgl.alive()).toBe(3);
