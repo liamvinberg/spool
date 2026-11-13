@@ -242,7 +242,7 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	await view.keyboard.press("Escape");
 	await keyList.waitFor({ state: "detached" });
 	expect(await together(view, audience)).toEqual({ slide: 4, beat: 0 });
-	// the pointer over the live slide is a soft dot in the room; L, pressed in the slide, takes it away there and says
+	// the pointer over the live slide shows in the room; L, pressed in the slide, takes it away there and says
 	// so, and the room's menu brings it back, its esc leaving the talk on
 	const dot = audience.locator("[data-spool-room-dot]");
 	const over = async (x: number) => {
@@ -267,6 +267,16 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	await expect.poll(() => view.getByRole("dialog", { name: "The room" }).count()).toBe(0);
 	await over(0.5);
 	await expect.poll(() => dot.evaluate((el) => (el as HTMLElement).style.opacity)).toBe("1");
+	// a press sinks it there, and the wheel turned with the button held turns its colour rather than scrolling the slide
+	const look = () =>
+		dot.evaluate((el) => ({ scale: (el as HTMLElement).style.scale, fill: (el as HTMLElement).style.background }));
+	const red = (await look()).fill;
+	await view.mouse.down();
+	await expect.poll(async () => (await look()).scale).toBe("0.78");
+	await view.mouse.wheel(0, -40);
+	await expect.poll(async () => (await look()).fill).not.toBe(red);
+	await view.mouse.up();
+	await expect.poll(async () => (await look()).scale).toBe("1");
 	expect(await together(view, audience)).toEqual({ slide: 4, beat: 0 });
 	// ⇥ hands it the keys, and esc takes them back without ending the talk
 	await view.keyboard.press("Tab");

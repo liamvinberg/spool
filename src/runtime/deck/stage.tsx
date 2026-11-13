@@ -11,6 +11,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { makePen } from "../../deck/pointer";
 import { fitIn } from "../../deck/stage-fit";
 import { DIGITS_FORGET_MS, forHost, type KeyCommand, pressedKey, readKey, typingIn } from "../../deck/stage-keys";
 import {
@@ -1080,8 +1081,9 @@ export function bootStage(runtime: StageRuntime): void {
 		else if (shownSlide()?.live !== true && !session.keys) carry({ kind: "next" });
 	});
 
-	// the pointer over a live slide, for a host that shows the room where it is as a soft dot: where it stands on the
-	// talk's screen, at most once a frame, and null once it leaves or stands over a slide that is not live
+	// the pointer over a live slide, for a host that shows the room where it is: where it stands on the talk's screen and
+	// what the hand does there (a press, a click, the colour the wheel turned to with the button held), at most once a
+	// frame, and null once it leaves or stands over a slide that is not live
 	let pointer: StagePointer | null = null;
 	let pointerSaid = "null";
 	let pointerFrame = 0;
@@ -1097,12 +1099,54 @@ export function bootStage(runtime: StageRuntime): void {
 		});
 	};
 	const share = (value: number) => Math.min(1, Math.max(0, value));
+	const pen = makePen();
+	let hand: { x: number; y: number } | null = null;
+	const point = () => {
+		const live = opened && hand !== null && shownSlide()?.live === true;
+		tellPointer(
+			live && hand !== null ? { x: share(hand.x / innerWidth), y: share(hand.y / innerHeight), ...pen.state } : null,
+		);
+	};
 	addEventListener("pointermove", (event) => {
-		if (!opened) return;
-		const live = shownSlide()?.live === true;
-		tellPointer(live ? { x: share(event.clientX / innerWidth), y: share(event.clientY / innerHeight) } : null);
+		hand = { x: event.clientX, y: event.clientY };
+		pen.move(event.clientX, event.clientY);
+		point();
 	});
-	document.documentElement.addEventListener("pointerleave", () => tellPointer(null));
+	addEventListener(
+		"pointerdown",
+		(event) => {
+			if (event.button !== 0) return;
+			hand = { x: event.clientX, y: event.clientY };
+			pen.press(event.clientX, event.clientY, event.timeStamp);
+			point();
+		},
+		true,
+	);
+	addEventListener(
+		"pointerup",
+		(event) => {
+			pen.release(event.timeStamp);
+			point();
+		},
+		true,
+	);
+	// the button held over a live slide a room watches: the wheel turns the pointer's colour, and the slide does not scroll
+	addEventListener(
+		"wheel",
+		(event) => {
+			if (alone || pointer === null || !pen.wheel(event.deltaY)) return;
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			point();
+		},
+		{ capture: true, passive: false },
+	);
+	document.documentElement.addEventListener("pointerleave", () => {
+		// a button let go outside is never heard: the hand that left is up, and what it made no click
+		pen.release(Number.POSITIVE_INFINITY);
+		hand = null;
+		point();
+	});
 
 	// --- reports -----------------------------------------------------------------------------------------
 

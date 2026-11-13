@@ -16,7 +16,7 @@ import type { StageCommand } from "./stage-session";
  *                             slides filling this screen, which is the room, B and the period black it, F is nobody's)
  *   R                         this slide from its start
  *   X                         the room's screen is the other screen (with the slides filling this one, nobody's)
- *   L                         Show pointer (spool#315): whether the room sees the presenter's pointer as a soft dot
+ *   L                         Show pointer (spool#315): whether the room sees the presenter's pointer
  *                             (with no room, nobody's; the host with no room on another screen does nothing with it)
  *   ?                         these keys
  *   ⇥                         the whole keyboard to a live slide; Esc takes it back
@@ -33,7 +33,7 @@ export type HostCommand =
 	| { readonly kind: "escape" }
 	| { readonly kind: "swap" }
 	| { readonly kind: "help" }
-	/** Show pointer flipped: the room sees the presenter's pointer as a soft dot, or no longer does */
+	/** Show pointer flipped: the room sees the presenter's pointer, or no longer does */
 	| { readonly kind: "show-pointer" }
 	/** the focused text field lets go of the keys */
 	| { readonly kind: "blur" };

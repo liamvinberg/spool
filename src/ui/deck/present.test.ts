@@ -110,7 +110,7 @@ it("has the Mac app's window full screen once the page has the screen's size, wh
 });
 
 it("shows the room the pointer until Show pointer is turned off, and then tells it nowhere", () => {
-	const at = { x: 0.25, y: 0.5 };
+	const at = { x: 0.25, y: 0.5, down: false, colour: 0, taps: 0 };
 	expect(pointerShown()).toBe(true);
 	expect(pointerForRoom(at, pointerShown())).toEqual(at);
 	showPointer(false);

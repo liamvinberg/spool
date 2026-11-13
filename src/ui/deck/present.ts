@@ -286,7 +286,7 @@ export function presentKeyFrom(
 }
 
 /**
- * Show pointer (spool#315): whether the room sees the presenter's pointer as a soft dot over a live slide. The
+ * Show pointer (spool#315): whether the room sees the presenter's pointer over a live slide. The
  * presenter's habit rather than the talk's, so it is remembered on this machine, on until turned off, and a flip holds
  * at once, before the daemon reads it back.
  */
