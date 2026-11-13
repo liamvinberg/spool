@@ -56,6 +56,8 @@ export interface StageHostEvents {
 	slides?(slides: readonly SlideReadiness[]): void;
 	/** a command carried out: where, whether the slide was ready, how long it took */
 	shown?(shown: StageShown): void;
+	/** the step it carried out has played: its dissolve is over and nothing is changing on screen */
+	played?(): void;
 	/**
 	 * a command for the host: escape, swap and help always, and every key's command while the stage follows, for the
 	 * session's owner to step; a follower's slides never write the talk's `ui.state`
@@ -320,6 +322,9 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 					doc.pictured = { held: message.shown.held };
 					catchUp(doc);
 				}
+				return;
+			case "stage-played":
+				if (live) on.played?.();
 				return;
 			case "stage-applied":
 				if (doc === incoming) {

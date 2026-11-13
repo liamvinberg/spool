@@ -162,6 +162,8 @@ export type StageMessage =
 	| { readonly spool: "stage-shown"; readonly shown: StageShown }
 	/** the session of that revision the host applied is on the screen, whether or not anything moved */
 	| { readonly spool: "stage-applied"; readonly revision: number }
+	/** the step has played: its dissolve is over and nothing is changing on screen, so what waited may now run */
+	| { readonly spool: "stage-played" }
 	/** a command the stage does not carry out itself: a host's own, and every command while it follows */
 	| { readonly spool: "stage-command"; readonly command: KeyCommand }
 	/** the pointer over the live slide on screen, and what the hand does there, for the room to show; null once it leaves, or the slide is not live */
@@ -354,6 +356,8 @@ export function parseStageMessage(value: unknown): StageMessage | undefined {
 		}
 		case "stage-applied":
 			return isCount(value.revision) ? { spool: "stage-applied", revision: value.revision } : undefined;
+		case "stage-played":
+			return { spool: "stage-played" };
 		case "stage-command": {
 			const command = parseKeyCommand(value.command);
 			return command === undefined ? undefined : { spool: "stage-command", command };

@@ -152,10 +152,10 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			return { ...now, at, keys: false, black: false, frozen: null };
 		};
 		/**
-		 * What the next key plays, owed to the next pane until the step is on the presenter's slide and, while a room is
-		 * open, on the room's screen: the pane shares their thread and the GPU, and nothing it starts may land on the key
-		 * (spool#320). The talk's first session, and a change that moves neither picture (a slide writing `ui.state`),
-		 * reach it at once.
+		 * What the next key plays, owed to the next pane until the step has played on the presenter's slide, its dissolve
+		 * over, and, while a room is open, is on the room's screen: the pane shares their thread and the GPU, and nothing
+		 * it starts may land on the key or in the step (spool#320, spool#330). The talk's first session, and a change that
+		 * moves neither picture (a slide writing `ui.state`), reach it at once.
 		 */
 		let owed: { session: StageSession; slide: At | undefined; room: number | undefined } | undefined;
 		let owedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -238,15 +238,14 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					}
 				},
 				slides: setReady,
-				shown: (shown) => {
-					if (
-						owed?.slide !== undefined &&
-						owed.slide.slide === shown.at.slide &&
-						owed.slide.beat === shown.at.beat
-					) {
+				played: () => {
+					const at = host.session()?.at;
+					if (owed?.slide !== undefined && owed.slide.slide === at?.slide && owed.slide.beat === at.beat) {
 						owed.slide = undefined;
 						paid();
 					}
+				},
+				shown: () => {
 					if (pictured) return;
 					pictured = true;
 					hands.current.onPicture();

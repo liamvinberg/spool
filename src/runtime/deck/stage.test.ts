@@ -628,7 +628,7 @@ it("puts the slide the back key plays on out of sight too, keeps a slide put on 
 	expect(ran.filter((one) => one.startsWith("f"))).toEqual(["f out of sight"]);
 });
 
-it("readies nothing while a step plays: what it puts on ahead or lets go waits for the dissolve to end, and a key meanwhile goes first", async () => {
+it("readies nothing while a step plays: what it puts on ahead or lets go waits for the dissolve to end, a key meanwhile goes first, and the host hears when it has played", async () => {
 	// a dissolve plays until the test ends it, as a browser's view transition plays for its length
 	const playing: (() => void)[] = [];
 	Object.defineProperty(document, "startViewTransition", {
@@ -667,6 +667,8 @@ it("readies nothing while a step plays: what it puts on ahead or lets go waits f
 		await ended();
 	}
 	await vi.waitFor(() => expect(ran).toContain("e out of sight"));
+	const played = () => on.said.filter((message) => message.spool === "stage-played").length;
+	const before = played();
 
 	// on e, four slides wait out of sight at most: the one furthest back is let go, once the step to e has played
 	on.send({ spool: "stage-command", command: { kind: "next" } });
@@ -680,7 +682,10 @@ it("readies nothing while a step plays: what it puts on ahead or lets go waits f
 	await vi.waitFor(() => expect(on.shown().at(-1)?.at.slide).toBe(5));
 	await new Promise((resolve) => setTimeout(resolve, 100));
 	expect(ran.filter((one) => one.endsWith("let go"))).toEqual([]);
+	// what waits for the steps to have played (a presenter's next pane) hears it once, as the last dissolve ends
+	expect(played()).toBe(before);
 	await ended();
+	await vi.waitFor(() => expect(played()).toBe(before + 1));
 	await vi.waitFor(() => expect(ran).toContain("g out of sight"));
 	const readied = ran.slice(ran.indexOf("f on screen") + 1);
 	expect(readied).toEqual(expect.arrayContaining(["a let go", "b let go", "g out of sight"]));

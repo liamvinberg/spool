@@ -685,9 +685,13 @@ export function bootStage(runtime: StageRuntime): void {
 		const at = picture().at;
 		const copy = copies.get(keyOf(at.slide, takeOf(at.slide, picture().takes)));
 		pending = { at, arrived: performance.now(), ready: ready(copy), frames: 0 };
+		playing = true;
 		countFrames();
 		settle();
 	}
+
+	/** A command or a session arrived and the step it asked for has not finished playing. */
+	let playing = false;
 
 	let swapping = false;
 	/** the dissolve playing: nothing is put on ahead until it has */
@@ -744,6 +748,10 @@ export function bootStage(runtime: StageRuntime): void {
 			}
 			redraw();
 			reportSlides();
+			if (playing && quiet()) {
+				playing = false;
+				post({ spool: "stage-played" });
+			}
 		} finally {
 			settling = false;
 		}
