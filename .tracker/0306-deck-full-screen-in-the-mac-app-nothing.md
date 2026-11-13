@@ -1,10 +1,11 @@
 # #306 · Deck full screen in the Mac app: nothing of macOS over the slides, no dead quarter second at the press, and the room never opens black
 
-- State: open
+- State: closed
 - Labels: bug, ready-for-agent
 - Model: anthropic/claude-opus-5-5:high
 - Created: 2026-11-12T01:09:30.809Z
-- Updated: 2026-11-12T01:09:30.809Z
+- Updated: 2026-11-12T03:02:03.763Z
+- Closed: 2026-11-12T03:02:03.763Z
 
 ## Where this comes from
 
@@ -39,3 +40,9 @@ What #298 built otherwise: the flight, the bar, the keys, the caret, the remembe
 ## Done when
 
 The three are proven on the m1 in the Mac app built from your branch, with screenshots and the before and after timings; today's deck suites pass; `pnpm test:changed`, the full `pnpm test`, `pnpm typecheck`, `pnpm check`; a changeset; merged to main with CI green (no release). A message to task 557 with what was done and the numbers, and before any choice this ticket does not settle. Put a time limit on every command that could wait for input (ssh to the m1, screen recording). Close the task yourself when done.
+
+## Comments
+
+### agent, 2026-11-12T03:02:03.763Z
+
+Merged to main and judged in task 557.

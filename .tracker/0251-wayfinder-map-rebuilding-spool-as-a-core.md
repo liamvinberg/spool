@@ -4,7 +4,7 @@
 - Labels: wayfinder:map
 - Tasks: task 557 (Spool presentations and extension core)
 - Created: 2026-11-10T08:20:58.024Z
-- Updated: 2026-11-11T10:15:14.867Z
+- Updated: 2026-11-12T13:04:33.710Z
 
 ## Destination
 
@@ -122,3 +122,28 @@ Specs ready to hand to builders for a rebuilt spool: a small **core** with an **
 **Two readers:** `daemon/projection.ts` (848 lines, real disk, may write placements, covers, unseen) and `daemon/design-projection.ts` (124 lines, pure, used by shares and spool-cloud). They overlap in classification, sidecar parsing and placement rules.
 
 **The scout's read:** the strongest boundaries already sit below the canvas (route factories, stores, the compile host, settings). Registering panes alone will not lift feature behaviour out of `canvas.tsx`.
+
+### agent, 2026-11-12T13:04:33.710Z
+
+## The road to 1.0.0 (task 634, 2026-11-12)
+
+Liam, 2026-11-12, in task 557: "lets just keep it in beta for now, i dont want to release these things, main pushes it to beta, so one idea is that i fix things, redo probably spool into like the new extensible system until its stable and in my beta builds i can test, and then when i feel its ready a v 1.0.0 maybe where i keep developing in beta builds ofcourse".
+
+This replaces point 3 of #260's resolution where it said "the old window is deleted one release later". There is no release in between: the released app stays at 0.56.0, everything lands on main and reaches Liam through Spool Beta, and the next release is 1.0.0 with the new window as the only one.
+
+**The order**
+
+1. Spec #284 (stage two): the new window behind the experiment `new-window`, one switch away in Spool Beta, with Pages, Properties, knobs, flows and the deck moved. When #294 passes, today's window takes fixes only.
+2. Stage three, its own spec: find, history, export, record, references, presence, comments, the agent pane and onboarding move. Then the new window becomes the default in the beta, and Liam and his test people live in it.
+3. Today's window is deleted on main: `canvas.tsx` and the window parts that existed twice, the lint allowance for today's tree, the switch in the test setup, and the experiment `new-window` itself.
+4. 1.0.0.
+
+**What the cut-over needs, for stage three's spec**
+
+- **Experiments graduate.** `deck` and `knobs` stop deciding whether a feature exists; the extension's switch does. A stored experiment value becomes the switch's value, so someone who had decks on still has them.
+- **A 0.56.0 setup opens cleanly, proven by a test**: a state folder (`~/.spool`: `config.json` with its settings and experiment values, the rest of the files there) and a project saved by 0.56.0, opened by the 1.0.0 candidate. Settings keep their keys (`present.way`, `export.talk`); the panes' remembered layout (`spool.panes.layout` and `spool.rail.agent.width` in the window's local storage) is read or reset without a broken rail; every extension is on for someone who already uses spool. Nothing in #284 changes the project's files or sync, so no format upgrade should be needed; if stage three needs one, it goes through the Upgrade consent that exists.
+- **People on 0.56.0** get no fixes until 1.0.0, then jump straight to it: the Mac app updates itself from the same feed (`updates.spool.page`), npm on the next install. Prove the update from an installed 0.56.0 to the candidate before publishing. A teammate still on 0.56.0 and one on 1.0.0 must sync on the same team canvas. spool-cloud takes the 1.0.0 package (its compiler and the frame runtime it serves) in the same step.
+- **The changeset**: one `major`, written at the cut-over, as `docs/releases.md` says 1.0.0 is cut. The patches already waiting in the release PR (#433) come along. Work behind `new-window` adds none on the way.
+- **The API's promise starts here.** #284 says `api: 1` is stable only once every official feature lives on it. That is 1.0.0: from then a breaking change to the SDK is a major version.
+- **Words**: "extension" shows to everyone for the first time, so the Chrome extension becomes "the browser extension" in the product's words.
+- **Open for Liam, when stage three is shaped**: whether 1.0.0 also needs extensions that are not spool's own (adding one from a folder, #257 and #258), or whether that follows 1.0.0.

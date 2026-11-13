@@ -5,7 +5,7 @@
 - Parent: #284
 - Blocked by: #286, #290
 - Created: 2026-11-11T10:15:04.220Z
-- Updated: 2026-11-11T10:15:04.220Z
+- Updated: 2026-11-12T12:02:19.421Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -16,6 +16,7 @@ Knobs gets its window part, and with it the first feature that works end to end 
 - `extensions/knobs/window.tsx`: the Knobs section in Properties (through `spool.properties:section`), driving a frame's knobs live, writing a value back into the source through `writes.plan` with undo, and whatever else today's section does (reset, the kinds of control, many frames).
 - The frame to window channel carries the knob protocol.
 - With knobs off: no section, frames read their declared values, nothing in any file changes.
+- With the experiment `knobs` off the extension waits and says so, as the Extensions page's ticket built.
 
 Today's window keeps its own knobs section until it is deleted in stage three.
 

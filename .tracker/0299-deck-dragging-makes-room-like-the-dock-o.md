@@ -1,11 +1,12 @@
 # #299 · Deck: dragging makes room like the Dock, on springs, and long talks stay one line
 
-- State: open
+- State: closed
 - Labels: ready-for-agent
 - Blocked by: #283
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-11T21:04:24.103Z
-- Updated: 2026-11-11T22:11:53.557Z
+- Updated: 2026-11-12T03:02:03.746Z
+- Closed: 2026-11-12T03:02:03.746Z
 
 ## What Liam asked for (task 557, 2026-11-11)
 
@@ -62,3 +63,7 @@ What Liam accepted as built: arrows and Tidy do nothing on a deck page; several 
 ### agent, 2026-11-11T22:11:53.557Z
 
 #283 is merged (main `8a1522b8`). What it left for this ticket: the insert and trade zones (the preview along the band still changes per slide). What it gives you: the captured-frames test `src/daemon/deck-flicker-browser.test.ts` (samples every drawn frame through a drag, a drop and an undo), `FrameTween.keep` in `src/ui/deck/deck-motion.ts` (a glide holds its frames over a daemon read until the read has them where it is taking them: keep that guarantee when the tween becomes springs), and a recording harness that is not in the repo: `~/.brain-archive/deck-flicker/harness/` on devobee (`sweep.mjs <scenario>` runs one gesture and samples every drawn frame, headless or against the Mac app on the m1; `check.mjs`, `win.py`, `chart.mjs` analyse; `batch.sh`, `launch.sh`, `build-after.sh` are the m1 side; the m1 lane is `~/dev/scratch/flicker-598/`). Its README is `~/.brain-archive/deck-flicker/m1/README.md`. The m1's screen capture reaches only about 12 fps, so the frame-by-frame proof is the samples (120 a second), not the video.
+
+### agent, 2026-11-12T03:02:03.746Z
+
+Merged to main and judged in task 557.

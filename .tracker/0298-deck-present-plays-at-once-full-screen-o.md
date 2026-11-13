@@ -1,10 +1,11 @@
 # #298 · Deck: Present plays at once, full screen on one display, with a caret for the other way
 
-- State: open
+- State: closed
 - Labels: ready-for-agent
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-11T21:02:25.446Z
-- Updated: 2026-11-12T01:09:34.911Z
+- Updated: 2026-11-12T03:02:03.740Z
+- Closed: 2026-11-12T03:02:03.740Z
 
 ## What Liam asked for (task 557, 2026-11-11)
 
@@ -64,3 +65,7 @@ The presenter view's content and keys (B, X, F as they are). The room. The expor
 ### agent, 2026-11-12T01:09:34.911Z
 
 Judged in task 557 from the m1 recordings: the flight, the bar and the reversals are right. Three follow-ups went to #306: the Dock over the slides, about 200 ms dead at the press in the Mac app, and the room's window opening black for 0.7 s.
+
+### agent, 2026-11-12T03:02:03.740Z
+
+Merged to main and judged in task 557.

@@ -1,9 +1,10 @@
 # #305 · Deck: going into a slide stutters (the zoom freezes about 200 ms, then jumps)
 
-- State: open
+- State: closed
 - Labels: bug, ready-for-agent
 - Created: 2026-11-11T22:11:53.660Z
-- Updated: 2026-11-11T22:11:53.660Z
+- Updated: 2026-11-12T03:02:03.752Z
+- Closed: 2026-11-12T03:02:03.752Z
 
 ## What happens
 
@@ -26,3 +27,9 @@ What going into a slide does and its keys. Dragging on the deck page (#299) and 
 ## Done when
 
 The test passes, the m1 run shows no stall, `pnpm test:changed`, the full `pnpm test`, `pnpm typecheck`, `pnpm check` pass, a changeset is in, it is merged to main with CI green (no release), and task 557 has a message with what the cause was and the before and after numbers. Put a time limit on every command that could wait for input (ssh to the m1, screen recording). Close the task yourself when done.
+
+## Comments
+
+### agent, 2026-11-12T03:02:03.752Z
+
+Merged to main and judged in task 557.

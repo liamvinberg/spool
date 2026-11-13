@@ -1,9 +1,10 @@
 # #300 · Instant play window, and the player inside exported HTML
 
-- State: open
+- State: closed (done: merged to main)
 - Labels: ready-for-agent, enhancement
 - Created: 2026-11-11T21:22:56.713Z
-- Updated: 2026-11-11T21:22:56.713Z
+- Updated: 2026-11-12T18:05:16.986Z
+- Closed: 2026-11-12T18:05:16.986Z
 
 ## Problem Statement
 
@@ -81,3 +82,68 @@ Turned down:
 - Liam approved the look on the canvas (task 609). The frames are in `design/frames/app/` marked To build; ticket 4 names them.
 - Memory: the spare was estimated at about 100 MB, which Liam accepted. Measure the real figure and report it.
 - From the scouts: the play route, shell assembly and vendor bundles are in the daemon's app, play, player-compile and vendor modules; the shell, chrome, sizing and fit in the runtime's player-shell-runtime, player-chrome, player-size, player-size-model and player-fit; the play window in the desktop main process; the export in the daemon's html-export and the canvas's export menu. ADR 0003 explains why the player is one composed document.
+
+## Comments
+
+### agent, 2026-11-12T18:05:16.986Z
+
+Merged to main in 4d107b4e (task 619). All four tickets closed. Final review (standards and spec) found 10 points; all fixed before the merge:
+
+# spec-619 review fixes
+
+Worktree `619-implement-spec-300-when-every-ticket-has--spec-619-fix`, on 1bcfb20c. There are 9 commits and the tree is clean. No changesets were added: every fix changes behaviour that has not been released yet, and the spec's three changesets already describe it.
+
+## Findings
+
+1. **Bridge gated the first reveal** (e7a54e09 `player: reveal on the served geometry while live geometry is still on its way`), in `src/daemon/app.ts`, the inline bridge in `assemblePlayerShell`.
+   - The bridge now asks the daemon for geometry in two ways:
+     - **Catch-up**, when the stream opens or none opens. It is never pending: an answer that differs from what the bridge holds is replayed as a live update, and an equal one announces nothing.
+     - **After a geometry event on the stream.** This one is pending until its answer arrives, or until the 1 s fallback fires. This is the existing wrong-size gate, unchanged.
+   - When the played document connects, the bridge replays what it holds at once. The only exception is a change the stream told of that is still pending; its answer then reveals.
+   - The request handler never starts a fetch.
+   - `geometrySubscribed`, `geometryCurrent` and `geometryAsking` are gone. `announcedRevision` now tracks whether anything is outstanding, and the latest request settles it in `finally`.
+   - Test: `player-parity-browser.test.ts`. The old #303 case is replaced by "reveals on the geometry it was served with while its first live geometry is still on its way". It holds the first `/frames` answer open and holds the inner document until that request has gone out, so the inner document connects while `/frames` is pending. It then checks a reveal at 390×844 and exactly one `/frames` request, and releases the hold only after.
+   - Against the old app.ts this test fails with `expected 2 to be 1`, which is the reviewer's second request.
+2. **Ten-second spare refill** (fbac594f `desktop: refill the spare only once a play reveals, closes or fails`). `REVEAL_PATIENCE_MS` and its timer are gone, and `awaitingReveal` is now a `Set`.
+   - A play stops holding the next spare back on any of these:
+     - the frame-revealed mark;
+     - `closed`;
+     - `render-process-gone`;
+     - a main-frame `did-fail-load` that is not an abort, decided by `loadFailedForGood(code, isMainFrame)` in `play-spare.ts`. The spare's own fail handler uses it too.
+   - Test: `play-spare.test.ts`, new case "a play stops holding the next spare back only when its own page fails for good". The existing case already proves that a play still awaiting its reveal blocks a refill.
+   - A frame that shows an error in the player (never revealed) now holds the spare back until its window closes. That is what the finding asked for.
+3. **Export inherited the start size** (29286a28 `player: the host keeps the start size, and an export opens as drawn`).
+   - `PlayerShellHost.start?: PlayerShellStart { read(); write(at) }`. The live host passes `{ read: readStart, write: writeStart }`, so its memory is exactly as before. The export host passes nothing, so it opens As drawn (Window when bare on touch, as before) and writes nothing.
+   - Test: in `html-export-browser.test.ts`'s player case, it picks Window, opens the file again in the same context, and expects `1440 × 900 · 89%` and an inner width of 1440. Without the fix it fails with `1280 × 870 · window`.
+   - It opens with `goto(file)`, not `reload()`. The shell writes `?frame=` into the address, and the offline route only lets the bare file URL through.
+4. **GLOSSARY** (5084c362).
+   - Player: covers the tab, the Mac window and the exported file; layout at the played size (as drawn, window, device, pulled); scaled down to fit and never up, with long pages scrolling at their width's scale; and where it opens (last pick when live, As drawn when exported).
+   - Edge bar: covers the 30px strip drawn by the page and always worn; the name and the size list; the title bar with the lights in the Mac window; copy link and close in a tab; no Record, copy link or close in an export; and no bar on touch in an export.
+5. **Source-text interception at 1442.** Removed with finding 1's test (e7a54e09); the new test reads no function text.
+   - The older interception at :1199 (`waits for current geometry when shell and runtime snapshots split`, from before the spec) is left as it was. The bridge's fallback still names `announceGeometry`, so that old hold still works and its `fallbacks > 0` guard passes.
+6. **Class string in play-serve** (c5d0e364 `test: the spare page's test asserts no class string`). Dropped. The CSP, `no-store`, no-script/handoff/token and render-origin 404 assertions are kept.
+7. **desktop/README** (c1d99a95). The spare paragraph is replaced with:
+   - play opens at once from a window kept ready;
+   - the `play marks` line in `app.log` in the state directory, with an example, how to read `spare` and `fresh`, the times in ms after the press, and `-` for a mark never reached.
+
+   The paragraph about the legacy popup and the control token is kept.
+8. **"screen" for frame** (c84d0aa5). `PlayerShellConfig.start` and `frames` docs now say "frame". The other "screen" uses in the spec's diff are either moved older text or mean a device screen ("touch screen", "on screen").
+9. **daemonOn/daemonOrigin** (5acf108e). These are now one `daemonOn: { identity, origin } | undefined`, set in one assignment.
+10. **Export assembly duplication** (70f4458b). It is extracted into `playScript(config)` and `frameStyles(styles, config, fonts, transitions)`, shared by `exportDocument` and `playerDocument`.
+    - Byte proof: 12 exports before and after, compared with `cmp`, and all were identical. The 12 are two projects (one with `shared/fonts.css`, transitions, a scenario and an image; one with neither) × scopes one and flow × no flag, `player=0` and `player=1`. Project names were normalized, and exports were checked deterministic first by running twice.
+    - Samples: `/tmp/spec619-fix/{before,after}/`. Script: `/tmp/spec619-fix/sample.test.ts`, not committed.
+    - The `transitions === undefined` branch is not hit: every project gets a default transitions.css. It is the same expression moved verbatim.
+
+Left alone as asked: the legacy popup path that awaits `frameGeometry()`.
+
+## Checks
+
+- `pnpm test:changed --base 1bcfb20c`: 391/392 across 36 files, covering player-parity-browser, play-serve, html-export-browser, html-export and player-runtime. The one failure is the known `deck/stage.test.ts` load flake; it passed alone, 7/7.
+- Also run on their own:
+  - `play-tab-browser`: 3/3.
+  - player-parity-browser `-t geometry`: 16/16.
+  - The new parity case: fails on the old bridge.
+  - The html-export-browser player case: passes; fails without the fix.
+- desktop: `pnpm typecheck` clean; `pnpm test` 142/143. The one failure is update-feed, which fails before any change.
+- `pnpm typecheck`, `pnpm check` and `pnpm build` are clean.
+- No lane daemon was started. The full `pnpm test` was not run; the brief's list did not include it.

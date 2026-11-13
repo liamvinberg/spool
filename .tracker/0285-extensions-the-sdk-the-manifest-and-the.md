@@ -3,9 +3,10 @@
 - State: open
 - Labels: ready-for-agent
 - Parent: #284
+- Blocked by: #261
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-11T10:15:03.227Z
-- Updated: 2026-11-11T10:15:03.227Z
+- Updated: 2026-11-12T12:02:13.296Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -19,9 +20,10 @@ Read the spec's "An extension on disk", "Life of an extension", "Slots in this s
 - **The manifest**, `extension.json`: its shape, a reader that runs nothing, and refusals a person can read. Official extensions are found in `extensions/*/` at build time.
 - **The host**: the registry, the states (off, waiting with a reason, running, failed with the error), activation that owns everything a part registers plus `effect()`, disposal in reverse that waits, an owner outliving what fills its slot, a piece missing from `adds` refused, a throw contained, lazy loading per part.
 - **Daemon side**: one registrar for routes under `/x/<id>/` behind core's checks, verbs declared in the manifest (listed by `--help` with no daemon, run by the daemon part), lifecycle hooks, watches and jobs, all closed when the extension stops. The daemon refuses a part from inside a project or `design/` and loads parts only from spool's own package.
-- **Frame side**: a frame part is loaded into the frame runtime, adds calls to the `spool` import with their types (an augmentable `SpoolUi`), gets boot data as a document boots, and declares each call's fallback. The `spool` module served to frames, the player, the HTML export and spool.page's viewer is built from core plus every official frame part; the types a project's frames are checked against too.
-- **Compile side**: a compile part is a pure, versioned transform, part of the cache key, run by every compiler.
+- **Frame side**: a frame part is loaded into the frame runtime, adds calls to the `spool` import with their types (an augmentable `SpoolUi`), gets boot data as a document boots, and declares each call's fallback. The `spool` module served to frames, the player, the HTML export and spool.page's viewer is built from core plus every official frame part; the types a project's frames are checked against too. Today that module leaves the repo by separate doors, and each must carry the parts: the package build (`tsup.config.ts`), the bundle a checkout makes on demand (`src/daemon/vendor.ts`), the import map (`src/daemon/vendor-pins.ts`), the modules embedded in an HTML export (`src/daemon/html-export.ts`), and the strings the cloud serves (`src/vendor-entry-build.ts`, the `spool.page/vendor` export). The types are a file copy today (`src/runtime/spool-public.ts` to `dist/spool-public.d.ts` in `package.json`'s build, and `src/check.ts` maps `spool` to one or the other), so the augmentations have to reach both.
+- **Compile side**: a compile part is a pure, versioned transform, run by every compiler. Its id, its version and the order the parts apply in go into the compiler's identity, beside `COMPILE_REVISION` in `src/daemon/design-compile.ts`. That is a different thing from #261 (a cache hit that misses a newly added file), which is fixed before this ticket starts: build on that fix, do not redo it.
 - **`spool extensions`**: lists what is there with each one's state and reason.
+- **Settings from the manifest**: the registry is a closed, typed list today (`SettingKey = keyof typeof SETTINGS` in `src/settings/registry.ts`; `src/daemon/settings.ts` refuses a key it does not know). It is put together from core's list plus the official manifests at build time and stays typed. Each extension's on/off key is made the same way. Only `spool extensions` reads them in this ticket.
 - **Lint**, in `pnpm check`: `extensions/**` imports only the SDK, its own files, npm packages and types from extensions named in `uses`; core never imports `extensions/**`.
 - **The test kit** (`spool/sdk/test`): runs a part against a fake core. Start it here with the daemon, frame and compile sides.
 - Rename the Chrome extension's folder `extension/` to `browser-extension/` (scripts, tsconfig, `AGENTS.md`, docs), so it does not sit beside `extensions/`. The glossary gains the spec's words.
@@ -36,7 +38,7 @@ Prove it with a fixture extension that lives with the tests and is never shipped
 
 ## Where to start
 
-The spike on the local branch `567-wayfinder-map-251-ticket-259-a`, `spikes/extension-core/` (`sdk/`, `core/manifests.ts`, `core/daemon/host.ts`, `core/frame/`, `core/compile.ts`): read it for shape, it was never reviewed. Today's code, to be checked: how the daemon mounts routes and closes resources (`src/daemon/app.ts`), the CLI (`src/cli.ts`), the frame runtime and the public `spool` types (`src/runtime/frame-runtime.ts`, `spool-public.ts`), the vendored `spool` module (`src/daemon/vendor.ts`), the compiler and its cache key (`src/daemon/design-compile.ts`, `player-compile.ts`, `compile-host.ts`, the `./compile` package export), the experiments registry for how one declared list reaches every side (`src/settings/experiments.ts`).
+The spike on the local branch `567-wayfinder-map-251-ticket-259-a`, `spikes/extension-core/` (`sdk/`, `core/manifests.ts`, `core/daemon/host.ts`, `core/frame/`, `core/compile.ts`): read it for shape, it was never reviewed. Its manifests are `extension.ts`; the spec chose JSON after it. The `spikes/` folder on main holds other spikes, not this one. Today's code, to be checked: how the daemon mounts routes and closes resources (`src/daemon/app.ts`), the CLI (`src/cli.ts`), the frame runtime and the public `spool` types (`src/runtime/frame-runtime.ts`, `src/runtime/spool-public.ts`), the vendored `spool` module (`src/daemon/vendor.ts`), the compiler and its cache key (`src/daemon/design-compile.ts`, `player-compile.ts`, `compile-host.ts`, the `./compile` package export), the experiments registry for how one declared list reaches every side (`src/settings/experiments.ts`). `~/.brain-archive/core-spec/refresh/scout-base.md` has these paths checked against main at 0.56.0, with line numbers.
 
 ## Leave alone
 
