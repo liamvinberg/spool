@@ -152,7 +152,9 @@ export function createStagePlay(deps: StagePlayDeps) {
 
 /**
  * The stage's own look, before any slide's: the ground around the talk's screen, the slide on show above the ones rendered
- * out of sight, one put on ahead unseen and carrying nothing into a dissolve, and the carry and dissolve between slides
+ * out of sight, one put on ahead unseen and carrying nothing into a dissolve, its contents never styled or laid out while
+ * it waits (only the slide on screen's styles are on then, so what it measured as it mounted is what it measures on
+ * screen, and a canvas sized by what it measures is never set off), and the carry and dissolve between slides
  * from the deck's design, which a slide's own styles may override for what it names. The carry and dissolve are in the
  * layer the document declares first, under every layer a slide's sheets are in: unlayered, they beat a slide's own
  * rules whatever those name, short of `!important` (spool#323). The dissolve lays the new slide over the old one, which
@@ -163,7 +165,7 @@ export const STAGE_CSS = `html { background: ${STAGE_GROUND}; }
 #root { position: absolute; inset: 0; }
 .spool-stage-slide { position: absolute; left: 0; top: 0; overflow: hidden; transform-origin: 0 0; z-index: 0; }
 .spool-stage-slide[data-spool-stage-shown] { z-index: 1; }
-.spool-stage-slide[data-spool-stage-waiting] { opacity: 0; }
+.spool-stage-slide[data-spool-stage-waiting] { opacity: 0; content-visibility: hidden; }
 .spool-stage-slide[data-spool-stage-waiting] * { view-transition-name: none !important; }
 .spool-stage-kept { display: contents; }
 .spool-stage-black { position: absolute; inset: 0; z-index: 2; background: #000; }

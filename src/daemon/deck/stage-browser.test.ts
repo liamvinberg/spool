@@ -212,6 +212,10 @@ it("plays the hard talk end to end: each step ready before its key and on in a f
 
 	// every slide that can show was seen whole, in the talk's order, and nothing else was
 	expect(wholeSlides(read)).toEqual(["title", "photo", "words", "gl", "live", "tall", "beat-throws", "end"]);
+	// a canvas sized by what it measures only ever measured its own size, waiting out of sight as on screen: never the
+	// size the styles of the slide on screen would lay it out at
+	const sizes = await stageFrame(page).evaluate(() => (window as unknown as { __glSizes?: string[] }).__glSizes ?? []);
+	expect(new Set(sizes)).toEqual(new Set(["640x360"]));
 	// each broken slide is named, and the one that broke on screen kept its picture, its WebGL canvas included
 	const slides = slidesBy((await said(page)).at(-1));
 	expect(slides.find((slide) => slide.frame === "talk/mount-throws")).toMatchObject({
