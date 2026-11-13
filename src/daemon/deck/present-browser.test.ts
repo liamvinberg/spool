@@ -553,3 +553,188 @@ export default function Slide() {
 	expect(await made("[data-deck-presenter]")).toBeGreaterThan(0);
 	await audience.close();
 });
+
+it("gives the room's copy of a live slide what the presenter does in it: clicks, tabs, hover, the wheel, typing and a drag, a room reloaded gets where it stands, and a slide waiting out of sight never writes the talk's state", {
+	timeout: 180_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir, experiments: { deck: true } });
+	const json = (value: unknown) => `${JSON.stringify(value, null, "\t")}\n`;
+	const slides = ["proto", "second", "waits"];
+	writeDesignFile(project.root, "frames/talk/deck.json", json({ version: 1, w: 1280, h: 720, slides }));
+	const ground = "position: absolute; inset: 0; background: #f1faee; font: 32px sans-serif;";
+	const files: Record<string, { tsx: string; css: string }> = {
+		// a prototype written the ordinary way: its state in React, its scroll and its hover the browser's
+		proto: {
+			tsx: `import "./slide.css";
+import { useRef, useState } from "react";
+import { ui } from "spool";
+
+export default function Slide() {
+	ui.live();
+	const [count, setCount] = useState(0);
+	const [tab, setTab] = useState("one");
+	const [text, setText] = useState("");
+	const [near, setNear] = useState(false);
+	const [at, setAt] = useState(0);
+	const grab = useRef<number | null>(null);
+	return (
+		<div className="ground">
+			<button type="button" id="count" onClick={() => setCount(count + 1)}>{\`count \${count}\`}</button>
+			<button type="button" id="tab" onClick={() => setTab("two")}>{\`tab \${tab}\`}</button>
+			<ul id="list">{Array.from({ length: 60 }, (_, row) => <li key={row}>{\`row \${row}\`}</li>)}</ul>
+			<input id="field" value={text} onChange={(event) => setText(event.target.value)} />
+			<p id="echo">{\`said \${text}\`}</p>
+			<div id="hover" onPointerEnter={() => setNear(true)} onPointerLeave={() => setNear(false)}>{near ? "near" : "far"}</div>
+			<div id="card" />
+			<div
+				id="knob"
+				style={{ transform: \`translateX(\${at}px)\` }}
+				onPointerDown={(event) => {
+					event.currentTarget.setPointerCapture(event.pointerId);
+					grab.current = event.clientX - at;
+				}}
+				onPointerMove={(event) => {
+					if (grab.current !== null) setAt(Math.round(event.clientX - grab.current));
+				}}
+				onPointerUp={() => {
+					grab.current = null;
+				}}
+			/>
+		</div>
+	);
+}
+`,
+			css: `.ground { ${ground} }
+#count { position: absolute; left: 40px; top: 40px; font-size: 32px; }
+#tab { position: absolute; left: 300px; top: 40px; font-size: 32px; }
+#list { position: absolute; left: 40px; top: 140px; width: 300px; height: 240px; overflow: auto; margin: 0; }
+#field { position: absolute; left: 400px; top: 140px; font-size: 32px; }
+#echo { position: absolute; left: 400px; top: 200px; margin: 0; }
+#hover { position: absolute; left: 400px; top: 300px; width: 200px; height: 80px; background: #a8dadc; }
+#card { position: absolute; left: 640px; top: 300px; width: 200px; height: 80px; background: #e63946; opacity: 0; }
+#hover:hover + #card { opacity: 1; }
+#knob { position: absolute; left: 40px; top: 480px; width: 80px; height: 80px; background: #1d3557; touch-action: none; }
+`,
+		},
+		second: {
+			tsx: `import "./slide.css";
+import { useState } from "react";
+import { ui } from "spool";
+
+export default function Slide() {
+	ui.live();
+	const [count, setCount] = useState(0);
+	return (
+		<div className="ground">
+			<button type="button" id="again" onClick={() => setCount(count + 1)}>{\`again \${count}\`}</button>
+		</div>
+	);
+}
+`,
+			css: `.ground { ${ground} }\n#again { position: absolute; left: 40px; top: 40px; font-size: 32px; }\n`,
+		},
+		// put on ahead out of sight, it writes \`ui.state\` from a timer once it has mounted
+		waits: {
+			tsx: `import "./slide.css";
+import { useEffect } from "react";
+import { ui } from "spool";
+
+export default function Slide() {
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			ui.state.sneaked = true;
+		}, 200);
+		return () => clearTimeout(timer);
+	}, []);
+	return <div className="ground">waits</div>;
+}
+`,
+			css: `.ground { ${ground} }\n`,
+		},
+	};
+	for (const [index, name] of slides.entries()) {
+		const file = files[name];
+		if (file === undefined) continue;
+		writeDesignFile(project.root, `frames/talk/${name}/frame.tsx`, file.tsx);
+		writeDesignFile(project.root, `frames/talk/${name}/slide.css`, file.css);
+		writeDesignFile(project.root, `frames/talk/${name}/frame.json`, json({ x: index * 1440, y: 0, w: 1280, h: 720 }));
+	}
+	writeDesignFile(
+		project.root,
+		".spool/state.json",
+		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.2 } } }),
+	);
+	const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+	await tapStages(context);
+	const view = await context.newPage();
+	await view.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	await view.locator("[data-deck-band]").waitFor({ timeout: 30_000 });
+	const opened = context.waitForEvent("page");
+	await view.getByRole("button", { name: "Ways to present" }).click();
+	await view.getByRole("menuitemradio", { name: /Presenter view/ }).click();
+	const audience = await opened;
+	await audience.setViewportSize({ width: 1280, height: 720 });
+	await view.locator("[data-deck-presenter]").waitFor();
+	expect(await together(view, audience)).toEqual({ slide: 0, beat: 0 });
+
+	const mine = (selector: string) =>
+		view.frameLocator("[data-deck-slide] iframe >> nth=-1").locator(`[data-spool-stage-shown] ${selector}`);
+	const theirs = (selector: string) =>
+		audience.frameLocator("iframe >> nth=-1").locator(`[data-spool-stage-shown] ${selector}`);
+
+	// state in React: a counter and a tab
+	for (let click = 0; click < 3; click++) await mine("#count").click();
+	await mine("#tab").click();
+	await expect.poll(() => theirs("#count").textContent()).toBe("count 3");
+	await expect.poll(() => theirs("#tab").textContent()).toBe("tab two");
+	// the hand over a card: React hears it come and go, and the card the CSS shows on hover shows
+	await mine("#hover").hover();
+	await expect.poll(() => theirs("#hover").textContent()).toBe("near");
+	await expect.poll(() => theirs("#card").evaluate((card) => getComputedStyle(card).opacity)).toBe("1");
+	await mine("#count").hover();
+	await expect.poll(() => theirs("#hover").textContent()).toBe("far");
+	await expect.poll(() => theirs("#card").evaluate((card) => getComputedStyle(card).opacity)).toBe("0");
+	// the wheel over a scrolling list scrolls it in both, to the same place
+	const list = await mine("#list").boundingBox();
+	if (list === null) throw new Error("no list");
+	await view.mouse.move(list.x + list.width / 2, list.y + list.height / 2);
+	await view.mouse.wheel(0, 400);
+	await expect.poll(() => mine("#list").evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+	const scrolled = await mine("#list").evaluate((element) => element.scrollTop);
+	await expect.poll(() => theirs("#list").evaluate((element) => element.scrollTop)).toBe(scrolled);
+	// typing in a field React holds
+	await mine("#field").click();
+	await view.keyboard.type("hello");
+	await expect.poll(() => theirs("#field").inputValue()).toBe("hello");
+	await expect.poll(() => theirs("#echo").textContent()).toBe("said hello");
+	await view.keyboard.press("Escape");
+	// a drag that takes the pointer as it presses
+	const knob = await mine("#knob").boundingBox();
+	if (knob === null) throw new Error("no knob");
+	await view.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2);
+	await view.mouse.down();
+	await view.mouse.move(knob.x + knob.width / 2 + 60, knob.y + knob.height / 2, { steps: 6 });
+	await view.mouse.up();
+	const dragged = () => (element: Element) => new DOMMatrix(getComputedStyle(element).transform).m41;
+	const moved = await mine("#knob").evaluate(dragged());
+	expect(moved).toBeGreaterThan(100);
+	await expect.poll(async () => Math.abs((await theirs("#knob").evaluate(dragged())) - moved)).toBeLessThan(2);
+
+	// a room reloaded on the live slide gets where its scroll and its field stand; its counter starts again
+	await audience.reload();
+	expect(await together(view, audience)).toEqual({ slide: 0, beat: 0 });
+	await expect.poll(() => theirs("#list").evaluate((element) => element.scrollTop)).toBe(scrolled);
+	await expect.poll(() => theirs("#echo").textContent()).toBe("said hello");
+
+	// the next live slide is given what is done in it, and the one after it, put on ahead, writes nothing of the talk's
+	await view.keyboard.press("ArrowRight");
+	expect(await together(view, audience)).toEqual({ slide: 1, beat: 0 });
+	await mine("#again").click();
+	await expect.poll(() => theirs("#again").textContent()).toBe("again 1");
+	await view.waitForTimeout(1000);
+	const sessions = (await said(view)).flat().flatMap((one) => (one.spool === "stage-session" ? [one.session] : []));
+	expect(sessions.filter((session) => "sneaked" in session.state)).toEqual([]);
+	await audience.close();
+});

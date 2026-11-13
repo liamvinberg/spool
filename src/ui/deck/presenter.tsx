@@ -283,6 +283,8 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 			room: false,
 			rest: true,
 			webgl: PRESENTED_WEBGL.slide,
+			// what is done in a live slide here, the room's copy of it is given (spool#332)
+			relay: true,
 			frame: ask.slide,
 			on: {
 				talk: setTalk,
@@ -316,6 +318,7 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 					setPointer(at);
 					say({ kind: "pointer", at: pointerForRoom(at, pointerShown()) });
 				},
+				input: (inputs) => say({ kind: "input", inputs }),
 				refused: (why) => {
 					if (!pictured) hands.current.onRefused(why);
 				},
@@ -346,6 +349,8 @@ export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture
 					paid();
 				}
 			} else if (message.kind === "command" && roomPasses(message.command)) carry(message.command);
+			// the room's copy of the live slide came on show: where this one stands, its scrolls, fields and focus
+			else if (message.kind === "recall") host.recall();
 		});
 		// the window the browser handed over says itself when it closes, and sooner than its last word
 		const watch = setInterval(() => {

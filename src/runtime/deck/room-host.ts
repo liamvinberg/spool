@@ -11,7 +11,8 @@ import { mountStage, type StageHost } from "./stage-host";
  * The room's window (spool#265): what the audience sees while a talk is presented from spool's own window, the slide and
  * nothing else, ever. No chrome, no cursor; black and frozen as its states. It holds the stage as a follower and shows
  * the newest session the presenter view publishes on the talk's broadcast channel, asking for it as it opens, so a
- * reload lands where the talk is. The presenter's pointer over a live slide shows here (`room-pointer.ts`), and only then.
+ * reload lands where the talk is. The presenter's pointer over a live slide shows here (`room-pointer.ts`), and only then,
+ * and what the presenter does in it is done in the room's copy (spool#332): the stage gives it to that slide alone.
  *
  * Its keys and clicks move the talk through the presenter, which carries them out and publishes the result: the room
  * never steps by itself. In a browser the first key or click in it puts it full screen, and does nothing else. When the
@@ -78,6 +79,7 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 		},
 		mode: "follow",
 		room: true,
+		replay: true,
 		...(config.frame === undefined ? {} : { frame: config.frame }),
 		on: {
 			// a new build took the screen: the newest session, which it may now be able to show
@@ -94,6 +96,7 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 			command: (command) => {
 				if (roomPasses(command)) say({ kind: "command", command });
 			},
+			recall: () => say({ kind: "recall" }),
 			refused: (why) => {
 				// what there is to show, the ground, is shown rather than held back
 				sayDrawn();
@@ -140,6 +143,8 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 		} else if (message.kind === "pointer") {
 			pointer = message.at;
 			dot.draw();
+		} else if (message.kind === "input") {
+			host.input(message.inputs);
 		} else if (message.kind === "end") {
 			channel.close();
 			// the window goes on the slide it shows: torn down first, it painted its black ground for a few frames before

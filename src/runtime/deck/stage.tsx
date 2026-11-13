@@ -37,6 +37,14 @@ import {
 	type StageSlideConfig,
 } from "../../deck/stage-wire";
 import { SlideScope, setSlideBeat } from "../slide-beats";
+import {
+	type InputRecorder,
+	type InputReplayer,
+	type OnShow,
+	recordInput,
+	replayInput,
+	replaying,
+} from "./stage-input";
 import { type KeptPicture, keepPicture } from "./stage-keep";
 import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
 import { giveBackWhen, limitWebgl, releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn } from "./stage-webgl";
@@ -245,6 +253,15 @@ export function bootStage(runtime: StageRuntime): void {
 	let filling = false;
 	/** a preview: the slide on screen draws once as it goes on or changes, and rests */
 	let still = false;
+	/** the presenter's own slide: the input its live slide on show is given is said, for the room's copy (spool#332) */
+	let relay = false;
+	/**
+	 * what is done in the live slide on show, recorded once the stage is told it relays: its listeners come after the
+	 * stage's own, so the wheel the held button takes is never the slide's
+	 */
+	let recorder: InputRecorder | undefined;
+	/** the room's copy given what the presenter does, for a stage told it replays */
+	let replayer: InputReplayer | undefined;
 	let opened = !embedded;
 	/** the WebGL contexts this document may hold: its share of what the browser keeps alive in its process */
 	let webglShare = WEBGL_SHARE;
@@ -291,6 +308,14 @@ export function bootStage(runtime: StageRuntime): void {
 			copies.set(key, copy);
 		}
 		return copy;
+	}
+
+	/** A copy let go, to be rendered afresh if it is wanted again: what was done in it is let go too. */
+	function dropCopy(copy: Copy): void {
+		if (copies.get(copy.key) !== copy) return;
+		copies.delete(copy.key);
+		recorder?.letGo(copy.key, talk[copy.index]?.frame ?? "", copy.take);
+		replayer?.letGo(copy.key);
 	}
 
 	/** Its stylesheet is in the document. */
@@ -546,7 +571,7 @@ export function bootStage(runtime: StageRuntime): void {
 	function sleep(copy: Copy): void {
 		// a broken copy is never shown, so never rendered afresh: it would only throw again
 		if (held(copy) > 0 && !copy.broken) {
-			copies.delete(copy.key);
+			dropCopy(copy);
 			copyFor(copy.index, copy.take);
 			return;
 		}
@@ -586,7 +611,7 @@ export function bootStage(runtime: StageRuntime): void {
 				copy.failed = true;
 				slide.unloaded = `${warmed.failed.join(", ")} would not load`;
 				setTimeout(() => {
-					if (copies.get(copy.key) === copy && shown !== copy.key) copies.delete(copy.key);
+					if (shown !== copy.key) dropCopy(copy);
 					settle();
 				}, RETRY_MS);
 			} else {
@@ -718,7 +743,7 @@ export function bootStage(runtime: StageRuntime): void {
 			const mine = (copy: Copy) => !stepping || copy.index === target;
 			// a copy gone blank goes first, so one wanted is rendered afresh in its place now
 			for (const [key, copy] of copies)
-				if (copy.blank && key !== shown && key !== revealed?.from && mine(copy)) copies.delete(key);
+				if (copy.blank && key !== shown && key !== revealed?.from && mine(copy)) dropCopy(copy);
 			if (stepping) {
 				if (slides[target]?.module === "in") copyFor(target, takeOf(target, want.takes));
 			} else {
@@ -726,7 +751,7 @@ export function bootStage(runtime: StageRuntime): void {
 				if (shown !== null) keep.add(shown);
 				// the slide a swap just took off stays while the one it put on can still be undone
 				if (revealed?.from != null) keep.add(revealed.from);
-				for (const key of copies.keys()) if (!keep.has(key)) copies.delete(key);
+				for (const [key, copy] of copies) if (!keep.has(key)) dropCopy(copy);
 				arrange();
 			}
 			for (const copy of copies.values()) {
@@ -871,6 +896,12 @@ export function bootStage(runtime: StageRuntime): void {
 			if (copy !== undefined) copy.awake = true;
 			redraw();
 		});
+		if (was !== copy) {
+			recorder?.shown();
+			// input that came for it before it was on show, given once the slide has drawn what it was put on with
+			if (replayer !== undefined) queueMicrotask(() => replayer?.shown());
+			recall();
+		}
 		// the one put on plays what was held for it; the one taken off draws no more, and is held still as it would wait
 		// to go on again once the frame showing the change has been
 		if (copy?.box !== undefined) letGo(copy.box);
@@ -981,7 +1012,9 @@ export function bootStage(runtime: StageRuntime): void {
 	function take(next: StageSession): void {
 		if (next === session) return;
 		const before = room ? roomPicture(session) : session;
+		const thawed = session.frozen !== null && next.frozen === null;
 		session = next;
+		if (thawed) recall();
 		const after = picture();
 		if (JSON.stringify(after.state) !== JSON.stringify(runtime.state.read())) seed(after.state);
 		if (mode === "own") post({ spool: "stage-session", session });
@@ -1043,6 +1076,13 @@ export function bootStage(runtime: StageRuntime): void {
 			filling = message.filling === true;
 			still = message.still === true;
 			if (message.webgl !== undefined) webglShare = message.webgl;
+			relay = message.relay === true;
+			if (message.replay === true) replayer ??= replayInput(replayed());
+			if (relay)
+				recorder ??= recordInput({
+					live: () => (mode === "own" ? liveOnShow() : undefined),
+					send: (inputs) => post({ spool: "stage-input", inputs }),
+				});
 			opened = true;
 			let next = message.session;
 			if (next !== undefined && message.frame !== undefined && talk[next.at.slide]?.frame !== message.frame) {
@@ -1067,6 +1107,14 @@ export function bootStage(runtime: StageRuntime): void {
 		if (message.spool === "stage-webgl") {
 			webglShare = message.webgl;
 			settle();
+			return;
+		}
+		if (message.spool === "stage-input") {
+			replayer?.give(message.inputs);
+			return;
+		}
+		if (message.spool === "stage-recall") {
+			recorder?.recall();
 			return;
 		}
 		if (message.spool === "stage-cursor") {
@@ -1110,7 +1158,8 @@ export function bootStage(runtime: StageRuntime): void {
 	};
 
 	addEventListener("keydown", (event) => {
-		if (!opened) return;
+		// a key the presenter pressed in the room's copy of a live slide is the slide's, never the talk's
+		if (!opened || replaying()) return;
 		const read = readKey(
 			pressedKey(event),
 			{
@@ -1134,7 +1183,7 @@ export function bootStage(runtime: StageRuntime): void {
 	});
 
 	addEventListener("click", (event) => {
-		if (!opened || event.defaultPrevented || event.button !== 0) return;
+		if (!opened || replaying() || event.defaultPrevented || event.button !== 0) return;
 		if (room && session.black) carry({ kind: "black", on: false });
 		else if (shownSlide()?.live !== true && !session.keys) carry({ kind: "next" });
 	});
@@ -1166,6 +1215,7 @@ export function bootStage(runtime: StageRuntime): void {
 		);
 	};
 	addEventListener("pointermove", (event) => {
+		if (replaying()) return;
 		hand = { x: event.clientX, y: event.clientY };
 		pen.move(event.clientX, event.clientY);
 		point();
@@ -1173,7 +1223,7 @@ export function bootStage(runtime: StageRuntime): void {
 	addEventListener(
 		"pointerdown",
 		(event) => {
-			if (event.button !== 0) return;
+			if (replaying() || event.button !== 0) return;
 			hand = { x: event.clientX, y: event.clientY };
 			pen.press(event.clientX, event.clientY, event.timeStamp);
 			point();
@@ -1183,6 +1233,7 @@ export function bootStage(runtime: StageRuntime): void {
 	addEventListener(
 		"pointerup",
 		(event) => {
+			if (replaying()) return;
 			pen.release(event.timeStamp);
 			point();
 		},
@@ -1192,7 +1243,7 @@ export function bootStage(runtime: StageRuntime): void {
 	addEventListener(
 		"wheel",
 		(event) => {
-			if (alone || pointer === null || !pen.wheel(event.deltaY)) return;
+			if (replaying() || alone || pointer === null || !pen.wheel(event.deltaY)) return;
 			event.preventDefault();
 			event.stopImmediatePropagation();
 			point();
@@ -1205,6 +1256,47 @@ export function bootStage(runtime: StageRuntime): void {
 		hand = null;
 		point();
 	});
+
+	// --- what the presenter does in a live slide, and the room's copy given it (spool#332) -----------------
+
+	/** The live slide on show, as input needs it. */
+	function liveOnShow(): OnShow | undefined {
+		const copy = shown === null ? undefined : copies.get(shown);
+		const slide = copy === undefined ? undefined : talk[copy.index];
+		if (!opened || copy?.box === undefined || slide?.live !== true) return undefined;
+		return { key: copy.key, frame: slide.frame, take: copy.take, box: copy.box };
+	}
+	/** The room's live slide on show while it shows the talk as it is, its black over it or not: never a held picture. */
+	const roomLive = () => (session.frozen === null ? liveOnShow() : undefined);
+	/** What the room's copy is given by, and where it waits. */
+	function replayed() {
+		return {
+			live: roomLive,
+			coming: () => {
+				const at = picture();
+				const slide = talk[at.at.slide];
+				const take = takeOf(at.at.slide, at.takes);
+				return slide?.live === true && keyOf(at.at.slide, take) !== shown
+					? { frame: slide.frame, take }
+					: undefined;
+			},
+			afresh: (frame: string, take: number) => {
+				const copy = copies.get(
+					keyOf(
+						talk.findIndex((slide) => slide.frame === frame),
+						take,
+					),
+				);
+				if (copy === undefined || copy.key === shown) return;
+				dropCopy(copy);
+				settle();
+			},
+		};
+	}
+	/** The room's copy of a live slide came on show, or the room let go of the picture it held: it asks where it stands. */
+	function recall(): void {
+		if (replayer !== undefined && roomLive() !== undefined) post({ spool: "stage-recall" });
+	}
 
 	// --- reports -----------------------------------------------------------------------------------------
 

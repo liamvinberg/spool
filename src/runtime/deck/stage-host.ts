@@ -1,4 +1,5 @@
 import type { Size } from "../../deck/deck-file";
+import type { SlideInputs } from "../../deck/input-wire";
 import { fitIn, STAGE_GROUND } from "../../deck/stage-fit";
 import { DIGITS_FORGET_MS, forHost, type KeyCommand, pressedKey, readKey, typingIn } from "../../deck/stage-keys";
 import type { StageCommand, StageSession, TalkSlide } from "../../deck/stage-session";
@@ -41,6 +42,10 @@ export interface StageHostOptions {
 	still?: boolean;
 	/** the WebGL contexts its stage may hold, as its share of the process it runs in; the stage's own share otherwise */
 	webgl?: number;
+	/** the presenter's own slide: what is done in a live slide on screen is said, for the room's copy (spool#332) */
+	relay?: boolean;
+	/** the room's: what the presenter does in a live slide is given to its copy, and nothing else's input ever is */
+	replay?: boolean;
 	/** where it opens: a session, or a slide by its frame (its first beat); the talk's first slide otherwise */
 	session?: StageSession;
 	frame?: string;
@@ -69,6 +74,10 @@ export interface StageHostEvents {
 	refused?(why: string): void;
 	/** where the pointer stands over the live slide on screen, and null once it leaves: the room shows it */
 	pointer?(at: StagePointer | null): void;
+	/** what was done in the live slide on screen, a relaying stage's, for the room's copy of it */
+	input?(inputs: SlideInputs): void;
+	/** a replaying stage's copy of a live slide came on show: where the presenter's stands is wanted */
+	recall?(): void;
 }
 
 export interface StageHost {
@@ -89,6 +98,10 @@ export interface StageHost {
 	cursor(hidden: boolean): void;
 	/** the WebGL contexts its stage may hold from now, for a document whose address named none (spool#320) */
 	share(webgl: number): void;
+	/** the room's: what the presenter did in a live slide, given to this stage's copy of it */
+	input(inputs: SlideInputs): void;
+	/** a relaying stage says again where its live slide on screen stands, for a room that opened since */
+	recall(): void;
 	/** the newest session the host knows */
 	session(): StageSession | undefined;
 	/** the talk, once the stage said it */
@@ -227,6 +240,8 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				...(options.rest === true ? { rest: true } : {}),
 				...(options.still === true ? { still: true } : {}),
 				...(share === undefined ? {} : { webgl: share }),
+				...(options.relay === true ? { relay: true } : {}),
+				...(options.replay === true ? { replay: true } : {}),
 				...(session === undefined ? {} : { session }),
 				...(frameOf === undefined ? {} : { frame: frameOf }),
 			});
@@ -300,6 +315,12 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				return;
 			case "stage-pointer":
 				if (live) on.pointer?.(message.at);
+				return;
+			case "stage-input":
+				if (live) on.input?.(message.inputs);
+				return;
+			case "stage-recall":
+				if (live) on.recall?.();
 				return;
 			case "stage-slides":
 				doc.slides = message.slides;
@@ -458,6 +479,12 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 			if (contexts === webgl) return;
 			webgl = contexts;
 			reshare();
+		},
+		input(inputs) {
+			current?.post?.({ spool: "stage-input", inputs });
+		},
+		recall() {
+			current?.post?.({ spool: "stage-recall" });
 		},
 		session: () => session,
 		talk: () => current?.talk ?? [],
