@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { openLog } from "./log";
-import { keepBarsHidden, loadPresenting, type PresentingModule, talkOptions } from "./presenting";
+import {
+	keepBarsHidden,
+	loadPresenting,
+	type PresentingModule,
+	type SimpleFullScreenWindow,
+	simpleFullScreen,
+	talkOptions,
+} from "./presenting";
 
 test("a talk hides the menu bar and the Dock in place of auto-hiding them, keeping every other option", () => {
 	// a window full screen the macOS way: full screen, the menu bar and the Dock auto-hidden
@@ -68,6 +75,51 @@ test("a talk keeps the bars hidden, each time macOS puts the full screen's back 
 	look();
 	assert.deepEqual(set, [talk, talk, talk]);
 	assert.equal(waits.length, 0);
+});
+
+test("simple full screen, on or off, leaves the keys with the page that had them, as macOS does not", () => {
+	const made = (page: boolean, front: boolean) => {
+		const seen = { page, front, focused: 0, waiting: [] as (() => void)[] };
+		const window = {
+			getNativeWindowHandle: () => Buffer.alloc(8),
+			// macOS builds the frame again, and the page's view is no longer the one keys go to
+			setSimpleFullScreen: () => {
+				seen.page = false;
+			},
+			isFocused: () => seen.front,
+			once: (event: string, then: () => void) => {
+				assert.equal(event, "focus");
+				seen.waiting.push(then);
+				return window;
+			},
+			webContents: {
+				isFocused: () => seen.page,
+				focus: () => {
+					seen.focused++;
+					seen.page = true;
+					seen.front = true;
+				},
+			},
+		} as unknown as SimpleFullScreenWindow;
+		return { window, seen };
+	};
+	const now = (_: SimpleFullScreenWindow, change: () => void) => change();
+	for (const on of [true, false]) {
+		// the window in front, its page with the keys: they are the page's again at once
+		const front = made(true, true);
+		simpleFullScreen(front.window, on, now);
+		assert.deepEqual([front.seen.page, front.seen.focused], [true, 1]);
+		// a page without them is not given them, nor is its window brought in front
+		const without = made(false, true);
+		simpleFullScreen(without.window, on, now);
+		assert.deepEqual([without.seen.page, without.seen.focused, without.seen.waiting.length], [false, 0, 0]);
+		// a window behind another gets them back as it comes in front, not before
+		const behind = made(true, false);
+		simpleFullScreen(behind.window, on, now);
+		assert.deepEqual([behind.seen.page, behind.seen.front, behind.seen.focused], [false, false, 0]);
+		for (const then of behind.seen.waiting) then();
+		assert.deepEqual([behind.seen.page, behind.seen.focused], [true, 1]);
+	}
 });
 
 test("a module that will not load leaves presenting as it was, and says so in the log", () => {

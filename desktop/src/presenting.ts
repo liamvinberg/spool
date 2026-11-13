@@ -107,8 +107,36 @@ export function restoreBars(options: number): void {
 }
 
 /** Makes `change` to `window`'s frame in one step, where macOS would have animated it. */
-export function immediately(window: BrowserWindow, change: () => void): void {
+export function immediately(window: Pick<BrowserWindow, "getNativeWindowHandle">, change: () => void): void {
 	const native = loaded();
 	if (native === undefined) change();
 	else native.immediately(window.getNativeWindowHandle(), change);
+}
+
+/** What `simpleFullScreen` asks of a window. */
+export type SimpleFullScreenWindow = Pick<
+	BrowserWindow,
+	"getNativeWindowHandle" | "setSimpleFullScreen" | "isFocused" | "once"
+> & {
+	readonly webContents: Pick<BrowserWindow["webContents"], "isFocused" | "focus">;
+};
+
+/**
+ * Simple full screen on or off in one step, the keys staying with the page (spool#327). Simple full screen takes the
+ * window's title bar away, and gives it back, by changing its style, and macOS builds the window's frame again for it:
+ * the window stays the key window, but the page's view is no longer the one its keys go to, and the next key after
+ * Present, or after the talk, would reach nothing until the page was clicked. So the page gets them back, when it had
+ * them: at once in the window in front, and in one behind (the room's window in front of it, say) once it comes in
+ * front, as giving the page the keys brings its window in front.
+ */
+export function simpleFullScreen(
+	window: SimpleFullScreenWindow,
+	on: boolean,
+	change: (window: SimpleFullScreenWindow, change: () => void) => void = immediately,
+): void {
+	const keys = window.webContents.isFocused();
+	change(window, () => window.setSimpleFullScreen(on));
+	if (!keys || window.webContents.isFocused()) return;
+	if (window.isFocused()) window.webContents.focus();
+	else window.once("focus", () => window.webContents.focus());
 }

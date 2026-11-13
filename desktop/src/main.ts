@@ -56,7 +56,7 @@ import {
 	type WorkArea,
 	writeRect,
 } from "./play-window";
-import { hideBars, immediately, keepBarsHidden, preparePresenting, restoreBars } from "./presenting";
+import { hideBars, keepBarsHidden, preparePresenting, restoreBars, simpleFullScreen } from "./presenting";
 import { type CanvasDownloads, installCanvasDownloads } from "./project-download";
 import {
 	type RemoteConfig,
@@ -267,7 +267,7 @@ function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 		const display = screen.getDisplayMatching(stood).bounds;
 		showing.setBounds(display, false);
 		filled.pinned = showing.getBounds();
-		immediately(showing, () => showing.setSimpleFullScreen(true));
+		simpleFullScreen(showing, true);
 		if (windowManager !== undefined) filled.release = windowManager.lift(showing, display).release;
 		if (!refilling) {
 			// heard from the first talk on, since `screen` answers only once the app is ready
@@ -281,7 +281,7 @@ function presentFullScreen(showing: BrowserWindow, on: boolean): boolean {
 	if (filled === undefined) return false;
 	filled.release();
 	showing.setBounds(filled.pinned, false);
-	immediately(showing, () => showing.setSimpleFullScreen(false));
+	simpleFullScreen(showing, false);
 	showing.setResizable(filled.resizable);
 	presentLevel(showing);
 	showing.setBounds(filled.stood, false);
