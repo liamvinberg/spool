@@ -36,10 +36,15 @@ const EXTENSION_DRAWS = /^(drawArrays|drawElements|drawRangeElements|multiDraw)/
 const restingBoxes = new WeakSet<Element>();
 const resting = new WeakSet<HTMLCanvasElement>();
 
-/** A slide's canvases draw nothing while it rests out of sight, and draw again as it goes on or wakes. */
+/**
+ * A slide's canvases draw nothing while it rests out of sight, and draw again as it goes on or wakes. Its box says so
+ * too, for what draws where the stage cannot see, such as a context shared on an OffscreenCanvas: a slide that finds
+ * `[data-spool-resting]` around it draws nothing more until it goes.
+ */
 export function restWebgl(box: Element, rest: boolean): void {
 	if (rest) restingBoxes.add(box);
 	else restingBoxes.delete(box);
+	box.toggleAttribute("data-spool-resting", rest);
 	for (const canvas of box.querySelectorAll("canvas")) {
 		if (rest) resting.add(canvas);
 		else resting.delete(canvas);

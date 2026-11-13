@@ -459,6 +459,7 @@ it("puts the slide the next key plays on out of sight before the key, its effect
 
 it("holds a slide waiting out of sight still after its first frame: its WebGL, frames, entrances and sound wait for it to go on", async () => {
 	const webgl = fakeWebgl();
+	let said = null as HTMLParagraphElement | null;
 	let entrance: Animation | undefined;
 	let later: Animation | undefined;
 	let sound = null as HTMLMediaElement | null;
@@ -476,6 +477,7 @@ it("holds a slide waiting out of sight still after its first frame: its WebGL, f
 				frame = requestAnimationFrame(draw);
 			};
 			draw();
+			said = words.current;
 			entrance = words.current?.animate([{ opacity: 0 }, { opacity: 1 }], 400);
 			// an entrance set off a moment after it mounts
 			const soon = setTimeout(() => {
@@ -511,11 +513,15 @@ it("holds a slide waiting out of sight still after its first frame: its WebGL, f
 	expect([webgl.drawn("talk/b"), frames]).toEqual([waited, ran]);
 	expect([entrance?.playState, entrance?.currentTime, sound?.paused]).toEqual(["paused", 0, true]);
 	expect([later?.playState, later?.currentTime]).toEqual(["paused", 0]);
+	// and says so, for what draws where the stage cannot see
+	expect(said?.closest("[data-spool-resting]")).not.toBeNull();
 
 	on.send({ spool: "stage-command", command: { kind: "next" } });
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
 	await vi.waitFor(() => expect(webgl.drawn("talk/b")).toBeGreaterThan(waited + 2));
 	expect([entrance?.playState, later?.playState, sound?.paused]).toEqual(["running", "running", false]);
+	// on show, it never rests
+	expect(said?.closest("[data-spool-resting]")).toBeNull();
 });
 
 it("draws each slide a still stage shows once, its entrances played, and then no more: the presenter's next pane", async () => {
@@ -564,10 +570,11 @@ it("draws each slide a still stage shows once, its entrances played, and then no
 
 	on.send({ spool: "stage-command", command: { kind: "next" } });
 	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
-	// on screen it draws again, as it stands now, and then rests as it did out of sight
+	// on screen it draws again, as it stands now, and then rests as it did out of sight, and says so
 	await vi.waitFor(() => expect(webgl.drawn("talk/b")).toBeGreaterThan(waited));
 	await resting("b");
 	expect(entrances.get("b")?.playState).toBe("finished");
+	expect(document.querySelector('[data-spool-stage-slide="talk/b"]')?.hasAttribute("data-spool-resting")).toBe(true);
 });
 
 it("puts the slide the back key plays on out of sight too, keeps a slide put on as it was, and what it was playing plays again as it goes back on", async () => {
