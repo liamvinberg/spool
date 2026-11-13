@@ -37,7 +37,7 @@ interface Hold {
 
 interface StageTap {
 	readonly frames: number[];
-	/** requestAnimationFrame calls the page made, the tap's own aside */
+	/** requestAnimationFrame calls the slides' code made: the stage's own and the tap's aside */
 	calls: number;
 	readonly moves: Move[];
 	readonly webgl: WeakSet<HTMLCanvasElement>;
@@ -64,7 +64,7 @@ export function record(): void {
 	const held = window as unknown as Record<symbol, unknown>;
 	if (held[KEY] !== undefined) return;
 	if (isStage()) {
-		held[KEY] = { tap: recordStage(), since, rest, calls, look, layoutNow, arm, caught, seek, release, whose };
+		held[KEY] = { tap: recordStage(), since, rest, asked, look, layoutNow, arm, caught, seek, release, whose };
 	} else if (window.top === window) {
 		held[KEY] = { tap: recordHost(), heard, shown, settled };
 	}
@@ -128,7 +128,7 @@ function recordStage(): StageTap {
 	};
 	raf(tick);
 	window.requestAnimationFrame = (callback) => {
-		tap.calls++;
+		if (slidesAsk(new Error().stack ?? "")) tap.calls++;
 		return raf(callback);
 	};
 
@@ -384,9 +384,12 @@ function busy(tap: StageTap): boolean {
 	return false;
 }
 
-/** How many requestAnimationFrame calls the page has made, for a loop of a slide's own once it rested. */
-function calls(): number {
-	return stageTap().calls;
+/** How many requestAnimationFrame calls the slides' code makes over the next `frames` frames: a loop asks every frame. */
+async function asked(frames: number): Promise<number> {
+	const tap = stageTap();
+	const from = tap.calls;
+	for (let drawn = 0; drawn < frames; drawn++) await frame();
+	return tap.calls - from;
 }
 
 // --- a look at the slide at rest ---------------------------------------------------------------------------
@@ -671,6 +674,14 @@ function lateFiles(
 const FETCHED_MOST = 500;
 
 /** The scripts a stack runs through, innermost first. */
+/**
+ * Whether a call came from a slide's code, a library it imports included: a script on its stack that is not spool's
+ * own, served under `/vendor/`. The stage asks for frames of its own as it readies the slides beside one at rest.
+ */
+function slidesAsk(stack: string): boolean {
+	return scriptsIn(stack).some((script) => !new URL(script).pathname.startsWith("/vendor/"));
+}
+
 function scriptsIn(stack: string): string[] {
 	return [...stack.matchAll(/(https?:\/\/[^\s()]+?):\d+:\d+/g)].flatMap((match) =>
 		match[1] === undefined ? [] : [match[1]],

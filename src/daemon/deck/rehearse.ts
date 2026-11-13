@@ -78,8 +78,8 @@ const CATCH_MS = 1500;
 export const STILL_MS = 120_000;
 /** A rehearsal stops when this many steps in a row never showed. */
 const STUCK_IN_A_ROW = 2;
-/** A slide that calls requestAnimationFrame more often than this a second once at rest runs a loop of its own. */
-const LOOP_PER_SECOND = 20;
+/** The frames a slide at rest is watched for a requestAnimationFrame loop of its own: it asks for one every frame. */
+const LOOP_FRAMES = 10;
 
 const PROBES = `window[Symbol.for("spool.rehearse")]`;
 
@@ -286,18 +286,15 @@ export async function rehearse(input: RehearseInput): Promise<Rehearsed> {
 	/** The beat on screen, read and pictured. */
 	const atRest = async (at: At, shownAt: number) => {
 		const look = await inStage<RestLook | null>(`${PROBES}.look(${shownAt})`);
-		const before = await inStage<number>(`${PROBES}.calls()`);
-		const since = Date.now();
+		const asked = await inStage<number>(`${PROBES}.asked(${LOOP_FRAMES})`);
 		const still = await shot(beatStill(at));
-		const after = await inStage<number>(`${PROBES}.calls()`);
-		const seconds = Math.max(0.1, (Date.now() - since) / 1000);
 		const frame = talk.slides[at.slide]?.frame ?? "";
 		// a slide that broke leaves the room on another's picture, which is none of this slide's to answer for
 		const own =
 			look !== null && look.frame === frame
 				? look
 				: { frame, size: talk.size, words: [], layout: [], names: [], webgl: 0, late: [] };
-		beats.push({ at, look: own, shownAt, loop: (after - before) / seconds > LOOP_PER_SECOND, still });
+		beats.push({ at, look: own, shownAt, loop: asked >= LOOP_FRAMES / 2, still });
 	};
 
 	/** The move from the slide before `next` into it, played again and held still at its start, middle and end. */
