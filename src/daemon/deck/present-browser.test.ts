@@ -152,6 +152,14 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	expect(await together(view, audience)).toEqual({ slide: 0, beat: 0 });
 	// the room's stage plays on a host of its own, a site the browser gives a process of its own (spool#320)
 	expect(stageHosts(audience)).toEqual([ROOM_HOST]);
+	// a click on Present leaves the room's window with the keys: its first key puts it full screen, and steps as well
+	await audience.keyboard.press("ArrowRight");
+	expect(await together(view, audience)).toEqual({ slide: 1, beat: 0 });
+	expect(await audience.evaluate(() => document.fullscreenElement !== null)).toBe(true);
+	await audience.keyboard.press("ArrowLeft");
+	expect(await together(view, audience)).toEqual({ slide: 0, beat: 0 });
+	await audience.evaluate(() => document.exitFullscreen());
+	await audience.setViewportSize({ width: 1280, height: 720 });
 	const screen = await recordScreen(audience);
 
 	// a long walk of the talk's own keys and the foot's segments, the room reloaded half way

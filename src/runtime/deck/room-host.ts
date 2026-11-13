@@ -160,25 +160,29 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	addEventListener("pagehide", () => say({ kind: "gone" }));
 
 	/**
-	 * The first key or click in a window not yet full screen puts it full screen, and is spent on that. Not in the Mac
-	 * app, which places the room itself: full screen on the room's display, or a window when there is only one.
+	 * The first key or click in a window not yet full screen puts it full screen. A click is spent on that; a key acts
+	 * as well, since the room's window has the keys when a click on Present opened it, and the first key after Present
+	 * steps (spool#327). Not in the Mac app, which places the room itself: full screen on the room's display, or a
+	 * window when there is only one.
 	 */
 	let first = app === undefined;
-	const fullScreen = (event: Event): boolean => {
+	const fullScreen = (): boolean => {
 		if (!first) return false;
 		first = false;
 		if (document.fullscreenElement !== null || !document.fullscreenEnabled) return false;
-		event.preventDefault();
 		void document.documentElement.requestFullscreen().catch(() => {});
 		return true;
 	};
 	addEventListener("keydown", (event) => {
 		const plain = !BARE.has(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey;
-		if (plain && event.key !== "Escape" && fullScreen(event)) return;
+		if (plain && event.key !== "Escape") fullScreen();
 		if (host.key(event)) event.preventDefault();
 	});
 	shield.addEventListener("click", (event) => {
-		if (fullScreen(event)) return;
+		if (fullScreen()) {
+			event.preventDefault();
+			return;
+		}
 		const session = host.session();
 		if (session === undefined) return;
 		if (session.black) say({ kind: "command", command: { kind: "black", on: false } });
