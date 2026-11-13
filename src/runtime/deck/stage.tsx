@@ -462,10 +462,13 @@ export function bootStage(runtime: StageRuntime): void {
 	}
 
 	/**
-	 * Nothing is changing on screen: no step waits, no swap or dissolve is under way, and the frame showing the last step
-	 * has been painted. Only then is anything readied: rendered out of sight, put on ahead, let go or warmed.
+	 * Nothing is changing on screen: no step waits, no swap or dissolve is under way, the frame showing the last step has
+	 * been painted and what that step set moving in the slide has ended. Only then is anything readied: rendered out of
+	 * sight, put on ahead, let go or warmed.
 	 */
-	const quiet = () => pending === undefined && !swapping && dissolve === undefined && unsaid === 0;
+	const quiet = () => pending === undefined && !swapping && dissolve === undefined && unsaid === 0 && stirring === 0;
+	/** the steps whose entrances, the animations in the slide that end, are still playing */
+	let stirring = 0;
 
 	/** The copy being put on ahead, once the frame the screen is painting has been. */
 	let waking: Copy | undefined;
@@ -780,8 +783,8 @@ export function bootStage(runtime: StageRuntime): void {
 			post(message);
 			unsaid--;
 			sayApplied();
-			// readied once the frame that shows the step has been painted
-			if (unsaid === 0) setTimeout(settle);
+			// readied once the frame that shows the step has been painted, and what the step set moving has ended
+			if (unsaid === 0) setTimeout(() => stirred(copy?.box));
 		};
 		requestAnimationFrame(() => {
 			const message: StageMessage = {
@@ -798,6 +801,27 @@ export function bootStage(runtime: StageRuntime): void {
 			};
 			if (first) requestAnimationFrame(() => say(message));
 			else say(message);
+		});
+	}
+
+	/** The step on screen settles once the entrances it set off in its slide have played, and at most `ENTRANCES_MS`. */
+	function stirred(box: HTMLElement | undefined): void {
+		const playing = entrancesIn(box);
+		if (playing.length === 0) {
+			settle();
+			return;
+		}
+		stirring++;
+		let late: ReturnType<typeof setTimeout> | undefined;
+		void Promise.race([
+			Promise.allSettled(playing.map((animation) => animation.finished)),
+			new Promise((resolve) => {
+				late = setTimeout(resolve, ENTRANCES_MS);
+			}),
+		]).then(() => {
+			clearTimeout(late);
+			stirring--;
+			settle();
 		});
 	}
 
@@ -1364,6 +1388,20 @@ function atRest(box: HTMLElement): void {
 		if (typeof end === "number" && Number.isFinite(end)) animation.finish();
 	}
 }
+
+/**
+ * The animations in a slide that end and are playing: its entrances on a step, a beat's reveal. Those that run for
+ * ever, and motion a slide drives from script, are none of a step's.
+ */
+function entrancesIn(box: HTMLElement | undefined): Animation[] {
+	return (box?.getAnimations?.({ subtree: true }) ?? []).filter((animation) => {
+		const end = animation.effect?.getComputedTiming().endTime;
+		return animation.playState === "running" && typeof end === "number" && Number.isFinite(end);
+	});
+}
+
+/** The longest a step's entrances hold back what waits for them: one that plays longer than this is the slide's motion. */
+const ENTRANCES_MS = 2000;
 
 /** The animations and media the stage held in each slide out of sight, by its box, to play as it goes on. */
 const heldStill = new WeakMap<Element, Set<Animation | HTMLMediaElement>>();

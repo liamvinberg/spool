@@ -153,7 +153,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		};
 		/**
 		 * What the next key plays, owed to the next pane until the step has played on the presenter's slide, its dissolve
-		 * over, and, while a room is open, is on the room's screen: the pane shares their thread and the GPU, and nothing
+		 * and entrances over, and, while a room is open, is on the room's screen: the pane shares their thread and the GPU, and nothing
 		 * it starts may land on the key or in the step (spool#320, spool#330). The talk's first session, and a change that
 		 * moves neither picture (a slide writing `ui.state`), reach it at once.
 		 */

@@ -56,7 +56,7 @@ export interface StageHostEvents {
 	slides?(slides: readonly SlideReadiness[]): void;
 	/** a command carried out: where, whether the slide was ready, how long it took */
 	shown?(shown: StageShown): void;
-	/** the step it carried out has played: its dissolve is over and nothing is changing on screen */
+	/** the step it carried out has played: its dissolve and the entrances it set off are over */
 	played?(): void;
 	/**
 	 * a command for the host: escape, swap and help always, and every key's command while the stage follows, for the

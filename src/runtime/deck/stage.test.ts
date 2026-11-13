@@ -628,7 +628,7 @@ it("puts the slide the back key plays on out of sight too, keeps a slide put on 
 	expect(ran.filter((one) => one.startsWith("f"))).toEqual(["f out of sight"]);
 });
 
-it("readies nothing while a step plays: what it puts on ahead or lets go waits for the dissolve to end, a key meanwhile goes first, and the host hears when it has played", async () => {
+it("readies nothing while a step plays: what it puts on ahead or lets go waits for its dissolve and entrances to end, a key meanwhile goes first, and the host hears when it has played", async () => {
 	// a dissolve plays until the test ends it, as a browser's view transition plays for its length
 	const playing: (() => void)[] = [];
 	Object.defineProperty(document, "startViewTransition", {
@@ -689,6 +689,27 @@ it("readies nothing while a step plays: what it puts on ahead or lets go waits f
 	await vi.waitFor(() => expect(ran).toContain("g out of sight"));
 	const readied = ran.slice(ran.indexOf("f on screen") + 1);
 	expect(readied).toEqual(expect.arrayContaining(["a let go", "b let go", "g out of sight"]));
+
+	// the entrances a step sets off in its slide are its motion too: the step has played once they end
+	let entered = () => {};
+	const entrance = {
+		playState: "running",
+		effect: { getComputedTiming: () => ({ endTime: 600 }) },
+		finished: new Promise<void>((resolve) => {
+			entered = resolve;
+		}),
+	};
+	const g = document.querySelector<HTMLElement>('[data-spool-stage-slide="talk/g"]');
+	if (g === null) throw new Error("g is not put on");
+	g.getAnimations = () => [entrance as unknown as Animation];
+	const onF = played();
+	on.send({ spool: "stage-command", command: { kind: "next" } });
+	await vi.waitFor(() => expect(on.shown().at(-1)?.at.slide).toBe(6));
+	await ended();
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	expect(played()).toBe(onF);
+	entered();
+	await vi.waitFor(() => expect(played()).toBe(onF + 1));
 });
 
 it("puts a slide on ahead only while its WebGL contexts fit the stage's share: one that does not makes them as it goes on", async () => {

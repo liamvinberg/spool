@@ -162,7 +162,7 @@ export type StageMessage =
 	| { readonly spool: "stage-shown"; readonly shown: StageShown }
 	/** the session of that revision the host applied is on the screen, whether or not anything moved */
 	| { readonly spool: "stage-applied"; readonly revision: number }
-	/** the step has played: its dissolve is over and nothing is changing on screen, so what waited may now run */
+	/** the step has played: its dissolve and the entrances it set off are over, so what waited may now run */
 	| { readonly spool: "stage-played" }
 	/** a command the stage does not carry out itself: a host's own, and every command while it follows */
 	| { readonly spool: "stage-command"; readonly command: KeyCommand }
