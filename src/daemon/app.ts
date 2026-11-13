@@ -1026,8 +1026,7 @@ export function createDaemonApp({
 		// no beat stills when it draws with WebGL (spool#330)
 		owesOpening: (root, frame) => {
 			const cover = readCover(root, frame);
-			if (cover === undefined || !slideOf(root, frame)) return false;
-			return cover.opening === undefined || (cover.beats === undefined && pacedWithWebgl(root, frame));
+			return cover !== undefined && slideOf(root, frame) && owesStills(root, frame, cover);
 		},
 		storeOpening: (root, frame, bytes, beats) => {
 			if (!frameExists(root, frame)) return;
@@ -1362,10 +1361,14 @@ export function createDaemonApp({
 			const page = pageParent(frame);
 			const deck = decks.get(page) ?? holdsDeck(root, page);
 			decks.set(page, deck);
-			if (!deck || slideBeats(root, frame) === undefined) continue;
-			if (cover.opening === undefined || pacedWithWebgl(root, frame))
+			if (deck && slideBeats(root, frame) !== undefined && owesStills(root, frame, cover))
 				booth.enqueue({ root, project: name, frame, reason: "opening" });
 		}
+	}
+
+	/** A slide's cover owes its opening still, or the stills of its beats when it draws with WebGL. */
+	function owesStills(root: string, frame: string, cover: Cover): boolean {
+		return cover.opening === undefined || (cover.beats === undefined && pacedWithWebgl(root, frame));
 	}
 
 	/**
