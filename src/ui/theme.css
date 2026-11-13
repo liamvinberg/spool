@@ -955,8 +955,6 @@
 	--motion-deck-arrive-foot: 240ms;
 	/* a beat's notes giving way to the next */
 	--motion-deck-notes: 300ms;
-	/* the presenter's pointer as the room sees it, following the hand: a spring's stiffness, damping and mass */
-	--motion-deck-pointer: 900 60 0.4;
 	/* the slides filling the screen (spool#298): one spring for everything that flies, its duration in seconds and its
 	 * bounce; the black the slide stands on, coming and going on the out curve; and the slide letting go of its card */
 	--motion-deck-present: 0.5 0;

@@ -677,7 +677,7 @@ export function PresentSlides({
 	const pointedAt = useRef<StagePointer | null>(null);
 	const hand = useRef<ReturnType<typeof createHand> | null>(null);
 	pointed.current = (at) => {
-		// the room's soft dot follows the hand over a live slide, as it follows the presenter view's, while it is shown
+		// the room's pointer follows the hand over a live slide, as it follows the presenter view's, while it is shown
 		pointedAt.current = at;
 		room.current?.say({ kind: "pointer", at: pointerForRoom(at, pointerShown()) });
 		if (at === null) return;

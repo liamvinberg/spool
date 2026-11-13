@@ -3,6 +3,7 @@ import { parseTalkMessage, roomPasses, type TalkMessage, talkChannel } from "../
 import { fitIn, STAGE_GROUND } from "../../deck/stage-fit";
 import { roomPicture, type StageSession } from "../../deck/stage-session";
 import { PRESENTED_WEBGL, PRESENTED_WEBGL_APART, type StagePointer } from "../../deck/stage-wire";
+import { roomPointer } from "./room-pointer";
 import { stageDaemon } from "./stage-daemon";
 import { mountStage, type StageHost } from "./stage-host";
 
@@ -10,7 +11,7 @@ import { mountStage, type StageHost } from "./stage-host";
  * The room's window (spool#265): what the audience sees while a talk is presented from spool's own window, the slide and
  * nothing else, ever. No chrome, no cursor; black and frozen as its states. It holds the stage as a follower and shows
  * the newest session the presenter view publishes on the talk's broadcast channel, asking for it as it opens, so a
- * reload lands where the talk is. The presenter's pointer over a live slide is one soft dot here, and only then.
+ * reload lands where the talk is. The presenter's pointer over a live slide shows here (`room-pointer.ts`), and only then.
  *
  * Its keys and clicks move the talk through the presenter, which carries them out and publishes the result: the room
  * never steps by itself. In a browser the first key or click in it puts it full screen, and does nothing else. When the
@@ -118,13 +119,13 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 	// nothing of the window takes a press but this: the stage beneath it never has the pointer or the focus
 	const shield = document.createElement("div");
 	Object.assign(shield.style, { position: "absolute", inset: "0", zIndex: "2" });
-	const dot = softDot(root, () => {
+	const dot = roomPointer(root, () => {
 		const session = host.session();
 		const box = { w: root.clientWidth, h: root.clientHeight };
 		if (session === undefined || size === undefined || pointer === null) return null;
 		if (session.black || session.frozen !== null || host.talk()[session.at.slide]?.live !== true) return null;
 		const f = fitIn(size, box);
-		return { x: f.x + pointer.x * size.w * f.s, y: f.y + pointer.y * size.h * f.s, width: size.w * f.s };
+		return { ...pointer, x: f.x + pointer.x * size.w * f.s, y: f.y + pointer.y * size.h * f.s, width: size.w * f.s };
 	});
 	root.append(shield);
 	new ResizeObserver(() => dot.draw()).observe(root);
@@ -240,99 +241,4 @@ function dragStrip(root: HTMLElement, app: RoomWindow): void {
 	set(app.windowed);
 	app.onWindowed(set);
 	root.append(strip);
-}
-
-/** The dot's spring, the design's: stiff and heavily damped, so it follows the pointer closely and never overshoots. */
-const STIFFNESS = 900;
-const DAMPING = 60;
-const MASS = 0.4;
-/** Its fade in and out. */
-const FADE = "180ms cubic-bezier(0.22, 0.61, 0.36, 1)";
-
-interface Dot {
-	draw(): void;
-	destroy(): void;
-}
-
-/**
- * The presenter's pointer, as the room sees it: one soft dot over the slide, gliding after it on a spring, sized to
- * the slide on screen. `where` says where it stands in the window, and the slide's width there; null hides it.
- */
-function softDot(root: HTMLElement, where: () => { x: number; y: number; width: number } | null): Dot {
-	const el = document.createElement("span");
-	el.setAttribute("aria-hidden", "true");
-	el.dataset.spoolRoomDot = "";
-	Object.assign(el.style, {
-		position: "absolute",
-		left: "0",
-		top: "0",
-		zIndex: "1",
-		borderRadius: "9999px",
-		background: "rgba(242, 242, 240, 0.55)",
-		pointerEvents: "none",
-		opacity: "0",
-		scale: "0.6",
-		transition: `opacity ${FADE}, scale ${FADE}`,
-	});
-	root.append(el);
-	let at: { x: number; y: number } | undefined;
-	const speed = { x: 0, y: 0 };
-	let goal = { x: 0, y: 0 };
-	let size = 10;
-	let frame = 0;
-	let last = 0;
-	const place = () => {
-		if (at === undefined) return;
-		el.style.transform = `translate(${at.x - size / 2}px, ${at.y - size / 2}px)`;
-	};
-	const step = (now: number) => {
-		frame = 0;
-		if (at === undefined) return;
-		let left = Math.min(0.05, (now - last) / 1000);
-		last = now;
-		while (left > 0) {
-			const h = Math.min(left, 0.004);
-			left -= h;
-			for (const axis of ["x", "y"] as const) {
-				const pull = -STIFFNESS * (at[axis] - goal[axis]) - DAMPING * speed[axis];
-				speed[axis] += (pull / MASS) * h;
-				at[axis] += speed[axis] * h;
-			}
-		}
-		const resting =
-			Math.abs(at.x - goal.x) < 0.1 && Math.abs(at.y - goal.y) < 0.1 && Math.hypot(speed.x, speed.y) < 1;
-		if (resting) at = { ...goal };
-		place();
-		if (!resting) frame = requestAnimationFrame(step);
-	};
-	return {
-		draw() {
-			const now = where();
-			if (now === null) {
-				el.style.opacity = "0";
-				el.style.scale = "0.6";
-				return;
-			}
-			size = Math.max(10, now.width / 60);
-			Object.assign(el.style, { width: `${size}px`, height: `${size}px`, filter: `blur(${size / 8}px)` });
-			goal = { x: now.x, y: now.y };
-			const hidden = el.style.opacity === "0";
-			// a dot that comes back comes back where the pointer is, not gliding from where it left
-			if (at === undefined || hidden) {
-				at = { ...goal };
-				speed.x = 0;
-				speed.y = 0;
-				place();
-			} else if (frame === 0) {
-				last = performance.now();
-				frame = requestAnimationFrame(step);
-			}
-			el.style.opacity = "1";
-			el.style.scale = "1";
-		},
-		destroy() {
-			cancelAnimationFrame(frame);
-			el.remove();
-		},
-	};
 }

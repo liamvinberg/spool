@@ -12,6 +12,7 @@ import {
 	tooHeavyAhead,
 } from "../../deck/stage-wire";
 import type { DeckRead } from "../../deck/wire";
+import { type PointerPlace, type RoomPointer, roomPointer } from "../../runtime/deck/room-pointer";
 import { mountStage, type StageHost } from "../../runtime/deck/stage-host";
 import { cn } from "../cn";
 import { desktopWindow, type RoomReport } from "../desktop-window";
@@ -584,11 +585,10 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 					{/* never touched: what it shows is only a look ahead */}
 					<div className="absolute inset-0 z-10" />
 					{keys ? (
-						<SoftDot
+						<RoomPointerView
 							at={pointer}
 							shown={roomLive && !black && frozen === null && pointerOn}
 							box={{ w: side.w, h: nextH }}
-							timing={timing}
 						/>
 					) : null}
 					<AnimatePresence initial={false}>
@@ -758,40 +758,20 @@ function TalkLine({
 	);
 }
 
-/** The presenter's pointer as the room sees it, over the room's view in the right-hand column: one soft dot. */
-function SoftDot({
-	at,
-	shown,
-	box,
-	timing,
-}: {
-	at: StagePointer | null;
-	shown: boolean;
-	box: Size;
-	timing: DeckMotion;
-}) {
-	const size = Math.max(10, box.w / 60);
-	const on = shown && at !== null;
-	return (
-		<motion.span
-			aria-hidden="true"
-			className="pointer-events-none absolute top-0 left-0 z-10 rounded-full bg-primary/55"
-			style={{ width: size, height: size, filter: `blur(${size / 8}px)` }}
-			initial={false}
-			animate={{
-				x: (at?.x ?? 0.5) * box.w - size / 2,
-				y: (at?.y ?? 0.5) * box.h - size / 2,
-				opacity: on ? 1 : 0,
-				scale: on ? 1 : 0.6,
-			}}
-			transition={{
-				x: { type: "spring", ...timing.pointer },
-				y: { type: "spring", ...timing.pointer },
-				opacity: { duration: timing.base / 1000, ease: timing.out },
-				scale: { duration: timing.base / 1000, ease: timing.out },
-			}}
-		/>
-	);
+/** The presenter's pointer as the room sees it, over the room's view in the right-hand column, drawn as the room draws it. */
+function RoomPointerView({ at, shown, box }: { at: StagePointer | null; shown: boolean; box: Size }) {
+	const root = useRef<HTMLDivElement>(null);
+	const place = useRef<PointerPlace | null>(null);
+	place.current = shown && at !== null ? { ...at, x: at.x * box.w, y: at.y * box.h, width: box.w } : null;
+	const drawn = useRef<RoomPointer | null>(null);
+	useEffect(() => {
+		if (root.current === null) return;
+		const pointer = roomPointer(root.current, () => place.current);
+		drawn.current = pointer;
+		return () => pointer.destroy();
+	}, []);
+	useEffect(() => drawn.current?.draw());
+	return <div ref={root} aria-hidden="true" className="pointer-events-none absolute inset-0 z-10" />;
 }
 
 /** mm:ss since the talk began, ticking. */

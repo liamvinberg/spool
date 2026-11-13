@@ -40,8 +40,6 @@ export interface DeckMotion {
 	readonly arrive: { readonly head: number; readonly side: number; readonly foot: number };
 	/** a beat's notes giving way to the next, on the snap curve */
 	readonly notes: number;
-	/** the spring the presenter's pointer follows the hand on */
-	readonly pointer: { readonly stiffness: number; readonly damping: number; readonly mass: number };
 	/** the slides filling the screen (spool#298): the one spring every flight rides, by duration in seconds and bounce */
 	readonly present: { readonly duration: number; readonly bounce: number };
 	/** the black the slides stand on, coming in and going */
@@ -71,7 +69,6 @@ export function deckMotion(root: Element = document.documentElement): DeckMotion
 		const [duration = 0, bounce = 0] = numbers(name);
 		return tune(/^\s*[\d.]+ms/.test(style.getPropertyValue(name)) ? duration / 1000 : duration, bounce);
 	};
-	const [stiffness = 0, damping = 0, mass = 1] = numbers("--motion-deck-pointer");
 	const [duration = 0, bounce = 0] = numbers("--motion-deck-present");
 	return {
 		snap: curve("--ease-snap"),
@@ -95,7 +92,6 @@ export function deckMotion(root: Element = document.documentElement): DeckMotion
 			foot: ms("--motion-deck-arrive-foot"),
 		},
 		notes: ms("--motion-deck-notes"),
-		pointer: { stiffness, damping, mass },
 		present: { duration, bounce },
 		groundIn: ms("--motion-deck-ground-in"),
 		groundOut: ms("--motion-deck-ground-out"),

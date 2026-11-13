@@ -33,7 +33,6 @@ it("moves the deck on the theme's roles, its prototype's timings and springs kep
 		chromeWait: 200,
 		arrive: { head: 100, side: 180, foot: 240 },
 		notes: 300,
-		pointer: { stiffness: 900, damping: 60, mass: 0.4 },
 		present: { duration: 0.5, bounce: 0 },
 		groundIn: 340,
 		groundOut: 300,
