@@ -48,7 +48,7 @@ import {
 import { type KeptPicture, keepPicture } from "./stage-keep";
 import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
 import { giveBackWhen, limitWebgl, releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn } from "./stage-webgl";
-import { readReach, stackNow, writersOf } from "./stage-writer";
+import { asSlide, followTimers, readReach, stackNow, timerSlide, writersOf } from "./stage-writer";
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
@@ -115,11 +115,12 @@ const RESIZE_NOTICE = /^ResizeObserver loop (completed with undelivered notifica
 
 /**
  * Before any slide's module runs: the private port to the host, made and handed over once with its methods bound, so
- * no slide can listen in by patching the prototype; WebGL canvases that keep their pictures; and every error the window
- * hears kept for the stage to name, never drawn.
+ * no slide can listen in by patching the prototype; WebGL canvases that keep their pictures; timers that keep the slide
+ * they were set as; and every error the window hears kept for the stage to name, never drawn.
  */
 if (deck !== undefined) {
 	watchWebgl();
+	followTimers();
 	watchAnimations();
 	if (embedded) {
 		const channel = new MessageChannel();
@@ -534,10 +535,13 @@ export function bootStage(runtime: StageRuntime): void {
 				if (copy.box !== undefined) restWebgl(copy.box, false);
 				wakingNow = true;
 				try {
-					flushSync(() => {
-						copy.awake = true;
-						redraw();
-					});
+					const mount = () =>
+						flushSync(() => {
+							copy.awake = true;
+							redraw();
+						});
+					if (frame === undefined) mount();
+					else asSlide(frame, mount);
 				} finally {
 					wakingNow = false;
 					if (onFrame !== undefined) runtime.activateStyle(onFrame);
@@ -891,11 +895,14 @@ export function bootStage(runtime: StageRuntime): void {
 		if (frame !== undefined) runtime.activateStyle(frame);
 		wear(copy === undefined ? [] : (slides[copy.index]?.warmed?.fonts ?? []));
 		if (copy?.box !== undefined) restWebgl(copy.box, false);
-		flushSync(() => {
-			shown = key;
-			if (copy !== undefined) copy.awake = true;
-			redraw();
-		});
+		const mount = () =>
+			flushSync(() => {
+				shown = key;
+				if (copy !== undefined) copy.awake = true;
+				redraw();
+			});
+		if (frame === undefined) mount();
+		else asSlide(frame, mount);
 		if (was !== copy) {
 			recorder?.shown();
 			// input that came for it before it was on show, given once the slide has drawn what it was put on with
@@ -1034,35 +1041,51 @@ export function bootStage(runtime: StageRuntime): void {
 
 	/** `ui.state` put in place by the stage itself, which is no slide writing it. */
 	let seeding = false;
+	/** `ui.state` as the stage last let it stand: what a write it refuses is put back to. */
+	let kept: StageState = {};
 	function seed(state: StageState): void {
 		seeding = true;
 		try {
 			runtime.state.seed(state);
+			kept = state;
 		} finally {
 			seeding = false;
 		}
 	}
 
 	// what a slide writes to `ui.state` is the talk's when this stage owns the session. One that follows is a mirror
-	// (the room, the slide the next key plays), and so is a room holding its picture, and a slide waiting out of sight,
-	// as its effects run or whenever later: what a slide writes there on its own is put back before it is drawn, all but
-	// a key the talk has never had, which is the slide's own default.
+	// (the room, the slide the next key plays), and so is a room holding its picture, and a slide put on out of sight as
+	// its effects run: what a slide writes there on its own is put back before it is drawn, all but a key the talk has
+	// never had, which is the slide's own default. A slide waiting out of sight that writes later, from a timer or a
+	// promise, writes nothing at all: its write is put back whole.
 	const reach = readReach();
-	/** Code of a slide out of sight made the write being heard, and none of the slide on show's (spool#332). */
+	/** A slide out of sight made the write being heard: its timer, or its code and none of the slide on show's (spool#332). */
 	const unseenWrote = (): boolean => {
+		const onShow = shownSlide()?.frame;
+		const timer = timerSlide();
+		if (timer !== undefined) return timer !== onShow;
 		if (reach.size === 0) return false;
 		const writers = writersOf(stackNow(), reach);
-		const onShow = shownSlide()?.frame;
 		return writers !== undefined && writers.size > 0 && (onShow === undefined || !writers.has(onShow));
 	};
 	runtime.state.subscribe(() => {
-		if (!opened || seeding) return;
+		if (seeding) return;
 		const state = runtime.state.read();
-		if (mode === "follow" || (room && session.frozen !== null) || wakingNow || unseenWrote()) {
-			const talkState = { ...state, ...picture().state };
-			if (JSON.stringify(talkState) !== JSON.stringify(state)) seed(talkState);
+		if (!opened) {
+			kept = state;
 			return;
 		}
+		if (!wakingNow && unseenWrote()) {
+			if (JSON.stringify(kept) !== JSON.stringify(state)) seed(kept);
+			return;
+		}
+		if (mode === "follow" || (room && session.frozen !== null) || wakingNow) {
+			const talkState = { ...state, ...picture().state };
+			if (JSON.stringify(talkState) !== JSON.stringify(state)) seed(talkState);
+			else kept = state;
+			return;
+		}
+		kept = state;
 		take(stepSession(session, { kind: "state", state }, talk));
 	});
 
