@@ -208,6 +208,8 @@ interface Copy {
  */
 const AHEAD = 2;
 const BEHIND = 1;
+/** The most slides awake out of sight at once: the two the keys play next, and those already put on nearest them. */
+const WAITING = 4;
 /** Slides fetched at once, nearest first. */
 const LOADS_AT_ONCE = 3;
 /** How long a slide whose files would not come waits before they are asked for again. */
@@ -399,9 +401,10 @@ export function bootStage(runtime: StageRuntime): void {
 	/**
 	 * Which copies are awake. The one on screen and the one wanted, whatever they hold; the slides the next key and the
 	 * back key play, put on ahead once the screen is quiet, the next first, while their WebGL contexts fit the stage's
-	 * share. A slide's cost is learned the first time it is awake, and one refused a context out of sight is put on
-	 * ahead no more. Any other copy is put back to sleep: rendered afresh when it holds contexts, so it gives them back,
-	 * and hidden otherwise, its effects undone.
+	 * share; then the slides already put on, nearest first, while theirs still fit, up to four waiting in all: a slide is
+	 * put on once, and stepping back to it runs and compiles nothing again. A slide's cost is learned the first time it is
+	 * awake, and one refused a context out of sight is put on ahead no more. Any other copy is put back to sleep:
+	 * rendered afresh when it holds contexts, so it gives them back, and hidden otherwise, its effects undone.
 	 */
 	function arrange(): void {
 		const at = picture();
@@ -422,6 +425,25 @@ export function bootStage(runtime: StageRuntime): void {
 			const cost = copy.awake ? held(copy) : slide?.crowded ? Number.POSITIVE_INFINITY : (slide?.webgl ?? 0);
 			if (cost > 0 && cost > left) continue;
 			if (!copy.awake && (!quiet() || !ready(copy))) continue;
+			left -= cost;
+			kept.add(copy);
+		}
+		const away = (copy: Copy) => Math.abs(copy.index - target);
+		const stillOn = [...copies.values()]
+			.filter(
+				(copy) =>
+					copy.awake &&
+					!copy.broken &&
+					copy !== on &&
+					copy !== wanted &&
+					!kept.has(copy) &&
+					copyAt(copy.index) === copy,
+			)
+			.sort((a, b) => away(a) - away(b));
+		for (const copy of stillOn) {
+			if (kept.size >= WAITING) break;
+			const cost = held(copy);
+			if (cost > 0 && cost > left) continue;
 			left -= cost;
 			kept.add(copy);
 		}

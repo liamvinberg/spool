@@ -392,18 +392,18 @@ it("keeps every slide that draws with WebGL ready, only those nearest the one on
 	const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
 	const on = await stage(
 		names.map((name) => ({ frame: `talk/${name}`, screen: DrawsWithWebgl })),
-		{ mode: "own", room: true, webgl: 2 },
+		{ mode: "own", room: true, webgl: 3 },
 	);
 	for (const [slide, name] of names.entries()) {
 		if (slide > 0) on.send({ spool: "stage-command", command: { kind: "next" } });
 		await vi.waitFor(() => expect(on.onScreen()).toBe(`talk/${name}`));
 		expect(webgl.drawing()).toBe(true);
 	}
-	// the one on screen and the one before: the rest are given back, never left for the browser to take, and rendered
-	// afresh out of sight, ready again without a context until they go on
-	await vi.waitFor(() => expect(webgl.alive()).toBe(2));
+	// the one on screen and the two before, as many as the share holds, nearest first: the rest are given back, never
+	// left for the browser to take, and rendered afresh out of sight, ready again without a context until they go on
+	await vi.waitFor(() => expect(webgl.alive()).toBe(3));
 	await vi.waitFor(() => expect(on.slides().map((slide) => slide.status)).toEqual(names.map(() => "ready")));
-	expect(webgl.alive()).toBe(2);
+	expect(webgl.alive()).toBe(3);
 
 	// the browser takes the one kept behind all the same: it is rendered afresh before it goes on
 	const behind = document.querySelector<HTMLCanvasElement>('[data-spool-stage-slide="talk/g"] canvas');
@@ -569,7 +569,7 @@ it("draws each slide a still stage shows once, its entrances played, and then no
 	expect(entrances.get("b")?.playState).toBe("finished");
 });
 
-it("puts the slide the back key plays on out of sight too, and what it was playing plays again as it goes back on", async () => {
+it("puts the slide the back key plays on out of sight too, keeps a slide put on as it was, and what it was playing plays again as it goes back on", async () => {
 	const ran: string[] = [];
 	let sound = null as HTMLMediaElement | null;
 	function Plays() {
@@ -581,15 +581,22 @@ it("puts the slide the back key plays on out of sight too, and what it was playi
 		}, []);
 		return createElement("div", { ref: box }, createElement("video", { ref: video }));
 	}
+	const noted = (name: string): ComponentType =>
+		function Noted() {
+			const box = useRef<HTMLParagraphElement>(null);
+			useEffect(() => {
+				whereRan(ran, name, box);
+			}, []);
+			return createElement("p", { ref: box }, name);
+		};
 	const on = await stage(
 		[
 			{ frame: "talk/a", screen: Plays },
-			{ frame: "talk/b", screen: plain("b") },
-			{ frame: "talk/c", screen: plain("c") },
+			...["b", "c", "d", "e", "f", "g"].map((name) => ({ frame: `talk/${name}`, screen: noted(name) })),
 		],
 		{ mode: "own", room: true },
 	);
-	await vi.waitFor(() => expect(ran).toEqual(["a on screen"]));
+	await vi.waitFor(() => expect(ran).toEqual(["a on screen", "b out of sight"]));
 	// played from a click, as a talk plays its video
 	await sound?.play();
 	for (const frame of ["talk/b", "talk/c"]) {
@@ -597,14 +604,27 @@ it("puts the slide the back key plays on out of sight too, and what it was playi
 		await vi.waitFor(() => expect(on.onScreen()).toBe(frame));
 	}
 	expect(sound?.paused).toBe(true);
-	on.send({ spool: "stage-command", command: { kind: "back" } });
-	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/b"));
-	// two slides back it slept; one back it is put on again before the key, so nothing runs as the key plays it
-	await vi.waitFor(() => expect(ran).toEqual(["a on screen", "a out of sight"]));
-	on.send({ spool: "stage-command", command: { kind: "back" } });
-	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/a"));
-	expect(ran).toEqual(["a on screen", "a out of sight"]);
+	// two slides back it is still on as it was put on: going back to it runs nothing in it again
+	for (const frame of ["talk/b", "talk/a"]) {
+		on.send({ spool: "stage-command", command: { kind: "back" } });
+		await vi.waitFor(() => expect(on.onScreen()).toBe(frame));
+	}
+	expect(ran.filter((one) => one.startsWith("a"))).toEqual(["a on screen"]);
 	expect(sound?.paused).toBe(false);
+
+	// a jump past every slide put on: the one the back key plays is put on before the key, so nothing runs as it plays
+	// it, and at most four slides wait out of sight, the nearest
+	on.send({ spool: "stage-command", command: { kind: "go", slide: 6 } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/g"));
+	await vi.waitFor(() => expect(ran).toContain("f out of sight"));
+	const waiting = () =>
+		[...document.querySelectorAll("[data-spool-stage-waiting]")].map((box) =>
+			box.getAttribute("data-spool-stage-slide"),
+		);
+	await vi.waitFor(() => expect(waiting().sort()).toEqual(["talk/b", "talk/c", "talk/d", "talk/f"]));
+	on.send({ spool: "stage-command", command: { kind: "back" } });
+	await vi.waitFor(() => expect(on.onScreen()).toBe("talk/f"));
+	expect(ran.filter((one) => one.startsWith("f"))).toEqual(["f out of sight"]);
 });
 
 it("puts a slide on ahead only while its WebGL contexts fit the stage's share: one that does not makes them as it goes on", async () => {
