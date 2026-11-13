@@ -1,4 +1,5 @@
 import type { Size } from "./deck-file";
+import { parseSlideInputs, type SlideInputs } from "./input-wire";
 import { type PenState, POINTER_COLOURS } from "./pointer";
 import type { KeyCommand } from "./stage-keys";
 import type { At, RoomPicture, StageCommand, StageSession, TalkSlide } from "./stage-session";
@@ -130,6 +131,13 @@ export type HostMessage =
 			 * alive in the process it shares with other documents. A slide whose contexts would not fit is not put on ahead.
 			 */
 			readonly webgl?: number;
+			/**
+			 * the presenter's own slide, which a room watches: the input its live slide on show is given is said, for the
+			 * room's copy of it (spool#332)
+			 */
+			readonly relay?: true;
+			/** the room's: what the presenter does in a live slide is given to this stage's copy of it (spool#332) */
+			readonly replay?: true;
 			readonly session?: StageSession;
 			readonly frame?: string;
 	  }
@@ -149,7 +157,14 @@ export type HostMessage =
 	/** the pointer hidden over the stage's document, or shown again: the slides fill the screen and nobody's hand moves */
 	| { readonly spool: "stage-cursor"; readonly hidden: boolean }
 	/** the WebGL contexts the stage may hold from now, its process shared otherwise than it was (spool#320) */
-	| { readonly spool: "stage-webgl"; readonly webgl: number };
+	| { readonly spool: "stage-webgl"; readonly webgl: number }
+	/** the room's: the input the presenter's copy of the live slide on show was given, for this copy to be given too */
+	| { readonly spool: "stage-input"; readonly inputs: SlideInputs }
+	/**
+	 * a relaying stage's: say again where the live slide on show stands (its scroll offsets, its fields, its focus), for
+	 * a room that opened late
+	 */
+	| { readonly spool: "stage-recall" };
 
 /** stage → host */
 export type StageMessage =
@@ -167,7 +182,11 @@ export type StageMessage =
 	/** a command the stage does not carry out itself: a host's own, and every command while it follows */
 	| { readonly spool: "stage-command"; readonly command: KeyCommand }
 	/** the pointer over the live slide on screen, and what the hand does there, for the room to show; null once it leaves, or the slide is not live */
-	| { readonly spool: "stage-pointer"; readonly at: StagePointer | null };
+	| { readonly spool: "stage-pointer"; readonly at: StagePointer | null }
+	/** a relaying stage's: the input its live slide on show was given, for the room's copy (spool#332) */
+	| { readonly spool: "stage-input"; readonly inputs: SlideInputs }
+	/** a replaying stage's: its copy of a live slide came on show, and is to be told where the presenter's stands */
+	| { readonly spool: "stage-recall" };
 
 type Loose = Record<string, unknown>;
 
@@ -260,6 +279,8 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 			...(value.rest === true ? { rest: true } : {}),
 			...(value.still === true ? { still: true } : {}),
 			...(isCount(value.webgl) ? { webgl: value.webgl } : {}),
+			...(value.relay === true ? { relay: true } : {}),
+			...(value.replay === true ? { replay: true } : {}),
 			...(session === undefined ? {} : { session }),
 			...(typeof value.frame === "string" ? { frame: value.frame } : {}),
 		};
@@ -283,6 +304,11 @@ export function parseHostMessage(value: unknown): HostMessage | undefined {
 	}
 	if (value.spool === "stage-webgl")
 		return isCount(value.webgl) ? { spool: "stage-webgl", webgl: value.webgl } : undefined;
+	if (value.spool === "stage-input") {
+		const inputs = parseSlideInputs(value.inputs);
+		return inputs === undefined ? undefined : { spool: "stage-input", inputs };
+	}
+	if (value.spool === "stage-recall") return { spool: "stage-recall" };
 	return undefined;
 }
 
@@ -366,6 +392,12 @@ export function parseStageMessage(value: unknown): StageMessage | undefined {
 			const at = parsePointer(value.at);
 			return at === undefined ? undefined : { spool: "stage-pointer", at };
 		}
+		case "stage-input": {
+			const inputs = parseSlideInputs(value.inputs);
+			return inputs === undefined ? undefined : { spool: "stage-input", inputs };
+		}
+		case "stage-recall":
+			return { spool: "stage-recall" };
 		default:
 			return undefined;
 	}

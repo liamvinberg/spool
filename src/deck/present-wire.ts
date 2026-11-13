@@ -1,3 +1,4 @@
+import { parseSlideInputs, type SlideInputs } from "./input-wire";
 import type { KeyCommand } from "./stage-keys";
 import type { StageSession } from "./stage-session";
 import { parseKeyCommand, parsePointer, parseSession, type StagePointer } from "./stage-wire";
@@ -7,7 +8,8 @@ import { parseKeyCommand, parsePointer, parseSession, type StagePointer } from "
  * windows of spool's on its own origin, so a broadcast channel named for the talk carries it; nothing goes through the
  * daemon. The presenter view is the one authority: it publishes each session whole, numbered by its revision, and the
  * room shows the newest and never steps by itself. The room asks for the newest as it opens, and as it opens again on
- * a reload. The pointer over a live slide travels apart from the sessions, light and often.
+ * a reload. The pointer over a live slide travels apart from the sessions, light and often, and so does what the
+ * presenter does in it, for the room's copy to be given (`input-wire.ts`).
  */
 
 export type TalkMessage =
@@ -18,6 +20,10 @@ export type TalkMessage =
 	| { readonly kind: "session"; readonly session: StageSession; readonly frame: string }
 	/** presenter → room: the presenter's pointer over the live slide, or null once it leaves */
 	| { readonly kind: "pointer"; readonly at: StagePointer | null }
+	/** presenter → room: what the presenter did in the live slide, for the room's copy of it to be given (spool#332) */
+	| { readonly kind: "input"; readonly inputs: SlideInputs }
+	/** room → presenter: the room's copy of the live slide came on show; where the presenter's stands is said again */
+	| { readonly kind: "recall" }
 	/** presenter → room: the talk is over, and the room's window closes */
 	| { readonly kind: "end" }
 	/** room → presenter: the newest session, please; the room has opened */
@@ -73,6 +79,12 @@ export function parseTalkMessage(value: unknown): TalkMessage | undefined {
 			const at = parsePointer(value.at);
 			return at === undefined ? undefined : { kind: "pointer", at };
 		}
+		case "input": {
+			const inputs = parseSlideInputs(value.inputs);
+			return inputs === undefined ? undefined : { kind: "input", inputs };
+		}
+		case "recall":
+			return { kind: "recall" };
 		case "command": {
 			const command = parseKeyCommand(value.command);
 			return command === undefined ? undefined : { kind: "command", command };
