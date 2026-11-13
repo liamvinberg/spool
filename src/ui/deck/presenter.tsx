@@ -65,6 +65,8 @@ export interface PresenterProps {
 	readonly deck: DeckRead | undefined;
 	/** the talk's shape */
 	readonly talk: Size;
+	/** a slide's still on one of its beats, which the booth takes of slides drawn with WebGL (spool#330) */
+	beatStill?(frame: string, beat: number): string | undefined;
 	/** false while the chrome falls away around the slide, before the view is drawn */
 	readonly shown: boolean;
 	/** the stage drew its first picture of the talk */
@@ -77,7 +79,7 @@ export interface PresenterProps {
 
 type RoomState = "opening" | "open" | "closed";
 
-export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, onRefused }: PresenterProps) {
+export function Presenter({ ask, deck, talk: screen, shown, beatStill, onPicture, onEnd, onRefused }: PresenterProps) {
 	const still = useReducedMotion() === true;
 	const timing = useDeckMotion();
 	const view = useRef<HTMLDivElement | null>(null);
@@ -117,8 +119,10 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 	/** L pressed with the menu away: what it did, said for a moment */
 	const [pointerSaid, setPointerSaid] = useState<{ readonly on: boolean } | null>(null);
 	const clock = useTalkClock(ask.pressed);
-	const hands = useRef({ onPicture, onEnd, onRefused, help, menu });
-	hands.current = { onPicture, onEnd, onRefused, help, menu };
+	const hands = useRef({ onPicture, onEnd, onRefused, beatStill, help, menu });
+	hands.current = { onPicture, onEnd, onRefused, beatStill, help, menu };
+	/** the beat still the next pane shows over its stage, for a slide drawn with WebGL; null while the stage's own shows */
+	const [nextStill, setNextStill] = useState<string | null>(null);
 	/** where the pointer is over the live slide, whatever the room is told */
 	const pointedAt = useRef<StagePointer | null>(null);
 	const roomWindow = useRef(ask.room);
@@ -160,9 +164,37 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 		let owed: { session: StageSession; slide: At | undefined; room: number | undefined } | undefined;
 		let owedTimer: ReturnType<typeof setTimeout> | undefined;
 		let before: StageSession | undefined;
+		/**
+		 * What the next key plays, in the next pane: a slide drawn with WebGL as the booth's still of that beat, so the pane
+		 * makes no context in the presenter's thread (spool#330), and any other as its stage draws it. The still shows once
+		 * it is decoded, and stays until the stage shows what follows it.
+		 */
+		let wantedStill: string | null = null;
+		const showAhead = (session: StageSession) => {
+			const frame = host.talk()[session.at.slide]?.frame;
+			const url = frame === undefined ? undefined : hands.current.beatStill?.(frame, session.at.beat);
+			if (url === undefined) {
+				wantedStill = null;
+				next.apply(session);
+				return;
+			}
+			wantedStill = url;
+			const image = new Image();
+			image.src = url;
+			image.decode().then(
+				() => {
+					if (wantedStill === url) setNextStill(url);
+				},
+				() => {
+					if (wantedStill !== url) return;
+					wantedStill = null;
+					next.apply(session);
+				},
+			);
+		};
 		const pay = () => {
 			clearTimeout(owedTimer);
-			if (owed !== undefined) next.apply(owed.session);
+			if (owed !== undefined) showAhead(owed.session);
 			owed = undefined;
 		};
 		const paid = () => {
@@ -175,7 +207,7 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			const slideMoves = was !== undefined && where(was) !== where(now);
 			const roomMoves = was !== undefined && where(roomPicture(was)) !== where(roomPicture(now));
 			if (!slideMoves && !(roomMoves && roomOpen.current)) {
-				if (owed === undefined) next.apply(ahead(now));
+				if (owed === undefined) showAhead(ahead(now));
 				else owed.session = ahead(now);
 				return;
 			}
@@ -270,7 +302,11 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 			// a preview, which costs the talk no frames: drawn once as each step leaves it
 			still: true,
 			webgl: PRESENTED_WEBGL.next,
-			frame: ask.slide,
+			on: {
+				applied: () => {
+					if (wantedStill === null) setNextStill(null);
+				},
+			},
 		});
 		stage.current = { main: host, next, say };
 
@@ -579,8 +615,21 @@ export function Presenter({ ask, deck, talk: screen, shown, onPicture, onEnd, on
 									: nameOf(afterFrame)}
 					</span>
 				</div>
-				<div className="relative mt-2 overflow-hidden rounded-md" style={{ width: side.w, height: nextH }}>
+				<div
+					data-deck-next=""
+					className="relative mt-2 overflow-hidden rounded-md"
+					style={{ width: side.w, height: nextH }}
+				>
 					<div ref={nextBox} className="absolute inset-0" />
+					{nextStill === null ? null : (
+						<img
+							data-deck-next-still=""
+							src={nextStill}
+							alt=""
+							draggable={false}
+							className="absolute inset-0 h-full w-full object-contain"
+						/>
+					)}
 					{/* never touched: what it shows is only a look ahead */}
 					<div className="absolute inset-0 z-10" />
 					{keys ? (

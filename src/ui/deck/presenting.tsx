@@ -8,7 +8,7 @@ import type { CameraStore } from "../canvas/camera-store";
 import type { CanvasStore } from "../canvas/canvas-store";
 import { type DeckReads, useDeckRead } from "./deck-api";
 import { type DeckMotion, useDeckMotion } from "./deck-motion";
-import { decodedPicture, letGo, openingOf } from "./opening";
+import { beatStillOf, decodedPicture, letGo, openingOf } from "./opening";
 import { presentDone, usePresentAsk, usePresentWarm } from "./present";
 import { type Card, PresentSlides } from "./present-slides";
 import { Presenter, useWindowSize } from "./presenter";
@@ -320,6 +320,7 @@ function PresenterMoments({ project, store, camera, reads, viewport, onEnded, sa
 					ask={mine}
 					deck={deck}
 					talk={talk}
+					beatStill={(frame, beat) => beatStillOf(store, project, frame, beat)}
 					shown={moment.kind === "on"}
 					onPicture={() => setPictured(true)}
 					onEnd={end}

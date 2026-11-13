@@ -58,6 +58,8 @@ export interface StageHostEvents {
 	shown?(shown: StageShown): void;
 	/** the step it carried out has played: its dissolve and the entrances it set off are over */
 	played?(): void;
+	/** the session the host applied last is on the screen, whether or not anything moved */
+	applied?(revision: number): void;
 	/**
 	 * a command for the host: escape, swap and help always, and every key's command while the stage follows, for the
 	 * session's owner to step; a follower's slides never write the talk's `ui.state`
@@ -327,7 +329,8 @@ export function mountStage(container: HTMLElement, options: StageHostOptions): S
 				if (live) on.played?.();
 				return;
 			case "stage-applied":
-				if (doc === incoming) {
+				if (live) on.applied?.(message.revision);
+				else if (doc === incoming) {
 					doc.applied = message.revision;
 					catchUp(doc);
 				}

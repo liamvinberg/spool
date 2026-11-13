@@ -448,7 +448,7 @@ it("presents the hard talk: the room follows the presenter through a long walk, 
 	expect(await view.locator("[data-deck-presenter]").count()).toBe(0);
 });
 
-it("opens the presenter view on its slide drawn sharp: it travels as its opening still, never stretched, which goes as it lands on a slide the stage has drawn, and the next pane names the next slide from its first frame", {
+it("opens the presenter view on its slide drawn sharp: it travels as its opening still, never stretched, which goes as it lands on a slide the stage has drawn, the next pane names the next slide from its first frame, and shows a slide drawn with WebGL as its beat stills", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -460,16 +460,21 @@ it("opens the presenter view on its slide drawn sharp: it travels as its opening
 		"frames/talk/deck.json",
 		json({ version: 1, w: 1280, h: 720, slides: ["one", "two"] }),
 	);
-	// slides of two beats, which the canvas's covers show at their last
+	// slides of two beats, which the canvas's covers show at their last; the second draws with WebGL
 	for (const [index, name] of ["one", "two"].entries()) {
 		writeDesignFile(
 			project.root,
 			`frames/talk/${name}/frame.tsx`,
-			`import { ui } from "spool";
+			`import { useEffect, useRef } from "react";
+import { ui } from "spool";
 
 export default function Slide() {
 	ui.beats(["said", "shown"]);
-	return <div style={{ position: "absolute", inset: 0, background: "#1d3557", color: "white", fontSize: 96 }}>${name}</div>;
+	const canvas = useRef(null);
+	useEffect(() => {
+		if (${name === "two"}) canvas.current.getContext("webgl")?.clear(0x4000);
+	}, []);
+	return <div style={{ position: "absolute", inset: 0, background: "#1d3557", color: "white", fontSize: 96 }}>${name}<canvas ref={canvas} width={64} height={64} /></div>;
 }
 `,
 		);
@@ -480,11 +485,25 @@ export default function Slide() {
 		".spool/state.json",
 		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.2 } } }),
 	);
-	// the booth's picture of the slide as the talk opens on it, made bigger than the presenter view draws it
+	// the booth's picture of the slide as the talk opens on it, made bigger than the presenter view draws it, and of each
+	// beat of the one drawn with WebGL
 	await expect.poll(async () => (await coverOf(project, "talk/one"))?.opening, { timeout: 60_000 }).toBeDefined();
+	await expect.poll(async () => (await coverOf(project, "talk/two"))?.beats?.length, { timeout: 60_000 }).toBe(2);
+	const stills = (await coverOf(project, "talk/two"))?.beats ?? [];
 	// a 2x screen, as the Mac's: the card's picture is far smaller than the presenter view draws the slide
 	const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 	await watchPictures(context);
+	// every WebGL context a document makes, counted
+	await context.addInitScript(() => {
+		const getContext = HTMLCanvasElement.prototype.getContext;
+		Reflect.set(window, "__webglMade", 0);
+		HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, options?: unknown) {
+			const made = Reflect.apply(getContext, this, [kind, options]);
+			if (made !== null && kind.startsWith("webgl"))
+				Reflect.set(window, "__webglMade", Reflect.get(window, "__webglMade") + 1);
+			return made;
+		} as typeof getContext;
+	});
 	// a browser where the room's host never answers: the room plays its stage on the render host, as it did before it
 	// had one (spool#320)
 	await tapStages(context);
@@ -513,5 +532,23 @@ export default function Slide() {
 	expect(words.filter((said) => said.includes("end of the talk"))).toEqual([]);
 	await expect.poll(async () => (await room(audience))?.at, { timeout: 30_000 }).toEqual({ slide: 0, beat: 0 });
 	expect(stageHosts(audience)).toEqual([RENDER_HOST]);
+
+	// the slide drawn with WebGL comes next: the pane shows the booth's still of the beat each key plays, and its stage
+	// makes no context in the presenter's thread (spool#330)
+	const nextStill = () => view.locator("[data-deck-next-still]").getAttribute("src", { timeout: 30_000 });
+	await view.keyboard.press("ArrowRight");
+	await expect.poll(nextStill, { timeout: 30_000 }).toContain(stills[0]);
+	await view.keyboard.press("ArrowRight");
+	await expect.poll(nextStill, { timeout: 30_000 }).toContain(stills[1]);
+	const made = async (selector: string) => {
+		let count = 0;
+		for (const frame of await view.locator(`${selector} iframe`).elementHandles())
+			count +=
+				(await (await frame.contentFrame())?.evaluate(() => Reflect.get(window, "__webglMade") as number)) ?? 0;
+		return count;
+	};
+	expect(await made("[data-deck-next]")).toBe(0);
+	// while the presenter's own slide draws it
+	expect(await made("[data-deck-presenter]")).toBeGreaterThan(0);
 	await audience.close();
 });

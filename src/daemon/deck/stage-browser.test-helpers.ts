@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { deflateSync, inflateSync } from "node:zlib";
 import type { BrowserContext, Page } from "playwright-core";
+import type { Cover } from "../../cover";
 import { writeDesignFile } from "../../test-helpers";
 
 /**
@@ -648,10 +649,10 @@ export function everStretched({ frames }: { frames: readonly PictureFrame[] }): 
 export async function coverOf(
 	project: { url: string; name: string; controlToken: string },
 	frame: string,
-): Promise<{ hash: string; opening?: string } | undefined> {
+): Promise<Cover | undefined> {
 	const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frames`, {
 		headers: { "X-Spool-Control": project.controlToken },
 	});
-	const { frames } = (await res.json()) as { frames: { name: string; cover?: { hash: string; opening?: string } }[] };
+	const { frames } = (await res.json()) as { frames: { name: string; cover?: Cover }[] };
 	return frames.find((one) => one.name === frame)?.cover;
 }

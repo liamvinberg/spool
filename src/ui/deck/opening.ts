@@ -27,6 +27,15 @@ export function openingOf(store: CanvasStore, project: string, frame: string): s
 }
 
 /**
+ * The address of a slide's still on one of its beats, when the booth has taken them of its current version: it takes
+ * them of slides that draw with WebGL, for the presenter's next pane (spool#330).
+ */
+export function beatStillOf(store: CanvasStore, project: string, frame: string, beat: number): string | undefined {
+	const still = store.get().frames.find((one) => one.name === frame)?.cover?.beats?.[beat];
+	return still === undefined ? undefined : coverUrl(project, frame, still);
+}
+
+/**
  * The picture at `url`, decoded once however often it is asked for; null when it would not load. It is held decoded
  * until another is asked for, or it is let go.
  */
