@@ -63,7 +63,7 @@ export interface StageHostEvents {
 	command?(command: KeyCommand): void;
 	/** the stage could not be opened, or a new build of it could not, and why; what was showing stays */
 	refused?(why: string): void;
-	/** where the pointer stands over the live slide on screen, and null once it leaves: the room shows it as a dot */
+	/** where the pointer stands over the live slide on screen, and null once it leaves: the room shows it */
 	pointer?(at: StagePointer | null): void;
 }
 
