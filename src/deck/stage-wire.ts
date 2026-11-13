@@ -1,4 +1,5 @@
 import type { Size } from "./deck-file";
+import { type PenState, POINTER_COLOURS } from "./pointer";
 import type { KeyCommand } from "./stage-keys";
 import type { At, RoomPicture, StageCommand, StageSession, TalkSlide } from "./stage-session";
 
@@ -94,7 +95,7 @@ export function tooHeavyAhead(slides: readonly SlideReadiness[], share: number):
 }
 
 /** Where the pointer stands over a live slide, on the talk's screen: from 0 to 1 across and down. */
-export interface StagePointer {
+export interface StagePointer extends PenState {
 	readonly x: number;
 	readonly y: number;
 }
@@ -163,7 +164,7 @@ export type StageMessage =
 	| { readonly spool: "stage-applied"; readonly revision: number }
 	/** a command the stage does not carry out itself: a host's own, and every command while it follows */
 	| { readonly spool: "stage-command"; readonly command: KeyCommand }
-	/** the pointer over the live slide on screen, for the room's soft dot; null once it leaves, or the slide is not live */
+	/** the pointer over the live slide on screen, and what the hand does there, for the room to show; null once it leaves, or the slide is not live */
 	| { readonly spool: "stage-pointer"; readonly at: StagePointer | null };
 
 type Loose = Record<string, unknown>;
@@ -373,7 +374,9 @@ const isShare = (value: unknown): value is number =>
 export function parsePointer(value: unknown): StagePointer | null | undefined {
 	if (value === null) return null;
 	if (!isRecord(value) || !isShare(value.x) || !isShare(value.y)) return undefined;
-	return { x: value.x, y: value.y };
+	// a stage from before the pen says only where the pointer is: up, red, never clicked
+	const colour = isCount(value.colour) && value.colour < POINTER_COLOURS.length ? value.colour : 0;
+	return { x: value.x, y: value.y, down: value.down === true, colour, taps: isCount(value.taps) ? value.taps : 0 };
 }
 
 /**
