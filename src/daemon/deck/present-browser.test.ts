@@ -554,7 +554,7 @@ export default function Slide() {
 	await audience.close();
 });
 
-it("gives the room's copy of a live slide what the presenter does in it: clicks, tabs, hover, the wheel, typing and a drag, a room reloaded gets where it stands, and a slide waiting out of sight never writes the talk's state", {
+it("gives the room's copy of a live slide what the presenter does in it: clicks, tabs, hover, the wheel, typing and a drag, while it held its picture too, never its keys; a room reloaded gets where it stands, and a slide waiting out of sight never writes the talk's state", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -568,7 +568,7 @@ it("gives the room's copy of a live slide what the presenter does in it: clicks,
 		// a prototype written the ordinary way: its state in React, its scroll and its hover the browser's
 		proto: {
 			tsx: `import "./slide.css";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ui } from "spool";
 
 export default function Slide() {
@@ -576,16 +576,28 @@ export default function Slide() {
 	const [count, setCount] = useState(0);
 	const [tab, setTab] = useState("one");
 	const [text, setText] = useState("");
+	const [kept, setKept] = useState("");
 	const [near, setNear] = useState(false);
 	const [at, setAt] = useState(0);
 	const grab = useRef<number | null>(null);
+	const field = useRef<HTMLInputElement>(null);
+	// a change heard the browser's way, once the field is left
+	useEffect(() => {
+		const element = field.current;
+		const heard = () => setKept(element?.value ?? "");
+		element?.addEventListener("change", heard);
+		return () => element?.removeEventListener("change", heard);
+	}, []);
 	return (
 		<div className="ground">
 			<button type="button" id="count" onClick={() => setCount(count + 1)}>{\`count \${count}\`}</button>
 			<button type="button" id="tab" onClick={() => setTab("two")}>{\`tab \${tab}\`}</button>
+			<button type="button" id="find" onClick={() => field.current?.focus()}>find</button>
+			<button type="button" id="fill" onClick={() => setText("filled")}>fill</button>
 			<ul id="list">{Array.from({ length: 60 }, (_, row) => <li key={row}>{\`row \${row}\`}</li>)}</ul>
-			<input id="field" value={text} onChange={(event) => setText(event.target.value)} />
+			<input id="field" ref={field} value={text} onChange={(event) => setText(event.target.value)} />
 			<p id="echo">{\`said \${text}\`}</p>
+			<p id="kept">{\`kept \${kept}\`}</p>
 			<div id="hover" onPointerEnter={() => setNear(true)} onPointerLeave={() => setNear(false)}>{near ? "near" : "far"}</div>
 			<div id="card" />
 			<div
@@ -609,12 +621,16 @@ export default function Slide() {
 			css: `.ground { ${ground} }
 #count { position: absolute; left: 40px; top: 40px; font-size: 32px; }
 #tab { position: absolute; left: 300px; top: 40px; font-size: 32px; }
+#find { position: absolute; left: 560px; top: 40px; font-size: 32px; }
+#fill { position: absolute; left: 760px; top: 40px; font-size: 32px; }
+#kept { position: absolute; left: 400px; top: 250px; margin: 0; }
 #list { position: absolute; left: 40px; top: 140px; width: 300px; height: 240px; overflow: auto; margin: 0; }
 #field { position: absolute; left: 400px; top: 140px; font-size: 32px; }
 #echo { position: absolute; left: 400px; top: 200px; margin: 0; }
 #hover { position: absolute; left: 400px; top: 300px; width: 200px; height: 80px; background: #a8dadc; }
 #card { position: absolute; left: 640px; top: 300px; width: 200px; height: 80px; background: #e63946; opacity: 0; }
 #hover:hover + #card { opacity: 1; }
+#hover:not(:hover) + #card { opacity: 0; }
 #knob { position: absolute; left: 40px; top: 480px; width: 80px; height: 80px; background: #1d3557; touch-action: none; }
 `,
 		},
@@ -622,30 +638,44 @@ export default function Slide() {
 			tsx: `import "./slide.css";
 import { useState } from "react";
 import { ui } from "spool";
+import { SHARED } from "shared/sneak";
 
 export default function Slide() {
 	ui.live();
 	const [count, setCount] = useState(0);
 	return (
-		<div className="ground">
-			<button type="button" id="again" onClick={() => setCount(count + 1)}>{\`again \${count}\`}</button>
+		<div className="ground" data-shared={SHARED}>
+			<button
+				type="button"
+				id="again"
+				onClick={() => {
+					setCount(count + 1);
+					ui.state.noted = count + 1;
+				}}
+			>{\`again \${count}\`}</button>
 		</div>
 	);
 }
 `,
 			css: `.ground { ${ground} }\n#again { position: absolute; left: 40px; top: 40px; font-size: 32px; }\n`,
 		},
-		// put on ahead out of sight, it writes \`ui.state\` from a timer once it has mounted
+		// put on ahead out of sight, it writes \`ui.state\` once it has mounted: from a timer of its own, from a timer of code
+		// the slide on show shares, and from a promise
 		waits: {
 			tsx: `import "./slide.css";
 import { useEffect } from "react";
 import { ui } from "spool";
+import { sneakLater } from "shared/sneak";
 
 export default function Slide() {
 	useEffect(() => {
 		const timer = setTimeout(() => {
 			ui.state.sneaked = true;
 		}, 200);
+		sneakLater();
+		void new Promise((done) => setTimeout(done, 300)).then(() => {
+			ui.state.sneakedLater = true;
+		});
 		return () => clearTimeout(timer);
 	}, []);
 	return <div className="ground">waits</div>;
@@ -654,6 +684,19 @@ export default function Slide() {
 			css: `.ground { ${ground} }\n`,
 		},
 	};
+	writeDesignFile(
+		project.root,
+		"shared/sneak.ts",
+		`import { ui } from "spool";
+
+export const SHARED = "shared";
+export function sneakLater(): void {
+	setTimeout(() => {
+		ui.state.sneakedShared = true;
+	}, 250);
+}
+`,
+	);
 	for (const [index, name] of slides.entries()) {
 		const file = files[name];
 		if (file === undefined) continue;
@@ -710,6 +753,15 @@ export default function Slide() {
 	await expect.poll(() => theirs("#field").inputValue()).toBe("hello");
 	await expect.poll(() => theirs("#echo").textContent()).toBe("said hello");
 	await view.keyboard.press("Escape");
+	// left, the field says it changed, the browser's way
+	await mine("#tab").click();
+	await expect.poll(() => theirs("#kept").textContent()).toBe("kept hello");
+	// a click whose handler focuses the field: the room's copy shows it focused, and the room's window keeps its keys
+	await mine("#find").click();
+	await expect.poll(() => theirs("#field").getAttribute("data-spool-focus")).toBe("");
+	await view.keyboard.press("Escape");
+	await mine("#tab").click();
+	expect(await audience.evaluate(() => document.activeElement?.tagName)).not.toBe("IFRAME");
 	// a drag that takes the pointer as it presses
 	const knob = await mine("#knob").boundingBox();
 	if (knob === null) throw new Error("no knob");
@@ -722,19 +774,34 @@ export default function Slide() {
 	expect(moved).toBeGreaterThan(100);
 	await expect.poll(async () => Math.abs((await theirs("#knob").evaluate(dragged())) - moved)).toBeLessThan(2);
 
-	// a room reloaded on the live slide gets where its scroll and its field stand; its counter starts again
+	// what is done while the room holds its picture shows there as it lets go
+	await view.keyboard.press("f");
+	await mine("#count").click();
+	await expect.poll(() => mine("#count").textContent()).toBe("count 4");
+	await view.waitForTimeout(300);
+	expect(await theirs("#count").textContent()).toBe("count 3");
+	await view.keyboard.press("f");
+	await expect.poll(() => theirs("#count").textContent()).toBe("count 4");
+
+	// a room reloaded on the live slide gets where its scroll and its field stand now, a field the slide filled too; its
+	// counter starts again
+	await mine("#fill").click();
+	await expect.poll(() => theirs("#echo").textContent()).toBe("said filled");
 	await audience.reload();
 	expect(await together(view, audience)).toEqual({ slide: 0, beat: 0 });
 	await expect.poll(() => theirs("#list").evaluate((element) => element.scrollTop)).toBe(scrolled);
-	await expect.poll(() => theirs("#echo").textContent()).toBe("said hello");
+	await expect.poll(() => theirs("#echo").textContent()).toBe("said filled");
 
 	// the next live slide is given what is done in it, and the one after it, put on ahead, writes nothing of the talk's
 	await view.keyboard.press("ArrowRight");
 	expect(await together(view, audience)).toEqual({ slide: 1, beat: 0 });
+	await view.waitForTimeout(1000);
+	// the slide on show writes, after them: theirs never ride along
 	await mine("#again").click();
 	await expect.poll(() => theirs("#again").textContent()).toBe("again 1");
-	await view.waitForTimeout(1000);
 	const sessions = (await said(view)).flat().flatMap((one) => (one.spool === "stage-session" ? [one.session] : []));
-	expect(sessions.filter((session) => "sneaked" in session.state)).toEqual([]);
+	expect(sessions.some((session) => session.state.noted === 1)).toBe(true);
+	const sneaks = ["sneaked", "sneakedShared", "sneakedLater"];
+	expect(sessions.filter((session) => sneaks.some((key) => key in session.state))).toEqual([]);
 	await audience.close();
 });

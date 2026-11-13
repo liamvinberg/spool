@@ -15,8 +15,8 @@ import {
  * the trusted input its live slide on show is given and says it; the room's stage replays it in its own copy of that
  * slide, and nowhere else: the hand's events, the wheel and keys made again there, at the same element, and the results
  * a made event cannot cause set as they stand in the presenter's copy: scroll offsets, what fields hold, the focus.
- * What only the browser's own hand draws (`:hover`, `:active`, `:focus` and the rest) the room's copy is given by a copy
- * of each such rule of its stylesheets that names an attribute the room sets instead.
+ * What only the browser's own hand draws (`:hover`, `:active`, `:focus` and the rest) the room's stage draws by an
+ * attribute it sets instead, each such rule of its stylesheets rewritten to name it.
  */
 
 /** The slide on show in a stage, as input needs it: its copy's box, and whose copy it is. */
@@ -26,6 +26,9 @@ export interface OnShow {
 	readonly take: number;
 	readonly box: HTMLElement;
 }
+
+/** A copy of a slide, by its frame and the take it was rendered for: the stage's key for it. */
+export const copyKey = (frame: string, take: number): string => `${frame}#${take}`;
 
 /** How long after the hand last did something a scroll is still its doing, and said as it goes. */
 const HAND_MS = 700;
@@ -127,8 +130,9 @@ export function recordInput(options: {
 	live(): OnShow | undefined;
 	send(inputs: SlideInputs): void;
 }): InputRecorder {
-	/** what each copy's results stand at: its scroll offsets, its fields and its focus, by what they are of */
-	const results = new Map<string, Map<string, SlideInput>>();
+	/** the elements of each copy that scrolled, and whether its focus was ever said: what its standing is read from */
+	const scrolledIn = new Map<string, Map<string, SlidePath>>();
+	const focusSaid = new Set<string>();
 	/** the copies given input since they were rendered */
 	const used = new Set<string>();
 	let batch: { on: OnShow; input: SlideInput[] } | undefined;
@@ -173,16 +177,35 @@ export function recordInput(options: {
 		if (now) flush();
 		else if (frame === 0) frame = requestAnimationFrame(flush);
 	};
-	const remember = (on: OnShow, what: string, input: SlideInput) => {
-		const held = results.get(on.key) ?? new Map<string, SlideInput>();
-		held.set(what, input);
-		results.set(on.key, held);
+	/**
+	 * Where the copy stands now, as results: the offsets of what scrolled, what every field holds and where the focus is,
+	 * read from the copy itself, so a field emptied by the slide's own code is said empty.
+	 */
+	const standing = (on: OnShow): SlideInput[] => {
+		const said: SlideInput[] = [];
+		const scrolled = scrolledIn.get(on.key);
+		for (const [what, path] of scrolled ?? []) {
+			const element = elementAt(on.box, path);
+			if (element === undefined) scrolled?.delete(what);
+			else said.push({ kind: "scroll", path, top: element.scrollTop, left: element.scrollLeft });
+		}
+		for (const field of on.box.querySelectorAll("input, textarea, select")) {
+			const input = fieldValue(on, field, "input");
+			if (input !== undefined) said.push(input);
+		}
+		const focused = pathIn(on.box, document.activeElement);
+		if (focused !== undefined || focusSaid.has(on.key)) {
+			const visible = focused !== undefined && document.activeElement?.matches(":focus-visible") === true;
+			said.push({ kind: "focus", path: focused ?? null, visible });
+		}
+		return said;
 	};
-	const sayResults = (on: OnShow | undefined) => {
-		const held = on === undefined ? undefined : results.get(on.key);
-		if (on === undefined || held === undefined || held.size === 0) return;
+	const sayStanding = (on: OnShow | undefined) => {
+		if (on === undefined) return;
+		const said = standing(on);
+		if (said.length === 0) return;
 		flush();
-		batch = { on, input: [...held.values()] };
+		batch = { on, input: said };
 		flush();
 	};
 	const hand = (event: Event) => {
@@ -286,8 +309,10 @@ export function recordInput(options: {
 	const scrolled = (on: OnShow, element: Element) => {
 		const path = pathIn(on.box, element);
 		if (path === undefined) return undefined;
+		const held = scrolledIn.get(on.key) ?? new Map<string, SlidePath>();
+		held.set(path.join("."), path);
+		scrolledIn.set(on.key, held);
 		const input: SlideInput = { kind: "scroll", path, top: element.scrollTop, left: element.scrollLeft };
-		remember(on, `scroll ${path.join(".")}`, input);
 		return input;
 	};
 	addEventListener(
@@ -320,28 +345,9 @@ export function recordInput(options: {
 	const changed = (event: Event) => {
 		if (!event.isTrusted) return;
 		const on = options.live();
-		const field = event.target;
-		if (
-			on === undefined ||
-			!(
-				field instanceof HTMLInputElement ||
-				field instanceof HTMLTextAreaElement ||
-				field instanceof HTMLSelectElement
-			)
-		)
-			return;
-		const path = pathIn(on.box, field);
-		if (path === undefined) return;
-		const checkable = field instanceof HTMLInputElement && (field.type === "checkbox" || field.type === "radio");
-		const input: SlideInput = {
-			kind: "value",
-			path,
-			event: event.type === "change" ? "change" : "input",
-			value: field.value.slice(0, VALUE_LONGEST),
-			...(checkable ? { checked: field.checked } : {}),
-		};
-		remember(on, `value ${path.join(".")}`, input);
-		queue(on, input, true);
+		const input =
+			on === undefined ? undefined : fieldValue(on, event.target, event.type === "change" ? "change" : "input");
+		if (on !== undefined && input !== undefined) queue(on, input, true);
 	};
 	addEventListener("input", changed, { capture: true });
 	addEventListener("change", changed, { capture: true });
@@ -354,9 +360,8 @@ export function recordInput(options: {
 			const path = on === undefined ? undefined : pathIn(on.box, event.target);
 			if (on === undefined || path === undefined) return;
 			const element = event.target as Element;
-			const input: SlideInput = { kind: "focus", path, visible: element.matches(":focus-visible") };
-			remember(on, "focus", input);
-			queue(on, input, true);
+			focusSaid.add(on.key);
+			queue(on, { kind: "focus", path, visible: element.matches(":focus-visible") }, true);
 		},
 		true,
 	);
@@ -366,9 +371,7 @@ export function recordInput(options: {
 			const on = options.live();
 			if (on === undefined || pathIn(on.box, event.target) === undefined) return;
 			if (pathIn(on.box, event.relatedTarget) !== undefined) return;
-			const input: SlideInput = { kind: "focus", path: null, visible: false };
-			remember(on, "focus", input);
-			queue(on, input, true);
+			queue(on, { kind: "focus", path: null, visible: false }, true);
 		},
 		true,
 	);
@@ -376,19 +379,50 @@ export function recordInput(options: {
 	return {
 		shown() {
 			flush();
-			sayResults(options.live());
+			// read once the frame showing it has been laid out and painted, never inside the step
+			const on = options.live();
+			if (on !== undefined)
+				requestAnimationFrame(() =>
+					afterTask(() => (options.live()?.key === on.key ? sayStanding(on) : undefined)),
+				);
 		},
 		recall() {
-			sayResults(options.live());
+			sayStanding(options.live());
 		},
 		letGo(key, frame, take) {
-			results.delete(key);
+			scrolledIn.delete(key);
+			focusSaid.delete(key);
 			if (!used.delete(key)) return;
 			if (batch?.on.key === key) batch = undefined;
 			options.send({ frame, take, input: [{ kind: "afresh" }] });
 		},
 	};
 }
+
+/** What a field of the copy holds, as a result to say: undefined for no field of it, and for a file's, no copy can be given. */
+function fieldValue(on: OnShow, field: EventTarget | null, event: "input" | "change"): SlideInput | undefined {
+	if (
+		!(
+			field instanceof HTMLInputElement ||
+			field instanceof HTMLTextAreaElement ||
+			field instanceof HTMLSelectElement
+		) ||
+		(field instanceof HTMLInputElement && field.type === "file")
+	)
+		return undefined;
+	const path = pathIn(on.box, field);
+	if (path === undefined) return undefined;
+	return {
+		kind: "value",
+		path,
+		event,
+		value: field.value.slice(0, VALUE_LONGEST),
+		...(checkable(field) ? { checked: (field as HTMLInputElement).checked } : {}),
+	};
+}
+
+const checkable = (field: Element) =>
+	field instanceof HTMLInputElement && (field.type === "checkbox" || field.type === "radio");
 
 const isMove = (input: SlideInput | undefined, type: string) => input?.kind === "hand" && input.type === type;
 const same = (a: SlidePath, b: SlidePath) => a.length === b.length && a.every((step, at) => step === b[at]);
@@ -411,8 +445,13 @@ export interface InputReplayer {
 	letGo(key: string): void;
 }
 
-/** The most words of input held for a copy the room has not put on show yet. */
-const WAITING_MOST = 64;
+/**
+ * How much input is held for a copy the room has not put on show yet, or while it holds its picture, the oldest let go
+ * past it: each input weighs one, and a field's value one more for every 256 characters it holds.
+ */
+const WAITING_MOST = 16_384;
+const weigh = (inputs: SlideInputs) =>
+	inputs.input.reduce((sum, one) => sum + 1 + (one.kind === "value" ? Math.floor(one.value.length / 256) : 0), 0);
 
 /** The element each replayed pointer is held by, as a slide took it. */
 const capturedBy = new Map<number, Element>();
@@ -451,14 +490,19 @@ export function replayInput(options: {
 	lendPointerCapture();
 	const used = new Set<string>();
 	let waiting: SlideInputs[] = [];
+	let waitingWeight = 0;
 	const marks = new Marks();
 	let carried: DataTransfer | undefined;
 	let on: OnShow | undefined;
+	keepFocus(() => {
+		const live = options.live();
+		return live === undefined ? undefined : { box: live.box, marks };
+	});
 
 	const give = (inputs: SlideInputs) => {
 		const live = options.live();
 		// the presenter's copy starts over: the room's does too, unless it is the one on show
-		const key = `${inputs.frame}#${inputs.take}`;
+		const key = copyKey(inputs.frame, inputs.take);
 		if (inputs.input.some((one) => one.kind === "afresh") && used.has(key) && live?.key !== key) {
 			used.delete(key);
 			options.afresh(inputs.frame, inputs.take);
@@ -474,9 +518,10 @@ export function replayInput(options: {
 			return;
 		}
 		const next = options.coming();
-		if (next !== undefined && next.frame === inputs.frame && next.take === inputs.take) {
-			waiting = [...waiting, inputs].slice(-WAITING_MOST);
-		}
+		if (next === undefined || next.frame !== inputs.frame || next.take !== inputs.take) return;
+		waiting.push(inputs);
+		waitingWeight += weigh(inputs);
+		while (waitingWeight > WAITING_MOST && waiting.length > 1) waitingWeight -= weigh(waiting.shift() as SlideInputs);
 	};
 
 	const replay = (live: OnShow, input: SlideInput) => {
@@ -533,6 +578,8 @@ export function replayInput(options: {
 				case "afresh":
 					return;
 			}
+		} catch {
+			// an input the copy cannot take (a value its field refuses) leaves the rest to be given
 		} finally {
 			replayingNow = false;
 		}
@@ -588,10 +635,11 @@ export function replayInput(options: {
 				marks.clear();
 				on = undefined;
 			}
+			// given to the copy now on show, held again for the one still to come, let go for any other
 			const held = waiting;
 			waiting = [];
-			if (live === undefined) return;
-			for (const inputs of held) if (inputs.frame === live.frame && inputs.take === live.take) give(inputs);
+			waitingWeight = 0;
+			for (const inputs of held) give(inputs);
 		},
 		letGo(key) {
 			used.delete(key);
@@ -658,10 +706,37 @@ function value(field: Element | undefined, input: Extract<SlideInput, { kind: "v
 		NATIVE_VALUE.select?.call(field, input.value);
 		differs = true;
 	}
-	if (!differs || field === undefined) return;
-	field.dispatchEvent(new Event("input", { bubbles: true }));
-	if (input.event === "change" || field instanceof HTMLSelectElement)
-		field.dispatchEvent(new Event("change", { bubbles: true }));
+	// a field typed in or slid changes after the value it was given already stands: its change is heard all the same.
+	// A box ticked is heard as the copy's own click ticked it, a choice from a list as its value was set, and only then.
+	const changes = input.event === "change" || field instanceof HTMLSelectElement;
+	if (field === undefined || (!differs && !(input.event === "change" && typedIn(field)))) return;
+	if (differs) field.dispatchEvent(new Event("input", { bubbles: true }));
+	if (changes) field.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+const typedIn = (field: Element) =>
+	field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && !checkable(field));
+
+/**
+ * In the room's copy of the live slide on show, the slide's own call to focus or blur (as a click it was given makes it)
+ * moves the copy's focus marks, and never the window's focus: a stage with it takes the room's keys, which are the
+ * talk's. Where the presenter's copy put its focus comes as a result all the same.
+ */
+function keepFocus(live: () => { box: Element; marks: Marks } | undefined): void {
+	for (const proto of [HTMLElement.prototype, SVGElement.prototype]) {
+		const focus = proto.focus;
+		const blur = proto.blur;
+		proto.focus = function (this: HTMLElement | SVGElement, options?: FocusOptions) {
+			const on = live();
+			if (on === undefined || !on.box.contains(this)) return focus.call(this, options);
+			if (this.tabIndex >= 0 || this.hasAttribute("tabindex")) on.marks.focus(on.box, this, typedIn(this));
+		};
+		proto.blur = function (this: HTMLElement | SVGElement) {
+			const on = live();
+			if (on === undefined || !on.box.contains(this)) return blur.call(this);
+			if (on.marks.focused(on.box) === this) on.marks.focus(on.box, undefined, false);
+		};
+	}
 }
 
 /** The attributes the room's copy is given for what only the browser's own hand draws, by the class each stands for. */
@@ -705,10 +780,7 @@ class Marks {
 				new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: target ?? null }),
 			);
 		}
-		for (const element of this.focusedOn?.within ?? []) element.removeAttribute(STANDS_FOR["focus-within"]);
-		was?.removeAttribute(STANDS_FOR.focus);
-		was?.removeAttribute(STANDS_FOR["focus-visible"]);
-		this.focusedOn = undefined;
+		this.unfocus();
 		if (target === undefined) return;
 		const within = this.chain(box, target);
 		for (const element of within) element.setAttribute(STANDS_FOR["focus-within"], "");
@@ -726,6 +798,11 @@ class Marks {
 		for (const element of this.pressed) element.removeAttribute(STANDS_FOR.active);
 		this.hovered = [];
 		this.pressed = [];
+		this.unfocus();
+	}
+
+	/** The focus's marks taken off, and no events: the caller says whatever is to be heard. */
+	private unfocus(): void {
 		const focused = this.focusedOn;
 		if (focused === undefined) return;
 		for (const element of focused.within) element.removeAttribute(STANDS_FOR["focus-within"]);
@@ -754,15 +831,16 @@ class Marks {
 	}
 }
 
-/** The sheets whose rules have their copies, each once. */
+/** The sheets whose rules are rewritten, each once. */
 const mirrored = new WeakSet<CSSStyleSheet>();
 const PSEUDO = /:(hover|active|focus-visible|focus-within|focus)(?![\w-])/g;
 
 /**
- * Each rule of the document's stylesheets that matches by the hand, the press or the focus (`:hover`, `:active`,
- * `:focus`, `:focus-visible`, `:focus-within`) gets a copy beside it that matches by the attribute the room sets
- * instead: what a made event can never cause, the copy draws. A sheet is copied the first time the room replays
- * anything once it is in the document, and never again.
+ * Each rule of the room stage's stylesheets that matches by the hand, the press or the focus (`:hover`, `:active`,
+ * `:focus`, `:focus-visible`, `:focus-within`) is rewritten to match by the attribute the room sets instead: what a
+ * made event can never cause, the copy draws, and a rule that matches by their absence (`:not(:hover)`) stops matching
+ * as the presenter's stops. The room's stage has no hand or focus of its own to lose by it. A sheet is rewritten the
+ * first time the room replays anything once it is in the document, and never again.
  */
 export function mirrorPseudoClasses(): void {
 	const sheets = [...document.styleSheets, ...(document.adoptedStyleSheets ?? [])];
@@ -770,7 +848,7 @@ export function mirrorPseudoClasses(): void {
 		if (mirrored.has(sheet)) continue;
 		mirrored.add(sheet);
 		try {
-			mirrorRules(sheet.cssRules, (text, at) => sheet.insertRule(text, at));
+			mirrorRules(sheet.cssRules);
 		} catch {
 			// a sheet of another origin keeps its rules to itself
 		}
@@ -784,21 +862,13 @@ export function mirroredSelector(selector: string): string | undefined {
 	return selector.replace(PSEUDO, (_, name: keyof typeof STANDS_FOR) => `[${STANDS_FOR[name]}]`);
 }
 
-function mirrorRules(rules: CSSRuleList, insert: (text: string, at: number) => void): void {
-	for (let at = rules.length - 1; at >= 0; at--) {
-		const rule = rules[at];
-		if (rule === undefined) continue;
+function mirrorRules(rules: CSSRuleList): void {
+	for (const rule of rules) {
 		const nested = (rule as CSSRule & { cssRules?: CSSRuleList }).cssRules;
-		const into = (rule as CSSRule & { insertRule?: (text: string, at: number) => number }).insertRule;
-		if (nested !== undefined && typeof into === "function")
-			mirrorRules(nested, (text, index) => into.call(rule, text, index));
+		if (nested !== undefined) mirrorRules(nested);
 		if (!(rule instanceof CSSStyleRule)) continue;
 		const selector = mirroredSelector(rule.selectorText);
-		if (selector === undefined || !rule.cssText.startsWith(rule.selectorText)) continue;
-		try {
-			insert(selector + rule.cssText.slice(rule.selectorText.length), at + 1);
-		} catch {
-			// a selector the attribute cannot stand in (a scrollbar's own part): the room goes without it
-		}
+		// a selector the attribute cannot stand in (a scrollbar's own part) is refused, and the rule kept as it was
+		if (selector !== undefined) rule.selectorText = selector;
 	}
 }

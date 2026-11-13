@@ -38,6 +38,7 @@ import {
 } from "../../deck/stage-wire";
 import { SlideScope, setSlideBeat } from "../slide-beats";
 import {
+	copyKey,
 	type InputRecorder,
 	type InputReplayer,
 	type OnShow,
@@ -284,7 +285,7 @@ export function bootStage(runtime: StageRuntime): void {
 	const picture = (): RoomPicture =>
 		room ? roomPicture(session) : { at: session.at, state: session.state, takes: session.takes };
 	const takeOf = (index: number, takes: RoomPicture["takes"]) => takes[talk[index]?.frame ?? ""] ?? 0;
-	const keyOf = (index: number, take: number) => `${talk[index]?.frame ?? ""}#${take}`;
+	const keyOf = (index: number, take: number) => copyKey(talk[index]?.frame ?? "", take);
 
 	/** The beat a slide rests at out of sight: where the talk would land on it from here. */
 	const restingBeat = (index: number, target: number) =>
@@ -1021,7 +1022,11 @@ export function bootStage(runtime: StageRuntime): void {
 		const before = room ? roomPicture(session) : session;
 		const thawed = session.frozen !== null && next.frozen === null;
 		session = next;
-		if (thawed) recall();
+		if (thawed) {
+			// what the presenter did while the room held its picture, given before the room shows the talk again
+			replayer?.shown();
+			recall();
+		}
 		const after = picture();
 		if (JSON.stringify(after.state) !== JSON.stringify(runtime.state.read())) seed(after.state);
 		if (mode === "own") post({ spool: "stage-session", session });
@@ -1296,10 +1301,12 @@ export function bootStage(runtime: StageRuntime): void {
 		return {
 			live: roomLive,
 			coming: () => {
-				const at = picture();
+				// a room holding its picture shows, on letting go, where the presenter is: all done there meanwhile waits
+				const held = session.frozen !== null;
+				const at = held ? session : picture();
 				const slide = talk[at.at.slide];
 				const take = takeOf(at.at.slide, at.takes);
-				return slide?.live === true && keyOf(at.at.slide, take) !== shown
+				return slide?.live === true && (held || keyOf(at.at.slide, take) !== shown)
 					? { frame: slide.frame, take }
 					: undefined;
 			},

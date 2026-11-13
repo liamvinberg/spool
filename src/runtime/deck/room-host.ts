@@ -131,6 +131,17 @@ export function bootRoom(root: HTMLElement, config: RoomConfig): StageHost {
 		return { ...pointer, x: f.x + pointer.x * size.w * f.s, y: f.y + pointer.y * size.h * f.s, width: size.w * f.s };
 	});
 	root.append(shield);
+	// a slide's own code can focus something in its stage, as a click the room's copy was given makes it: the stage would
+	// have the window's keys, which are the talk's, so the window takes them back
+	const keepKeys = () =>
+		setTimeout(() => {
+			const focused = document.activeElement;
+			if (!(focused instanceof HTMLIFrameElement)) return;
+			focused.blur();
+			window.focus();
+		});
+	addEventListener("blur", keepKeys);
+	addEventListener("focus", keepKeys);
 	new ResizeObserver(() => dot.draw()).observe(root);
 	if (app !== undefined) dragStrip(root, app);
 
