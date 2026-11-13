@@ -763,7 +763,12 @@ export default function Slide() {
 	rmSync(join(folder, `opening-${one?.opening}.jpg`));
 	expect((await project.coverOf("talk/one"))?.opening).toBeUndefined();
 	await expect.poll(async () => (await project.coverOf("talk/one"))?.opening, { timeout: 30_000 }).toBeDefined();
-	// and one drawn with WebGL its beat stills, once it was timed drawing with it
+	// and one drawn with WebGL its beat stills, once it was timed drawing with it, as a booth on a GPU times it
+	const census = { elements: 3, animations: [], canvasCount: 1, canvases: [], videos: 0, oversized: [], webgl: 1 };
+	writeFileSync(
+		join(folder, "pace.json"),
+		`${JSON.stringify({ perSecond: 60, slowestMs: 17, scale: 1, census: { ...census, loop: false } })}\n`,
+	);
 	for (const name of readdirSync(folder)) if (name.startsWith("beat")) rmSync(join(folder, name));
 	await expect.poll(async () => (await project.coverOf("talk/one"))?.beats?.length, { timeout: 30_000 }).toBe(2);
 });
