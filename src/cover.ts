@@ -89,6 +89,12 @@ export function openingShape(cover: CoverShape): CoverShape | undefined {
 	return raster === undefined ? undefined : { ...cover, scale, raster };
 }
 
+/**
+ * The box a slide's beat stills are made to fill (spool#330): the presenter's next pane draws a slide 320 CSS pixels
+ * wide, and this is that, sharp on a screen of up to three device pixels to one.
+ */
+export const BEAT_STILL_SCREEN = { width: 960, height: 540 } as const;
+
 /** JPEG quality for a slide's opening still. */
 export const OPENING_QUALITY = 0.82;
 
@@ -120,4 +126,10 @@ export interface Cover {
 	 * the talk opens on, addressed the same way (spool#319).
 	 */
 	opening?: string;
+	/**
+	 * A slide's stills of each of its beats, in order, small, for the presenter's next pane, when the photo booth has
+	 * taken them: it takes them of slides that draw with WebGL, which the pane shows as these rather than making a
+	 * context in the presenter's thread (spool#330). Addressed the same way.
+	 */
+	beats?: string[];
 }

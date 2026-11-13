@@ -12,6 +12,7 @@ import {
 	readCover,
 	readCoverAwaited,
 	readCoverImage,
+	retireOpening,
 	scanBrokenFrames,
 	scanBrokenFramesSync,
 	scanCoverSchemes,
@@ -142,6 +143,23 @@ describe("a slide's opening still (spool#319)", () => {
 		]);
 		expect(writeOpening(root, "cart", JPEG)).toBeUndefined();
 		expect(existsSync(join(root, "design", ".spool", "thumbs", "cart"))).toBe(false);
+	});
+
+	it("carries the stills of its beats, in order, served at their own addresses, and goes with them", () => {
+		const root = project();
+		writeCover(root, "home", JPEG);
+		const opened = writeOpening(root, "home", OTHER_JPEG, [PNG, JPEG]);
+		const beats = opened?.beats ?? [];
+		expect(beats).toEqual([expect.stringMatching(/^[0-9a-f]{32}$/), expect.stringMatching(/^[0-9a-f]{32}$/)]);
+		expect(readCover(root, "home")).toEqual(opened);
+		expect(beats.map((beat) => readCoverImage(root, "home", beat)?.bytes)).toEqual([PNG, JPEG]);
+		// taken again without them, as of a slide that no longer draws with WebGL: none stand
+		expect(writeOpening(root, "home", OTHER_JPEG)?.beats).toBeUndefined();
+		expect(readCoverImage(root, "home", beats[0] ?? "")).toBeUndefined();
+		// an edit lets them go with the opening still
+		writeOpening(root, "home", OTHER_JPEG, [PNG]);
+		expect(retireOpening(root, "home")).toEqual({ hash: opened?.hash });
+		expect(readdirSync(storeDir(root)).filter((name) => name.startsWith("beat"))).toEqual([]);
 	});
 });
 

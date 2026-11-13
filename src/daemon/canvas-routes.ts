@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { validator } from "hono/validator";
+import type { Cover } from "../cover";
 import { isFramePath } from "../page-path";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -26,7 +27,7 @@ export function canvasRoutes(deps: {
 	/** A frame read with no cover: the booth owes it a picture. */
 	owePicture: (root: string, project: string, frame: string) => void;
 	/** Covered frames read with no opening still: the slides of a talk among them are owed one (spool#319). */
-	oweOpenings: (root: string, project: string, frames: readonly string[]) => void;
+	oweOpenings: (root: string, project: string, frames: readonly { name: string; cover: Cover }[]) => void;
 	flowGraph: Pick<ReturnType<typeof createFlowGraph>, "flows">;
 	resolvePass: Pick<ReturnType<typeof createResolvePass>, "run">;
 	/** This daemon's own origin once it is really listening, which the resolve pass dials. */
@@ -48,8 +49,10 @@ export function canvasRoutes(deps: {
 						deps.oweOpenings(
 							root,
 							name,
-							projection.frames.flatMap((frame) =>
-								frame.cover !== undefined && frame.cover.opening === undefined ? [frame.name] : [],
+							projection.frames.flatMap(({ name, cover }) =>
+								cover !== undefined && (cover.opening === undefined || cover.beats === undefined)
+									? [{ name, cover }]
+									: [],
 							),
 						);
 						return c.json({

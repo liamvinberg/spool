@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer as createTlsServer } from "node:tls";
 import { crc32, deflateSync } from "node:zlib";
@@ -48,7 +48,9 @@ async function served(booth: BoothSeams = {}, experiments?: { deck: boolean }) {
 	const control = { headers: { "X-Spool-Control": project.controlToken } };
 	const projection = async () => {
 		const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frames`, control);
-		return (await res.json()) as { frames: { name: string; cover?: { hash: string; opening?: string } }[] };
+		return (await res.json()) as {
+			frames: { name: string; cover?: { hash: string; opening?: string; beats?: string[] } }[];
+		};
 	};
 	const coverOf = async (frame: string) => (await projection()).frames.find((entry) => entry.name === frame)?.cover;
 	const image = async (frame: string, hash: string) => {
@@ -689,15 +691,22 @@ it("photographs a slide of a talk again as the talk draws it, on the beat it ope
 		"frames/talk/deck.json",
 		json({ version: 1, w: 1280, h: 720, slides: ["one", "two"] }),
 	);
-	// a slide red on the beat it opens on and blue on its last, which its cover shows
+	// a slide red on the beat it opens on and blue on its last, which its cover shows, drawn with WebGL
 	writeFrame(
 		project.root,
 		"talk/one",
-		`import { ui } from "spool";
+		`import { useEffect, useRef } from "react";
+import { ui } from "spool";
 
 export default function Slide() {
 	const beat = ui.beats(["red", "blue"]);
-	return <main style={{ background: beat.name, width: "100%", height: "100vh" }}>one</main>;
+	const canvas = useRef(null);
+	useEffect(() => {
+		const gl = canvas.current.getContext("webgl");
+		gl.clearColor(beat.index === 0 ? 1 : 0, 0, beat.index === 0 ? 0 : 1, 1);
+		gl.clear(gl.COLOR_BUFFER_BIT);
+	}, [beat.index]);
+	return <canvas ref={canvas} width={1280} height={720} style={{ display: "block", width: "100%", height: "100vh" }} />;
 }
 `,
 	);
@@ -719,11 +728,27 @@ export default function Slide() {
 	expect(red[2]).toBeLessThan(60);
 	const blue = await colourOf((await project.image("talk/one", one?.hash ?? "")).bytes);
 	expect(blue[2]).toBeGreaterThan(200);
+	// a slide drawn with WebGL on each of its beats, small, for the presenter's next pane (spool#330)
+	const beatStills = async () => {
+		const beats = (await project.coverOf("talk/one"))?.beats ?? [];
+		return await Promise.all(beats.map(async (beat) => (await project.image("talk/one", beat)).bytes));
+	};
+	await expect
+		.poll(async () => (await beatStills()).map((bytes) => imageSize(bytes)), { timeout: 30_000 })
+		.toEqual([
+			{ width: 960, height: 540 },
+			{ width: 960, height: 540 },
+		]);
+	const [onRed, onBlue] = await Promise.all((await beatStills()).map((bytes) => colourOf(bytes)));
+	expect(onRed?.[0]).toBeGreaterThan(200);
+	expect(onBlue?.[2]).toBeGreaterThan(200);
 	// a slide of one beat stands on it already
 	await expect.poll(async () => (await project.coverOf("talk/two"))?.opening, { timeout: 30_000 }).toBeDefined();
 	// a frame on the deck's page that is no slide of its talk is never presented
 	await expect.poll(() => project.coverOf("talk/loose"), { timeout: 30_000 }).toBeDefined();
 	expect((await project.coverOf("talk/loose"))?.opening).toBeUndefined();
+	// a slide drawn without WebGL has no beat stills
+	expect((await project.coverOf("talk/two"))?.beats).toBeUndefined();
 
 	// an edit lets the opening still go at once, as it is of the slide before the edit, and takes both again
 	const was = (await project.coverOf("talk/two"))?.opening;
@@ -738,4 +763,7 @@ export default function Slide() {
 	rmSync(join(folder, `opening-${one?.opening}.jpg`));
 	expect((await project.coverOf("talk/one"))?.opening).toBeUndefined();
 	await expect.poll(async () => (await project.coverOf("talk/one"))?.opening, { timeout: 30_000 }).toBeDefined();
+	// and one drawn with WebGL its beat stills, once it was timed drawing with it
+	for (const name of readdirSync(folder)) if (name.startsWith("beat")) rmSync(join(folder, name));
+	await expect.poll(async () => (await project.coverOf("talk/one"))?.beats?.length, { timeout: 30_000 }).toBe(2);
 });

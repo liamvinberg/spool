@@ -28,6 +28,11 @@ const OPENING_NAME = new RegExp(
 	`^${OPENING_PREFIX}([0-9a-f]{${HASH_CHARS}})\\.(${COVER_FORMATS.map((f) => f.ext).join("|")})$`,
 );
 
+/** A slide's still of one of its beats (spool#330), named by the beat, from 0, and its own content. */
+const BEAT_NAME = new RegExp(
+	`^beat([0-9]+)-([0-9a-f]{${HASH_CHARS}})\\.(${COVER_FORMATS.map((f) => f.ext).join("|")})$`,
+);
+
 export function isCoverHash(value: string): boolean {
 	return COVER_HASH.test(value);
 }
@@ -95,7 +100,21 @@ function coverAmong(names: string[]): Cover | undefined {
 	const hash = last(COVER_NAME);
 	if (hash === undefined) return undefined;
 	const opening = last(OPENING_NAME);
-	return opening === undefined ? { hash } : { hash, opening };
+	if (opening === undefined) return { hash };
+	const beats = beatsAmong(names);
+	return beats === undefined ? { hash, opening } : { hash, opening, beats };
+}
+
+/** The beat stills among a cover's files, one for every beat from the first, or none. */
+function beatsAmong(names: string[]): string[] | undefined {
+	const beats: string[] = [];
+	for (const name of names) {
+		const found = BEAT_NAME.exec(name);
+		if (found?.[1] !== undefined && found[2] !== undefined) beats[Number(found[1])] = found[2];
+	}
+	if (beats.length === 0) return undefined;
+	for (let beat = 0; beat < beats.length; beat++) if (beats[beat] === undefined) return undefined;
+	return beats;
 }
 
 export function scanCovers(root: string): Map<string, Cover> {
@@ -148,11 +167,15 @@ export interface StoredCover {
 	type: string;
 }
 
-/** The one image an immutable cover address names: a cover, or the opening still beside one. */
+/** The one image an immutable cover address names: a cover, or the opening still or a beat still beside one. */
 export function readCoverImage(root: string, frame: string, hash: string): StoredCover | undefined {
 	if (!isCoverHash(hash)) return undefined;
 	const dir = coverDir(root, frame);
-	for (const name of [hash, `${OPENING_PREFIX}${hash}`]) {
+	const beat = filesIn(dir)
+		.map((name) => BEAT_NAME.exec(name))
+		.find((found) => found?.[2] === hash);
+	const beatName = beat === undefined || beat === null ? [] : [`beat${beat[1]}-${hash}`];
+	for (const name of [hash, `${OPENING_PREFIX}${hash}`, ...beatName]) {
 		for (const format of COVER_FORMATS) {
 			try {
 				return { bytes: readFileSync(join(dir, `${name}.${format.ext}`)), type: format.type };
@@ -211,10 +234,16 @@ export function writeCover(
 }
 
 /**
- * A slide's opening still, beside the cover just written of the same version (spool#319), retiring the one before it.
- * Nothing is written for a frame with no cover: an opening still never stands without the cover it goes with.
+ * A slide's opening still, beside the cover just written of the same version (spool#319), retiring the one before it,
+ * with the stills of its beats taken with it, or none (spool#330). Nothing is written for a frame with no cover: an
+ * opening still never stands without the cover it goes with.
  */
-export function writeOpening(root: string, frame: string, bytes: Buffer): Cover | undefined {
+export function writeOpening(
+	root: string,
+	frame: string,
+	bytes: Buffer,
+	beats: readonly Buffer[] = [],
+): Cover | undefined {
 	const dir = coverDir(root, frame);
 	const cover = coverOf(dir);
 	if (cover === undefined) return undefined;
@@ -223,23 +252,33 @@ export function writeOpening(root: string, frame: string, bytes: Buffer): Cover 
 	const opening = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
 	const name = `${OPENING_PREFIX}${opening}.${format.ext}`;
 	writeAtomic(join(dir, name), bytes);
+	const stills = beats.map((still, beat) => {
+		const format = coverFormat(still);
+		if (format === undefined) throw new Error("a beat still must be one PNG or JPEG image");
+		const hash = createHash("sha256").update(still).digest("hex").slice(0, HASH_CHARS);
+		writeAtomic(join(dir, `beat${beat}-${hash}.${format.ext}`), still);
+		return { hash, name: `beat${beat}-${hash}.${format.ext}` };
+	});
+	const kept = new Set([name, ...stills.map((still) => still.name)]);
 	for (const old of filesIn(dir)) {
-		if (old !== name && OPENING_NAME.test(old)) rmSync(join(dir, old), { force: true });
+		if (!kept.has(old) && (OPENING_NAME.test(old) || BEAT_NAME.test(old))) rmSync(join(dir, old), { force: true });
 	}
-	return { hash: cover.hash, opening };
+	return stills.length === 0
+		? { hash: cover.hash, opening }
+		: { hash: cover.hash, opening, beats: stills.map((still) => still.hash) };
 }
 
 /**
- * A slide's opening still let go as the slide is edited (spool#319): it is of the slide before the edit, and a talk
- * flies its cover until the booth has the new one, as before. The cover stays, as a card shows the last picture it has.
- * The cover it now stands alone as, when it had a still beside it.
+ * A slide's opening still, and its beat stills, let go as the slide is edited (spool#319): they are of the slide before
+ * the edit, and a talk flies its cover until the booth has the new one, as before. The cover stays, as a card shows the
+ * last picture it has. The cover it now stands alone as, when it had a still beside it.
  */
 export function retireOpening(root: string, frame: string): Cover | undefined {
 	const dir = coverDir(root, frame);
 	const cover = coverOf(dir);
 	if (cover?.opening === undefined) return undefined;
 	for (const old of filesIn(dir)) {
-		if (OPENING_NAME.test(old)) rmSync(join(dir, old), { force: true });
+		if (OPENING_NAME.test(old) || BEAT_NAME.test(old)) rmSync(join(dir, old), { force: true });
 	}
 	return { hash: cover.hash };
 }
@@ -518,6 +557,22 @@ export function writePace(root: string, frame: string, pace: FramePace | undefin
 	const file = join(coverDir(root, frame), PACE_NAME);
 	if (pace === undefined) rmSync(file, { force: true });
 	else writeAtomic(file, `${JSON.stringify(pace)}\n`);
+}
+
+/**
+ * Whether a frame drew with WebGL when the booth last timed it, at rest or as any of its beats entered: a slide the
+ * booth takes beat stills of for the presenter's next pane (spool#330). Untimed, it is not known to.
+ */
+export function pacedWithWebgl(root: string, frame: string): boolean {
+	try {
+		const parsed = PACE_FILE.safeParse(JSON.parse(readFileSync(join(coverDir(root, frame), PACE_NAME), "utf8")));
+		if (!parsed.success) return false;
+		const { census, beats } = parsed.data;
+		return (census?.webgl ?? 0) > 0 || (beats ?? []).some((beat) => (beat.census?.webgl ?? 0) > 0);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return false;
+	}
 }
 
 /** Every timed frame's pace, and when it was timed. Machine-written: anything malformed reads as untimed. */

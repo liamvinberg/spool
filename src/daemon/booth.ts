@@ -9,6 +9,7 @@ import type {
 	Request,
 } from "playwright-core";
 import {
+	BEAT_STILL_SCREEN,
 	COVER_QUALITY,
 	type ColorScheme,
 	type CoverShape,
@@ -389,8 +390,13 @@ export interface BoothDeps {
 	 * the size a talk draws it, on the beat the talk opens on. A slide whose cover has its still beside it owes none.
 	 */
 	owesOpening?(root: string, frame: string): boolean;
-	/** A slide's opening still, of the source the frame has now. */
-	storeOpening?(root: string, frame: string, bytes: Buffer): void;
+	/**
+	 * Whether a slide was seen to draw with WebGL on any beat when the booth last timed it: what it takes beat stills of,
+	 * beside its opening still, whatever the beat it opens on draws (spool#330).
+	 */
+	drawsWebgl?(root: string, frame: string): boolean;
+	/** A slide's opening still, of the source the frame has now, with the stills of its beats when it took them. */
+	storeOpening?(root: string, frame: string, bytes: Buffer, beats: readonly Buffer[]): void;
 	/** A cover could not be made; the reason, and whose fault it was, ride beside the old one, which stays (#173). */
 	failed(root: string, frame: string, reason: string, kind: CaptureFailure): void;
 	/** A sitting for this frame is over, whatever came of it. */
@@ -1307,14 +1313,15 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const beats = deps.beats?.(root, frame)?.length ?? 0;
 		const url = frameUrl(origin, sitting.project, frame, undefined, beats > 1 ? 0 : undefined);
 		const reload = !loaded || beats > 1;
-		let bytes: Buffer | undefined;
+		const webgl = deps.drawsWebgl?.(root, frame) === true;
+		let taken: { opening: Buffer; beats: Buffer[] } | undefined;
 		try {
-			bytes = await underDeadline(
+			taken = await underDeadline(
 				slot,
 				tab,
 				timing.sittingMs,
 				"being photographed",
-				sitOpening(tab, url, still, reload, etag),
+				sitOpening(tab, url, still, reload, etag, { beats: Math.max(1, beats), webgl }),
 			);
 		} catch (error) {
 			if (closed) return reload;
@@ -1322,8 +1329,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			if (!(error instanceof TimedOut) && !(await browserGone(tab))) retire(slot, tab);
 		}
 		const now = await deps.compile(root, frame);
-		if (bytes === undefined || now.kind !== "ok" || now.etag !== etag) failedAt.set(keyOf(root, frame), Date.now());
-		else deps.storeOpening?.(root, frame, bytes);
+		if (taken === undefined || now.kind !== "ok" || now.etag !== etag) failedAt.set(keyOf(root, frame), Date.now());
+		else deps.storeOpening?.(root, frame, taken.opening, taken.beats);
 		return reload;
 	}
 
@@ -1333,7 +1340,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		still: CoverShape,
 		reload: boolean,
 		etag: string,
-	): Promise<Buffer | undefined> {
+		slide: { beats: number; webgl: boolean },
+	): Promise<{ opening: Buffer; beats: Buffer[] } | undefined> {
 		if (reload) {
 			tab.covers++;
 			const arrival = await arrive(tab, url, still);
@@ -1349,12 +1357,40 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			const world = await isolatedWorld(tab);
 			await evaluate(tab, world, "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))");
 		}
-		return await screenshot(tab, {
+		const opening = await screenshot(tab, {
 			format: "jpeg",
 			quality: Math.round(OPENING_QUALITY * 100),
 			optimizeForSpeed: true,
 			clip: { x: 0, y: 0, width: still.width, height: still.height, scale: 1 },
 		});
+		return { opening, beats: await beatStills(tab, still, slide) };
+	}
+
+	/**
+	 * A slide that draws with WebGL photographed small on each of its beats, at rest, as the presenter's next pane shows
+	 * it (spool#330): the pane shows these rather than make a context in the presenter's thread. Taken from the opening
+	 * still's page, on the beat the talk opens on, each beat after it put on as a jump puts it. None for a slide that
+	 * draws with none.
+	 */
+	async function beatStills(tab: Tab, still: CoverShape, slide: { beats: number; webgl: boolean }): Promise<Buffer[]> {
+		if (!slide.webgl && (await frameWork(tab)).webgl === 0) return [];
+		const fits = Math.min(BEAT_STILL_SCREEN.width / still.width, BEAT_STILL_SCREEN.height / still.height);
+		const shot = () =>
+			screenshot(tab, {
+				format: "jpeg",
+				quality: Math.round(OPENING_QUALITY * 100),
+				optimizeForSpeed: true,
+				// the page stays at the opening's density, and the picture is made at the beat still's
+				clip: { x: 0, y: 0, width: still.width, height: still.height, scale: fits / still.scale },
+			});
+		const stills = [await shot()];
+		const world = await isolatedWorld(tab);
+		for (let beat = 1; beat < slide.beats; beat++) {
+			await evaluate(tab, world, `${stepTo(beat)}; ${frameShims.boothProbes}.finishMotion()`);
+			await settled(tab, world);
+			stills.push(await shot());
+		}
+		return stills;
 	}
 
 	/**

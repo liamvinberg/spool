@@ -11,7 +11,7 @@ import { z } from "zod";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
 import { BETA } from "../channel";
 import { account, type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
-import { type ColorScheme, coverShape } from "../cover";
+import { type ColorScheme, type Cover, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { placeOf } from "../home-places";
@@ -171,6 +171,7 @@ import {
 	clearCaptureError,
 	coverSize,
 	isCoverHash,
+	pacedWithWebgl,
 	readCover,
 	readCoverImage,
 	retireOpening,
@@ -1020,14 +1021,17 @@ export function createDaemonApp({
 			if (frameExists(root, frame)) writePace(root, frame, pace);
 		},
 		beats: (root, frame) => slideBeats(root, frame),
-		// a slide of a talk, while talks are presented here, whose cover has no opening still beside it (spool#319)
+		drawsWebgl: (root, frame) => pacedWithWebgl(root, frame),
+		// a slide of a talk, while talks are presented here, whose cover has no opening still beside it (spool#319), or
+		// no beat stills when it draws with WebGL (spool#330)
 		owesOpening: (root, frame) => {
 			const cover = readCover(root, frame);
-			return cover !== undefined && cover.opening === undefined && slideOf(root, frame);
+			if (cover === undefined || !slideOf(root, frame)) return false;
+			return cover.opening === undefined || (cover.beats === undefined && pacedWithWebgl(root, frame));
 		},
-		storeOpening: (root, frame, bytes) => {
+		storeOpening: (root, frame, bytes, beats) => {
 			if (!frameExists(root, frame)) return;
-			const cover = writeOpening(root, frame, bytes);
+			const cover = writeOpening(root, frame, bytes, beats);
 			if (cover !== undefined) hub.publish(root, { kind: "thumb", frame, cover });
 		},
 		reactDev: vendorReactDevJs,
@@ -1347,19 +1351,20 @@ export function createDaemonApp({
 	}
 
 	/**
-	 * A read found covered frames with no opening still beside the cover (spool#319). The slides of a talk among them
-	 * were photographed before the booth took those, or it could not, and are owed one.
+	 * A read found covered frames with no opening still beside the cover (spool#319), or no beat stills (spool#330). The
+	 * slides of a talk among them were photographed before the booth took those, or it could not, and are owed them: an
+	 * opening still each, and beat stills those that draw with WebGL.
 	 */
-	function oweOpenings(root: string, name: string, frames: readonly string[]): void {
+	function oweOpenings(root: string, name: string, frames: readonly { name: string; cover: Cover }[]): void {
 		if (selfOrigin === undefined || !deckOn()) return;
 		const decks = new Map<string, boolean>();
-		for (const frame of frames) {
+		for (const { name: frame, cover } of frames) {
 			const page = pageParent(frame);
 			const deck = decks.get(page) ?? holdsDeck(root, page);
 			decks.set(page, deck);
-			if (deck && slideBeats(root, frame) !== undefined) {
+			if (!deck || slideBeats(root, frame) === undefined) continue;
+			if (cover.opening === undefined || pacedWithWebgl(root, frame))
 				booth.enqueue({ root, project: name, frame, reason: "opening" });
-			}
 		}
 	}
 
