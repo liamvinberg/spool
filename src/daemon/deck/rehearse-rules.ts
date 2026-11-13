@@ -105,6 +105,8 @@ export type Finding =
 			readonly before: number;
 			readonly share: number;
 	  }
+	/** a slide that, once at rest, draws every frame without end: a requestAnimationFrame loop of its own */
+	| { readonly kind: "endless"; readonly place: Place }
 	/** a step that lagged: its change came `keyMs` after its key, or it drew `missed` frames fewer than its `of` */
 	| {
 			readonly kind: "lag";
@@ -345,12 +347,17 @@ function lookedAt(rehearsal: Rehearsal): Finding[] {
 	const found: Finding[] = [];
 	const late = new Set<string>();
 	const cut = new Set<string>();
+	const endless = new Set<number>();
 	const webgl = new Map<number, { contexts: number; beat: number }>();
 	let before: BeatAtRest | undefined;
 	// the beat the talk opened on loads as the talk opens, before anyone watches: the stage readies only what comes next
 	const [opened] = rehearsal.beats;
 	for (const beat of rehearsal.beats) {
 		const place: Place = { slide: beat.at.slide, beat: beat.at.beat };
+		if (beat.loop && !endless.has(beat.at.slide)) {
+			endless.add(beat.at.slide);
+			found.push({ kind: "endless", place });
+		}
 		for (const file of beat === opened ? [] : beat.look.late) {
 			const key = `${beat.at.slide}:${file.kind}:${file.name}`;
 			if (late.has(key)) continue;

@@ -69,12 +69,14 @@ it("points a finding at the element's own line when it knows one, and at the sli
 				twice: [{ name: "hero", slide: 2, elements: twins }],
 			},
 			{ kind: "webgl", place: { slide: 2, beat: 0 }, contexts: 9, before: 2, share: 10 },
+			{ kind: "endless", place: { slide: 2, beat: 0 } },
 			{ kind: "move-cut", from: 0, ran: 200, runs: 600, back: true },
 		]),
 	);
 	expect(stderr).toEqual([
 		`design/frames/talk/close/frame.tsx:3:4: the move from slide 2 "steps" to slide 3 "close" did not run: view-transition-name "hero" is on 2 elements of slide 3, h1 at design/frames/talk/close/frame.tsx:3:4 and p at design/frames/talk/close/frame.tsx:4:4; give a name to one element per slide`,
 		`design/frames/talk/close/frame.tsx: slide 3 "close": holds 9 WebGL contexts and the slide before it 2, past the 10 full screen and the presenter's slide keep for a slide and the one before it (the room keeps 15 in a process of its own, 6 where it shares the presenter's), so they cannot ready this slide ahead: it compiles as it goes on and can lag there; draw on fewer canvases`,
+		`design/frames/talk/close/frame.tsx: slide 3 "close": draws every frame without end once at rest, a requestAnimationFrame loop of its own, so it never rests and every step beside it shares the thread with it; stop the loop once its motion is done, unless the slide is about that motion`,
 		`design/frames/talk/steps/frame.tsx: the move back from slide 2 "steps" to slide 1 "open" was cut short: it ran 200 of its 600 ms`,
 	]);
 });

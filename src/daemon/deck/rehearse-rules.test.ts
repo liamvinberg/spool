@@ -287,6 +287,19 @@ describe("findingsOf", () => {
 		expect(findingsOf(talk({ beats }))).toEqual([{ kind: "late", place: { slide: 1, beat: 0 }, file: font }]);
 	});
 
+	it("names a slide that draws every frame without end once at rest, once, on the first beat it does", () => {
+		const beats = [
+			beat(0, 0, "talk/one"),
+			{ ...beat(0, 1, "talk/one"), loop: true },
+			{ ...beat(1, 0, "talk/two"), loop: true },
+			{ ...beat(1, 1, "talk/two"), loop: true },
+		];
+		expect(findingsOf(talk({ beats }))).toEqual([
+			{ kind: "endless", place: { slide: 0, beat: 1 } },
+			{ kind: "endless", place: { slide: 1, beat: 0 } },
+		]);
+	});
+
 	it("names a slide a talk cannot ready ahead for the WebGL contexts it and the slide before it hold, past the ten full screen and the presenter's slide keep", () => {
 		const beats = [beat(0, 1, "talk/one", { webgl: 2 }), beat(1, 0, "talk/two", { webgl: 9 })];
 		expect(findingsOf(talk({ beats }))).toEqual([

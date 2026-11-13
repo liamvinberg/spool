@@ -165,6 +165,8 @@ function lineOf(outcome: RehearseOutcome, finding: Finding): string {
 					: `holds ${finding.contexts} WebGL contexts and the slide before it ${finding.before}`;
 			return `${pathOf(outcome, finding.place)}: ${where(outcome, { slide: finding.place.slide })}: ${held}, past the ${finding.share} full screen and the presenter's slide keep for a slide and the one before it (the room keeps ${PRESENTED_WEBGL_APART.room} in a process of its own, ${PRESENTED_WEBGL.room} where it shares the presenter's), so they cannot ready this slide ahead: it compiles as it goes on and can lag there; draw on fewer canvases`;
 		}
+		case "endless":
+			return `${pathOf(outcome, finding.place)}: ${where(outcome, finding.place)}: draws every frame without end once at rest, a requestAnimationFrame loop of its own, so it never rests and every step beside it shares the thread with it; stop the loop once its motion is done, unless the slide is about that motion`;
 		case "lag": {
 			const subject = finding.move
 				? `the move from ${where(outcome, { slide: finding.place.slide - (finding.place.back ? -1 : 1) })} to ${where(outcome, finding.place)}`
