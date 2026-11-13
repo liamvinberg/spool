@@ -130,7 +130,7 @@ function Scene() {
 export default function Slide() {
 	return (
 		<div style={{ background: "#264653", width: "100%", height: "100%" }}>
-			{[1, 2, 3, 4, 5, 6, 7].map((n) => (
+			{[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => (
 				<Scene key={n} />
 			))}
 		</div>
@@ -299,7 +299,7 @@ it("names each fault of a talk at its slide and beat, and nothing of the calm sl
 		}),
 	);
 	expect(found).toContainEqual(
-		expect.objectContaining({ kind: "webgl", place: expect.objectContaining({ slide: at("gl") }), contexts: 7 }),
+		expect.objectContaining({ kind: "webgl", place: expect.objectContaining({ slide: at("gl") }), contexts: 11 }),
 	);
 	expect(found).toContainEqual(
 		expect.objectContaining({

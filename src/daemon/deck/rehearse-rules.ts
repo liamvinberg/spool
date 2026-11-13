@@ -11,7 +11,7 @@ import type {
 	WordsAtEdge,
 } from "../../deck/rehearsal";
 import type { At } from "../../deck/stage-session";
-import { PRESENTED_WEBGL, type SlideReadiness, tooHeavyAhead } from "../../deck/stage-wire";
+import { PRESENTED_WEBGL_APART, type SlideReadiness, tooHeavyAhead } from "../../deck/stage-wire";
 import { type FrameCensus, type FramePace, SLOW_PER_SECOND } from "../thumbs";
 
 /**
@@ -97,7 +97,7 @@ export type Finding =
 			readonly shift: number;
 			readonly causes: readonly LayoutCause[];
 	  }
-	/** a slide the room cannot ready ahead: its `contexts` and the slide before's pass the `share` the room keeps for both */
+	/** a slide a talk cannot ready ahead: its `contexts` and the slide before's pass the `share` kept for both */
 	| {
 			readonly kind: "webgl";
 			readonly place: Place;
@@ -378,8 +378,15 @@ function lookedAt(rehearsal: Rehearsal): Finding[] {
 }
 
 /**
- * The slides the room cannot ready ahead for the WebGL contexts they and the slide before them draw with, as the
- * presenter view marks them: counted by the stage as it readied them and by the looks at rest, the most of either.
+ * The WebGL contexts the stages a talk is most often given in keep for a slide and the one before it: full screen's
+ * (the stage's own share) and the presenter's slide's, the room's stage in a process of its own. The room keeps more
+ * there, and fewer where it shares the presenter's process, as the report says.
+ */
+const READIED_WEBGL = PRESENTED_WEBGL_APART.slide;
+
+/**
+ * The slides a talk cannot ready ahead for the WebGL contexts they and the slide before them draw with: counted by the
+ * stage as it readied them and by the looks at rest, the most of either.
  */
 function tooHeavy(rehearsal: Rehearsal, peaks: ReadonlyMap<number, { contexts: number; beat: number }>): Finding[] {
 	const counted = new Map<string, number>();
@@ -392,7 +399,7 @@ function tooHeavy(rehearsal: Rehearsal, peaks: ReadonlyMap<number, { contexts: n
 		webgl: Math.max(counted.get(slide.frame) ?? 0, peaks.get(index)?.contexts ?? 0),
 	}));
 	const found: Finding[] = [];
-	for (const [frame, contexts] of tooHeavyAhead(slides, PRESENTED_WEBGL.room)) {
+	for (const [frame, contexts] of tooHeavyAhead(slides, READIED_WEBGL)) {
 		const slide = slides.findIndex((each) => each.frame === frame);
 		if (slide < rehearsal.from || slide > rehearsal.to) continue;
 		const beat = peaks.get(slide)?.beat;
@@ -402,7 +409,7 @@ function tooHeavy(rehearsal: Rehearsal, peaks: ReadonlyMap<number, { contexts: n
 			place: beat === undefined ? { slide } : { slide, beat },
 			contexts,
 			before,
-			share: PRESENTED_WEBGL.room,
+			share: READIED_WEBGL,
 		});
 	}
 	return found;

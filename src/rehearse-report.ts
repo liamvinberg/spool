@@ -2,6 +2,7 @@ import { causesOf } from "./check-pace";
 import { breaks, type Finding, type Place } from "./daemon/deck/rehearse-rules";
 import { RENDER_HOST } from "./daemon/security";
 import { REHEARSE, type RehearsedSlide } from "./deck/rehearsal";
+import { PRESENTED_WEBGL, PRESENTED_WEBGL_APART } from "./deck/stage-wire";
 
 /**
  * What `spool rehearse` says (spool#322), in the plain style of `spool check`: a line for each thing found wrong, at
@@ -162,7 +163,7 @@ function lineOf(outcome: RehearseOutcome, finding: Finding): string {
 				finding.before === 0
 					? `holds ${finding.contexts} WebGL contexts`
 					: `holds ${finding.contexts} WebGL contexts and the slide before it ${finding.before}`;
-			return `${pathOf(outcome, finding.place)}: ${where(outcome, { slide: finding.place.slide })}: ${held}, past the ${finding.share} the room keeps for a slide and the one before it, so it cannot ready this slide ahead: it compiles as it goes on and can lag there; draw on fewer canvases`;
+			return `${pathOf(outcome, finding.place)}: ${where(outcome, { slide: finding.place.slide })}: ${held}, past the ${finding.share} full screen and the presenter's slide keep for a slide and the one before it (the room keeps ${PRESENTED_WEBGL_APART.room} in a process of its own, ${PRESENTED_WEBGL.room} where it shares the presenter's), so they cannot ready this slide ahead: it compiles as it goes on and can lag there; draw on fewer canvases`;
 		}
 		case "lag": {
 			const subject = finding.move

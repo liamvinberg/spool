@@ -287,16 +287,16 @@ describe("findingsOf", () => {
 		expect(findingsOf(talk({ beats }))).toEqual([{ kind: "late", place: { slide: 1, beat: 0 }, file: font }]);
 	});
 
-	it("names a slide the room cannot ready ahead for the WebGL contexts it and the slide before it hold, as the presenter view marks it", () => {
-		const beats = [beat(0, 1, "talk/one", { webgl: 2 }), beat(1, 0, "talk/two", { webgl: 5 })];
+	it("names a slide a talk cannot ready ahead for the WebGL contexts it and the slide before it hold, past the ten full screen and the presenter's slide keep", () => {
+		const beats = [beat(0, 1, "talk/one", { webgl: 2 }), beat(1, 0, "talk/two", { webgl: 9 })];
 		expect(findingsOf(talk({ beats }))).toEqual([
-			{ kind: "webgl", place: { slide: 1, beat: 0 }, contexts: 5, before: 2, share: 6 },
+			{ kind: "webgl", place: { slide: 1, beat: 0 }, contexts: 9, before: 2, share: 10 },
 		]);
 		// the stage counts a slide it readied that the rehearsal never rested on
-		const readied = [{ frame: "talk/one", status: "ready" as const, webgl: 6 }];
+		const readied = [{ frame: "talk/one", status: "ready" as const, webgl: 10 }];
 		const alone = talk({ from: 1, to: 1, beats: [beat(1, 0, "talk/two", { webgl: 1 })], opened: readied });
 		expect(findingsOf(alone)).toEqual([
-			{ kind: "webgl", place: { slide: 1, beat: 0 }, contexts: 1, before: 6, share: 6 },
+			{ kind: "webgl", place: { slide: 1, beat: 0 }, contexts: 1, before: 10, share: 10 },
 		]);
 	});
 
