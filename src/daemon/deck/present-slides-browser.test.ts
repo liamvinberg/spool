@@ -435,7 +435,7 @@ it("with two displays in a browser, the caret's Full screen opens the room's win
 	await expect.poll(async () => near(pixelsOf(await view.screenshot(), [{ x: 160, y: 360 }])[0], TWO, 10)).toBe(true);
 });
 
-it("waits on its card while the window grows to cover the screen, and sets off once it has", {
+it("waits on its card while the window grows to cover the screen, sets off once it has, and plays the keys pressed meanwhile once the live slide has taken over", {
 	timeout: 120_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -447,6 +447,8 @@ it("waits on its card while the window grows to cover the screen, and sets off o
 		".spool/state.json",
 		JSON.stringify({ activePage: "talk", pageCameras: { talk: { x: 40, y: 120, k: 0.08 } } }),
 	);
+	// it flies as its opening still, which stands over the live slide a few frames after landing
+	await expect.poll(async () => (await coverOf(project, "talk/one"))?.opening, { timeout: 60_000 }).toBeDefined();
 	const screen = { width: W + 160, height: H + 90 };
 	const context = await browser.newContext({ viewport: { width: W, height: H }, screen });
 	await fullScreenAsABrowserGivesIt(context, { grows: true });
@@ -457,16 +459,36 @@ it("waits on its card while the window grows to cover the screen, and sets off o
 	// a window changing size draws nothing: a slide that set off under it would show up half way there
 	await view.keyboard.press("ControlOrMeta+Shift+Enter");
 	await expect.poll(() => phaseOf(view)).toBe("waiting");
-	// → pressed meanwhile, and held down: it steps once, the live slide on, never ten times nor onto its picture
+	// what happened first: the still gone from over the live slide, or the talk on the second slide
+	await view.evaluate(() => {
+		const order: string[] = [];
+		Object.defineProperty(window, "__order", { value: order });
+		new MutationObserver(() => {
+			const still = document.querySelector("[data-present-flyer] > div");
+			const bar = document.querySelector("[data-present-bar]")?.textContent ?? "";
+			if (still !== null && still.childElementCount > 0 && !order.includes("still")) order.push("still");
+			if (order.includes("still") && still?.childElementCount === 0 && !order.includes("gone")) order.push("gone");
+			if (/\D2 of 3/.test(bar) && !order.includes("second")) order.push("second");
+		}).observe(document.body, { subtree: true, childList: true, characterData: true });
+	});
+	// → held down, B, → pressed meanwhile: each played once, in order, each on the talk the one before left, once the
+	// live slide has taken over: the first steps, B blacks the room, and the last brings it back and does nothing else
 	await view.keyboard.down("ArrowRight");
 	await view.keyboard.down("ArrowRight");
 	await view.keyboard.up("ArrowRight");
+	await view.keyboard.press("b");
+	await view.keyboard.press("ArrowRight");
 	await view.waitForTimeout(400);
 	expect(await phaseOf(view)).toBe("waiting");
 	await view.setViewportSize(screen);
 	await expect.poll(() => phaseOf(view)).toBe("on");
 	const shown = async () => pixelsOf(await view.screenshot(), [{ x: 160, y: 360 }])[0];
 	await expect.poll(async () => near(await shown(), TWO, 10), { timeout: 10_000 }).toBe(true);
+	expect(await view.evaluate(() => (window as unknown as { __order: string[] }).__order)).toEqual([
+		"still",
+		"gone",
+		"second",
+	]);
 	// the second slide's first beat: one ← is back on the first
 	await view.keyboard.press("ArrowLeft");
 	await expect.poll(async () => near(await shown(), ONE, 10), { timeout: 10_000 }).toBe(true);

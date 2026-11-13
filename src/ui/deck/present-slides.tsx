@@ -91,6 +91,9 @@ const WARM_MS = 30_000;
  */
 const SETTLE_FRAMES = 4;
 
+/** The longest a held key waits for the session the one before it made, before it plays all the same. */
+const HELD_WAIT_MS = 150;
+
 /** Once `count` frames have been drawn. */
 function frames(count: number): Promise<void> {
 	return new Promise((done) => {
@@ -192,6 +195,7 @@ export function PresentSlides({
 	const tookOver = useRef(false);
 	/** the keys pressed before it had, as pressed, played as the talk's once it has, in order; each once, however long held */
 	const held = useRef<KeyboardEvent[]>([]);
+	const heldNext = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	/** the picture the slide flies as, decoded */
 	const pictured = useRef(false);
 	/** the slide flies as its opening still the whole way, and the live slide takes over once it has landed */
@@ -272,17 +276,26 @@ export function PresentSlides({
 	}, []);
 
 	/**
+	 * the keys held on the way in, played once the live slide has taken over, one at a time: what a key does depends on
+	 * the session the one before it made (black, a slide given the keys), so the next waits for the stage to say it, or
+	 * a moment, for a key that changed nothing
+	 */
+	const playHeld = useCallback(() => {
+		clearTimeout(heldNext.current);
+		if (phaseRef.current !== "on" || !tookOver.current) return;
+		const event = held.current.shift();
+		if (event === undefined) return;
+		host.current?.key(event);
+		if (held.current.length > 0) heldNext.current = setTimeout(() => playingHeld.current(), HELD_WAIT_MS);
+	}, []);
+	const playingHeld = useRef(playHeld);
+	playingHeld.current = playHeld;
+	/**
 	 * the live slide on in the flying layer, fading in over its picture while it flies, or at once when `now` (the talk
 	 * moved on from what the picture shows) or once it has landed; never off again this talk. Under an opening still
 	 * that has landed, it comes on a few frames before the still goes: a live slide is drawn at the size it stands only
 	 * in the frames after it is shown there, and one first drawn small on the way stands soft until then (spool#319).
 	 */
-	const playHeld = useCallback(() => {
-		if (phaseRef.current !== "on" || !tookOver.current) return;
-		const keys = held.current;
-		held.current = [];
-		for (const event of keys) host.current?.key(event);
-	}, []);
 	const handOver = useCallback(
 		(ms: number, under = false) =>
 			void fade(liveBox.current, 1, ms)
@@ -462,6 +475,7 @@ export function PresentSlides({
 				},
 				session: (now) => {
 					setSession(now);
+					if (held.current.length > 0) playingHeld.current();
 					// the talk moved on from the slide its picture shows: the live slide takes over at once
 					const on = mounted.talk()[now.at.slide]?.frame;
 					const up = phaseRef.current === "in" || phaseRef.current === "on";
