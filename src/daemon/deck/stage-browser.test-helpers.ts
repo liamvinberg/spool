@@ -124,21 +124,42 @@ export function useProbe<T extends HTMLElement>(name: string) {
 	return ref;
 }
 
-/** A canvas cleared to one colour by WebGL, drawn once a frame for as long as it stands. */
+/**
+ * A canvas cleared to one colour by WebGL, drawn once a frame for as long as it stands. Its drawing buffer is twice the
+ * size it is laid out at, measured as that changes, as a sharp canvas's is; each size it measured is noted.
+ */
 export function useGl(colour: [number, number, number]) {
 	const ref = useRef<HTMLCanvasElement>(null);
 	useLayoutEffect(() => {
 		const canvas = ref.current;
 		const gl = canvas?.getContext("webgl");
 		if (canvas === null || gl === null || gl === undefined) return;
-		let frame = 0;
 		const draw = () => {
+			gl.viewport(0, 0, canvas.width, canvas.height);
 			gl.clearColor(colour[0] / 255, colour[1] / 255, colour[2] / 255, 1);
 			gl.clear(gl.COLOR_BUFFER_BIT);
-			frame = requestAnimationFrame(draw);
 		};
-		draw();
-		return () => cancelAnimationFrame(frame);
+		const fit = () => {
+			((window as unknown as { __glSizes?: string[] }).__glSizes ??= []).push(
+				\`\${canvas.clientWidth}x\${canvas.clientHeight}\`,
+			);
+			canvas.width = canvas.clientWidth * 2;
+			canvas.height = canvas.clientHeight * 2;
+			draw();
+		};
+		const observer = new ResizeObserver(fit);
+		observer.observe(canvas);
+		fit();
+		let frame = 0;
+		const loop = () => {
+			draw();
+			frame = requestAnimationFrame(loop);
+		};
+		frame = requestAnimationFrame(loop);
+		return () => {
+			cancelAnimationFrame(frame);
+			observer.disconnect();
+		};
 	}, [colour]);
 	return ref;
 }
