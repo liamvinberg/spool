@@ -401,10 +401,11 @@ export function bootStage(runtime: StageRuntime): void {
 	/**
 	 * Which copies are awake. The one on screen and the one wanted, whatever they hold; the slides the next key and the
 	 * back key play, put on ahead once the screen is quiet, the next first, while their WebGL contexts fit the stage's
-	 * share; then the slides already put on, nearest first, while theirs still fit, up to four waiting in all: a slide is
-	 * put on once, and stepping back to it runs and compiles nothing again. A slide's cost is learned the first time it is
-	 * awake, and one refused a context out of sight is put on ahead no more. Any other copy is put back to sleep:
-	 * rendered afresh when it holds contexts, so it gives them back, and hidden otherwise, its effects undone.
+	 * share; then the slides already put on, nearest first, while theirs fit beside room for any one slide to make its
+	 * own, up to four waiting in all: a slide is put on once, and stepping back to it runs and compiles nothing again. A
+	 * slide's cost is learned the first time it is awake, and one refused a context out of sight is put on ahead no more.
+	 * Any other copy is put back to sleep: rendered afresh when it holds contexts, so it gives them back, and hidden
+	 * otherwise, its effects undone.
 	 */
 	function arrange(): void {
 		const at = picture();
@@ -440,11 +441,14 @@ export function bootStage(runtime: StageRuntime): void {
 					copyAt(copy.index) === copy,
 			)
 			.sort((a, b) => away(a) - away(b));
+		// they leave room for the costliest slide of the talk to make its own as it goes on: kept to the brim, a slide put on
+		// without them would have the browser take a context from one of them, or from the slide on screen
+		let spare = left - Math.max(0, ...slides.map((slide) => slide?.webgl ?? 0));
 		for (const copy of stillOn) {
 			if (kept.size >= WAITING) break;
 			const cost = held(copy);
-			if (cost > 0 && cost > left) continue;
-			left -= cost;
+			if (cost > 0 && cost > spare) continue;
+			spare -= cost;
 			kept.add(copy);
 		}
 		for (const copy of [...copies.values()]) {
