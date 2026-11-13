@@ -39,7 +39,7 @@ import {
 import { SlideScope, setSlideBeat } from "../slide-beats";
 import { type KeptPicture, keepPicture } from "./stage-keep";
 import { stillComing, type Warmed, warmSlide, wear } from "./stage-warm";
-import { limitWebgl, releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn } from "./stage-webgl";
+import { giveBackWhen, limitWebgl, releaseWebgl, restWebgl, WEBGL_SHARE, watchWebgl, webglIn } from "./stage-webgl";
 
 /**
  * The stage (spool#265): a deck's talk played in one render document, the room's screen, the presenter's slide and an
@@ -461,8 +461,11 @@ export function bootStage(runtime: StageRuntime): void {
 		}
 	}
 
-	/** Nothing is changing on screen: no step waits, no swap or dissolve is under way. */
-	const quiet = () => pending === undefined && !swapping && dissolve === undefined;
+	/**
+	 * Nothing is changing on screen: no step waits, no swap or dissolve is under way, and the frame showing the last step
+	 * has been painted. Only then is anything readied: rendered out of sight, put on ahead, let go or warmed.
+	 */
+	const quiet = () => pending === undefined && !swapping && dissolve === undefined && unsaid === 0;
 
 	/** The copy being put on ahead, once the frame the screen is painting has been. */
 	let waking: Copy | undefined;
@@ -640,6 +643,9 @@ export function bootStage(runtime: StageRuntime): void {
 		true,
 	);
 
+	// a slide let go gives its contexts back once the screen is quiet, never inside a step
+	giveBackWhen(() => quiet());
+
 	// a slide out of sight makes a WebGL context only while the document holds fewer than its share: one more, and the
 	// browser could take one from the slide on screen to make it. One refused goes, to be made as it goes on, its own cost
 	limitWebgl((canvas) => {
@@ -698,16 +704,25 @@ export function bootStage(runtime: StageRuntime): void {
 			fetchAhead();
 			const want = picture();
 			const target = want.at.slide;
+			// while a step plays, the slide it plays is all that is readied: the rest waits for the screen to be quiet, and a
+			// key meanwhile plays its own slide first (spool#330)
+			const stepping = !quiet();
+			const mine = (copy: Copy) => !stepping || copy.index === target;
 			// a copy gone blank goes first, so one wanted is rendered afresh in its place now
 			for (const [key, copy] of copies)
-				if (copy.blank && key !== shown && key !== revealed?.from) copies.delete(key);
-			const keep = new Set(wantedCopies().map((copy) => copy.key));
-			if (shown !== null) keep.add(shown);
-			// the slide a swap just took off stays while the one it put on can still be undone
-			if (revealed?.from != null) keep.add(revealed.from);
-			for (const key of copies.keys()) if (!keep.has(key)) copies.delete(key);
-			arrange();
+				if (copy.blank && key !== shown && key !== revealed?.from && mine(copy)) copies.delete(key);
+			if (stepping) {
+				if (slides[target]?.module === "in") copyFor(target, takeOf(target, want.takes));
+			} else {
+				const keep = new Set(wantedCopies().map((copy) => copy.key));
+				if (shown !== null) keep.add(shown);
+				// the slide a swap just took off stays while the one it put on can still be undone
+				if (revealed?.from != null) keep.add(revealed.from);
+				for (const key of copies.keys()) if (!keep.has(key)) copies.delete(key);
+				arrange();
+			}
 			for (const copy of copies.values()) {
+				if (!mine(copy)) continue;
 				warm(copy);
 				if (copy.key === shown) continue;
 				setSlideBeat(copy.key, copy.index === target ? want.at.beat : restingBeat(copy.index, target));
@@ -757,6 +772,8 @@ export function bootStage(runtime: StageRuntime): void {
 			post(message);
 			unsaid--;
 			sayApplied();
+			// readied once the frame that shows the step has been painted
+			if (unsaid === 0) setTimeout(settle);
 		};
 		requestAnimationFrame(() => {
 			const message: StageMessage = {

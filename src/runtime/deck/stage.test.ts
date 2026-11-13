@@ -628,6 +628,64 @@ it("puts the slide the back key plays on out of sight too, keeps a slide put on 
 	expect(ran.filter((one) => one.startsWith("f"))).toEqual(["f out of sight"]);
 });
 
+it("readies nothing while a step plays: what it puts on ahead or lets go waits for the dissolve to end, and a key meanwhile goes first", async () => {
+	// a dissolve plays until the test ends it, as a browser's view transition plays for its length
+	const playing: (() => void)[] = [];
+	Object.defineProperty(document, "startViewTransition", {
+		configurable: true,
+		value: (asked: { update: () => Promise<void> }) => {
+			const changed = new Promise((resolve) => setTimeout(resolve, 10)).then(asked.update);
+			const finished = changed.then(() => new Promise<void>((resolve) => playing.push(resolve)));
+			return { updateCallbackDone: changed, ready: changed, finished, skipTransition() {} };
+		},
+	});
+	const ran: string[] = [];
+	const noted = (name: string): ComponentType =>
+		function Noted() {
+			const box = useRef<HTMLParagraphElement>(null);
+			useEffect(() => {
+				whereRan(ran, name, box);
+				return () => {
+					ran.push(`${name} let go`);
+				};
+			}, []);
+			return createElement("p", { ref: box }, name);
+		};
+	const names = ["a", "b", "c", "d", "e", "f", "g"];
+	const on = await stage(
+		names.map((name) => ({ frame: `talk/${name}`, screen: noted(name) })),
+		{ mode: "own", room: true },
+	);
+	const ended = async () => {
+		await vi.waitFor(() => expect(playing.length).toBeGreaterThan(0));
+		for (const end of playing.splice(0)) end();
+	};
+	await vi.waitFor(() => expect(ran).toEqual(["a on screen", "b out of sight"]));
+	for (const name of ["b", "c", "d"]) {
+		on.send({ spool: "stage-command", command: { kind: "next" } });
+		await vi.waitFor(() => expect(on.onScreen()).toBe(`talk/${name}`));
+		await ended();
+	}
+	await vi.waitFor(() => expect(ran).toContain("e out of sight"));
+
+	// on e, four slides wait out of sight at most: the one furthest back is let go, once the step to e has played
+	on.send({ spool: "stage-command", command: { kind: "next" } });
+	await vi.waitFor(() => expect(on.shown().at(-1)?.at.slide).toBe(4));
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	expect(ran).not.toContain("a let go");
+	expect(ran).not.toContain("f out of sight");
+
+	// a key while it plays goes first: its slide goes on, and only then is anything readied
+	on.send({ spool: "stage-command", command: { kind: "next" } });
+	await vi.waitFor(() => expect(on.shown().at(-1)?.at.slide).toBe(5));
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	expect(ran.filter((one) => one.endsWith("let go"))).toEqual([]);
+	await ended();
+	await vi.waitFor(() => expect(ran).toContain("g out of sight"));
+	const readied = ran.slice(ran.indexOf("f on screen") + 1);
+	expect(readied).toEqual(expect.arrayContaining(["a let go", "b let go", "g out of sight"]));
+});
+
 it("puts a slide on ahead only while its WebGL contexts fit the stage's share: one that does not makes them as it goes on", async () => {
 	const webgl = fakeWebgl();
 	const ran: string[] = [];

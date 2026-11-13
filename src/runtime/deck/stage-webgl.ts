@@ -202,14 +202,40 @@ export function webglIn(box: Element): number {
 	return count;
 }
 
+/** The contexts let go of and not yet given back, oldest first. */
+const letGo: (WebGLRenderingContext | WebGL2RenderingContext)[] = [];
+let giving = false;
+let mayGive: () => boolean = () => true;
+
+/** When the document may spend a moment giving a context back: never while a step plays (spool#330). */
+export function giveBackWhen(may: () => boolean): void {
+	mayGive = may;
+}
+
 /**
- * The WebGL contexts the canvases in a box let go of given back to the browser now, not whenever the page is next
- * collected. After the tasks already queued, so whatever the slide does as it goes still draws on a live one.
+ * The WebGL contexts the canvases in a box let go of given back to the browser soon, not whenever the page is next
+ * collected: one a frame, after the frame, and only while `giveBackWhen` allows, since giving one back can take tens of
+ * milliseconds. Until then the browser counts it, and takes it first should it need room: it is drawn least lately.
  */
 export function releaseWebgl(box: Element): void {
-	const held = [...box.querySelectorAll("canvas")].flatMap((canvas) => contexts.get(canvas) ?? []);
-	if (held.length === 0) return;
-	setTimeout(() => {
-		for (const gl of held) if (!gl.isContextLost()) gl.getExtension("WEBGL_lose_context")?.loseContext();
-	});
+	for (const canvas of box.querySelectorAll("canvas")) {
+		const gl = contexts.get(canvas);
+		if (gl !== undefined) letGo.push(gl);
+	}
+	giveBackLater();
+}
+
+function giveBackLater(): void {
+	if (giving || letGo.length === 0) return;
+	giving = true;
+	requestFrame(() =>
+		setTimeout(() => {
+			giving = false;
+			if (mayGive()) {
+				const gl = letGo.shift();
+				if (gl !== undefined && !gl.isContextLost()) gl.getExtension("WEBGL_lose_context")?.loseContext();
+			}
+			giveBackLater();
+		}),
+	);
 }
