@@ -316,6 +316,8 @@ function PlayButton({
 			onPointerEnter={() => onIntent?.(name)}
 			onPointerDown={(event) => {
 				event.stopPropagation();
+				// the press is the play's, not a focus for the button: the talk it opens has taken the keys already
+				event.preventDefault();
 				onPlay(name);
 			}}
 			onDoubleClick={(event) => event.stopPropagation()}
