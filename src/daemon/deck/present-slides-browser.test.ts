@@ -384,6 +384,8 @@ it("presents on one display: the slide grows from its card into a full screen as
 		.toBe("1");
 	await present.click({ timeout: 5_000 });
 	await expect.poll(() => phaseOf(view)).toBe("on");
+	// pressed with the pointer, Present leaves the keys with the talk, not on the button it took them from
+	expect(await view.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Presenting");
 	// a talk after the first turns round on its way home as the first did
 	await view.keyboard.press("Escape");
 	await expect.poll(() => phaseOf(view)).toBe("home");
@@ -455,10 +457,19 @@ it("waits on its card while the window grows to cover the screen, and sets off o
 	// a window changing size draws nothing: a slide that set off under it would show up half way there
 	await view.keyboard.press("ControlOrMeta+Shift+Enter");
 	await expect.poll(() => phaseOf(view)).toBe("waiting");
+	// → pressed meanwhile, and held down: it steps once, the live slide on, never ten times nor onto its picture
+	await view.keyboard.down("ArrowRight");
+	await view.keyboard.down("ArrowRight");
+	await view.keyboard.up("ArrowRight");
 	await view.waitForTimeout(400);
 	expect(await phaseOf(view)).toBe("waiting");
 	await view.setViewportSize(screen);
-	await expect.poll(() => phaseOf(view)).toMatch(/^(in|on)$/);
+	await expect.poll(() => phaseOf(view)).toBe("on");
+	const shown = async () => pixelsOf(await view.screenshot(), [{ x: 160, y: 360 }])[0];
+	await expect.poll(async () => near(await shown(), TWO, 10), { timeout: 10_000 }).toBe(true);
+	// the second slide's first beat: one ← is back on the first
+	await view.keyboard.press("ArrowLeft");
+	await expect.poll(async () => near(await shown(), ONE, 10), { timeout: 10_000 }).toBe(true);
 });
 
 it("with no opening still to fly, hands over from a slide's cover to the live slide at rest, so it never shows twice, and never leaves the cover stretched over it", {

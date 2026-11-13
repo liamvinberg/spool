@@ -188,6 +188,10 @@ export function PresentSlides({
 	const filling = useRef(false);
 	/** the live slide is on in the flying layer, for the rest of the talk */
 	const liveOn = useRef(false);
+	/** the live slide has taken over: no picture of the slide stands over it any more, for the rest of the talk */
+	const tookOver = useRef(false);
+	/** the keys pressed before it had, as pressed, played as the talk's once it has, in order; each once, however long held */
+	const held = useRef<KeyboardEvent[]>([]);
 	/** the picture the slide flies as, decoded */
 	const pictured = useRef(false);
 	/** the slide flies as its opening still the whole way, and the live slide takes over once it has landed */
@@ -273,14 +277,23 @@ export function PresentSlides({
 	 * that has landed, it comes on a few frames before the still goes: a live slide is drawn at the size it stands only
 	 * in the frames after it is shown there, and one first drawn small on the way stands soft until then (spool#319).
 	 */
+	const playHeld = useCallback(() => {
+		if (phaseRef.current !== "on" || !tookOver.current) return;
+		const keys = held.current;
+		held.current = [];
+		for (const event of keys) host.current?.key(event);
+	}, []);
 	const handOver = useCallback(
 		(ms: number, under = false) =>
 			void fade(liveBox.current, 1, ms)
 				.then(() => (under ? frames(SETTLE_FRAMES) : undefined))
 				.then(() => {
-					if (liveOn.current) pictureBox.current?.replaceChildren();
+					if (!liveOn.current) return;
+					pictureBox.current?.replaceChildren();
+					tookOver.current = true;
+					playHeld();
 				}),
-		[fade],
+		[fade, playHeld],
 	);
 	const showLive = useCallback(
 		(at: "now" | "fade" | "landed") => {
@@ -296,11 +309,12 @@ export function PresentSlides({
 		(n: number) => () => {
 			if (trip.current !== n || phaseRef.current !== "in") return;
 			setPhase("on");
+			playHeld();
 			// a hand-over still fading as the slide lands is done in this frame: a stretched picture never stands there
 			if (liveOn.current) handOver(0);
 			else if (stillFlies.current && drawn.current !== null && drawn.current === wanted.current) showLive("landed");
 		},
-		[handOver, setPhase, showLive],
+		[handOver, playHeld, setPhase, showLive],
 	);
 
 	/** the slide sets off, as its opening still, else as the live slide when the stage has drawn it, else as its cover */
@@ -374,6 +388,7 @@ export function PresentSlides({
 		if (was !== "waiting" && was !== "in" && was !== "on") return;
 		const n = ++trip.current;
 		const frame = currentFrame();
+		held.current = [];
 		setPhase("home");
 		setPinned(false);
 		setHelp(false);
@@ -481,6 +496,7 @@ export function PresentSlides({
 			if (host.current === mounted) host.current = null;
 			drawn.current = null;
 			liveOn.current = false;
+			tookOver.current = false;
 			setSession(undefined);
 			setSlides([]);
 		};
@@ -505,6 +521,8 @@ export function PresentSlides({
 		const n = ++trip.current;
 		wanted.current = ask.slide;
 		liveOn.current = false;
+		tookOver.current = false;
+		held.current = [];
 		pictured.current = false;
 		pictureBox.current?.replaceChildren();
 		if (liveBox.current !== null) liveBox.current.style.opacity = "0";
@@ -647,10 +665,12 @@ export function PresentSlides({
 				if (event.key === "Escape" || event.key === "?") setHelp(false);
 				return;
 			}
-			// on its way in, the slide is the talk's start: Esc turns it round, and nothing else moves it yet
-			if (phaseRef.current !== "on") {
+			// on its way in, the slide is the talk's start: Esc turns it round, and any other key waits for the live slide
+			// to take over from its picture, then plays, once for a key held down; nothing is ever played onto the picture
+			if (phaseRef.current !== "on" || !tookOver.current) {
 				event.preventDefault();
 				if (event.key === "Escape") end();
+				else if (!event.repeat) held.current.push(new KeyboardEvent("keydown", event));
 				return;
 			}
 			if (host.current?.key(event) === true) event.preventDefault();
