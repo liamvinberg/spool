@@ -691,20 +691,23 @@ it("photographs a slide of a talk again as the talk draws it, on the beat it ope
 		"frames/talk/deck.json",
 		json({ version: 1, w: 1280, h: 720, slides: ["one", "two"] }),
 	);
-	// a slide red on the beat it opens on and blue on its last, which its cover shows, drawn with WebGL
+	// a slide red on the beat it opens on and blue on its last, which its cover shows, drawn with WebGL on an
+	// OffscreenCanvas and copied to the one on screen, as a context its scenes share is
 	writeFrame(
 		project.root,
 		"talk/one",
 		`import { useEffect, useRef } from "react";
 import { ui } from "spool";
 
+const shared = new OffscreenCanvas(1280, 720);
 export default function Slide() {
 	const beat = ui.beats(["red", "blue"]);
 	const canvas = useRef(null);
 	useEffect(() => {
-		const gl = canvas.current.getContext("webgl");
+		const gl = shared.getContext("webgl");
 		gl.clearColor(beat.index === 0 ? 1 : 0, 0, beat.index === 0 ? 0 : 1, 1);
 		gl.clear(gl.COLOR_BUFFER_BIT);
+		canvas.current.getContext("2d").drawImage(shared, 0, 0);
 	}, [beat.index]);
 	return <canvas ref={canvas} width={1280} height={720} style={{ display: "block", width: "100%", height: "100vh" }} />;
 }

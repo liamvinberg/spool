@@ -23,10 +23,26 @@ export function preserveDrawingBuffers(): void {
 		if (webgl && context !== null) webglCanvases.add(this);
 		return context;
 	} as typeof nativeGetContext;
+	// a context on an OffscreenCanvas draws WebGL too, copied to the canvases on screen: one shared by a slide's scenes
+	// is none of the document's canvases, and still makes it a slide drawn with WebGL (spool#330)
+	const Offscreen = globalThis.OffscreenCanvas;
+	if (Offscreen === undefined) return;
+	const nativeOffscreen = Offscreen.prototype.getContext;
+	Offscreen.prototype.getContext = function getContext(this: OffscreenCanvas, type: string, attributes?: unknown) {
+		const context = Reflect.apply(nativeOffscreen, this, [type, attributes]);
+		if ((type === "webgl" || type === "webgl2") && context !== null && !webglOffscreen.has(this)) {
+			webglOffscreen.add(this);
+			offscreenWebgl++;
+		}
+		return context;
+	} as typeof nativeOffscreen;
 }
 
 /** Canvases the frame made a WebGL context on. */
 const webglCanvases = new WeakSet<HTMLCanvasElement>();
+/** OffscreenCanvases it made one on, and how many. */
+const webglOffscreen = new WeakSet<OffscreenCanvas>();
+let offscreenWebgl = 0;
 /** Display frames so far in which the frame's own requestAnimationFrame callbacks ran, and the last one's time. */
 let delivered = 0;
 let deliveredAt = -1;
@@ -40,14 +56,14 @@ const counted = (time: number) => {
  * What the photo booth's census (census.ts) cannot see from its own world
  * (spool#318): in how many display frames the frame's code had a rAF callback, which the booth
  * reads either side of a timing to tell a loop that runs while nothing moves,
- * and how many canvases in the document hold a WebGL context. The booth calls
+ * and how many canvases in the document hold a WebGL context, OffscreenCanvases among them. The booth calls
  * it in the frame's world; nothing else does.
  */
 export function exposeFrameWork(): void {
 	Object.defineProperty(window, "__spoolFrameWork", {
 		configurable: true,
 		value: () => {
-			let webgl = 0;
+			let webgl = offscreenWebgl;
 			for (const canvas of document.querySelectorAll("canvas")) if (webglCanvases.has(canvas)) webgl++;
 			return { frames: delivered, webgl };
 		},
