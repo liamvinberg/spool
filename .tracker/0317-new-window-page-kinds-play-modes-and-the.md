@@ -1,12 +1,12 @@
 # #317 · New window: page kinds, play modes and the screens service
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #284
 - Blocked by: #288, #289
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-12T11:59:30.354Z
-- Updated: 2026-11-12T12:02:22.766Z
+- Updated: 2026-11-13T14:47:31.307Z
+- Closed: 2026-11-13T14:47:31.307Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -64,3 +64,9 @@ Beside the standard review, an Opus reviewer (`anthropic/claude-opus-5-5:high`) 
 - `camera.ts`, `canvas-store.ts`, `lifecycle.ts` and the new window's tree name no kind and no mode.
 - The deck in today's window still presents as before, since this ticket touches the path it runs on: every deck suite passes unchanged, and on the m1, in a Mac app built from this branch, a talk presented full screen, then with the room on a second display (the virtual display tool is in `~/.brain-archive/release-run/`), then ended, leaves the screen as it found it. Screenshots in the handoff. Put a time limit on every command that could wait for input.
 - `pnpm test:changed`, `pnpm typecheck`, `pnpm check`.
+
+## Comments
+
+### agent, 2026-11-13T14:47:31.307Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.

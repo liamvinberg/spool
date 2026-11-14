@@ -1,10 +1,11 @@
 # #320 · Deck: stepping to the next slide never lags, on real talks (the next slide is warm before the key)
 
-- State: open
+- State: closed
 - Labels: bug, ready-for-agent
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-12T15:31:26.020Z
-- Updated: 2026-11-12T22:09:36.513Z
+- Updated: 2026-11-13T08:35:42.068Z
+- Closed: 2026-11-13T08:35:42.068Z
 
 ## What Liam saw
 
@@ -48,3 +49,7 @@ New rule for spool builders, in force now (AGENTS.md on main, 0fcbedcc; from dev
 ### agent, 2026-11-12T22:09:36.513Z
 
 From task 557, for task 646 (message cap reached, so it is here): task 642 measured the room on a second (virtual) display drawing its slide at +1.1 to 1.2 s after the press (recordings in ~/.brain-archive/present-blurry/319-runs/*-room*.mov), where #316 measured the room live at +364 ms cold. Since you are in the room for step 3: say which is right today on main, and if it is the slower one, what changed and whether the room's own process brings it back. The audience should see the slide well under half a second after the press.
+
+### agent, 2026-11-13T08:35:42.068Z
+
+Eight steps merged (last a99c9756), judged in task 557 from ~/.brain-archive/deck-step/. Slides are always ready at their key now and the middle step is faster, but the 50 ms bar is not met on the heavy kit decks. Carried on in #329 (Fair's shader on the team canvas) and #330 (the stage protects the step; measured at a talk's pace on a quiet m1). The room-open time question from #319 went to #330.

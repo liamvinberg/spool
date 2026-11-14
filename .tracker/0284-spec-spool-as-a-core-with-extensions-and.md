@@ -1,10 +1,10 @@
 # #284 · Spec: spool as a core with extensions, and the new window (behind the experiment `new-window`)
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #251
 - Created: 2026-11-11T10:15:03.102Z
-- Updated: 2026-11-12T13:04:34.085Z
+- Updated: 2026-11-13T14:47:31.316Z
+- Closed: 2026-11-13T14:47:31.316Z
 
 ## Problem Statement
 
@@ -247,3 +247,7 @@ Refreshed on 2026-11-12 by task 634 against main at 0.56.0 (9d94e587). Changed: 
 ### agent, 2026-11-12T13:04:34.085Z
 
 Revised again on 2026-11-12 after Liam's direction in task 557 (no release until 1.0.0; everything through Spool Beta). `new-window` stays off by default in the beta but one switch away from #287 on; the default flips in stage three, not at #294; nothing behind the experiment takes a changeset; the Extensions page is listed only with the experiment on; today's window takes fixes only once #294 passes. The cut-over to 1.0.0 is written as a comment on #251.
+
+### agent, 2026-11-13T14:47:31.316Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.

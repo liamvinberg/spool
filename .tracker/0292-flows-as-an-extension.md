@@ -1,11 +1,11 @@
 # #292 · Flows as an extension
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #284
 - Blocked by: #289
 - Created: 2026-11-11T10:15:04.415Z
-- Updated: 2026-11-12T12:02:20.329Z
+- Updated: 2026-11-13T14:47:31.275Z
+- Closed: 2026-11-13T14:47:31.275Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -40,3 +40,9 @@ How flows look and behave, in the window and in the player.
 - The flows suites pass against the new window and, unchanged, against today's; added to the parity list.
 - A walk in the player, an HTML export and a share still work.
 - `pnpm test:changed`, `pnpm typecheck`, `pnpm check`.
+
+## Comments
+
+### agent, 2026-11-13T14:47:31.275Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.

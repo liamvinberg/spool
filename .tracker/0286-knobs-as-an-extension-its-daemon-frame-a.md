@@ -1,11 +1,11 @@
 # #286 · Knobs as an extension: its daemon, frame and compile parts
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #284
 - Blocked by: #285
 - Created: 2026-11-11T10:15:03.357Z
-- Updated: 2026-11-12T12:02:14.798Z
+- Updated: 2026-11-13T14:47:31.179Z
+- Closed: 2026-11-13T14:47:31.179Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -40,3 +40,9 @@ How knobs look and behave. The window's knobs section beyond its calls.
 - Knobs' existing suites pass, in today's window and in play, in an HTML export, and through the `./compile` export.
 - Changing the compile part's version changes the compile cache keys; building again with the same version changes none.
 - `pnpm test:changed`, `pnpm typecheck`, `pnpm check`.
+
+## Comments
+
+### agent, 2026-11-13T14:47:31.179Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.
