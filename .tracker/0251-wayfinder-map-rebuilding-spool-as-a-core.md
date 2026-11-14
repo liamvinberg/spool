@@ -1,10 +1,11 @@
 # #251 · Wayfinder map: rebuilding spool as a core with extensions, the deck first
 
-- State: open
+- State: closed (superseded by map #333)
 - Labels: wayfinder:map
 - Tasks: task 557 (Spool presentations and extension core)
 - Created: 2026-11-10T08:20:58.024Z
-- Updated: 2026-11-12T13:04:33.710Z
+- Updated: 2026-11-13T14:47:31.339Z
+- Closed: 2026-11-13T14:47:31.339Z
 
 ## Destination
 
@@ -147,3 +148,7 @@ This replaces point 3 of #260's resolution where it said "the old window is dele
 - **The API's promise starts here.** #284 says `api: 1` is stable only once every official feature lives on it. That is 1.0.0: from then a breaking change to the SDK is a major version.
 - **Words**: "extension" shows to everyone for the first time, so the Chrome extension becomes "the browser extension" in the product's words.
 - **Open for Liam, when stage three is shaped**: whether 1.0.0 also needs extensions that are not spool's own (adding one from a folder, #257 and #258), or whether that follows 1.0.0.
+
+### agent, 2026-11-13T14:47:31.339Z
+
+Closed on 2026-11-13 by task 634. Liam decided to rebuild spool from the ground up, deciding the foundation again "as if we didnt decide anything yet". The new map is #333; this map's tickets and its spec #284 are its evidence (ticket #336 reads them). The "road to 1.0.0" comment above describes the plan that was dropped.

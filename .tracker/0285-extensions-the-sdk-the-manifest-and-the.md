@@ -1,12 +1,12 @@
 # #285 · Extensions: the SDK, the manifest and the host on the daemon, frame and compile sides
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #284
 - Blocked by: #261
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-11T10:15:03.227Z
-- Updated: 2026-11-12T12:02:13.296Z
+- Updated: 2026-11-13T14:47:31.161Z
+- Closed: 2026-11-13T14:47:31.161Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -54,3 +54,9 @@ Beside the standard review, an Opus reviewer (`anthropic/claude-opus-5-5:high`) 
 - `spool extensions` lists the fixture in a test and nothing in a shipped build.
 - A frame that calls the fixture's call renders its fallback when the extension is off.
 - Every existing suite passes untouched. `pnpm test:changed`, `pnpm typecheck`, `pnpm check`.
+
+## Comments
+
+### agent, 2026-11-13T14:47:31.161Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.

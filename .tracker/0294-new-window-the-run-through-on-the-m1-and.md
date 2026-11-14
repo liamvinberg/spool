@@ -1,11 +1,11 @@
 # #294 · New window: the run-through on the m1, and the numbers
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #284
 - Blocked by: #291, #292, #293
 - Created: 2026-11-11T10:15:04.938Z
-- Updated: 2026-11-12T13:04:33.615Z
+- Updated: 2026-11-13T14:47:31.295Z
+- Closed: 2026-11-13T14:47:31.295Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -39,3 +39,9 @@ How the deck's release run was done: `~/.brain-archive/release-run/` on devobee 
 - The numbers are in the handoff, new not slower than old on each.
 - The parity list is green on CI.
 - A message to task 634 with the handoff.
+
+## Comments
+
+### agent, 2026-11-13T14:47:31.295Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.

@@ -2,10 +2,9 @@
 
 - State: open
 - Labels: bug, ready-for-agent
-- Parent: #284
 - Model: anthropic/claude-opus-5-5:high
 - Created: 2026-11-10T08:30:12.050Z
-- Updated: 2026-11-12T12:02:23.499Z
+- Updated: 2026-11-13T14:47:31.356Z
 
 Part of #284: this is fixed before the extensions skeleton (#285) builds on the compile cache.
 
@@ -35,3 +34,9 @@ A cached build records what each import resolved to and where the resolver looke
 - A second build with nothing changed is still a hit (no slower: say the hit's time before and after on spool's own canvas).
 - If it cannot be reproduced, close with why, and say so to task 634 before #285 is held any longer.
 - `pnpm test:changed`, `pnpm typecheck`, `pnpm check`. A changeset (a stale frame is something a person can see). A message to task 634 when it is merged.
+
+## Comments
+
+### agent, 2026-11-13T14:47:31.356Z
+
+No longer part of #284 (closed, superseded by the ground-up rebuild, map #333). Still a real bug in today's spool, which stays Liam's daily tool: ready to fix on its own. Report to task 634 as written, or simply close when merged.

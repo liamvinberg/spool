@@ -1,12 +1,12 @@
 # #289 · New window: changing the canvas, and the services extensions get
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #284
 - Blocked by: #285, #287, #288
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-11T10:15:03.764Z
-- Updated: 2026-11-12T12:02:17.109Z
+- Updated: 2026-11-13T14:47:31.234Z
+- Closed: 2026-11-13T14:47:31.234Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -53,3 +53,9 @@ Beside the standard review, an Opus reviewer (`anthropic/claude-opus-5-5:high`) 
 - A fixture's planned write lands, is refused when the source moved under it, and undoes.
 - The captured-frame test covers drag, drop, resize and undo. A test proves a preview writes no standing place, and that a drop held over a stale read does not snap back.
 - Every existing suite passes untouched. `pnpm test:changed`, `pnpm typecheck`, `pnpm check`.
+
+## Comments
+
+### agent, 2026-11-13T14:47:31.234Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.

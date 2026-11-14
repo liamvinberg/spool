@@ -1,11 +1,11 @@
 # #290 · Pages and Properties as extensions, and the Extensions page
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #284
 - Blocked by: #288, #289
 - Created: 2026-11-11T10:15:03.963Z
-- Updated: 2026-11-12T13:04:33.168Z
+- Updated: 2026-11-13T14:47:31.247Z
+- Closed: 2026-11-13T14:47:31.247Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -45,3 +45,9 @@ Today's window. The Extensions page's stage-three parts.
 - A fixture extension that needs a missing service shows as waiting with its reason on the page, and a fixture that throws shows as failed.
 - The page matches the design frame; put a screenshot beside the frame in the handoff.
 - `pnpm test:changed`, `pnpm typecheck`, `pnpm check`. No changeset (spec, Further Notes).
+
+## Comments
+
+### agent, 2026-11-13T14:47:31.247Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.

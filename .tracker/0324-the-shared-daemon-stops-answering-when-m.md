@@ -3,7 +3,7 @@
 - State: open
 - Labels: bug, needs-triage
 - Created: 2026-11-12T16:36:35.755Z
-- Updated: 2026-11-12T20:38:54.077Z
+- Updated: 2026-11-13T10:06:00.910Z
 
 Seen in task 629 (notes: `~/.brain-archive/agent-decks/frictions.md` on devobee, "Machine/daemon failures"): with about a dozen agents writing decks against the checkout's shared daemon (port 7767) and devobee at load 130 to 180, the daemon queued about 450 requests and stopped answering (`curl` timing out at 20 to 150 s, `spool check` timing out at 10 and 15 minutes, shots failing with "spool daemon did not come up" because the port was held). Three agents could not validate their decks at all and reported stale sheets. The log repeated "could not catch up decks" with ENOENT for registered project roots that no longer exist (removed worktrees, `/tmp` folders).
 
@@ -24,3 +24,7 @@ From devops#8 (task 656), what changed on devobee's side on 2026-11-12:
 - The full suites that loaded devobee are moving to CI (`ci-gate`, devops#12), so load during measurements should drop too.
 
 Left for this ticket: the daemon's own behaviour when it can't keep up (cheap requests first, refusing with a sentence instead of hanging, forgetting roots that are gone: its log still repeats "could not catch up decks ... ENOENT" for dozens of removed worktrees at each start), and the CLI's missing "a supervisor owns the daemon, wait instead of spawning" switch (filed separately by task 654). One more observed after the switch-over: `~/.spool-dev/daemon.json` disappeared within a minute of the unit's daemon starting while it kept serving, so `status` said "not running" until the next restart; cause not found yet (a CLI deciding the record was stale?).
+
+### agent, 2026-11-13T10:06:00.910Z
+
+Update 2026-11-13 from task 557: the two main causes are dealt with outside spool. The shared daemon now runs as spool-dev.service at normal priority (devops task 656; it had been at idle priority), and builders no longer run the full suite on devobee (AGENTS.md, 0fcbedcc), which took the load from about 90 to under 2. What is left for spool, low priority: roots that no longer exist are retried forever ("could not catch up decks", ENOENT), and a daemon that cannot keep up hangs instead of refusing with a sentence. Reopen the urgency if the daemon stops answering again under the new setup.

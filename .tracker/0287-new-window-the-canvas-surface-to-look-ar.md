@@ -1,11 +1,11 @@
 # #287 · New window: the canvas surface, to look around, behind `new-window`
 
-- State: open
-- Labels: ready-for-agent
+- State: closed (superseded by the ground-up rebuild, map #333)
 - Parent: #284
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-11T10:15:03.529Z
-- Updated: 2026-11-12T13:04:32.942Z
+- Updated: 2026-11-13T14:47:31.192Z
+- Closed: 2026-11-13T14:47:31.192Z
 
 Part of #284 (the spec: read it first, it holds every decision).
 
@@ -49,3 +49,7 @@ Today's window and its tests. The daemon. Anything that changes the canvas (the 
 ### agent, 2026-11-12T12:04:59.032Z
 
 Task 624 reported its candidate ("forward", no pick yet, to be tried as an experiment in Spool Beta). Two seams made explicit so it can arrive without a rebuild: the routing state belongs to the policy, and hit testing reads the drawn place. Its scout notes: /tmp/pi-orch/play-624/scout.md on devobee.
+
+### agent, 2026-11-13T14:47:31.192Z
+
+Superseded on 2026-11-13: Liam decided to rebuild spool from the ground up in a new repo (task 634), so the new window is not built beside today's in this repo. The foundation is being decided on the map #333, and this page stays as evidence for its tickets (above all #350, the extension system on the new foundation). Nothing here was built.
