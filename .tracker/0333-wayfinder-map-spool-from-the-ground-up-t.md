@@ -1,9 +1,10 @@
 # #333 · Wayfinder map: spool from the ground up, the foundation
 
-- State: open
+- State: closed (moved to spool-next)
 - Labels: wayfinder:map
 - Created: 2026-11-13T14:47:10.942Z
-- Updated: 2026-11-13T23:29:24.368Z
+- Updated: 2026-11-14T11:38:33.458Z
+- Closed: 2026-11-14T10:28:43.260Z
 
 ## Destination
 
@@ -48,6 +49,9 @@ A new spool, written from the ground up in its own repo: a small core that is fa
 - (open) #342 What a frame is, so far: Liam accepts that a design frame is a design with code made from it afterwards, and wants a language of our own taken seriously, "dedicated to making kind of frames", with validation built in. Round two (#354) tests three shapes of it, a checker, harder samples, merging by meaning, a compiler out to React and the interpreter as a safety line, before he picks.
 - #335 Where today's spool spends its time: closed without an m1 pass of today's spool (the screen was never free). The canvas side is answered by #343. The engine side is known roughly from devobee: an edit shows after about 3.6 s, opening takes about 2.4 s, picture to live about 6 s, so today's gap to the budget is mostly in the engine, not in the drawing. #345 measures those on the m1, headless, if it turns on them.
 - #354 A frame language of our own, round two: it holds up. With a checker agents write it nearly as reliably as TSX (15 and 14 of 16 against 16) in fewer tokens, every hand edit is one line, merging by names works where line merge fails, it compiles out to React, and nothing hostile escaped. The look of the syntax did not change quality (blind judges could not tell); the line-based look is dropped, and the typed-and-braced or the JSX-like look is Liam's pick. All 12 of his real frames ported at rest, 3 with one box of real code, but hover, timers and dragging were lost: which of those the language takes in is settled in #342. Heavy frames still need GPU pictures when zoomed out.
+- Liam, 2026-11-14: our own language is the direction for frames, with his projects ported and redone to fit it; real code lives in boxes inside a frame. Start from the typed-and-braced look in the style of Rust and Swift; take the best from existing languages rather than inventing from nothing (#355); keep it as its own piece, since it may be released for others. He leaves the engineering of it to the brain's recommendation.
+- #355 Prior art, four notes: the language stays typed, named data with a 13-part feature map and real code only in code boxes; it is built as one Rust core for the command line and the browser; both researchers lean to the browser drawing live frames with GPU pictures far out, in Electron and the hosted browser, with a native app (Rune, GPUI) measured in a bounded spike before anything is chosen.
+- **2026-11-14: this map moves to project spool-next** at Liam's ask (its own tracker, a brain task there, autopilot as the orchestrator), re-charted around frames in our own language. Handoff: `~/.brain-archive/spool-foundation/handoff-to-spool-next.md`. The new task closes this map and its open children as moved.
 
 ## Not yet specified
 
@@ -64,3 +68,17 @@ A new spool, written from the ground up in its own repo: a small core that is fa
 
 - Which features the rebuilt spool has, and how they look and work: the rethink (task 655) and its threads.
 - Today's spool beyond fixes: it stays Liam's daily tool, through Spool Beta, until the new one can replace it.
+
+## Comments
+
+### agent, 2026-11-14T10:28:43.260Z
+
+Moved to project spool-next and re-charted as spool-next#1 (the core) and spool-next#16 (the frame language, parked), held by task 682. Every open child here was closed with a pointer to its successor.
+
+### agent, 2026-11-14T11:38:33.458Z
+
+From the look exploration's round 4 (ten layout ideas drawn in spark, task 666), closed by Liam in task 679 on 2026-11-16: none changes the core of spool, "maybe we will explore this later". Three ideas to carry, frames kept on the rethink canvas at `explore/look/{focus,filmstrip,grid}-{canvas,how}`; the other seven are deleted.
+
+- **Workspaces (from focus)**: like Blender's workspace tabs, "maybe we can have something similar in spool". His doubt: in Blender they change your toolset, and "in spool like agents kind of draw everything so i dont know". Belongs with the window pieces.
+- **Flows shown and labelled by the agent (from filmstrip)**: "not like the pane below but like how maybe we could have so agents atleast could label, and show flows this way, show the states of screens". Belongs with flows and play.
+- **A grid as a view of a page (from grid)**: what he meant by a grid was the whole canvas snapping to locations. "i feel like canvas should be free, maybe though it becomes a view for a page or a page can be this". Belongs with Arrange (piece 9).

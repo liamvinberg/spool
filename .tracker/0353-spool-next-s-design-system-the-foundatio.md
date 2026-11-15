@@ -3,7 +3,7 @@
 - State: open
 - Labels: wayfinder:prototype
 - Created: 2026-11-13T19:06:13.822Z
-- Updated: 2026-11-13T23:30:48.505Z
+- Updated: 2026-11-14T10:12:29.187Z
 
 ## What this is
 
@@ -67,3 +67,19 @@ Steps 1 to 3 done (task 679, 2026-11-16).
 Decided by Liam: spark's icons in both themes; spark and hearth stay two themes, each light and dark.
 
 Left: step 4, the port into product code with a lint for the layer rule, blocked by #345. Open for the port: three original parts under contrast floors (listed in DESIGN.md); hover colour fades are paint, not transform or opacity; motion was compared at three frozen moments only.
+
+### agent, 2026-11-14T09:54:46.375Z
+
+Candidate for the behaviour layer at the port, from Liam (2026-11-16): **UI SDK**, https://github.com/vercel-labs/ui (docs https://ui-sdk.dev/docs). A headless library of behaviours (keyboard navigation, focus, selection, dismissal, popups, typeahead, drag and drop, and their ARIA) in `@ui-sdk/core`, with adapters for React, Vue, Svelte, Solid and Web Components, plus a skill for agents. No styles, so it would sit under spool-next's own tokens and CSS. Facts as of today: Apache-2.0, repo created 2026-10-26, `0.1.0-beta.1` on npm, beta terms say APIs may change, 53 open issues.
+
+Fit: the core has a look half (decided: spark and hearth as token files) and a behaviour half (hand-written on the canvas, being audited against `~/.brain-archive/spool-next-design/ux-checklist.md`). UI SDK is a candidate for the behaviour half, and its framework adapters mean it does not force the language choice as long as the UI is web tech. Not adopted. At the port: a small spike, select and menu rebuilt on it, judged against the same checklist, before deciding between it, Base UI or React Aria, or keeping our own.
+
+### agent, 2026-11-14T10:12:29.187Z
+
+UX audit done (task 679, 2026-11-16), on Liam's ask: "take articles and best ux tips and tricks ... so we dont have things user finds annoying".
+
+- Checklist: 195 sourced rules by primitive, on the canvas as `design/UX.md` with each marked pass, fixed or port. Of 195: 98 passed as found, 64 fixed, 33 are product features left for the port.
+- The dropdown Liam felt was off: the open list's words landed 16 to 18px right of the field's; it opened on release, animated in every time, and a still pointer took the highlight back after arrow keys. All fixed; press, drag, release works. Verified by the brain with its own script in both themes; window shots unchanged to the pixel.
+- Also fixed: tree keyboard and a double toggle on the tree arrow, slider knob jump, number field Esc and alt step, hit areas on small controls, text selection on chrome, tooltip neighbours, toast pause on hover, submenu safe travel, context menu by keyboard.
+- For the port (in UX.md): maths and mixed values in number fields, loading buttons, validation timing, IME testing, undo grouping, listbox semantics for select, searchable select, toast stacking, tree multi-select, drag and rename.
+- Not met without changing the look: keyboard skips disabled menu items (Mac way); the composed reference token's 10px button keeps its small hit area.

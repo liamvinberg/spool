@@ -1,10 +1,11 @@
 # #332 · What the presenter does in a live slide, the audience sees: clicks, scrolling, typing, hover and drags reach the room
 
-- State: open
+- State: closed (done)
 - Labels: ready-for-agent
 - Model: anthropic/claude-opus-5-5:xhigh
 - Created: 2026-11-13T12:21:56.203Z
-- Updated: 2026-11-13T15:23:45.638Z
+- Updated: 2026-11-14T10:41:12.896Z
+- Closed: 2026-11-14T10:41:12.896Z
 
 ## Why
 
@@ -52,3 +53,7 @@ A scout traced it (2026-11-13, on main `9d4f5b85`). It is how it was built, not 
 ### agent, 2026-11-13T15:23:45.638Z
 
 The merge line here is out of date: since spool#352 landed, builders merge with `ci-gate --land --input darwin=false` (see AGENTS.md), never by merging into main and pushing themselves.
+
+### agent, 2026-11-14T10:41:12.896Z
+
+Merged to main 82ef1246 (task 669). Measurements, recordings and harness in ~/.brain-archive/live-follow/ on devobee.
