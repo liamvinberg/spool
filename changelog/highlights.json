@@ -1,5 +1,5 @@
 {
-	"through": "0.56.0",
+	"through": "0.57.0",
 	"headlines": {
 		"78ee723": "Export frames as HTML",
 		"2b96f16": "Experimental settings",
@@ -49,6 +49,14 @@
 		"7311cee": "Comments on team projects"
 	},
 	"highlights": [
+		{
+			"id": "1bcfb20",
+			"clip": "1bcfb20-4d53e551.mp4",
+			"poster": "1bcfb20-4d53e551.jpg"
+		},
+		{
+			"id": "86543b4"
+		},
 		{
 			"id": "88ab2e2",
 			"clip": "88ab2e2-fa60bdb1.mp4",
